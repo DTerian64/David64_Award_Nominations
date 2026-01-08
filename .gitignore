@@ -1,0 +1,26 @@
+# Environment variables
+   .env
+   *.env
+   .env.*
+   backend/.env
+   
+   # Python
+   __pycache__/
+   *.py[cod]
+   *$py.class
+   *.so
+   .Python
+   .venv/
+   venv/
+   ENV/
+   
+   # Azure/Blob Storage
+   __blobstorage__/
+   __queuestorage__/
+   
+   # VS Code
+   .vscode/
+   
+   # OS
+   .DS_Store
+   Thumbs.db

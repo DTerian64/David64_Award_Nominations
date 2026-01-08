@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+gunicorn
+pyodbc
+httpx
+PyJWT>=2.8.0
+pydantic
+python-multipart
