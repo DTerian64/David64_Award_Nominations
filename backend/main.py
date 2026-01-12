@@ -1,17 +1,20 @@
 # Award Nomination System - FastAPI Application
-# Architecture: FastAPI + Azure SQL + Entra ID + Email Notifications
+# Architecture: FastAPI + Azure SQL + Entra ID + userPrincipalName Notifications
 
+from dotenv import load_dotenv
+load_dotenv()
+import os
 from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.security import OAuth2AuthorizationCodeBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials # OAuth2AuthorizationCodeBearer
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date, datetime
 import pyodbc
 import jwt
 import httpx
-import os
 from contextlib import contextmanager
+
 
 # ============================================================================
 # CONFIGURATION
@@ -27,10 +30,12 @@ SQL_PASSWORD = os.getenv("SQL_PASSWORD")  # In production, use Azure Key Vault
 TENANT_ID = os.getenv("TENANT_ID")
 CLIENT_ID = os.getenv("CLIENT_ID")  # Register app in Azure Portal
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")  # From app registration
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+JWKS_URL = f"{AUTHORITY}/discovery/v2.0/keys"
 
-# Email Configuration (Azure Communication Services or SendGrid)
+# userPrincipalName Configuration (Azure Communication Services or SendGrid)
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-FROM_EMAIL = os.getenv("FROM_EMAIL")
+FROM_userPrincipalName = os.getenv("FROM_userPrincipalName")
 
 # ============================================================================
 # DATABASE CONNECTION
@@ -66,7 +71,7 @@ class User(BaseModel):
     LastName: str
     Title: str
     ManagerId: Optional[int]
-    Email: Optional[str]
+    userPrincipalName: str
 
 class NominationCreate(BaseModel):
     BeneficiaryId: int
@@ -110,29 +115,24 @@ app.add_middleware(
 )
 
 # OAuth2 Configuration
-oauth2_scheme = OAuth2AuthorizationCodeBearer(
-    authorizationUrl=f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/authorize",
-    tokenUrl=f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token",
-)
+#oauth2_scheme = OAuth2AuthorizationCodeBearer(
+#    authorizationUrl=f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/authorize",
+#    tokenUrl=f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token",
+#)
 
 # ============================================================================
 # AUTHENTICATION
 # ============================================================================
+bearer_scheme = HTTPBearer(auto_error=True)
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     """Validate Microsoft Entra ID token and return user info"""
+    token = credentials.credentials  # This is the JWT string
     try:
-        # Decode JWT token (in production, validate signature with Microsoft's public keys)
-        decoded = jwt.decode(token, options={"verify_signature": False})
-        
-        user_id = decoded.get("oid")  # Object ID from Entra ID
-        email = decoded.get("email") or decoded.get("preferred_username")
-        
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication token"
-            )
+        payload = jwt.decode(
+            token,
+            options={"verify_signature": False}  # DEV ONLY
+        )
         
         # Get user from database
         with get_db_connection() as conn:
@@ -155,21 +155,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
                 "LastName": row[2],
                 "Title": row[3],
                 "ManagerId": row[4],
-                "Email": email
+                "userPrincipalName": userPrincipalName
             }
     
     except jwt.DecodeError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token format"
+            detail="Invalid token"
         )
 
 # ============================================================================
-# EMAIL NOTIFICATION SERVICE
+# userPrincipalName NOTIFICATION SERVICE
 # ============================================================================
 
-async def send_email(to_email: str, subject: str, body: str):
-    """Send email notification using SendGrid"""
+async def send_userPrincipalName(to_userPrincipalName: str, subject: str, body: str):
+    """Send userPrincipalName notification using SendGrid"""
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -179,15 +179,15 @@ async def send_email(to_email: str, subject: str, body: str):
                     "Content-Type": "application/json"
                 },
                 json={
-                    "personalizations": [{"to": [{"email": to_email}]}],
-                    "from": {"email": FROM_EMAIL},
+                    "personalizations": [{"to": [{"userPrincipalName": to_userPrincipalName}]}],
+                    "from": {"userPrincipalName": FROM_userPrincipalName},
                     "subject": subject,
                     "content": [{"type": "text/html", "value": body}]
                 }
             )
             return response.status_code == 202
     except Exception as e:
-        print(f"Email error: {e}")
+        print(f"userPrincipalName error: {e}")
         return False
 
 # ============================================================================
@@ -256,7 +256,7 @@ async def create_nomination(
                 detail="Beneficiary has no manager assigned"
             )
         
-        # Get manager email
+        # Get manager userPrincipalName
         cursor.execute(
             "SELECT FirstName, LastName FROM Users WHERE UserId = ?",
             (manager_id,)
@@ -281,9 +281,9 @@ async def create_nomination(
         conn.commit()
         nomination_id = cursor.execute("SELECT @@IDENTITY").fetchone()[0]
         
-        # Send email to manager
+        # Send userPrincipalName to manager
         nominator_name = f"{current_user['FirstName']} {current_user['LastName']}"
-        email_body = f"""
+        userPrincipalName_body = f"""
         <html>
         <body>
             <h2>New Award Nomination Pending Approval</h2>
@@ -301,11 +301,11 @@ async def create_nomination(
         </html>
         """
         
-        # In production, get manager email from Azure AD or Users table
-        await send_email(
-            to_email=f"{manager[1].lower()}.{manager[0].lower()}@yourcompany.com",
+        # In production, get manager userPrincipalName from Azure AD or Users table
+        await send_userPrincipalName(
+            to_userPrincipalName=f"{manager[1].lower()}.{manager[0].lower()}@yourcompany.com",
             subject=f"Award Nomination Pending Approval - {beneficiary_name}",
-            body=email_body
+            body=userPrincipalName_body
         )
         
         return {
@@ -434,6 +434,9 @@ async def get_nomination_history(current_user: dict = Depends(get_current_user))
         
         return nominations
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 # ============================================================================
 # PAYROLL EXTRACT GENERATION
 # ============================================================================

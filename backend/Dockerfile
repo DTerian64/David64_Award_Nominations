@@ -1,23 +1,35 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
-# Install Microsoft ODBC Driver 18 for SQL Server + dependencies
+# ────────────────────────────────────────────────────────────────
+# Install Microsoft ODBC Driver 18 for SQL Server + required tools
+# ────────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg2 apt-transport-https ca-certificates unixodbc unixodbc-dev \
- && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
- && curl https://packages.microsoft.com/config/debian/12/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    curl \
+    ca-certificates \
+    gnupg \
+ && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+    > /etc/apt/sources.list.d/mssql-release.list \
  && apt-get update \
- && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
+ && ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
+    msodbcsql18 \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application code
 COPY . .
 
-# App Service will send traffic to port 8000 (we bind to 0.0.0.0:8000)
-CMD ["gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "main:app"]
+# Run with gunicorn + uvicorn
+CMD ["gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", "main:app"]
