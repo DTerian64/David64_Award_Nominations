@@ -1,0 +1,283 @@
+import os
+import pyodbc
+from contextlib import contextmanager
+from typing import Optional, Tuple, List
+
+# Database Configuration
+DB_SERVER = os.getenv("SQL_SERVER")
+DB_NAME = os.getenv("SQL_DATABASE")
+DB_DRIVER = os.getenv("DB_DRIVER", "{ODBC Driver 18 for SQL Server}")
+DB_USERNAME= os.getenv("SQL_USER")
+DB_PASSWORD = os.getenv("SQL_PASSWORD")
+
+USE_MANAGED_IDENTITY = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
+if USE_MANAGED_IDENTITY:
+    # Production: Use Managed Identity (for Azure App Service, Azure Functions, etc.)
+    CONNECTION_STRING = (
+    f"Driver={DB_DRIVER};"
+    f"Server={DB_SERVER};"
+    f"Database={DB_NAME};"
+    f"Authentication=ActiveDirectoryMsi;"
+    f"Encrypt=yes;"
+    f"TrustServerCertificate=no;"
+    )
+elif DB_USERNAME and DB_PASSWORD:
+    # Development: Use SQL Authentication
+    CONNECTION_STRING = (
+        f"Driver={DB_DRIVER};"
+        f"Server={DB_SERVER};"
+        f"Database={DB_NAME};"
+        f"UID={DB_USERNAME};"
+        f"PWD={DB_PASSWORD};"
+        f"Encrypt=yes;"
+        f"TrustServerCertificate=no;"
+    )
+else:
+    # Development: Use Azure AD Interactive (will prompt for login)
+    CONNECTION_STRING = (
+        f"Driver={DB_DRIVER};"
+        f"Server={DB_SERVER};"
+        f"Database={DB_NAME};"
+        f"Authentication=ActiveDirectoryInteractive;"
+        f"Encrypt=yes;"
+        f"TrustServerCertificate=no;"
+    )    
+
+
+def get_db_connection():
+    """Create a new database connection"""
+    return pyodbc.connect(CONNECTION_STRING)
+
+
+@contextmanager
+def get_db_context():
+    """Database connection context manager"""
+    conn = get_db_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# USER QUERIES
+# ============================================================================
+
+def get_user_by_id(user_id: str) -> Optional[Tuple]:
+    """
+    Get user by Azure AD Object ID
+    Returns: (UserId, userPrincipalName, FirstName, LastName, Title, ManagerId)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT UserId, userPrincipalName, FirstName, LastName, Title, ManagerId
+            FROM Users
+            WHERE UserId = ?
+        """, (user_id,))
+        return cursor.fetchone()
+
+
+def get_user_by_upn(upn: str) -> Optional[Tuple]:
+    """
+    Get user by User Principal Name (email)
+    Returns: (UserId, userPrincipalName, FirstName, LastName, Title, ManagerId)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT UserId, userPrincipalName, FirstName, LastName, Title, ManagerId
+            FROM Users
+            WHERE userPrincipalName = ?
+        """, (upn,))
+        return cursor.fetchone()
+
+
+def get_all_users_except(user_id: int) -> List[Tuple]:
+    """
+    Get all users except the specified one
+    Returns: List of (UserId, userPrincipalName, FirstName, LastName, Title, ManagerId)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT UserId, userPrincipalName, FirstName, LastName, Title, ManagerId 
+            FROM Users 
+            WHERE UserId != ?
+            ORDER BY LastName, FirstName
+        """, (user_id,))
+        return cursor.fetchall()
+
+
+def get_user_manager_info(user_id: int) -> Optional[Tuple]:
+    """
+    Get user's manager information
+    Returns: (ManagerId, BeneficiaryFirstName, BeneficiaryLastName)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ManagerId, FirstName, LastName 
+            FROM Users 
+            WHERE UserId = ?
+        """, (user_id,))
+        return cursor.fetchone()
+
+
+def get_user_name_by_id(user_id: int) -> Optional[Tuple]:
+    """
+    Get user name by ID
+    Returns: (FirstName, LastName)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT FirstName, LastName 
+            FROM Users 
+            WHERE UserId = ?
+        """, (user_id,))
+        return cursor.fetchone()
+
+
+# ============================================================================
+# NOMINATION QUERIES
+# ============================================================================
+
+def create_nomination(nominator_id: int, beneficiary_id: int, approver_id: int, 
+                     dollar_amount: int, description: str) -> int:
+    """
+    Create a new nomination
+    Returns: NominationId
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO Nominations 
+            (NominatorId, BeneficiaryId, ApproverId, DollarAmount, 
+             NominationDescription, NominationDate, ApprovedDate, PayedDate)
+            VALUES (?, ?, ?, ?, ?, GETDATE(), NULL, NULL)
+        """, (nominator_id, beneficiary_id, approver_id, dollar_amount, description))
+        conn.commit()
+        
+        cursor.execute("SELECT @@IDENTITY")
+        return cursor.fetchone()[0]
+
+
+def get_pending_nominations_for_approver(approver_id: int) -> List[Tuple]:
+    """
+    Get all pending nominations for a specific approver
+    Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
+                     DollarAmount, NominationDescription, NominationDate,
+                     ApprovedDate, PayedDate)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
+                   n.DollarAmount, n.NominationDescription, n.NominationDate,
+                   n.ApprovedDate, n.PayedDate
+            FROM Nominations n
+            WHERE n.ApproverId = ? AND n.ApprovedDate IS NULL
+            ORDER BY n.NominationDate DESC
+        """, (approver_id,))
+        return cursor.fetchall()
+
+
+def get_nomination_approver(nomination_id: int) -> Optional[int]:
+    """
+    Get the approver ID for a nomination
+    Returns: ApproverId
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ApproverId 
+            FROM Nominations 
+            WHERE NominationId = ?
+        """, (nomination_id,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+
+def approve_nomination(nomination_id: int) -> bool:
+    """
+    Approve a nomination by setting ApprovedDate
+    Returns: True if successful
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE Nominations 
+            SET ApprovedDate = GETDATE()
+            WHERE NominationId = ?
+        """, (nomination_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def reject_nomination(nomination_id: int) -> bool:
+    """
+    Reject a nomination by deleting it
+    Returns: True if successful
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM Nominations 
+            WHERE NominationId = ?
+        """, (nomination_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_nomination_history(user_id: int) -> List[Tuple]:
+    """
+    Get nomination history for a user (as nominator or beneficiary)
+    Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
+                     DollarAmount, NominationDescription, NominationDate,
+                     ApprovedDate, PayedDate)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
+                   n.DollarAmount, n.NominationDescription, n.NominationDate,
+                   n.ApprovedDate, n.PayedDate
+            FROM Nominations n
+            WHERE n.NominatorId = ? OR n.BeneficiaryId = ?
+            ORDER BY n.NominationDate DESC
+        """, (user_id, user_id))
+        return cursor.fetchall()
+
+
+def get_nomination_for_payroll(nomination_id: int) -> Optional[Tuple]:
+    """
+    Get nomination details for payroll extract
+    Returns: (BeneficiaryId, DollarAmount, NominationDate, FirstName, LastName)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT n.BeneficiaryId, n.DollarAmount, n.NominationDate,
+                   u.FirstName, u.LastName
+            FROM Nominations n
+            JOIN Users u ON n.BeneficiaryId = u.UserId
+            WHERE n.NominationId = ?
+        """, (nomination_id,))
+        return cursor.fetchone()
+
+
+def mark_nomination_as_paid(nomination_id: int) -> bool:
+    """
+    Mark a nomination as paid by setting PayedDate
+    Returns: True if successful
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE Nominations 
+            SET PayedDate = GETDATE()
+            WHERE NominationId = ?
+        """, (nomination_id,))
+        conn.commit()
+        return cursor.rowcount > 0
