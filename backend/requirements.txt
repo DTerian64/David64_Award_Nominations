@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 gunicorn
 pyodbc
+python-dotenv
 httpx
 PyJWT>=2.8.0
 pydantic

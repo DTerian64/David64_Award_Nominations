@@ -1,6 +1,7 @@
 # Award Nomination System - FastAPI Application
 # Architecture: FastAPI + Azure SQL + Entra ID + Email Notifications
 
+import socket
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -50,6 +51,16 @@ app = FastAPI(
     docs_url=None,  # Disable default docs
     redoc_url=None,
 )
+
+#used for verification where the call is routed through Azure Front Door
+@app.get("/whoami")
+def whoami():
+     return {
+        "region": os.getenv("REGION", "unknown"),
+        "container_app": os.getenv("CONTAINER_APP_NAME", "unknown"),
+        "revision": os.getenv("CONTAINER_APP_REVISION", "unknown"),
+        "hostname": socket.gethostname(),
+    }
 
 # Custom Swagger UI with proper OAuth2 PKCE configuration
 @app.get("/docs", include_in_schema=False)
