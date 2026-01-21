@@ -1,5 +1,5 @@
 import { apiCall } from './api';
-import { User, Nomination, NominationCreate, NominationApproval } from '../types/api.types';
+import type { User, Nomination, NominationCreate, NominationApproval } from '../types/api.types';
 
 export const getUsers = (): Promise<User[]> => 
   apiCall<User[]>('/api/users');

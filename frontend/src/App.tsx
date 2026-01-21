@@ -72,7 +72,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
 const AwardNominationApp: React.FC = () => {
   const { accounts } = useMsal();
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [_currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [nominations, setNominations] = useState<Nomination[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<Nomination[]>([]);
