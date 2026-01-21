@@ -242,12 +242,18 @@ const AwardNominationApp: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <UnauthenticatedTemplate>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="bg-white p-8 rounded-lg shadow-lg text-center max-w-md">
-            <Award className="w-16 h-16 text-indigo-600 mx-auto mb-4" />
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Award Nomination System</h1>
-            <p className="text-gray-600 mb-6">Recognize outstanding achievements</p>
-            <SignInButton />
+        <div className="min-h-screen flex items-center justify-center p-4">
+          <div className="max-w-md w-full">
+            <div className="bg-white p-8 rounded-lg shadow-lg text-center">
+              <Award className="w-16 h-16 text-indigo-600 mx-auto mb-4" />
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                Award Nomination System
+              </h1>
+              <p className="text-gray-600 mb-6">
+                Recognize outstanding achievements
+              </p>
+              <SignInButton />
+            </div>
           </div>
         </div>
       </UnauthenticatedTemplate>

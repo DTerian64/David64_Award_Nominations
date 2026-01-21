@@ -9,7 +9,7 @@ import os
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List,Dict, Any, Callable
 from datetime import datetime
 import jwt
 import httpx
@@ -36,6 +36,10 @@ JWKS_URL = f"{AUTHORITY}/discovery/v2.0/keys"
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 FROM_EMAIL = os.getenv("FROM_EMAIL")
 
+# ============================================================================
+# REUSABLE DEPENDENCIES
+# ============================================================================
+
 
 # ============================================================================
 # FASTAPI APPLICATION
@@ -51,16 +55,6 @@ app = FastAPI(
     docs_url=None,  # Disable default docs
     redoc_url=None,
 )
-
-#used for verification where the call is routed through Azure Front Door
-@app.get("/whoami")
-def whoami():
-     return {
-        "region": os.getenv("REGION", "unknown"),
-        "container_app": os.getenv("CONTAINER_APP_NAME", "unknown"),
-        "revision": os.getenv("CONTAINER_APP_REVISION", "unknown"),
-        "hostname": socket.gethostname(),
-    }
 
 # Custom Swagger UI with proper OAuth2 PKCE configuration
 @app.get("/docs", include_in_schema=False)
@@ -243,6 +237,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             )
         
         print(f"User found: {row[2]} {row[3]} (ID: {row[0]})")
+
+        print(f"User roles from token: {payload.get('roles', [])}")
         
         return {
             "UserId": row[0],
@@ -250,7 +246,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             "FirstName": row[2],
             "LastName": row[3],
             "Title": row[4],
-            "ManagerId": row[5]
+            "ManagerId": row[5],
+            "roles": payload.get("roles", [])
         }
     
     except jwt.DecodeError as e:
@@ -274,7 +271,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             detail=f"Authentication error: {str(e)}"
         )
 
+def require_role(required_role: str) -> Callable:
+    def _checker(user_claims: Dict[str, Any] = Depends(get_current_user)):
+        roles = user_claims.get("roles", []) or []
+        if required_role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not Authorized"
+            )
+        return user_claims
+    return _checker
 
+#used for verification where the call is routed through Azure Front Door
+@app.get("/whoami")
+def whoami(_claims=Depends(require_role("Admin.Access"))):
+     return {
+        "region": os.getenv("REGION", "unknown"),
+        "container_app": os.getenv("CONTAINER_APP_NAME", "unknown"),
+        "revision": os.getenv("CONTAINER_APP_REVISION", "unknown"),
+        "hostname": socket.gethostname(),
+    }
 # ============================================================================
 # EMAIL NOTIFICATION SERVICE
 # ============================================================================
