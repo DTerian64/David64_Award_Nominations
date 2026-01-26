@@ -53,7 +53,13 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, impersonated
     
     const headers = new Headers(options.headers);
 
-    headers.set('Content-Type', 'application/json');
+    const hasBody = options.body !== undefined && options.body !== null;
+    const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+
+    if (hasBody && !isFormData && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    
     headers.set('Authorization', `Bearer ${token}`);
 
     // Add impersonation header if provided
@@ -72,7 +78,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, impersonated
     }
 
     if (res.status === 204) return undefined as T;
-    return await res.json();
+    return (await res.json()) as T;
   } catch (error) {
     console.error('API Error:', error);
     throw error;
