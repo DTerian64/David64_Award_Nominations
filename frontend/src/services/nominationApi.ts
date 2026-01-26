@@ -1,25 +1,34 @@
 import { apiCall } from './api';
 import type { User, Nomination, NominationCreate, NominationApproval } from '../types/api.types';
 
-export const getUsers = (): Promise<User[]> => 
-  apiCall<User[]>('/api/users');
+/**
+ * All API functions now accept an optional impersonatedUserUPN parameter
+ * that will be passed to the backend via the X-Impersonate-User header
+ */
 
-export const createNomination = (nomination: NominationCreate): Promise<void> =>
+export const getUsers = (impersonatedUserUPN?: string): Promise<User[]> => 
+  apiCall<User[]>('/api/users', {}, impersonatedUserUPN);
+
+export const createNomination = (
+  nomination: NominationCreate,
+  impersonatedUserUPN?: string
+): Promise<void> =>
   apiCall('/api/nominations', {
     method: 'POST',
     body: JSON.stringify(nomination),
-  });
+  }, impersonatedUserUPN);
 
-export const getPendingNominations = (): Promise<Nomination[]> =>
-  apiCall<Nomination[]>('/api/nominations/pending');
+export const getPendingNominations = (impersonatedUserUPN?: string): Promise<Nomination[]> =>
+  apiCall<Nomination[]>('/api/nominations/pending', {}, impersonatedUserUPN);
 
-export const getNominationHistory = (): Promise<Nomination[]> =>
-  apiCall<Nomination[]>('/api/nominations/history');
+export const getNominationHistory = (impersonatedUserUPN?: string): Promise<Nomination[]> =>
+  apiCall<Nomination[]>('/api/nominations/history', {}, impersonatedUserUPN);
 
 export const approveNomination = (
   nominationId: number,
   approved: boolean,
-  comments?: string
+  comments?: string,
+  impersonatedUserUPN?: string
 ): Promise<void> =>
   apiCall('/api/nominations/approve', {
     method: 'POST',
@@ -28,4 +37,4 @@ export const approveNomination = (
       Approved: approved,
       Comments: comments,
     } as NominationApproval),
-  });
+  }, impersonatedUserUPN);

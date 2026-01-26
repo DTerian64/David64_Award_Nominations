@@ -27,24 +27,41 @@ interface RequestOptions extends RequestInit {
   headers?: Record<string, string>;
 }
 
+/**
+ * Enhanced API call function with impersonation support
+ * If impersonatedUserUPN is provided, it will be sent in the X-Impersonate-User header
+ */
 export const apiCall = async <T = any>(
   endpoint: string,
-  options: RequestOptions = {}
+  options: RequestOptions = {},
+  impersonatedUserUPN?: string
 ): Promise<T> => {
   const token = await getAccessToken();
 
+  const headers: Record<string, string> = {
+    ...options.headers,
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Add impersonation header if provided
+  if (impersonatedUserUPN) {
+    headers['X-Impersonate-User'] = impersonatedUserUPN;
+  }
+
   const response = await fetch(`${apiConfig.apiEndpoint}${endpoint}`, {
     ...options,
-    headers: {
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
   });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.detail || `API call failed: ${response.statusText}`);
+  }
+
+  // Handle 204 No Content
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return response.json();

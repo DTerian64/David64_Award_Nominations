@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
-from datetime import date
+from datetime import date, datetime
 
 
 class User(BaseModel):
@@ -44,3 +44,13 @@ class StatusResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+
+class AuditLog(BaseModel):
+    """Audit log entry for impersonation tracking"""
+    AuditId: int
+    Timestamp: datetime
+    AdminUPN: str
+    ImpersonatedUPN: str
+    Action: str
+    Details: Optional[str] = None
+    IpAddress: Optional[str] = None

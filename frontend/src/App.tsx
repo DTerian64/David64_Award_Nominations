@@ -7,6 +7,9 @@ import {
 } from '@azure/msal-react';
 import { SignInButton } from './components/SignInButton';
 import { SignOutButton } from './components/SignOutButton';
+import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
+import { ImpersonationBanner } from './components/ImpersonationBanner';
+import { useImpersonation } from './contexts/ImpersonationContext';
 import { getAccessToken } from './services/api';
 
 // Types matching your backend
@@ -43,18 +46,25 @@ interface CurrentUser {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-// Authenticated API fetch with proper error handling
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+// Authenticated API fetch with impersonation support
+async function apiFetch<T>(path: string, options: RequestInit = {}, impersonatedUPN?: string): Promise<T> {
   try {
     const token = await getAccessToken();
     
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    };
+
+    // Add impersonation header if provided
+    if (impersonatedUPN) {
+      headers['X-Impersonate-User'] = impersonatedUPN;
+    }
+    
     const res = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(options.headers || {}),
-      },
+      headers,
     });
 
     if (!res.ok) {
@@ -72,6 +82,21 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
 const AwardNominationApp: React.FC = () => {
   const { accounts } = useMsal();
+  const { getEffectiveUser, isImpersonating, isAdmin } = useImpersonation();
+  // ADD THIS DEBUG CODE:
+  useEffect(() => {
+  console.log('=== IMPERSONATION DEBUG ===');
+  console.log('isAdmin:', isAdmin);
+  console.log('isImpersonating:', isImpersonating);
+  console.log('accounts:', accounts);
+  if (accounts.length > 0) {
+    console.log('Token claims:', accounts[0]?.idTokenClaims);
+    console.log('Roles in token:', accounts[0]?.idTokenClaims?.roles);
+  }
+  console.log('========================');
+  }, [isAdmin, isImpersonating, accounts]);
+  
+  
   const [_currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [nominations, setNominations] = useState<Nomination[]>([]);
@@ -85,26 +110,25 @@ const AwardNominationApp: React.FC = () => {
   const [description, setDescription] = useState('');
   const [submitStatus, setSubmitStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Load current user info from token
+  // Reload data when impersonation changes
   useEffect(() => {
     if (accounts.length > 0) {
-      // Get current user info from API (which uses token to identify user)
       loadCurrentUser();
       loadUsers();
       loadNominations();
       loadPendingApprovals();
     }
-  }, [accounts]);
+  }, [accounts, isImpersonating]);
 
   const loadCurrentUser = async () => {
     try {
-      // You could add a /api/me endpoint, or use the account info from MSAL
+      const effectiveUPN = getEffectiveUser();
       setCurrentUser({
-        UserId: 0, // Will be set by backend based on token
-        userPrincipalName: accounts[0]?.username || '',
+        UserId: 0,
+        userPrincipalName: effectiveUPN,
         FirstName: accounts[0]?.name?.split(' ')[0] || '',
         LastName: accounts[0]?.name?.split(' ')[1] || '',
-        Title: '', // Will be populated from backend
+        Title: '',
         ManagerId: null,
       });
     } catch (error) {
@@ -114,7 +138,8 @@ const AwardNominationApp: React.FC = () => {
 
   const loadUsers = async () => {
     try {
-      const userData = await apiFetch<User[]>('/api/users');
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      const userData = await apiFetch<User[]>('/api/users', {}, impersonatedUPN);
       setUsers(userData);
     } catch (error) {
       console.error('Failed to load users:', error);
@@ -123,7 +148,8 @@ const AwardNominationApp: React.FC = () => {
 
   const loadNominations = async () => {
     try {
-      const history = await apiFetch<Nomination[]>('/api/nominations/history');
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      const history = await apiFetch<Nomination[]>('/api/nominations/history', {}, impersonatedUPN);
       setNominations(history);
     } catch (error) {
       console.error('Failed to load nominations:', error);
@@ -132,7 +158,8 @@ const AwardNominationApp: React.FC = () => {
 
   const loadPendingApprovals = async () => {
     try {
-      const pending = await apiFetch<Nomination[]>('/api/nominations/pending');
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      const pending = await apiFetch<Nomination[]>('/api/nominations/pending', {}, impersonatedUPN);
       setPendingApprovals(pending);
     } catch (error) {
       console.error('Failed to load pending approvals:', error);
@@ -155,7 +182,8 @@ const AwardNominationApp: React.FC = () => {
     setSubmitStatus(null);
 
     try {
-      // Backend expects this structure (matches NominationCreate model)
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      
       const payload = {
         BeneficiaryId: Number(selectedBeneficiary),
         DollarAmount: dollarAmount,
@@ -165,7 +193,7 @@ const AwardNominationApp: React.FC = () => {
       await apiFetch('/api/nominations', {
         method: 'POST',
         body: JSON.stringify(payload),
-      });
+      }, impersonatedUPN);
       
       setSubmitStatus({ type: 'success', message: 'Nomination submitted successfully!' });
       setSelectedBeneficiary('');
@@ -190,17 +218,18 @@ const AwardNominationApp: React.FC = () => {
     setLoading(true);
     
     try {
-      // Backend expects POST to /api/nominations/approve with body
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      
       await apiFetch('/api/nominations/approve', {
         method: 'POST',
         body: JSON.stringify({
           NominationId: nominationId,
           Approved: approved,
         }),
-      });
+      }, impersonatedUPN);
 
       await loadPendingApprovals();
-      await loadNominations(); // Refresh history as well
+      await loadNominations();
       
       setSubmitStatus({ 
         type: 'success', 
@@ -233,7 +262,6 @@ const AwardNominationApp: React.FC = () => {
     );
   };
 
-  // Helper to get user name by ID
   const getUserName = (userId: number): string => {
     const user = users.find(u => u.UserId === userId);
     return user ? `${user.FirstName} ${user.LastName}` : 'Unknown';
@@ -259,6 +287,8 @@ const AwardNominationApp: React.FC = () => {
       </UnauthenticatedTemplate>
 
       <AuthenticatedTemplate>
+        <ImpersonationBanner />
+        
         <header className="bg-white shadow-sm border-b border-gray-200">
           <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center">
@@ -270,6 +300,7 @@ const AwardNominationApp: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center space-x-4">
+                {isAdmin && <AdminImpersonationPanel users={users} />}
                 {accounts.length > 0 && (
                   <div className="text-right">
                     <p className="text-sm font-semibold text-gray-900">{accounts[0].name}</p>

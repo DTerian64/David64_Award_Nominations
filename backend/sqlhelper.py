@@ -281,3 +281,41 @@ def mark_nomination_as_paid(nomination_id: int) -> bool:
         """, (nomination_id,))
         conn.commit()
         return cursor.rowcount > 0
+    
+# ============================================================================
+# IMPERSONATION & AUDIT LOG QUERIES
+# ============================================================================
+
+def log_impersonation(admin_upn: str, impersonated_upn: str, action: str, 
+                     details: Optional[str] = None, ip_address: Optional[str] = None) -> int:
+    """
+    Log an impersonation action to the audit table
+    Returns: AuditId
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO Impersonation_AuditLog 
+            (AdminUPN, ImpersonatedUPN, Action, Details, IpAddress, Timestamp)
+            VALUES (?, ?, ?, ?, ?, GETDATE())
+        """, (admin_upn, impersonated_upn, action, details, ip_address))
+        conn.commit()
+        
+        cursor.execute("SELECT @@IDENTITY")
+        return cursor.fetchone()[0]
+
+
+def get_audit_logs(limit: int = 100) -> List[Tuple]:
+    """
+    Get recent audit logs
+    Returns: List of (AuditId, Timestamp, AdminUPN, ImpersonatedUPN, Action, Details, IpAddress)
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT TOP (?) AuditId, Timestamp, AdminUPN, ImpersonatedUPN, 
+                   Action, Details, IpAddress
+            FROM Impersonation_AuditLog
+            ORDER BY Timestamp DESC
+        """, (limit,))
+        return cursor.fetchall()

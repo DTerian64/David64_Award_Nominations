@@ -40,6 +40,13 @@ export const loginRequest = {
     "profile",
     "email",
   ],
+extraQueryParameters: {
+    claims: JSON.stringify({
+      id_token: {
+        roles: null
+      }
+    })
+  }
 };
 
 /**
