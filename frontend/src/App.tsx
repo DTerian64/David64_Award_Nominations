@@ -51,15 +51,14 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, impersonated
   try {
     const token = await getAccessToken();
     
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {}),
-    };
+    const headers = new Headers(options.headers);
+
+    headers.set('Content-Type', 'application/json');
+    headers.set('Authorization', `Bearer ${token}`);
 
     // Add impersonation header if provided
     if (impersonatedUPN) {
-      headers['X-Impersonate-User'] = impersonatedUPN;
+      headers.set('X-Impersonate-User', impersonatedUPN);
     }
     
     const res = await fetch(`${API_BASE_URL}${path}`, {
