@@ -428,9 +428,9 @@ const AwardNominationApp: React.FC = () => {
                     rows={5}
                     placeholder="Describe the achievement or reason for this nomination..."
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
-                    maxLength={2000}
+                    maxLength={500}
                   />
-                  <p className="mt-1 text-xs text-gray-500">{description.length}/2000 characters</p>
+                  <p className="mt-1 text-xs text-gray-500">{description.length}/500 characters</p>
                 </div>
 
                 <button

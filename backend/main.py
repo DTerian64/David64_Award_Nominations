@@ -237,10 +237,10 @@ async def create_nomination(
     nomination: NominationCreate,
     user_context: dict = Depends(get_current_user_with_impersonation)
 ):
-    """Create a new award nomination"""
+    """Create a new nomination"""
     effective_user = user_context["effective_user"]
     
-    # Get beneficiary details
+    # Get beneficiary's manager
     beneficiary = sqlhelper.get_user_manager_info(nomination.BeneficiaryId)
     
     if not beneficiary:
@@ -328,7 +328,7 @@ async def get_pending_nominations(user_context: dict = Depends(get_current_user_
             NominationDate=row[6],
             ApprovedDate=row[7],
             PayedDate=row[8],
-            Status="Pending"
+            Status=row[9]  # Now reading Status from database
         ))
     
     await log_action_if_impersonating(user_context, "viewed_pending_approvals")
@@ -402,12 +402,6 @@ async def get_nomination_history(user_context: dict = Depends(get_current_user_w
     
     nominations = []
     for row in rows:
-        status_val = "Pending"
-        if row[8]:  # PayedDate
-            status_val = "Paid"
-        elif row[7]:  # ApprovedDate
-            status_val = "Approved"
-        
         nominations.append(Nomination(
             NominationId=row[0],
             NominatorId=row[1],
@@ -418,7 +412,7 @@ async def get_nomination_history(user_context: dict = Depends(get_current_user_w
             NominationDate=row[6],
             ApprovedDate=row[7],
             PayedDate=row[8],
-            Status=status_val
+            Status=row[9]  # Now reading Status from database
         ))
     
     await log_action_if_impersonating(user_context, "viewed_nomination_history")

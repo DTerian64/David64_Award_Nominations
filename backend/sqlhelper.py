@@ -154,8 +154,8 @@ def create_nomination(nominator_id: int, beneficiary_id: int, approver_id: int,
         cursor.execute("""
             INSERT INTO Nominations 
             (NominatorId, BeneficiaryId, ApproverId, DollarAmount, 
-             NominationDescription, NominationDate, ApprovedDate, PayedDate)
-            VALUES (?, ?, ?, ?, ?, GETDATE(), NULL, NULL)
+             NominationDescription, NominationDate, Status, ApprovedDate, PayedDate)
+            VALUES (?, ?, ?, ?, ?, GETDATE(), 'Pending', NULL, NULL)
         """, (nominator_id, beneficiary_id, approver_id, dollar_amount, description))
         conn.commit()
         
@@ -168,16 +168,16 @@ def get_pending_nominations_for_approver(approver_id: int) -> List[Tuple]:
     Get all pending nominations for a specific approver
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
                      DollarAmount, NominationDescription, NominationDate,
-                     ApprovedDate, PayedDate)
+                     ApprovedDate, PayedDate, Status)
     """
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
                    n.DollarAmount, n.NominationDescription, n.NominationDate,
-                   n.ApprovedDate, n.PayedDate
+                   n.ApprovedDate, n.PayedDate, n.Status
             FROM Nominations n
-            WHERE n.ApproverId = ? AND n.ApprovedDate IS NULL
+            WHERE n.ApproverId = ? AND n.Status = 'Pending'
             ORDER BY n.NominationDate DESC
         """, (approver_id,))
         return cursor.fetchall()
@@ -201,14 +201,14 @@ def get_nomination_approver(nomination_id: int) -> Optional[int]:
 
 def approve_nomination(nomination_id: int) -> bool:
     """
-    Approve a nomination by setting ApprovedDate
+    Approve a nomination by setting ApprovedDate and Status
     Returns: True if successful
     """
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE Nominations 
-            SET ApprovedDate = GETDATE()
+            SET ApprovedDate = GETDATE(), Status = 'Approved'
             WHERE NominationId = ?
         """, (nomination_id,))
         conn.commit()
@@ -217,13 +217,14 @@ def approve_nomination(nomination_id: int) -> bool:
 
 def reject_nomination(nomination_id: int) -> bool:
     """
-    Reject a nomination by deleting it
+    Reject a nomination by setting Status to 'Rejected'
     Returns: True if successful
     """
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            DELETE FROM Nominations 
+            UPDATE Nominations 
+            SET Status = 'Rejected'
             WHERE NominationId = ?
         """, (nomination_id,))
         conn.commit()
@@ -235,14 +236,14 @@ def get_nomination_history(user_id: int) -> List[Tuple]:
     Get nomination history for a user (as nominator or beneficiary)
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
                      DollarAmount, NominationDescription, NominationDate,
-                     ApprovedDate, PayedDate)
+                     ApprovedDate, PayedDate, Status)
     """
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
                    n.DollarAmount, n.NominationDescription, n.NominationDate,
-                   n.ApprovedDate, n.PayedDate
+                   n.ApprovedDate, n.PayedDate, n.Status
             FROM Nominations n
             WHERE n.NominatorId = ? OR n.BeneficiaryId = ?
             ORDER BY n.NominationDate DESC
@@ -269,14 +270,14 @@ def get_nomination_for_payroll(nomination_id: int) -> Optional[Tuple]:
 
 def mark_nomination_as_paid(nomination_id: int) -> bool:
     """
-    Mark a nomination as paid by setting PayedDate
+    Mark a nomination as paid by setting PayedDate and Status
     Returns: True if successful
     """
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE Nominations 
-            SET PayedDate = GETDATE()
+            SET PayedDate = GETDATE(), Status = 'Paid'
             WHERE NominationId = ?
         """, (nomination_id,))
         conn.commit()

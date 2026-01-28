@@ -15,7 +15,7 @@ class User(BaseModel):
 class NominationCreate(BaseModel):
     BeneficiaryId: int
     DollarAmount: int = Field(gt=0)
-    NominationDescription: str = Field(min_length=1, max_length=2000)
+    NominationDescription: str = Field(min_length=1, max_length=500)
 
 
 class Nomination(BaseModel):
@@ -26,8 +26,8 @@ class Nomination(BaseModel):
     DollarAmount: int
     NominationDescription: str
     NominationDate: date
-    ApprovedDate: Optional[date] = None
-    PayedDate: Optional[date] = None
+    ApprovedDate: Optional[datetime] = None
+    PayedDate: Optional[datetime] = None
     Status: Literal["Pending", "Approved", "Paid", "Rejected"]
 
 
@@ -44,6 +44,7 @@ class StatusResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+
 
 class AuditLog(BaseModel):
     """Audit log entry for impersonation tracking"""
