@@ -155,10 +155,19 @@ async def swagger_ui_redirect():
     """)
 
 # CORS Configuration
+ALLOWED_ORIGINS = ["https://awards.terian-services.com"]
+
+# Add localhost for development/testing
+if os.getenv("ENVIRONMENT", "development") == "development":
+    ALLOWED_ORIGINS.extend([
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend URL
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -209,12 +218,11 @@ def whoami(_claims=Depends(require_role("AWard_Nomination_Admin"))):
         "hostname": socket.gethostname(),
     }
 
-
 @app.get("/api/users", response_model=List[User])
 async def get_users(user_context: dict = Depends(get_current_user_with_impersonation)):
     """Get all users for nomination selection"""
     effective_user = user_context["effective_user"]
-    
+   
     rows = sqlhelper.get_all_users_except(effective_user["UserId"])
     
     users = []

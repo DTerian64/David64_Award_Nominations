@@ -46,7 +46,12 @@ else:
 
 def get_db_connection():
     """Create a new database connection"""
-    return pyodbc.connect(CONNECTION_STRING)
+    try:
+        print(f"Attempting to connect to database with connection string: {CONNECTION_STRING}")
+        return pyodbc.connect(CONNECTION_STRING)
+    except Exception as e:
+        print(f"Error connecting to database: {e}")
+        raise
 
 
 @contextmanager
@@ -54,6 +59,7 @@ def get_db_context():
     """Database connection context manager"""
     conn = get_db_connection()
     try:
+        print("Database connection established.")
         yield conn
     finally:
         conn.close()

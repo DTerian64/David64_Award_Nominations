@@ -1,0 +1,70 @@
+name: Deploy Backend to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main  # Trigger on push to main branch
+    paths:
+      - 'backend/**'  # Only trigger if backend files change
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+env:
+  ACR_NAME: acrawardnomination
+  ACR_LOGIN_SERVER: acrawardnomination.azurecr.io
+  IMAGE_NAME: award-nomination-api
+  RESOURCE_GROUP: rg_award_nomination
+  CONTAINER_APP_EASTUS: award-api-eastus
+  CONTAINER_APP_WESTUS: award-api-westus
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Login to Azure Container Registry
+      run: |
+        az acr login --name ${{ env.ACR_NAME }}
+    
+    - name: Build Docker image
+      run: |
+        cd backend
+        docker build -t ${{ env.IMAGE_NAME }}:latest .
+        docker tag ${{ env.IMAGE_NAME }}:latest ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+        docker tag ${{ env.IMAGE_NAME }}:latest ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+    
+    - name: Push to Azure Container Registry
+      run: |
+        docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+        docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+    
+    - name: Deploy to East US Container App
+      run: |
+        az containerapp update \
+          --name ${{ env.CONTAINER_APP_EASTUS }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+    
+    - name: Deploy to West US Container App
+      run: |
+        az containerapp update \
+          --name ${{ env.CONTAINER_APP_WESTUS }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+    
+    - name: Deployment Summary
+      run: |
+        echo "### Deployment Successful! :rocket:" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Deployed to:** East US & West US" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

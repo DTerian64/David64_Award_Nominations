@@ -4,10 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'frontend/**'  # Only trigger if frontend files change
   pull_request:
     types: [opened, synchronize, reopened, closed]
     branches:
       - main
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs: 
   build_and_deploy_job:
