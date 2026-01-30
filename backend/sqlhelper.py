@@ -46,8 +46,7 @@ else:
 
 def get_db_connection():
     """Create a new database connection"""
-    try:
-        print(f"Attempting to connect to database with connection string: {CONNECTION_STRING}")
+    try:        
         return pyodbc.connect(CONNECTION_STRING)
     except Exception as e:
         print(f"Error connecting to database: {e}")
@@ -251,9 +250,9 @@ def get_nomination_history(user_id: int) -> List[Tuple]:
                    n.DollarAmount, n.NominationDescription, n.NominationDate,
                    n.ApprovedDate, n.PayedDate, n.Status
             FROM Nominations n
-            WHERE n.NominatorId = ? OR n.BeneficiaryId = ?
+            WHERE n.NominatorId = ?
             ORDER BY n.NominationDate DESC
-        """, (user_id, user_id))
+        """, user_id)
         return cursor.fetchall()
 
 
