@@ -7,3 +7,5 @@ httpx
 PyJWT>=2.8.0
 pydantic
 python-multipart
+azure-storage-blob>=12.19.0
+azure-identity>=1.15.0

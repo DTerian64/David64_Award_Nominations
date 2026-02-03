@@ -30,6 +30,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Create models directory
+RUN mkdir -p ml_models
+
 # Expose port
 EXPOSE 8000
 

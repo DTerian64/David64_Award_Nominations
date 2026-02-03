@@ -26,6 +26,8 @@ from auth import (
     is_admin
 )
 
+import fraud_ml
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -162,6 +164,7 @@ if os.getenv("ENVIRONMENT", "development") == "development":
     ALLOWED_ORIGINS.extend([
         "http://localhost:8000",
         "http://127.0.0.1:8000",
+        "http://localhost:5173"
     ])
 
 app.add_middleware(
@@ -247,6 +250,8 @@ async def create_nomination(
 ):
     """Create a new nomination"""
     effective_user = user_context["effective_user"]
+
+   
     
     # Get beneficiary's manager
     beneficiary = sqlhelper.get_user_manager_info(nomination.BeneficiaryId)
@@ -269,6 +274,27 @@ async def create_nomination(
     # Get manager info
     manager = sqlhelper.get_user_name_by_id(manager_id)
     manager_name = f"{manager[0]} {manager[1]}"
+
+    # Get fraud assessment
+    fraud_result = fraud_ml.get_fraud_assessment({
+        'NominatorId': effective_user["UserId"],
+        'BeneficiaryId': nomination.BeneficiaryId,
+        'ApproverId': manager_id,
+        'DollarAmount': nomination.DollarAmount,
+        'NominationDate': datetime.now()
+    })
+
+    # Log fraud assessment
+    print(f"Fraud Assessment: {fraud_result['risk_level']} "
+            f"(score: {fraud_result['fraud_score']})")
+    
+    # Optionally block high-risk nominations
+    if fraud_result['risk_level'] == 'CRITICAL':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Nomination blocked due to fraud risk: "
+                f"{', '.join(fraud_result['warning_flags'])}"
+        )
     
     # Insert nomination using effective_user
     nomination_id = sqlhelper.create_nomination(

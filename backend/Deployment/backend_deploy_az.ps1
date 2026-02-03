@@ -105,3 +105,39 @@ az containerapp show -n award-api-eastus -g $rg --query properties.configuration
 az containerapp show -n award-api-westus -g $rg --query properties.configuration.ingress.fqdn -o tsv
 #award-api-westus.ambitiousglacier-50e13e03.westus.azurecontainerapps.io
 
+# Enable system-assigned managed identity
+az containerapp identity assign `
+  --name award-api-eastus `
+  --resource-group rg_award_nomination 
+  --system-assigned
+
+# Get the identity principal ID
+$principalId = az containerapp identity show `
+  --name award-api-eastus `
+  --resource-group rg_award_nomination `
+  --query principalId -o tsv
+
+# Grant the identity access to blob storage
+az role assignment create `
+  --assignee $principalId `
+  --role "Storage Blob Data Reader" `
+  --scope "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination/providers/Microsoft.Storage/storageAccounts/awardnominationmodels"
+
+# Enable system-assigned managed identity for award-api-westus
+  az containerapp identity assign `
+  --name award-api-westus `
+  --resource-group rg_award_nomination `
+  --system-assigned
+
+# Get the identity principal ID
+$principalId = az containerapp identity show `
+  --name award-api-westus `
+  --resource-group rg_award_nomination `
+  --query principalId -o tsv
+
+# Grant the identity access to blob storage
+az role assignment create `
+  --assignee $principalId `
+  --role "Storage Blob Data Reader" `
+  --scope "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination/providers/Microsoft.Storage/storageAccounts/awardnominationmodels"
+
