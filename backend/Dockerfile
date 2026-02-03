@@ -33,6 +33,7 @@ COPY . .
 # Create models directory
 RUN mkdir -p ml_models
 
+
 # Expose port
 EXPOSE 8000
 

@@ -275,7 +275,7 @@ async def create_nomination(
     manager = sqlhelper.get_user_name_by_id(manager_id)
     manager_name = f"{manager[0]} {manager[1]}"
 
-    # Get fraud assessment
+    # Get fraud assessment 
     fraud_result = fraud_ml.get_fraud_assessment({
         'NominatorId': effective_user["UserId"],
         'BeneficiaryId': nomination.BeneficiaryId,

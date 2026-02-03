@@ -47,7 +47,7 @@ else:
 def get_db_connection():
     """Create a new database connection"""
     try:        
-        return pyodbc.connect(CONNECTION_STRING)
+        return pyodbc.connect(CONNECTION_STRING) 
     except Exception as e:
         print(f"Error connecting to database: {e}")
         raise
