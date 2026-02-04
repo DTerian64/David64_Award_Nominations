@@ -9,3 +9,6 @@ pydantic
 python-multipart
 azure-storage-blob>=12.19.0
 azure-identity>=1.15.0
+numpy
+pandas
+scikit-learn
