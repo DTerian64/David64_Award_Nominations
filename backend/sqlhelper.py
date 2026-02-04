@@ -325,3 +325,100 @@ def get_audit_logs(limit: int = 100) -> List[Tuple]:
             ORDER BY Timestamp DESC
         """, (limit,))
         return cursor.fetchall()
+
+# ============================================================================
+# FRAUD DETECTION QUERIES
+# Add these to the end of your sqlhelper.py file
+# ============================================================================
+
+def get_nominator_history(nominator_id: int) -> List[Tuple]:
+    """Get all previous nominations by this nominator"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId, BeneficiaryId, DollarAmount, NominationDate
+            FROM Nominations
+            WHERE NominatorId = ?
+            ORDER BY NominationDate DESC
+        """, (nominator_id,))
+        return cursor.fetchall()
+
+
+def get_beneficiary_history(beneficiary_id: int) -> List[Tuple]:
+    """Get all previous nominations received by this beneficiary"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId, NominatorId, DollarAmount, NominationDate
+            FROM Nominations
+            WHERE BeneficiaryId = ?
+            ORDER BY NominationDate DESC
+        """, (beneficiary_id,))
+        return cursor.fetchall()
+
+
+def get_approver_history(approver_id: int) -> List[Tuple]:
+    """Get all previous nominations approved by this approver"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId, 
+                   DATEDIFF(HOUR, NominationDate, ApprovedDate) AS HoursToApproval
+            FROM Nominations
+            WHERE ApproverId = ?
+              AND ApprovedDate IS NOT NULL
+            ORDER BY NominationDate DESC
+        """, (approver_id,))
+        return cursor.fetchall()
+
+
+def check_reciprocal_nomination(nominator_id: int, beneficiary_id: int) -> bool:
+    """Check if there's a reciprocal nomination (B nominated A when A nominates B)"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as Count
+            FROM Nominations
+            WHERE NominatorId = ? AND BeneficiaryId = ?
+        """, (beneficiary_id, nominator_id))
+        result = cursor.fetchone()
+        return result[0] > 0 if result else False
+
+
+def get_pair_nomination_count(nominator_id: int, beneficiary_id: int) -> int:
+    """Get count of nominations from this nominator to this beneficiary"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as Count
+            FROM Nominations
+            WHERE NominatorId = ? AND BeneficiaryId = ?
+        """, (nominator_id, beneficiary_id))
+        result = cursor.fetchone()
+        return result[0] if result else 0
+
+
+def get_overall_amount_stats() -> Tuple[float, float]:
+    """Get mean and standard deviation of all nomination amounts"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT AVG(CAST(DollarAmount AS FLOAT)) AS MeanAmount,
+                   STDEV(CAST(DollarAmount AS FLOAT)) AS StdAmount
+            FROM Nominations
+        """)
+        result = cursor.fetchone()
+        return result if result else (0.0, 0.0)
+
+
+def save_fraud_assessment(nomination_id: int, fraud_score: int, risk_level: str, 
+                          warning_flags: str) -> bool:
+    """Save fraud assessment to database"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO FraudScores (NominationId, FraudScore, RiskLevel, FraudFlags)
+            VALUES (?, ?, ?, ?)
+        """, (nomination_id, fraud_score, risk_level, warning_flags))
+        conn.commit()
+        return cursor.rowcount > 0
