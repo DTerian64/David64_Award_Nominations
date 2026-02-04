@@ -1,0 +1,96 @@
+sequenceDiagram
+    participant User as 👤 User/Manager
+    participant SWA as Azure Static Web App<br/>(React Frontend)
+    participant AAD as Microsoft Entra ID<br/>(OAuth2)
+    participant AFD as Azure Front Door<br/>(Load Balancer)
+    participant ACA_East as Container App East<br/>(FastAPI)
+    participant ACA_West as Container App West<br/>(FastAPI)
+    participant Blob as Azure Blob Storage<br/>(ML Models)
+    participant SQL as Azure SQL Database
+    participant SendGrid as SendGrid API
+
+    Note over User,SendGrid: User Creates Nomination Flow
+
+    User->>SWA: 1. Access application
+    SWA->>AAD: 2. Authenticate (OAuth2)
+    AAD->>SWA: 3. Return JWT token
+    
+    User->>SWA: 4. Submit nomination form
+    SWA->>AFD: 5. POST /api/nominations/create<br/>(JWT in header)
+    
+    alt Primary Region (East US)
+        AFD->>ACA_East: 6a. Route request
+        ACA_East->>AAD: 7a. Validate JWT token
+        AAD->>ACA_East: 8a. Token valid + claims
+        
+        ACA_East->>Blob: 9a. Download ML model<br/>(if not cached)
+        Blob->>ACA_East: 10a. Return model.pkl
+        
+        ACA_East->>SQL: 11a. Query historical data<br/>(nominator, beneficiary history)
+        SQL->>ACA_East: 12a. Return rows
+        
+        Note over ACA_East: Calculate fraud score<br/>Run ML prediction
+        
+        alt Fraud Score = CRITICAL
+            ACA_East->>SWA: ❌ Block nomination<br/>(400 Bad Request)
+        else Fraud Score Acceptable
+            ACA_East->>SQL: 13a. INSERT Nomination
+            ACA_East->>SQL: 14a. INSERT FraudScore
+            SQL->>ACA_East: 15a. Success + NominationId
+            
+            ACA_East->>SQL: 16a. Get manager email
+            SQL->>ACA_East: 17a. Return email
+            
+            ACA_East->>SendGrid: 18a. Send notification email
+            SendGrid->>ACA_East: 19a. Email queued
+            
+            ACA_East->>SWA: 20a. ✓ Success response
+        end
+    else Failover to West US
+        AFD->>ACA_West: 6b. Route request<br/>(East unhealthy)
+        Note over ACA_West: Same flow as East
+        ACA_West->>SWA: ✓ Success response
+    end
+    
+    SWA->>User: 21. Show confirmation
+
+    Note over User,SendGrid: Manager Approval Flow
+
+    User->>SWA: 22. Manager clicks "Approve"
+    SWA->>AFD: 23. POST /api/nominations/approve
+    AFD->>ACA_East: 24. Route to backend
+    
+    ACA_East->>AAD: 25. Validate JWT
+    AAD->>ACA_East: 26. Valid manager token
+    
+    ACA_East->>SQL: 27. Verify manager is approver
+    SQL->>ACA_East: 28. Confirmed
+    
+    ACA_East->>SQL: 29. UPDATE Status='Approved'<br/>UPDATE ApprovedDate=NOW()
+    SQL->>ACA_East: 30. Success
+    
+    Note over ACA_East: Generate payroll CSV
+    
+    ACA_East->>SQL: 31. UPDATE Status='Paid'<br/>UPDATE PayedDate=NOW()
+    SQL->>ACA_East: 32. Success
+    
+    ACA_East->>SWA: 33. ✓ Approval confirmed
+    SWA->>User: 34. Show success message
+
+    Note over User,SendGrid: Admin Impersonation Flow
+
+    User->>SWA: 35. Admin uses Swagger UI<br/>X-Impersonate-User header
+    SWA->>AFD: 36. GET /api/users<br/>X-Impersonate-User: user@domain.com
+    AFD->>ACA_East: 37. Route request
+    
+    ACA_East->>AAD: 38. Validate admin JWT
+    AAD->>ACA_East: 39. Valid admin<br/>Role: AWard_Nomination_Admin
+    
+    ACA_East->>SQL: 40. Log impersonation to AuditLog<br/>(admin UPN, impersonated UPN, action, IP)
+    SQL->>ACA_East: 41. Logged
+    
+    ACA_East->>SQL: 42. Execute query as impersonated user
+    SQL->>ACA_East: 43. Return data
+    
+    ACA_East->>SWA: 44. Response (as impersonated user)
+    SWA->>User: 45. Display data

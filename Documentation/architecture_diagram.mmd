@@ -1,0 +1,81 @@
+graph TB
+    subgraph "User Access"
+        User[👤 End Users<br/>Employees & Managers]
+    end
+
+    subgraph "Azure Static Web Apps"
+        SWA[award-nomination-frontend<br/>React SPA<br/>Deployed via GitHub Actions]
+    end
+
+    subgraph "Azure Front Door"
+        AFD[Award-Nomination-ADF<br/>Global Load Balancer<br/>SSL/TLS Termination<br/>WAF Protection]
+    end
+
+    subgraph "East US Region"
+        ACA_East[award-api-eastus<br/>Azure Container Apps<br/>FastAPI Backend<br/>Python 3.11]
+    end
+
+    subgraph "West US Region"
+        ACA_West[award-api-westus<br/>Azure Container Apps<br/>FastAPI Backend<br/>Python 3.11]
+    end
+
+    subgraph "Azure SQL Database"
+        SQL[(AwardNominations<br/>david64-sql<br/>SQL Server 12.0<br/>• Users Table<br/>• Nominations Table<br/>• FraudScores Table<br/>• Impersonation_AuditLog)]
+    end
+
+    subgraph "Azure Blob Storage"
+        Blob[awardnominationmodels<br/>ML Models Container<br/>fraud_detection_model.pkl]
+    end
+
+    subgraph "Azure Container Registry"
+        ACR[acrawardnomination.azurecr.io<br/>Docker Images<br/>award-nomination-api:latest]
+    end
+
+    subgraph "Azure AD / Entra ID"
+        AAD[Microsoft Entra ID<br/>OAuth 2.0 / OIDC<br/>Role: AWard_Nomination_Admin]
+    end
+
+    subgraph "CI/CD Pipeline"
+        GH[GitHub Actions<br/>• Frontend: SWA Deploy<br/>• Backend: Docker Build & Push<br/>• Auto Deploy to ACAs]
+    end
+
+    subgraph "External Services"
+        SendGrid[SendGrid API<br/>Email Notifications]
+    end
+
+    User -->|HTTPS| SWA
+    SWA -->|REST API Calls| AFD
+    AFD -->|Route /api/*<br/>Health Probes| ACA_East
+    AFD -->|Route /api/*<br/>Failover| ACA_West
+    
+    ACA_East -->|Read/Write| SQL
+    ACA_West -->|Read/Write| SQL
+    
+    ACA_East -->|Download Model<br/>Managed Identity| Blob
+    ACA_West -->|Download Model<br/>Managed Identity| Blob
+    
+    ACA_East -->|Authenticate Users<br/>Validate Tokens| AAD
+    ACA_West -->|Authenticate Users<br/>Validate Tokens| AAD
+    
+    ACA_East -->|Send Emails| SendGrid
+    ACA_West -->|Send Emails| SendGrid
+    
+    GH -->|Deploy Frontend| SWA
+    GH -->|Build & Push Images| ACR
+    GH -->|Update Container Apps| ACA_East
+    GH -->|Update Container Apps| ACA_West
+    
+    ACR -->|Pull Images| ACA_East
+    ACR -->|Pull Images| ACA_West
+
+    style User fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
+    style SWA fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style AFD fill:#e8f5e9,stroke:#388e3c,stroke-width:3px
+    style ACA_East fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style ACA_West fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style SQL fill:#e1f5fe,stroke:#0277bd,stroke-width:3px
+    style Blob fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style AAD fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style GH fill:#ede7f6,stroke:#512da8,stroke-width:2px
+    style SendGrid fill:#e0f2f1,stroke:#00695c,stroke-width:2px
+    style ACR fill:#fce4ec,stroke:#880e4f,stroke-width:2px
