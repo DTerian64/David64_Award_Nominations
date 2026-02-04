@@ -21,6 +21,7 @@ class FraudDetector:
     
     def __init__(self, model_path='ml_models/fraud_detection_model.pkl'):
         """Load the trained model from local path or Azure Blob Storage"""
+        print("Loading fraud detection model...")
         try: 
             # Try to load from local path first
             if os.path.exists(model_path):

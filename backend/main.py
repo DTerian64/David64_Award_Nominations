@@ -172,7 +172,7 @@ if os.getenv("ENVIRONMENT", "production") == "development":
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,              # ✅ CRITICAL: Must be True for auth
+    allow_credentials=False,              # ✅ CRITICAL: Must be True for auth
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],                # ✅ Added: Expose response headers
