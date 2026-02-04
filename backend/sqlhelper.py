@@ -252,7 +252,7 @@ def get_nomination_history(user_id: int) -> List[Tuple]:
             FROM Nominations n
             WHERE n.NominatorId = ?
             ORDER BY n.NominationDate DESC
-        """, user_id)
+        """, (user_id,))
         return cursor.fetchall()
 
 
