@@ -159,20 +159,24 @@ async def swagger_ui_redirect():
 # CORS Configuration
 ALLOWED_ORIGINS = ["https://awards.terian-services.com"]
 
-# Add localhost for development/testing
-if os.getenv("ENVIRONMENT", "development") == "development":
+# Add development origins if needed
+if os.getenv("ENVIRONMENT", "production") == "development":
     ALLOWED_ORIGINS.extend([
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:5173"
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
     ])
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["*"],
+    allow_credentials=True,              # ✅ CRITICAL: Must be True for auth
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],                # ✅ Added: Expose response headers
+    max_age=3600,                        # ✅ Added: Cache preflight for 1 hour
 )
 
 # ============================================================================
