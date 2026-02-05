@@ -57,9 +57,11 @@ def get_db_connection():
 def get_db_context():
     """Database connection context manager"""
     conn = get_db_connection()
-    try:
-        print("Database connection established.")
+    try:        
         yield conn
+    except Exception as e:
+        print(f"Error in database context: {e}")
+        raise
     finally:
         conn.close()
 

@@ -280,6 +280,7 @@ async def create_nomination(
     manager_name = f"{manager[0]} {manager[1]}"
 
     # Get fraud assessment 
+    print(f"Getting fraud assessment for nomination: {nomination}")
     fraud_result = fraud_ml.get_fraud_assessment({
         'NominatorId': effective_user["UserId"],
         'BeneficiaryId': nomination.BeneficiaryId,
