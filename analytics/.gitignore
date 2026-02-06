@@ -1,0 +1,24 @@
+# Environment variables
+   .env
+   *.env
+   
+   # Python
+   __pycache__/
+   *.py[cod]
+   .venv/
+   venv/
+   
+   # Azure Storage Emulator
+   __azurite_db_*.json
+   __blobstorage__/
+   __queuestorage__/
+   
+   # Data files
+   *.csv
+   *.xlsx
+   *.json
+   *.png
+   *.pkl
+   
+   # Jupyter outputs
+   .ipynb_checkpoints/
