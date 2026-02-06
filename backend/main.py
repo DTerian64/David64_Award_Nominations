@@ -57,7 +57,7 @@ app = FastAPI(
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
     return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
+        openapi_url=app.openapi_url or "/openapi.json",
         title=app.title + " - Swagger UI",
         oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
         swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
@@ -71,7 +71,7 @@ async def custom_swagger_ui_html():
         }
     )
 
-@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
+@app.get(app.swagger_ui_oauth2_redirect_url or "/oauth2-redirect", include_in_schema=False)
 async def swagger_ui_redirect():
     from fastapi.responses import HTMLResponse
     return HTMLResponse("""
@@ -276,9 +276,14 @@ async def create_nomination(
         )
     
     # Get manager info
-    manager = sqlhelper.get_user_name_by_id(manager_id)
+    manager = sqlhelper.get_user_name_by_id(manager_id)        
+    if not manager:
+        raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Manager data inconsistency: Manager ID {manager_id} not found in system"
+    )
+    
     manager_name = f"{manager[0]} {manager[1]}"
-
     # Get fraud assessment 
     print(f"Getting fraud assessment for nomination: {nomination}")
     fraud_result = fraud_ml.get_fraud_assessment({
@@ -335,12 +340,20 @@ async def create_nomination(
     </html>
     """
     
-    manager_email = f"{manager[1].lower()}.{manager[0].lower()}@yourcompany.com"
-    await send_email(
-        to_email=manager_email,
-        subject=f"Award Nomination Pending Approval - {beneficiary_name}",
-        body=email_body
-    )
+    manager_email = f"{manager[1].lower()}.{manager[0].lower()}@terian-services.com"
+   # Send email notification
+    try:
+        email_sent = await send_email(
+            to_email=manager_email,
+            subject=f"Award Nomination Pending Approval - {beneficiary_name}",
+            body=email_body
+        )
+        if not email_sent:
+            print(f"⚠️ Warning: Failed to send email to {manager_email}")
+            # Don't fail the nomination if email fails - just log it
+    except Exception as e:
+        print(f"⚠️ Warning: Email send error: {e}")
+        # Don't fail the nomination if email fails
     
     return StatusResponse(
         Status="Pending",
@@ -491,6 +504,59 @@ async def get_audit_logs(
 def health():
     return HealthResponse(status="ok")
 
+@app.post("/api/admin/refresh-fraud-model")
+async def refresh_fraud_model(current_user: dict = Depends(require_role("AWard_Nomination_Admin"))):
+    """
+    Manually refresh the fraud detection model from Azure Blob Storage (Admin only)
+    
+    Checks if there's a newer version in blob storage and downloads it if available.
+    """
+    import fraud_ml
+    
+    try:
+        updated = fraud_ml.refresh_model()
+        
+        if updated:
+            return {
+                "status": "success",
+                "message": "Fraud detection model updated successfully",
+                "model_trained": str(fraud_ml.fraud_detector.training_date),
+                "updated": True
+            }
+        else:
+            return {
+                "status": "success",
+                "message": "Model is already up to date",
+                "model_trained": str(fraud_ml.fraud_detector.training_date),
+                "updated": False
+            }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to refresh model: {str(e)}"
+        )
+
+
+@app.get("/api/admin/fraud-model-info")
+async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_Nomination_Admin"))):
+    """
+    Get information about the currently loaded fraud detection model (Admin only)
+    """
+    import fraud_ml
+    
+    if fraud_ml.fraud_detector.model is None:
+        return {
+            "status": "not_loaded",
+            "message": "Fraud detection model is not loaded"
+        }
+    
+    return {
+        "status": "loaded",
+        "model_trained": str(fraud_ml.fraud_detector.training_date),
+        "feature_count": len(fraud_ml.fraud_detector.feature_columns),
+        "features": fraud_ml.fraud_detector.feature_columns
+    }
 
 # ============================================================================
 # PAYROLL EXTRACT GENERATION
