@@ -43,6 +43,21 @@ jobs:
           echo "⚠️ No requirements.txt found, installing default packages..."
           pip install pandas numpy scikit-learn matplotlib seaborn pyodbc python-dotenv azure-storage-blob azure-identity
         fi
+      
+    - name: 🔧 Install Microsoft ODBC Driver 18 for SQL Server
+      run: |
+        sudo apt-get update
+        # Add Microsoft repo key and list (adapt for exact Ubuntu version if needed)
+        curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+        curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+        sudo apt-get update
+        # Accept EULA and install driver + optional tools
+        sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+        # Optional but recommended: unixODBC dev headers (helps pyodbc compile if needed, though usually not)
+        sudo apt-get install -y unixodbc-dev
+        # Verify installation (debug only, can remove later)
+        odbcinst -q -d
+        # Should show: [ODBC Driver 18 for SQL Server]
     
     - name: 🔐 Azure Login
       uses: azure/login@v1
