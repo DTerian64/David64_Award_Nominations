@@ -1,0 +1,112 @@
+name: Train and Deploy Fraud Detection Model
+
+on:
+  schedule:
+    - cron: '0 2 1 * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'analytics/**'
+      - '.github/workflows/train-fraud-model.yml'
+
+env:
+  PYTHON_VERSION: '3.12'
+  MODEL_OUTPUT_PATH: 'analytics/Fraud_Detection/fraud_detection_model.pkl'
+  AZURE_STORAGE_ACCOUNT: 'awardnominationmodels'
+  BLOB_CONTAINER: 'ml-models'
+  BLOB_NAME: 'fraud_detection_model.pkl'
+
+jobs:
+  train-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔄 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        cd analytics
+        if [ -f requirements.txt ]; then
+          echo "📦 Installing from requirements.txt..."
+          pip install -r requirements.txt
+        else
+          echo "⚠️ No requirements.txt found, installing default packages..."
+          pip install pandas numpy scikit-learn matplotlib seaborn pyodbc python-dotenv azure-storage-blob azure-identity
+        fi
+    
+    - name: 🔐 Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: 🤖 Train Fraud Detection Model
+      env:
+        SQL_SERVER: ${{ secrets.SQL_SERVER }}
+        SQL_DATABASE: ${{ secrets.SQL_DATABASE }}
+        SQL_USER: ${{ secrets.SQL_USER }}
+        SQL_PASSWORD: ${{ secrets.SQL_PASSWORD }}
+      run: |
+        cd analytics/Fraud_Detection
+        echo "🚀 Starting fraud model training..."
+        python train_fraud_model.py
+        
+        if [ -f "fraud_detection_model.pkl" ]; then
+          echo "✅ Model trained successfully"
+          ls -lh fraud_detection_model.pkl
+        else
+          echo "❌ Model file not found!"
+          exit 1
+        fi
+    
+    - name: ☁️ Upload Model to Azure Blob Storage
+      run: |
+        echo "📤 Uploading model to Azure Blob Storage..."
+        az storage blob upload \
+          --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
+          --container-name ${{ env.BLOB_CONTAINER }} \
+          --name ${{ env.BLOB_NAME }} \
+          --file ${{ env.MODEL_OUTPUT_PATH }} \
+          --overwrite \
+          --auth-mode login
+        
+        echo "✅ Model uploaded successfully"
+        
+        az storage blob show \
+          --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
+          --container-name ${{ env.BLOB_CONTAINER }} \
+          --name ${{ env.BLOB_NAME }} \
+          --query "{name: name, size: properties.contentLength, lastModified: properties.lastModified}" \
+          --output table
+    
+    - name: 📊 Upload Training Artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: fraud-model-artifacts
+        path: |
+          analytics/Fraud_Detection/fraud_detection_model.pkl
+          analytics/Fraud_Detection/fraud_detection_analysis.png
+        retention-days: 30
+    
+    - name: 📝 Create Deployment Summary
+      if: success()
+      run: |
+        echo "### 🎉 Fraud Model Training Complete! 🤖" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Training Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "**Model Location:** Azure Blob Storage" >> $GITHUB_STEP_SUMMARY
+        echo "**Storage Account:** ${{ env.AZURE_STORAGE_ACCOUNT }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Container:** ${{ env.BLOB_CONTAINER }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Blob:** ${{ env.BLOB_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Model is now available for Container Apps" >> $GITHUB_STEP_SUMMARY
