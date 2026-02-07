@@ -8,11 +8,15 @@ WORKDIR /app
 
 # ────────────────────────────────────────────────────────────────
 # Install Microsoft ODBC Driver 18 for SQL Server + required tools
+# IMPORTANT: Keep bash and essential utilities for console access
 # ────────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     gnupg \
+    bash \
+    procps \
+    vim-tiny \
  && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
     | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
  && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
@@ -33,9 +37,11 @@ COPY . .
 # Create models directory
 RUN mkdir -p ml_models
 
-
 # Expose port
 EXPOSE 8000
+
+# Set bash as default shell for console access
+SHELL ["/bin/bash", "-c"]
 
 # Run with gunicorn + uvicorn
 CMD ["gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", \
