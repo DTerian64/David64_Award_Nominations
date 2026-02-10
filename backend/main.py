@@ -10,7 +10,6 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from datetime import datetime
-import httpx
 
 import sqlhelper
 from models import (
@@ -35,9 +34,9 @@ import fraud_ml
 TENANT_ID = os.getenv("TENANT_ID")
 CLIENT_ID = os.getenv("CLIENT_ID")
 
-# Email Configuration (SendGrid)
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-FROM_EMAIL = os.getenv("FROM_EMAIL")
+# Email Configuration (Gmail SMTP)
+# Import email utilities
+from email_utils import send_email, get_nomination_submitted_email, get_nomination_approved_email
 
 # ============================================================================
 # FASTAPI APPLICATION
@@ -180,32 +179,6 @@ app.add_middleware(
 )
 
 # ============================================================================
-# EMAIL NOTIFICATION SERVICE
-# ============================================================================
-
-async def send_email(to_email: str, subject: str, body: str):
-    """Send email notification using SendGrid"""
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.sendgrid.com/v3/mail/send",
-                headers={
-                    "Authorization": f"Bearer {SENDGRID_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "personalizations": [{"to": [{"email": to_email}]}],
-                    "from": {"email": FROM_EMAIL},
-                    "subject": subject,
-                    "content": [{"type": "text/html", "value": body}]
-                }
-            )
-            return response.status_code == 202
-    except Exception as e:
-        print(f"Email error: {e}")
-        return False
-
-# ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
@@ -322,26 +295,34 @@ async def create_nomination(
         f"NominationId: {nomination_id}, Beneficiary: {beneficiary_name}, Amount: ${nomination.DollarAmount}"
     )
     
-    # Send email to manager
+    # Send email to manager using template
     nominator_name = f"{effective_user['FirstName']} {effective_user['LastName']}"
+    
+    # Create professional email body
     email_body = f"""
     <html>
-    <body>
-        <h2>New Award Nomination Pending Approval</h2>
+    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2c3e50;">New Award Nomination Pending Approval</h2>
         <p>Dear {manager_name},</p>
         <p><strong>{nominator_name}</strong> has nominated <strong>{beneficiary_name}</strong> 
         for a monetary award of <strong>${nomination.DollarAmount}</strong>.</p>
         
         <h3>Nomination Details:</h3>
-        <p>{nomination.NominationDescription}</p>
+        <p style="background-color: #f8f9fa; padding: 15px; border-radius: 5px;">
+            {nomination.NominationDescription}
+        </p>
         
         <p>Please review and approve/reject this nomination in the Award Nomination System.</p>
+        <hr style="margin: 20px 0;">
+        <p style="color: #7f8c8d; font-size: 12px;">
+            This is an automated message from the Award Nomination System.
+        </p>
     </body>
     </html>
     """
     
-    manager_email = f"{manager[1].lower()}.{manager[0].lower()}@terian-services.com"
-   # Send email notification
+    manager_email = manager[2]  # Use userEmail from manager data
+    # Send email notification
     try:
         email_sent = await send_email(
             to_email=manager_email,
@@ -414,6 +395,28 @@ async def approve_nomination(
         # Approve nomination
         sqlhelper.approve_nomination(approval.NominationId)
         
+        # Get nomination details for email
+        nom_details = sqlhelper.get_nomination_details(approval.NominationId)
+        if nom_details:
+            nominator_email = nom_details.get('nominator_email')
+            beneficiary_name = nom_details.get('beneficiary_name')
+            award_amount = nom_details.get('dollar_amount')
+            
+            # Send approval email to nominator
+            if nominator_email:
+                try:
+                    approval_body = get_nomination_approved_email(
+                        beneficiary_name or "the nominee",
+                        f"Monetary Award (${award_amount})"
+                    )
+                    await send_email(
+                        to_email=nominator_email,
+                        subject=f"✅ Nomination Approved - {beneficiary_name}",
+                        body=approval_body
+                    )
+                except Exception as e:
+                    print(f"⚠️ Warning: Failed to send approval email: {e}")
+        
         # Log if impersonating
         await log_action_if_impersonating(
             user_context,
@@ -431,6 +434,42 @@ async def approve_nomination(
     else:
         # Reject nomination
         sqlhelper.reject_nomination(approval.NominationId)
+        
+        # Get nomination details for email
+        nom_details = sqlhelper.get_nomination_details(approval.NominationId)
+        if nom_details:
+            nominator_email = nom_details.get('nominator_email')
+            beneficiary_name = nom_details.get('beneficiary_name')
+            award_amount = nom_details.get('dollar_amount')
+            
+            # Send rejection email to nominator
+            if nominator_email:
+                try:
+                    rejection_body = f"""
+                    <html>
+                    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                        <h2 style="color: #e74c3c;">Nomination Status Update</h2>
+                        <p>Your nomination has been reviewed:</p>
+                        <ul>
+                            <li><strong>Nominee:</strong> {beneficiary_name}</li>
+                            <li><strong>Award Amount:</strong> ${award_amount}</li>
+                            <li><strong>Status:</strong> <span style="color: #e74c3c;">Not Approved</span></li>
+                        </ul>
+                        <p>Thank you for your participation in the award nomination process.</p>
+                        <hr style="margin: 20px 0;">
+                        <p style="color: #7f8c8d; font-size: 12px;">
+                            This is an automated message from the Award Nomination System.
+                        </p>
+                    </body>
+                    </html>
+                    """
+                    await send_email(
+                        to_email=nominator_email,
+                        subject=f"Nomination Status - {beneficiary_name}",
+                        body=rejection_body
+                    )
+                except Exception as e:
+                    print(f"⚠️ Warning: Failed to send rejection email: {e}")
         
         # Log if impersonating
         await log_action_if_impersonating(

@@ -3,6 +3,7 @@ import pyodbc
 from contextlib import contextmanager
 from typing import Optional, Tuple, List
 
+
 # Database Configuration
 DB_SERVER = os.getenv("SQL_SERVER")
 DB_NAME = os.getenv("SQL_DATABASE")
@@ -139,7 +140,7 @@ def get_user_name_by_id(user_id: int) -> Optional[Tuple]:
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT FirstName, LastName 
+            SELECT FirstName, LastName, userEmail 
             FROM Users 
             WHERE UserId = ?
         """, (user_id,))
@@ -424,3 +425,60 @@ def save_fraud_assessment(nomination_id: int, fraud_score: int, risk_level: str,
         """, (nomination_id, fraud_score, risk_level, warning_flags))
         conn.commit()
         return cursor.rowcount > 0
+    
+def get_nomination_details(nomination_id: int) -> Optional[dict]:
+    """
+    Get nomination details including nominator email, beneficiary name, etc.
+    Used for sending email notifications.
+    
+    Args:
+        nomination_id: The nomination ID
+        
+    Returns:
+        Optional[dict]: Dictionary containing nomination details or None if not found
+    """
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+            n.NominationId,
+            n.DollarAmount,
+            nominator.userEmail as NominatorEmail,
+            nominator.FirstName + ' ' + nominator.LastName as NominatorName,
+            beneficiary.FirstName + ' ' + beneficiary.LastName as BeneficiaryName,
+            beneficiary.userEmail as BeneficiaryEmail,
+            approver.userEmail as ApproverEmail,
+            approver.FirstName + ' ' + approver.LastName as ApproverName,
+            n.NominationDescription,
+            n.Status
+            FROM dbo.Nominations n
+            INNER JOIN dbo.Users nominator ON n.NominatorId = nominator.UserId
+            INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
+            INNER JOIN dbo.Users approver ON n.ApproverId = approver.UserId
+            WHERE n.NominationId = ?
+            """, (nomination_id,))
+        
+    row =  cursor.fetchone()       
+    
+    if row:
+        return {
+            'nomination_id': row[0],
+            'dollar_amount': row[1],
+            'nominator_email': row[2],
+            'nominator_name': row[3],
+            'beneficiary_name': row[4],
+            'beneficiary_email': row[5],
+            'approver_email': row[6],
+            'approver_name': row[7],
+            'description': row[8],
+            'status': row[9]
+        }
+    return None
+
+
+
+
+
+
+
+
