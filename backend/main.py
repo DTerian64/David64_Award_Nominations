@@ -6,16 +6,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from datetime import datetime
 
-import sqlhelper
-from models import (
-    User, NominationCreate, Nomination, NominationApproval,
-    StatusResponse, HealthResponse, AuditLog
-)
 # Import authentication functions from auth.py
 from auth import (
     get_current_user,
@@ -25,7 +21,20 @@ from auth import (
     is_admin
 )
 
+import sqlhelper
+from models import (
+    User, NominationCreate, Nomination, NominationApproval,
+    StatusResponse, HealthResponse, AuditLog
+)
+
 import fraud_ml
+
+from token_utils import verify_action_token, get_action_url
+from email_utils import (
+    get_action_confirmation_page, 
+    get_nomination_pending_email
+)
+
 
 # ============================================================================
 # CONFIGURATION
@@ -298,29 +307,32 @@ async def create_nomination(
     # Send email to manager using template
     nominator_name = f"{effective_user['FirstName']} {effective_user['LastName']}"
     
-    # Create professional email body
-    email_body = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2c3e50;">New Award Nomination Pending Approval</h2>
-        <p>Dear {manager_name},</p>
-        <p><strong>{nominator_name}</strong> has nominated <strong>{beneficiary_name}</strong> 
-        for a monetary award of <strong>${nomination.DollarAmount}</strong>.</p>
-        
-        <h3>Nomination Details:</h3>
-        <p style="background-color: #f8f9fa; padding: 15px; border-radius: 5px;">
-            {nomination.NominationDescription}
-        </p>
-        
-        <p>Please review and approve/reject this nomination in the Award Nomination System.</p>
-        <hr style="margin: 20px 0;">
-        <p style="color: #7f8c8d; font-size: 12px;">
-            This is an automated message from the Award Nomination System.
-        </p>
-    </body>
-    </html>
-    """
+    # Generate secure action URLs
+    approve_url = get_action_url(
+        os.getenv("API_BASE_URL", "https://award-api-eastus.lemonpond-a2daba01.eastus.azurecontainerapps.io"),
+        nomination_id,
+        "approve",
+        manager_id
+    )
     
+    reject_url = get_action_url(
+        os.getenv("API_BASE_URL", "https://award-nomination-api-bqb8ftbdfpemfyck.z02.azurefd.net"),
+        nomination_id,
+        "reject",
+        manager_id
+    )
+
+    # Use new template with action buttons
+    email_body = get_nomination_pending_email(
+        manager_name=manager_name,
+        nominator_name=f"{effective_user['FirstName']} {effective_user['LastName']}",
+        beneficiary_name=beneficiary_name,
+        dollar_amount=nomination.DollarAmount,
+        description=nomination.NominationDescription,
+        approve_url=approve_url,
+        reject_url=reject_url
+    )
+
     manager_email = manager[2]  # Use userEmail from manager data
     # Send email notification
     try:
@@ -596,6 +608,161 @@ async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_
         "feature_count": len(fraud_ml.fraud_detector.feature_columns),
         "features": fraud_ml.fraud_detector.feature_columns
     }
+
+@app.get("/api/nominations/email-action", response_class=HTMLResponse)
+async def handle_email_action(token: str = Query(..., description="Action token from email")):
+    """
+    🔗 Handle approve/reject action from email button click
+    
+    This endpoint:
+    1. Verifies the token is valid and not expired
+    2. Checks the user is authorized to approve/reject
+    3. Performs the action
+    4. Shows a confirmation page in the browser
+    
+    Args:
+        token: JWT token from email link
+    
+    Returns:
+        HTML page with success/error message
+    
+    Security:
+        - Token must be valid and not expired (72 hours)
+        - Token contains approver_id which is verified against DB
+        - Token is signed with secret key (cannot be forged)
+    """
+    
+    # 1️⃣ Verify and decode token
+    payload = verify_action_token(token)
+    
+    if not payload:
+        return get_action_confirmation_page(
+            action="",
+            success=False,
+            message="This link has expired or is invalid. Please log in to the Award Nomination System to approve or reject this nomination."
+        )
+    
+    nomination_id = payload["nomination_id"]
+    action = payload["action"]  # "approve" or "reject"
+    expected_approver_id = payload["approver_id"]
+    
+    # 2️⃣ Verify nomination exists and user is the approver
+    actual_approver_id = sqlhelper.get_nomination_approver(nomination_id)
+    
+    if actual_approver_id is None:
+        return get_action_confirmation_page(
+            action="",
+            success=False,
+            message="Nomination not found. It may have already been processed or deleted."
+        )
+    
+    if actual_approver_id != expected_approver_id:
+        return get_action_confirmation_page(
+            action="",
+            success=False,
+            message="You are not authorized to approve or reject this nomination."
+        )
+    
+    # 3️⃣ Check if already processed
+    nomination_status = sqlhelper.get_nomination_status(nomination_id)
+    if nomination_status in ["Approved", "Rejected"]:
+        return get_action_confirmation_page(
+            action=nomination_status.lower(),
+            success=True,
+            message=f"This nomination has already been {nomination_status.lower()}."
+        )
+    
+    # 4️⃣ Perform the action
+    try:
+        if action == "approve":
+            sqlhelper.approve_nomination(nomination_id)
+            
+            # Get nomination details for email
+            nom_details = sqlhelper.get_nomination_details(nomination_id)
+            if nom_details:
+                nominator_email = nom_details.get('nominator_email')
+                beneficiary_name = nom_details.get('beneficiary_name')
+                award_amount = nom_details.get('dollar_amount')
+                
+                # Send approval email to nominator
+                if nominator_email:
+                    try:
+                        from email_utils import send_email, get_nomination_approved_email
+                        approval_body = get_nomination_approved_email(
+                            beneficiary_name or "the nominee",
+                            f"Monetary Award (${award_amount})"
+                        )
+                        await send_email(
+                            to_email=nominator_email,
+                            subject=f"✅ Nomination Approved - {beneficiary_name}",
+                            body=approval_body
+                        )
+                    except Exception as e:
+                        print(f"⚠️ Warning: Failed to send approval email: {e}")
+            
+            # Generate payroll extract
+            await generate_payroll_extract(nomination_id)
+            
+            return get_action_confirmation_page(
+                action="approved",
+                success=True,
+                message=f"The nomination has been approved successfully. The nominator has been notified via email."
+            )
+            
+        else:  # action == "reject"
+            sqlhelper.reject_nomination(nomination_id)
+            
+            # Get nomination details for email
+            nom_details = sqlhelper.get_nomination_details(nomination_id)
+            if nom_details:
+                nominator_email = nom_details.get('nominator_email')
+                beneficiary_name = nom_details.get('beneficiary_name')
+                award_amount = nom_details.get('dollar_amount')
+                
+                # Send rejection email to nominator
+                if nominator_email:
+                    try:
+                        from email_utils import send_email
+                        rejection_body = f"""
+                        <html>
+                        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                            <h2 style="color: #e74c3c;">Nomination Status Update</h2>
+                            <p>Your nomination has been reviewed:</p>
+                            <ul>
+                                <li><strong>Nominee:</strong> {beneficiary_name}</li>
+                                <li><strong>Award Amount:</strong> ${award_amount}</li>
+                                <li><strong>Status:</strong> <span style="color: #e74c3c;">Not Approved</span></li>
+                            </ul>
+                            <p>Thank you for your participation in the award nomination process.</p>
+                            <hr style="margin: 20px 0;">
+                            <p style="color: #7f8c8d; font-size: 12px;">
+                                This is an automated message from the Award Nomination System.
+                            </p>
+                        </body>
+                        </html>
+                        """
+                        await send_email(
+                            to_email=nominator_email,
+                            subject=f"Nomination Status - {beneficiary_name}",
+                            body=rejection_body
+                        )
+                    except Exception as e:
+                        print(f"⚠️ Warning: Failed to send rejection email: {e}")
+            
+            return get_action_confirmation_page(
+                action="rejected",
+                success=True,
+                message=f"The nomination has been rejected. The nominator has been notified via email."
+            )
+            
+    except Exception as e:
+        print(f"❌ Error processing email action: {e}")
+        return get_action_confirmation_page(
+            action="",
+            success=False,
+            message=f"An error occurred while processing your request: {str(e)}"
+        )
+
 
 # ============================================================================
 # PAYROLL EXTRACT GENERATION
