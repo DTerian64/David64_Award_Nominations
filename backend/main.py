@@ -310,16 +310,16 @@ async def create_nomination(
     # Generate secure action URLs
     approve_url = get_action_url(
         os.getenv("API_BASE_URL", "https://award-api-eastus.lemonpond-a2daba01.eastus.azurecontainerapps.io"),
-        nomination_id,
+        int(nomination_id),
         "approve",
-        manager_id
+        int(manager_id)
     )
     
     reject_url = get_action_url(
         os.getenv("API_BASE_URL", "https://award-nomination-api-bqb8ftbdfpemfyck.z02.azurefd.net"),
-        nomination_id,
+        int(nomination_id),
         "reject",
-        manager_id
+        int(manager_id)
     )
 
     # Use new template with action buttons
