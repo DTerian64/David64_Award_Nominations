@@ -282,7 +282,7 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
     if row:
         return {
             'nomination_id': row[0],
-            'dollar_amount': row[1],
+            'dollar_amount': float(row[1]),
             'nominator_email': row[2],
             'nominator_name': row[3],
             'beneficiary_name': row[4],
