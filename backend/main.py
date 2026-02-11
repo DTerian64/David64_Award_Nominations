@@ -327,7 +327,7 @@ async def create_nomination(
         manager_name=manager_name,
         nominator_name=f"{effective_user['FirstName']} {effective_user['LastName']}",
         beneficiary_name=beneficiary_name,
-        dollar_amount=nomination.DollarAmount,
+        dollar_amount=float(nomination.DollarAmount),
         description=nomination.NominationDescription,
         approve_url=approve_url,
         reject_url=reject_url
