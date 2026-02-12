@@ -1,6 +1,12 @@
 # Award Nomination System - FastAPI Application
 # Architecture: FastAPI + Azure SQL + Entra ID + Email Notifications
 
+import logging
+from logging_config import setup_logging
+
+# Set up logging at the top of the file
+logger = setup_logging()
+
 import socket
 from dotenv import load_dotenv
 load_dotenv()
@@ -237,7 +243,15 @@ async def create_nomination(
     """Create a new nomination"""
     effective_user = user_context["effective_user"]
 
-   
+    # Use structured logging
+    logger.info(
+        "Nomination submission started",
+        extra={
+            "user_id": effective_user["UserId"],
+            "beneficiary_id": nomination.BeneficiaryId,
+            "amount": float(nomination.DollarAmount)
+        }
+    )
     
     # Get beneficiary's manager
     beneficiary = sqlhelper.get_user_manager_info(nomination.BeneficiaryId)
@@ -267,7 +281,10 @@ async def create_nomination(
     
     manager_name = f"{manager[0]} {manager[1]}"
     # Get fraud assessment 
-    print(f"Getting fraud assessment for nomination: {nomination}")
+    logger.info("Getting fraud assessment for nomination", extra={
+        "nomination": nomination,
+        "manager_id": manager_id
+    })
     fraud_result = fraud_ml.get_fraud_assessment({
         'NominatorId': effective_user["UserId"],
         'BeneficiaryId': nomination.BeneficiaryId,
@@ -277,8 +294,12 @@ async def create_nomination(
     })
 
     # Log fraud assessment
-    print(f"Fraud Assessment: {fraud_result['risk_level']} "
-            f"(score: {fraud_result['fraud_score']})")
+    logger.info("Fraud assessment result", extra={
+        "risk_level": fraud_result['risk_level'],
+        "fraud_score": fraud_result['fraud_score'],
+        "warning_flags": fraud_result['warning_flags']
+    })
+   
     
     # Optionally block high-risk nominations
     if fraud_result['risk_level'] == 'CRITICAL':
@@ -295,6 +316,14 @@ async def create_nomination(
         approver_id=manager_id,
         dollar_amount=nomination.DollarAmount,
         description=nomination.NominationDescription
+    )
+
+    logger.info(
+        "Nomination created successfully",
+        extra={
+            "nomination_id": nomination_id,
+            "user_id": effective_user["UserId"]
+        }
     )
     
     # Log if impersonating
@@ -342,10 +371,10 @@ async def create_nomination(
             body=email_body
         )
         if not email_sent:
-            print(f"⚠️ Warning: Failed to send email to {manager_email}")
+            logger.warning(f"⚠️ Failed to send email to {manager_email}")            
             # Don't fail the nomination if email fails - just log it
     except Exception as e:
-        print(f"⚠️ Warning: Email send error: {e}")
+        logger.warning(f"⚠️ Email send error: {e}")        
         # Don't fail the nomination if email fails
     
     return StatusResponse(
@@ -427,7 +456,7 @@ async def approve_nomination(
                         body=approval_body
                     )
                 except Exception as e:
-                    print(f"⚠️ Warning: Failed to send approval email: {e}")
+                    logger.warning(f"⚠️ Failed to send approval email: {e}")                    
         
         # Log if impersonating
         await log_action_if_impersonating(
@@ -481,7 +510,7 @@ async def approve_nomination(
                         body=rejection_body
                     )
                 except Exception as e:
-                    print(f"⚠️ Warning: Failed to send rejection email: {e}")
+                    logger.warning(f"⚠️ Failed to send rejection email: {e}")                    
         
         # Log if impersonating
         await log_action_if_impersonating(
@@ -698,7 +727,7 @@ async def handle_email_action(token: str = Query(..., description="Action token 
                             body=approval_body
                         )
                     except Exception as e:
-                        print(f"⚠️ Warning: Failed to send approval email: {e}")
+                        logger.warning(f"⚠️ Failed to send approval email: {e}")                        
             
             # Generate payroll extract
             await generate_payroll_extract(nomination_id)
@@ -747,7 +776,7 @@ async def handle_email_action(token: str = Query(..., description="Action token 
                             body=rejection_body
                         )
                     except Exception as e:
-                        print(f"⚠️ Warning: Failed to send rejection email: {e}")
+                        logger.warning(f"⚠️ Failed to send rejection email: {e}")                        
             
             return get_action_confirmation_page(
                 action="rejected",
@@ -756,7 +785,7 @@ async def handle_email_action(token: str = Query(..., description="Action token 
             )
             
     except Exception as e:
-        print(f"❌ Error processing email action: {e}")
+        logger.error(f"❌ Error processing email action: {e}")        
         return get_action_confirmation_page(
             action="",
             success=False,
@@ -783,7 +812,7 @@ async def generate_payroll_extract(nomination_id: int):
         # Update PayedDate
         sqlhelper.mark_nomination_as_paid(nomination_id)
         
-        print(f"Payroll extract generated: {extract_filename}")
+        logger.info(f"Payroll extract generated: {extract_filename}")
         
         # In production, upload to Azure Blob Storage or SFTP to payroll system
 

@@ -38,9 +38,9 @@ def generate_action_token(
     
     now = datetime.now(timezone.utc)
     payload = {
-        "nomination_id": nomination_id,
+        "nomination_id": int(nomination_id),
         "action": action,
-        "approver_id": approver_id,
+        "approver_id": int(approver_id),
         "exp": now + timedelta(hours=expiry),
         "iat": now
     }
