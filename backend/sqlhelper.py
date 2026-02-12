@@ -277,20 +277,20 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
             WHERE n.NominationId = ?
             """, (nomination_id,))
         
-    row =  cursor.fetchone()       
+        row =  cursor.fetchone()       
     
     if row:
-        return {
-            'nomination_id': int(row[0]),
-            'dollar_amount': float(row[1]),
-            'nominator_email': row[2],
-            'nominator_name': row[3],
-            'beneficiary_name': row[4],
-            'beneficiary_email': row[5],
-            'approver_email': row[6],
-            'approver_name': row[7],
-            'description': row[8],
-            'status': row[9]
+            return {
+                'nomination_id': int(row[0]),
+                'dollar_amount': float(row[1]),
+                'nominator_email': row[2],
+                'nominator_name': row[3],
+                'beneficiary_name': row[4],
+                'beneficiary_email': row[5],
+                'approver_email': row[6],
+                'approver_name': row[7],
+                'description': row[8],
+                'status': row[9]
         }
     return None
 
