@@ -8,7 +8,7 @@ on:
     branches:
       - main
     paths:
-      - 'analytics/**'
+      - 'analytics/Fraud_Detection/**'
       - '.github/workflows/train-fraud-model.yml'
 
 env:
