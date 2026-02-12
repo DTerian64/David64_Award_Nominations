@@ -1,0 +1,29 @@
+// Award API - Critical Fraud Alert
+// Description: Detects CRITICAL fraud risk nominations
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Alerts
+// Alert Condition: Any CRITICAL risk nomination
+// Action: Immediate email notification
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(15m)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where tostring(LogData.logger) == "fraud_ml"
+| where tostring(LogData.risk_level) == "CRITICAL"
+| extend 
+    PacificTime = datetime_utc_to_local(TimeGenerated, 'US/Pacific'),
+    FraudScore = toint(LogData.fraud_score),
+    Warnings = tostring(LogData.warning_flags),
+    NominatorId = toint(LogData.nominator_id),
+    BeneficiaryId = toint(LogData.beneficiary_id),
+    DollarAmount = todouble(LogData.dollar_amount)
+| summarize 
+    CriticalCount = count(),
+    HighestScore = max(FraudScore),
+    TotalAmount = sum(DollarAmount),
+    Nominators = make_set(NominatorId),
+    AllWarnings = make_set(Warnings)
+| extend AlertTriggered = iff(CriticalCount > 0, "YES - CRITICAL FRAUD DETECTED", "NO")
+| project CriticalCount, HighestScore, TotalAmount, Nominators, AlertTriggered, AllWarnings

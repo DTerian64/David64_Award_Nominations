@@ -1,0 +1,20 @@
+// Award API - Error Spike Alert
+// Description: Detects error spikes (>10 errors in 5 minutes)
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Alerts
+// Alert Condition: ErrorCount > 10
+// Action: Email notification
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(5m)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where tostring(LogData.level) == "ERROR"
+| summarize 
+    ErrorCount = count(),
+    UniqueErrors = dcount(tostring(LogData.message)),
+    Regions = make_set(ContainerAppName_s),
+    ErrorMessages = make_set(tostring(LogData.message))
+| extend AlertTriggered = iff(ErrorCount > 10, "YES", "NO")
+| project ErrorCount, UniqueErrors, Regions, AlertTriggered, ErrorMessages

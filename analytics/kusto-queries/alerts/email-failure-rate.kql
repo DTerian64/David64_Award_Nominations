@@ -1,0 +1,24 @@
+// Award API - Email Failure Rate Alert
+// Description: Alerts when email failure rate exceeds 20% in the last hour
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Alerts
+// Alert Condition: FailureRate > 20
+// Action: Email notification
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(1h)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where tostring(LogData.logger) == "email_utils"
+| summarize 
+    Total = count(),
+    Success = countif(tostring(LogData.message) contains "successfully"),
+    Failed = countif(tostring(LogData.level) in ("ERROR", "WARNING")),
+    FailedMessages = make_set(tostring(LogData.message)),
+    Regions = make_set(ContainerAppName_s)
+| extend 
+    FailureRate = round(todouble(Failed) / todouble(Total) * 100, 2),
+    SuccessRate = round(todouble(Success) / todouble(Total) * 100, 2)
+| extend AlertTriggered = iff(FailureRate > 20, "YES - HIGH EMAIL FAILURE RATE", "NO")
+| project Total, Success, Failed, FailureRate, SuccessRate, AlertTriggered, Regions, FailedMessages

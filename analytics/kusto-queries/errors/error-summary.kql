@@ -1,0 +1,26 @@
+// Award API - Error Summary by Type
+// Description: Groups errors by type with count, first seen, and last seen timestamps
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Errors
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(7d)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where tostring(LogData.level) == "ERROR"
+| extend 
+    Message = tostring(LogData.message),
+    Module = tostring(LogData.logger)
+| summarize 
+    Count = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Regions = make_set(ContainerAppName_s),
+    Modules = make_set(Module)
+    by ErrorMessage = Message
+| extend 
+    FirstSeenPT = datetime_utc_to_local(FirstSeen, 'US/Pacific'),
+    LastSeenPT = datetime_utc_to_local(LastSeen, 'US/Pacific')
+| project ErrorMessage, Count, FirstSeenPT, LastSeenPT, Modules, Regions
+| order by Count desc

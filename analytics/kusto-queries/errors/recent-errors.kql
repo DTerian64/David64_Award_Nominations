@@ -1,0 +1,20 @@
+// Award API - Recent Errors
+// Description: Shows all errors from the last 24 hours with full details
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Errors
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(24h)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where tostring(LogData.level) == "ERROR"
+| extend 
+    PacificTime = datetime_utc_to_local(TimeGenerated, 'US/Pacific'),
+    Message = tostring(LogData.message),
+    Module = tostring(LogData.logger),
+    Exception = tostring(LogData.exception),
+    NominationId = toint(LogData.nomination_id),
+    UserId = toint(LogData.user_id)
+| project PacificTime, Message, Module, Exception, NominationId, UserId, Region = ContainerAppName_s
+| order by PacificTime desc

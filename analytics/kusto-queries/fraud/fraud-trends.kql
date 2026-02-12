@@ -1,0 +1,22 @@
+// Award API - Fraud Detection Trends
+// Description: Shows fraud score trends and risk level distribution over time
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Fraud Detection
+// Visualization: Time Chart
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(7d)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where tostring(LogData.logger) == "fraud_ml"
+| where tostring(LogData.message) == "Fraud assessment completed"
+| extend 
+    RiskLevel = tostring(LogData.risk_level),
+    FraudScore = toint(LogData.fraud_score)
+| summarize 
+    AvgFraudScore = avg(FraudScore),
+    HighRiskCount = countif(RiskLevel in ("HIGH", "CRITICAL")),
+    TotalAssessments = count()
+    by bin(TimeGenerated, 6h)
+| render timechart

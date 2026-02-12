@@ -1,0 +1,36 @@
+// Award API - Executive Dashboard Summary
+// Description: High-level metrics for executive dashboard (last 24 hours)
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Monitoring
+// Use: Pin to dashboard for overview
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(24h)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where isnotempty(LogData.level)
+| summarize 
+    TotalLogs = count(),
+    Errors = countif(tostring(LogData.level) == "ERROR"),
+    Warnings = countif(tostring(LogData.level) == "WARNING"),
+    NominationsCreated = countif(tostring(LogData.message) == "Nomination created"),
+    EmailsSent = countif(tostring(LogData.logger) == "email_utils" and tostring(LogData.message) contains "successfully"),
+    EmailsFailed = countif(tostring(LogData.logger) == "email_utils" and tostring(LogData.level) == "ERROR"),
+    HighRiskNominations = countif(tostring(LogData.risk_level) in ("HIGH", "CRITICAL")),
+    CriticalRiskNominations = countif(tostring(LogData.risk_level) == "CRITICAL")
+| extend 
+    ErrorRate = round(todouble(Errors) / todouble(TotalLogs) * 100, 2),
+    EmailSuccessRate = round(todouble(EmailsSent) / (todouble(EmailsSent) + todouble(EmailsFailed)) * 100, 2),
+    HighRiskRate = round(todouble(HighRiskNominations) / todouble(NominationsCreated) * 100, 2)
+| project 
+    TotalLogs,
+    NominationsCreated,
+    Errors,
+    ErrorRate,
+    Warnings,
+    EmailsSent,
+    EmailSuccessRate,
+    HighRiskNominations,
+    HighRiskRate,
+    CriticalRiskNominations

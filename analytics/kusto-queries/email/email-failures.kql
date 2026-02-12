@@ -1,0 +1,22 @@
+// Award API - Email Failures
+// Description: Shows all failed email attempts with error details
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Email Monitoring
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(24h)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where tostring(LogData.logger) == "email_utils"
+| where tostring(LogData.level) in ("ERROR", "WARNING")
+| extend 
+    PacificTime = datetime_utc_to_local(TimeGenerated, 'US/Pacific'),
+    LogLevel = tostring(LogData.level),
+    Message = tostring(LogData.message),
+    Recipient = tostring(LogData.recipient),
+    Subject = tostring(LogData.subject),
+    NominationId = toint(LogData.nomination_id),
+    Exception = tostring(LogData.exception)
+| project PacificTime, LogLevel, Message, Recipient, Subject, NominationId, Exception, Region = ContainerAppName_s
+| order by PacificTime desc

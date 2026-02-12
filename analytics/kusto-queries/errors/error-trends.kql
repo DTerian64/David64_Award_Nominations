@@ -1,0 +1,14 @@
+// Award API - Error Trends
+// Description: Shows error count trend over the last 7 days (hourly breakdown)
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Errors
+// Visualization: Time Chart
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(7d)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where tostring(LogData.level) == "ERROR"
+| summarize ErrorCount = count() by bin(TimeGenerated, 1h), ContainerAppName_s
+| render timechart

@@ -1,0 +1,37 @@
+// Award API - Regional Performance Comparison
+// Description: Compares performance metrics between East and West regions
+// Last Updated: 2026-02-12
+// Author: David Terian
+// Category: Monitoring
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(24h)
+| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| extend LogData = parse_json(Log_s)
+| where isnotempty(LogData.level)
+| summarize 
+    TotalLogs = count(),
+    Errors = countif(tostring(LogData.level) == "ERROR"),
+    Warnings = countif(tostring(LogData.level) == "WARNING"),
+    InfoLogs = countif(tostring(LogData.level) == "INFO"),
+    Nominations = countif(tostring(LogData.message) == "Nomination created"),
+    EmailsSent = countif(tostring(LogData.logger) == "email_utils" and tostring(LogData.message) contains "successfully"),
+    EmailsFailed = countif(tostring(LogData.logger) == "email_utils" and tostring(LogData.level) == "ERROR"),
+    FraudAssessments = countif(tostring(LogData.logger) == "fraud_ml")
+    by Region = ContainerAppName_s
+| extend 
+    ErrorRate = round(todouble(Errors) / todouble(TotalLogs) * 100, 2),
+    EmailSuccessRate = round(todouble(EmailsSent) / (todouble(EmailsSent) + todouble(EmailsFailed)) * 100, 2),
+    WarningRate = round(todouble(Warnings) / todouble(TotalLogs) * 100, 2)
+| project 
+    Region,
+    TotalLogs,
+    Nominations,
+    Errors,
+    ErrorRate,
+    Warnings,
+    WarningRate,
+    EmailsSent,
+    EmailSuccessRate,
+    FraudAssessments
+| order by Region asc
