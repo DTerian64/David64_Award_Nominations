@@ -8,6 +8,8 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional
+import logging
+logger = logging.getLogger(__name__) 
 
 # Configuration from environment variables
 GMAIL_USER = os.getenv("GMAIL_USER", "david.terian@gmail.com")
@@ -22,8 +24,8 @@ SMTP_PORT = 587
 
 # Validate configuration
 if not GMAIL_APP_PASSWORD:
-    print("⚠️  WARNING: GMAIL_APP_PASSWORD not set. Email notifications will fail.")
-    print("   Generate at: https://myaccount.google.com/apppasswords")
+    logger.warning("⚠️  WARNING: GMAIL_APP_PASSWORD not set. Email notifications will fail.")
+    logger.info("   Generate at: https://myaccount.google.com/apppasswords")
 
 
 async def send_email(
@@ -48,7 +50,7 @@ async def send_email(
     """
     try:
         if not GMAIL_APP_PASSWORD:
-            print("❌ Cannot send email: GMAIL_APP_PASSWORD not configured")
+            logger.error("❌ Cannot send email: GMAIL_APP_PASSWORD not configured")
             return False
         
         # Create message
@@ -67,18 +69,18 @@ async def send_email(
             server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
             server.sendmail(from_email or GMAIL_USER, [to_email], message.as_string())
         
-        print(f"✅ Email sent successfully to {to_email}")
+        logger.info(f"✅ Email sent successfully to {to_email}")
         return True
         
     except smtplib.SMTPAuthenticationError as e:
-        print(f"❌ Gmail authentication failed: {e}")
-        print("   Check your app password at: https://myaccount.google.com/apppasswords")
+        logger.error(f"❌ Gmail authentication failed: {e}")
+        logger.info("   Check your app password at: https://myaccount.google.com/apppasswords")
         return False
     except smtplib.SMTPException as e:
-        print(f"❌ SMTP error: {e}")
+        logger.error(f"❌ SMTP error: {e}")
         return False
     except Exception as e:
-        print(f"❌ Email error: {e}")
+        logger.error(f"❌ Email error: {e}")
         return False
 
 
@@ -341,6 +343,6 @@ if __name__ == "__main__":
             subject="Test - Award Nomination Pending Approval",
             body=body
         )
-        print(f"Email test {'succeeded' if success else 'failed'}")
+        logger.info(f"Email test {'succeeded' if success else 'failed'}")
     
     asyncio.run(test_email())

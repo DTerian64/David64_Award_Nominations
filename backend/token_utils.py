@@ -7,6 +7,9 @@ import os
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Literal
+import logging
+# Get logger - automatically uses the config from logging_config.py
+logger = logging.getLogger(__name__)  # __name__ will be "token_utils"
 
 # Secret key for signing tokens (store in Azure Key Vault for production)
 SECRET_KEY = os.getenv("EMAIL_ACTION_SECRET_KEY", "default-secret-key")  # Replace with secure key in production
@@ -70,10 +73,10 @@ def verify_action_token(token: str) -> Optional[Dict]:
         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         return payload
     except jwt.ExpiredSignatureError:
-        print("⚠️ Token has expired")
+        logger.error("⚠️ Token has expired")
         return None
     except jwt.InvalidTokenError as e:
-        print(f"⚠️ Invalid token: {e}")
+        logger.error(f"⚠️ Invalid token: {e}")
         return None
 
 
@@ -111,10 +114,10 @@ def get_action_url(
 if __name__ == "__main__":
     # Test token generation and verification
     token = generate_action_token(123, "approve", 456)
-    print(f"Generated token: {token}")
+    logger.info(f"Generated token: {token}")
     
     payload = verify_action_token(token)
-    print(f"Verified payload: {payload}")
+    logger.info(f"Verified payload: {payload}")
     
     # Test URL generation
     url = get_action_url(
@@ -123,4 +126,4 @@ if __name__ == "__main__":
         "approve",
         456
     )
-    print(f"Action URL: {url}")
+    logger.info(f"Action URL: {url}")

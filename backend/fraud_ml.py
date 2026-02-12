@@ -12,6 +12,9 @@ import sqlhelper
 import os
 from pathlib import Path
 
+import logging
+logger = logging.getLogger(__name__)  # __name__ will be "fraud_ml"
+
 # ============================================================================
 # LOAD ML MODEL
 # ============================================================================
@@ -20,19 +23,19 @@ class FraudDetector:
     """Fraud detection model wrapper"""        
     def __init__(self, model_path='ml_models/fraud_detection_model.pkl'):
         """Load the trained model from local path or Azure Blob Storage"""
-        print("🔍 Checking for fraud detection model...")
+        logger.info("🔍 Checking for fraud detection model...")
         
         try: 
             # Check if we should update from blob storage
             if self._should_update_from_blob(model_path):
-                print("📥 Newer model found in Azure Blob Storage. Downloading...")
+                logger.info("📥 Newer model found in Azure Blob Storage. Downloading...")
                 model_data = self._download_model_from_blob(model_path)
             elif os.path.exists(model_path):
-                print(f"📂 Loading model from local path: {model_path}")
+                logger.info(f"📂 Loading model from local path: {model_path}")
                 with open(model_path, 'rb') as f:
                     model_data = pickle.load(f)
             else:
-                print(f"📥 Model not found locally. Downloading from Azure Blob Storage...")
+                logger.info(f"📥 Model not found locally. Downloading from Azure Blob Storage...")
                 model_data = self._download_model_from_blob(model_path)
             
             self.model = model_data['model']
@@ -40,13 +43,13 @@ class FraudDetector:
             self.feature_columns = model_data['feature_columns']
             self.training_date = model_data['training_date']
             
-            print(f"✅ Fraud detection model loaded (trained: {self.training_date})")
+            logger.info(f"✅ Fraud detection model loaded (trained: {self.training_date})")
             
         except FileNotFoundError:
-            print("⚠️  Fraud detection model not found. Please run train_fraud_model.py first.")
+            logger.error("⚠️  Fraud detection model not found. Please run train_fraud_model.py first.")
             self.model = None
         except Exception as e:
-            print(f"⚠️  Error loading fraud detection model: {e}")
+            logger.error(f"⚠️  Error loading fraud detection model: {e}")
             import traceback
             traceback.print_exc()
             self.model = None
@@ -62,13 +65,13 @@ class FraudDetector:
         try:
             # If local file doesn't exist, we need to download
             if not os.path.exists(local_path):
-                print("📭 No local model found")
+                logger.warning("📭 No local model found")
                 return True
             
             # Get local file's last modified time
             local_mtime = os.path.getmtime(local_path)
             local_modified = datetime.fromtimestamp(local_mtime, tz=timezone.utc)
-            print(f"📅 Local model last modified: {local_modified}")
+            logger.info(f"📅 Local model last modified: {local_modified}")
             
             # Get blob's last modified time
             from azure.storage.blob import BlobServiceClient
@@ -95,25 +98,25 @@ class FraudDetector:
             try:
                 properties = blob_client.get_blob_properties()
                 blob_modified = properties.last_modified
-                print(f"☁️  Blob model last modified: {blob_modified}")
+                logger.info(f"☁️  Blob model last modified: {blob_modified}")
                 
                 # Compare timestamps
                 if blob_modified > local_modified:
-                    print(f"🆕 Blob is newer by {(blob_modified - local_modified).total_seconds():.0f} seconds")
+                    logger.info(f"🆕 Blob is newer by {(blob_modified - local_modified).total_seconds():.0f} seconds")
                     return True
                 else:
-                    print(f"✅ Local model is up to date")
+                    logger.info(f"✅ Local model is up to date")
                     return False
                     
             except ResourceNotFoundError:
-                print("⚠️  Model not found in blob storage")
+                logger.warning("⚠️  Model not found in blob storage")
                 return False
             
         except ImportError:
-            print("⚠️  Azure Storage SDK not installed. Using local model.")
+            logger.warning("⚠️  Azure Storage SDK not installed. Using local model.")
             return False
         except Exception as e:
-            print(f"⚠️  Error checking blob version: {e}")
+            logger.error(f"⚠️  Error checking blob version: {e}")
             # If we can't check blob, use local version if it exists
             return False
     def _download_model_from_blob(self, local_path: str):
@@ -127,13 +130,13 @@ class FraudDetector:
             container_name = os.getenv('MODEL_CONTAINER', 'ml-models')
             blob_name = os.getenv('MODEL_BLOB_NAME', 'fraud_detection_model.pkl')
             
-            print(f"📍 Connecting to: {storage_account}/{container_name}/{blob_name}")
+            logger.info(f"📍 Connecting to: {storage_account}/{container_name}/{blob_name}")
             
             # Option 1: Use storage account key
             if storage_key:
                 connection_string = f"DefaultEndpointsProtocol=https;AccountName={storage_account};AccountKey={storage_key};EndpointSuffix=core.windows.net"
                 blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-                print("🔑 Using storage account key authentication")
+                logger.info("🔑 Using storage account key authentication")
             
             # Option 2: Use managed identity (preferred for production)
             else:
@@ -141,7 +144,7 @@ class FraudDetector:
                 account_url = f"https://{storage_account}.blob.core.windows.net"
                 credential = DefaultAzureCredential()
                 blob_service_client = BlobServiceClient(account_url, credential=credential)
-                print("🎭 Using managed identity authentication")
+                logger.info("🎭 Using managed identity authentication")
             
             # Download the blob
             blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
@@ -150,22 +153,22 @@ class FraudDetector:
             Path(local_path).parent.mkdir(parents=True, exist_ok=True)
             
             # Download to local path
-            print(f"⬇️  Downloading model to {local_path}...")
+            logger.info(f"⬇️  Downloading model to {local_path}")
             with open(local_path, 'wb') as f:
                 download_stream = blob_client.download_blob()
                 f.write(download_stream.readall())
             
-            print(f"✅ Model downloaded from Azure Blob Storage to {local_path}")
+            logger.info(f"✅ Model downloaded from Azure Blob Storage to {local_path}")
             
             # Load the downloaded model
             with open(local_path, 'rb') as f:
                 return pickle.load(f)
         
         except ImportError:
-            print("⚠️  Azure Storage SDK not installed. Install with: pip install azure-storage-blob azure-identity")
+            logger.warning("⚠️  Azure Storage SDK not installed. Install with: pip install azure-storage-blob azure-identity")
             raise FileNotFoundError("Could not download model from Azure Blob Storage")
         except Exception as e:
-            print(f"❌ Error downloading model from Azure Blob Storage: {e}")
+            logger.error(f"❌ Error downloading model from Azure Blob Storage: {e}")
             import traceback
             traceback.print_exc()
             raise FileNotFoundError(f"Could not download model from Azure Blob Storage: {e}")
@@ -177,11 +180,11 @@ class FraudDetector:
         Returns:
             True if model was updated, False otherwise
         """
-        print("\n🔄 Manually checking for model updates...")
+        logger.info("\n🔄 Manually checking for model updates...")
         
         if self._should_update_from_blob(model_path):
             try:
-                print("📥 Downloading updated model...")
+                logger.info("📥 Downloading updated model...")
                 model_data = self._download_model_from_blob(model_path)
                 
                 # Update the loaded model
@@ -190,14 +193,14 @@ class FraudDetector:
                 self.feature_columns = model_data['feature_columns']
                 self.training_date = model_data['training_date']
                 
-                print(f"✅ Model updated successfully (trained: {self.training_date})")
+                logger.info(f"✅ Model updated successfully (trained: {self.training_date})")
                 return True
                 
             except Exception as e:
-                print(f"❌ Failed to update model: {e}")
+                logger.error(f"❌ Failed to update model: {e}")
                 return False
         else:
-            print("✅ Model is already up to date")
+            logger.info("✅ Model is already up to date")
             return False
       
     def calculate_features(self, nomination_data: Dict[str, Any]) -> pd.DataFrame:

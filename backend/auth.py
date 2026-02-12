@@ -10,6 +10,8 @@ from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import OAuth2
 from typing import Optional, Dict, Any, Callable
 import sqlhelper
+import logging
+logger = logging.getLogger(__name__) 
 
 # ============================================================================
 # CONFIGURATION
@@ -65,19 +67,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
         )
         
         # Debug: Print available claims
-        print("Token payload claims:", list(payload.keys()))
+        logger.info("Token payload claims: %s", list(payload.keys()))
         
         # Get User Principal Name from token
         upn = payload.get("upn") or payload.get("preferred_username") or payload.get("email")
         
         if not upn:
-            print(f"UPN not found. Available claims: {list(payload.keys())}")
+            logger.warning(f"UPN not found. Available claims: {list(payload.keys())}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"User Principal Name not found in token"
             )
         
-        print(f"Found UPN: {upn}")
+        logger.info(f"Found UPN: {upn}")
         
         # Get user from database by UPN
         row = sqlhelper.get_user_by_upn(upn)
@@ -88,15 +90,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
                 detail=f"User not found in system with UPN: {upn}"
             )
         
-        print(f"User found: {row[2]} {row[3]} (ID: {row[0]})")
-        print(f"User roles from token: {payload.get('roles', [])}")
-        print("tid:", payload.get("tid"))
-        print("ver:", payload.get("ver"))
-        print("aud:", payload.get("aud"))
-        print("roles:", payload.get("roles"))
+        logger.info(f"User found: {row[2]} {row[3]} (ID: {row[0]})")
+        logger.info(f"User roles from token: {payload.get('roles', [])}")
+        logger.info(f"tid: {payload.get('tid')}")
+        logger.info(f"ver: {payload.get('ver')}")
+        logger.info(f"aud: {payload.get('aud')}")
+        logger.info(f"roles: {payload.get('roles')}")
 
-        
-        
+                
         return {
             "UserId": row[0],
             "userPrincipalName": row[1],
@@ -108,19 +109,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
         }
     
     except jwt.DecodeError as e:
-        print(f"JWT Decode Error: {str(e)}")
+        logger.error(f"JWT Decode Error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token format: {str(e)}"
         )
     except jwt.InvalidTokenError as e:
-        print(f"Invalid Token Error: {str(e)}")
+        logger.error(f"Invalid Token Error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {str(e)}"
         )
     except Exception as e:
-        print(f"Error in get_current_user: {type(e).__name__}: {str(e)}")
+        logger.error(f"Error in get_current_user: {type(e).__name__}: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(
@@ -168,7 +169,7 @@ async def get_current_user_with_impersonation(
         is_admin = "AWard_Nomination_Admin" in roles or "Administrator" in roles
         
         if not is_admin:
-            print(
+            logger.warning(
                 f"❌ Non-admin user {actual_user['userPrincipalName']} "
                 f"attempted to impersonate {x_impersonate_user}"
             )
@@ -202,7 +203,7 @@ async def get_current_user_with_impersonation(
             action="impersonation_started"
         )
         
-        print(
+        logger.info(
             f"✅ Admin {actual_user['userPrincipalName']} "
             f"is impersonating {x_impersonate_user}"
         )
