@@ -6,6 +6,7 @@ from logging_config import setup_logging
 
 # Set up logging at the top of the file
 logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 import socket
 from dotenv import load_dotenv
@@ -294,11 +295,18 @@ async def create_nomination(
     })
 
     # Log fraud assessment
-    logger.info("Fraud assessment result", extra={
-        "risk_level": fraud_result['risk_level'],
-        "fraud_score": fraud_result['fraud_score'],
-        "warning_flags": fraud_result['warning_flags']
-    })
+    if fraud_result['risk_level'] in ('CRITICAL', 'HIGH'):        
+        logger.warning("Fraud assessment result", extra={
+            "risk_level": fraud_result['risk_level'],
+            "fraud_score": fraud_result['fraud_score'],
+            "warning_flags": fraud_result['warning_flags']
+        })
+    else:
+        logger.info("Fraud assessment result", extra={
+            "risk_level": fraud_result['risk_level'],
+            "fraud_score": fraud_result['fraud_score'],
+            "warning_flags": fraud_result['warning_flags']
+        })
    
     
     # Optionally block high-risk nominations

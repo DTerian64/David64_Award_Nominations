@@ -50,7 +50,7 @@ def setup_logging():
     console_handler.setFormatter(json_formatter)
     
     # Root logger configuration
-    root_logger = logging.getLogger()
+    root_logger = logging.getLogger(__name__)
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(console_handler)
     
