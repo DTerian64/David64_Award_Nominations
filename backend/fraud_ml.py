@@ -78,15 +78,18 @@ class FraudDetector:
             from azure.core.exceptions import ResourceNotFoundError
             
             storage_account = os.getenv('AZURE_STORAGE_ACCOUNT', 'awardnominationmodels')
-            storage_key = os.getenv('AZURE_STORAGE_KEY')
+            storage_key = os.getenv('AZURE_STORAGE_KEY')            
+                
             container_name = os.getenv('MODEL_CONTAINER', 'ml-models')
             blob_name = os.getenv('MODEL_BLOB_NAME', 'fraud_detection_model.pkl')
             
             # Connect to blob storage
             if storage_key:
+                logger.info(f"⚠️  AZURE_STORAGE_KEY is found {storage_key}. Using storage account key authentication.")   
                 connection_string = f"DefaultEndpointsProtocol=https;AccountName={storage_account};AccountKey={storage_key};EndpointSuffix=core.windows.net"
                 blob_service_client = BlobServiceClient.from_connection_string(connection_string)
             else:
+                logger.warning("⚠️  AZURE_STORAGE_KEY not set. Attempting to use managed identity or other auth method.")   
                 from azure.identity import DefaultAzureCredential
                 account_url = f"https://{storage_account}.blob.core.windows.net"
                 credential = DefaultAzureCredential()
