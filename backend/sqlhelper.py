@@ -3,6 +3,8 @@ import pyodbc
 from contextlib import contextmanager
 from typing import Optional, Tuple, List
 
+import logging
+logger = logging.getLogger(__name__) 
 
 # Database Configuration
 DB_SERVER = os.getenv("SQL_SERVER")
@@ -50,7 +52,7 @@ def get_db_connection():
     try:        
         return pyodbc.connect(CONNECTION_STRING) 
     except Exception as e:
-        print(f"Error connecting to database: {e}")
+        logger.error(f"Error connecting to database: {e}")
         raise
 
 
@@ -61,7 +63,7 @@ def get_db_context():
     try:        
         yield conn
     except Exception as e:
-        print(f"Error in database context: {e}")
+        logger.error(f"Error in database context: {e}")
         raise
     finally:
         conn.close()

@@ -65,8 +65,10 @@ class FraudDetector:
         try:
             # If local file doesn't exist, we need to download
             if not os.path.exists(local_path):
-                logger.warning("📭 No local model found")
+                logger.warning(f"📭 No local model found: {local_path}")
                 return True
+            else:
+                logger.info(f"📂 Local model found: {local_path}")
             
             # Get local file's last modified time
             local_mtime = os.path.getmtime(local_path)
