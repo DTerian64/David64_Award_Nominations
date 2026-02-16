@@ -241,8 +241,16 @@ class ImpersonationLoadGenerator:
     ) -> bool:
         """Approve a nomination by impersonating the manager"""
         try:
+            # The endpoint is /api/nominations/approve (not /{id}/approve)
+            # It expects a JSON body with NominationId and Approved fields
+            data = {
+                "NominationId": nomination_id,
+                "Approved": True
+            }
+            
             async with session.post(
-                f"{self.api_base}/api/nominations/{nomination_id}/approve",
+                f"{self.api_base}/api/nominations/approve",
+                json=data,
                 headers=self.get_auth_headers(impersonate_upn=manager_upn),
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as resp:
@@ -411,7 +419,7 @@ class ImpersonationLoadGenerator:
 # ============================================================================
 
 async def main():
-    """Main entry point"""
+    """Main entry point for load testing"""
     
     try:
         # Get token from user (via browser/Swagger)
@@ -445,6 +453,158 @@ async def main():
         return 1
 
 
+async def approve_pending():
+    """
+    Approve all pending nominations
+    
+    Workflow:
+    1. Get all managers from the user list
+    2. For each manager, impersonate them and get their pending nominations
+    3. Approve each pending nomination as that manager
+    """
+    
+    try:
+        # Get token from user
+        admin_token = get_token_from_user()
+        
+        logger.info("="*70)
+        logger.info("APPROVE PENDING NOMINATIONS")
+        logger.info("="*70)
+        
+        # Create a minimal generator instance just to use its methods
+        generator = ImpersonationLoadGenerator(
+            admin_token=admin_token,
+            concurrent_users=1,
+            duration_hours=0,
+            auto_approve=False
+        )
+        
+        connector = aiohttp.TCPConnector(limit=100)
+        
+        async with aiohttp.ClientSession(connector=connector) as session:
+            # Fetch all users first (needed to get manager info)
+            logger.info("\n1️⃣  Fetching user data...")
+            await generator.fetch_users(session)
+            
+            # Get all pending nominations by impersonating each manager
+            logger.info("\n2️⃣  Fetching pending nominations from all managers...")
+            logger.info(f"   Found {len(generator.managers)} managers to check")
+            
+            all_pending_nominations = []
+            
+            for manager in generator.managers:
+                manager_upn = manager["userPrincipalName"]
+                manager_name = f"{manager.get('FirstName', '')} {manager.get('LastName', '')}"
+                
+                try:
+                    # Impersonate this manager and get their pending nominations
+                    async with session.get(
+                        f"{generator.api_base}/api/nominations/pending",
+                        headers=generator.get_auth_headers(impersonate_upn=manager_upn),
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as resp:
+                        if resp.status == 200:
+                            manager_pending = await resp.json()
+                            if manager_pending:
+                                logger.info(f"   • {manager_name}: {len(manager_pending)} pending")
+                                # Add manager info to each nomination for later use
+                                for nom in manager_pending:
+                                    nom["_manager_upn"] = manager_upn
+                                    nom["_manager_name"] = manager_name
+                                all_pending_nominations.extend(manager_pending)
+                        elif resp.status == 404:
+                            # No pending nominations for this manager
+                            pass
+                        else:
+                            text = await resp.text()
+                            logger.warning(f"   ⚠️  Failed for {manager_name}: {resp.status} - {text[:100]}")
+                
+                except Exception as e:
+                    logger.warning(f"   ⚠️  Error fetching for {manager_name}: {e}")
+                    continue
+            
+            logger.info(f"\n   ✅ Found {len(all_pending_nominations)} total pending nominations")
+            
+            if not all_pending_nominations:
+                logger.info("\n✅ No pending nominations to approve!")
+                return 0
+            
+            # Process each pending nomination
+            logger.info(f"\n3️⃣  Approving {len(all_pending_nominations)} pending nominations...")
+            
+            approved_count = 0
+            failed_count = 0
+            
+            for i, nomination in enumerate(all_pending_nominations, 1):
+                nomination_id = nomination.get("NominationId")
+                beneficiary_id = nomination.get("BeneficiaryId")
+                dollar_amount = nomination.get("DollarAmount")
+                
+                # Get manager info that we stored earlier
+                manager_upn = nomination.get("_manager_upn")
+                manager_name = nomination.get("_manager_name")
+                
+                logger.info(f"\n   [{i}/{len(all_pending_nominations)}] Processing Nomination ID: {nomination_id}")
+                logger.info(f"      Beneficiary ID: {beneficiary_id}, Amount: ${dollar_amount}")
+                logger.info(f"      Approver: {manager_name} ({manager_upn})")
+                
+                # Approve the nomination
+                success = await generator.approve_nomination(
+                    session,
+                    nomination_id,
+                    manager_upn
+                )
+                
+                if success:
+                    approved_count += 1
+                else:
+                    failed_count += 1
+                
+                # Small delay to avoid overwhelming the API
+                await asyncio.sleep(0.1)
+            
+            # Final summary
+            logger.info("\n" + "="*70)
+            logger.info("APPROVAL PROCESS COMPLETE")
+            logger.info("="*70)
+            logger.info(f"✅ Approved:        {approved_count}")
+            logger.info(f"❌ Failed:          {failed_count}")
+            logger.info(f"📊 Total Processed: {len(all_pending_nominations)}")
+            logger.info("="*70)
+            
+            return 0
+        
+    except KeyboardInterrupt:
+        logger.info("\n⚠️  Approval process interrupted by user")
+        return 0
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
+    print("\n" + "="*70)
+    print("AWARD NOMINATION LOAD TESTING TOOL")
+    print("="*70)
+    print("\nChoose an option:")
+    print("  1. Run Load Test (create nominations)")
+    print("  2. Approve Pending Nominations")
+    print("  3. Exit")
+    print("="*70)
+    
+    choice = input("\nEnter your choice (1-3): ").strip()
+    
+    if choice == "1":
+        exit_code = asyncio.run(main())
+    elif choice == "2":
+        exit_code = asyncio.run(approve_pending())
+    elif choice == "3":
+        logger.info("Exiting...")
+        exit_code = 0
+    else:
+        logger.error("Invalid choice. Exiting...")
+        exit_code = 1
+    
     exit(exit_code)
