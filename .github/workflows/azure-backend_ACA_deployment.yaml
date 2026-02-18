@@ -47,6 +47,24 @@ jobs:
         docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
         docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
     
+    - name: Set Container App Secrets
+      run: |
+        # Get ACR admin password to inject as registry secret
+        ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+
+        for APP in ${{ env.CONTAINER_APP_EASTUS }} ${{ env.CONTAINER_APP_WESTUS }}; do
+          az containerapp secret set \
+            --name $APP \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets \
+              "gmail-app-password=${{ secrets.GMAIL_APP_PASSWORD }}" \
+              "sql-database=${{ secrets.SQL_DATABASE }}" \
+              "sql-password=${{ secrets.SQL_PASSWORD }}" \
+              "sql-server=${{ secrets.SQL_SERVER }}" \
+              "sql-user=${{ secrets.SQL_USER }}" \
+              "acrawardnominationazurecrio-acrawardnomination=$ACR_PASSWORD"
+        done
+
     - name: Deploy to East US Container App
       run: |
         az containerapp update \
