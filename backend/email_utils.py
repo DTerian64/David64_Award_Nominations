@@ -16,7 +16,7 @@ GMAIL_USER = os.getenv("GMAIL_USER", "david.terian@gmail.com")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 FROM_EMAIL = os.getenv("FROM_EMAIL", GMAIL_USER)
 FROM_NAME = os.getenv("FROM_NAME", "Award Nomination System")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://award-api-eastus.lemonpond-a2daba01.eastus.azurecontainerapps.io")
+API_BASE_URL = os.getenv("API_BASE_URL")
 
 # SMTP Configuration
 SMTP_HOST = "smtp.gmail.com"
