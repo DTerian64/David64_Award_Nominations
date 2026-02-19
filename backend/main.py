@@ -832,7 +832,7 @@ async def generate_payroll_extract(nomination_id: int):
 @app.get("/api/admin/analytics/overview")
 async def get_analytics_overview(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role(['Admin']))
+    _: None = Depends(require_role(['AWard_Nomination_Admin']))
 ):
     """Get high-level analytics overview"""
     try:
@@ -855,7 +855,7 @@ async def get_analytics_overview(
 async def get_spending_trends(
     days: int = Query(default=90, ge=1, le=365),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role(['Admin']))
+    _: None = Depends(require_role(['AWard_Nomination_Admin']))
 ):
     """Get spending trends over time"""
     try:
@@ -876,7 +876,7 @@ async def get_spending_trends(
 @app.get("/api/admin/analytics/department-spending")
 async def get_department_spending(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role(['Admin']))
+    _: None = Depends(require_role(['AWard_Nomination_Admin']))
 ):
     """Get spending breakdown by department"""
     try:
@@ -899,7 +899,7 @@ async def get_department_spending(
 async def get_top_recipients(
     limit: int = Query(default=10, ge=1, le=50),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role(['Admin']))
+    _: None = Depends(require_role(['AWard_Nomination_Admin']))
 ):
     """Get top award recipients"""
     try:
@@ -923,7 +923,7 @@ async def get_top_recipients(
 async def get_top_nominators(
     limit: int = Query(default=10, ge=1, le=50),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role(['Admin']))
+    _: None = Depends(require_role(['AWard_Nomination_Admin']))
 ):
     """Get top nominators"""
     try:
@@ -947,7 +947,7 @@ async def get_top_nominators(
 async def get_fraud_alerts(
     limit: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role(['Admin']))
+    _: None = Depends(require_role(['AWard_Nomination_Admin']))
 ):
     """Get recent fraud detection alerts"""
     try:
@@ -973,7 +973,7 @@ async def get_fraud_alerts(
 @app.get("/api/admin/analytics/approval-metrics")
 async def get_approval_metrics(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role(['Admin']))
+    _: None = Depends(require_role(['AWard_Nomination_Admin']))
 ):
     """Get approval and rejection metrics"""
     try:
@@ -987,7 +987,7 @@ async def get_approval_metrics(
 @app.get("/api/admin/analytics/diversity-metrics")
 async def get_diversity_metrics(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role(['Admin']))
+    _: None = Depends(require_role(['AWard_Nomination_Admin']))
 ):
     """Get award distribution diversity metrics"""
     try:
