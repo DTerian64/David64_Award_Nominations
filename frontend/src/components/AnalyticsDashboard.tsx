@@ -91,7 +91,7 @@ export const AnalyticsDashboard: React.FC = () => {
       'Content-Type': 'application/json'
     });
     
-    if (impersonatedUser) {
+    if (impersonatedUser && typeof impersonatedUser === 'string') {
       headers.set('X-Impersonate-User', impersonatedUser);
     }
 
@@ -275,7 +275,9 @@ export const AnalyticsDashboard: React.FC = () => {
       {selectedTab === 'fraud' && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <AlertTriangle size={20} className="text-red-600" />
+            <span className="text-red-600">
+              <AlertTriangle size={20} />
+            </span>
             Recent Fraud Alerts
           </h2>
           <FraudAlertsList alerts={fraudAlerts} />
@@ -341,7 +343,9 @@ const MetricCard: React.FC<MetricCardProps> = ({ icon: Icon, label, value, chang
           {change}
         </p>
       </div>
-      <Icon size={24} className={positive ? 'text-green-600' : warning ? 'text-red-600' : 'text-blue-600'} />
+      <span className={positive ? 'text-green-600' : warning ? 'text-red-600' : 'text-blue-600'}>
+        <Icon size={24} />
+      </span>
     </div>
   </div>
 );
