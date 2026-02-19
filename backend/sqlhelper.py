@@ -482,7 +482,226 @@ def save_fraud_assessment(nomination_id: int, fraud_score: int, risk_level: str,
         """, (nomination_id, fraud_score, risk_level, warning_flags))
         conn.commit()
         return cursor.rowcount > 0
-    
+
+
+# ============================================================================
+# ANALYTICS QUERIES
+# ============================================================================
+
+def get_analytics_overview() -> dict:
+    """Get high-level analytics metrics"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as totalNominations,
+                SUM(DollarAmount) as totalAmount,
+                SUM(CASE WHEN Status = 'Approved' THEN 1 ELSE 0 END) as approvedCount,
+                SUM(CASE WHEN Status = 'Pending' THEN 1 ELSE 0 END) as pendingCount,
+                AVG(CAST(DollarAmount AS FLOAT)) as avgAmount,
+                SUM(CASE WHEN Status = 'Rejected' THEN 1 ELSE 0 END) as rejectedCount
+            FROM Nominations
+        """)
+        row = cursor.fetchone()
+        if row:
+            total = row[0] or 0
+            return {
+                'totalNominations': total,
+                'totalAmount': row[1] or 0,
+                'approvedCount': row[2] or 0,
+                'pendingCount': row[3] or 0,
+                'avgAmount': row[4] or 0,
+                'rejectedCount': row[5] or 0,
+                'rejectionRate': (row[5] or 0) / total if total > 0 else 0
+            }
+        return {}
+
+
+def get_spending_trends(days: int = 90) -> List[Tuple]:
+    """Get spending trends over last N days"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT 
+                CAST(NominationDate AS DATE) as PeriodDate,
+                COUNT(*) as NominationCount,
+                SUM(DollarAmount) as TotalAmount
+            FROM Nominations
+            WHERE NominationDate >= DATEADD(DAY, -{days}, CAST(GETDATE() AS DATE))
+            GROUP BY CAST(NominationDate AS DATE)
+            ORDER BY PeriodDate DESC
+        """)
+        return cursor.fetchall()
+
+
+def get_department_spending() -> List[Tuple]:
+    """Get spending by department"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                u.Title as Department,
+                COUNT(n.NominationId) as NominationCount,
+                SUM(n.DollarAmount) as TotalSpent,
+                AVG(CAST(n.DollarAmount AS FLOAT)) as AvgAmount
+            FROM Nominations n
+            JOIN Users u ON n.BeneficiaryId = u.UserId
+            WHERE n.Status IN ('Approved', 'Paid')
+            GROUP BY u.Title
+            ORDER BY TotalSpent DESC
+        """)
+        return cursor.fetchall()
+
+
+def get_top_recipients(limit: int = 10) -> List[Tuple]:
+    """Get top recipients by count"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT TOP {limit}
+                u.UserId,
+                u.FirstName,
+                u.LastName,
+                COUNT(n.NominationId) as NominationCount,
+                SUM(n.DollarAmount) as TotalAmount
+            FROM Nominations n
+            JOIN Users u ON n.BeneficiaryId = u.UserId
+            WHERE n.Status IN ('Approved', 'Paid')
+            GROUP BY u.UserId, u.FirstName, u.LastName
+            ORDER BY NominationCount DESC
+        """)
+        return cursor.fetchall()
+
+
+def get_top_nominators(limit: int = 10) -> List[Tuple]:
+    """Get top nominators by count"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT TOP {limit}
+                u.UserId,
+                u.FirstName,
+                u.LastName,
+                COUNT(n.NominationId) as NominationCount,
+                SUM(n.DollarAmount) as TotalAmount
+            FROM Nominations n
+            JOIN Users u ON n.NominatorId = u.UserId
+            WHERE n.Status IN ('Approved', 'Paid')
+            GROUP BY u.UserId, u.FirstName, u.LastName
+            ORDER BY NominationCount DESC
+        """)
+        return cursor.fetchall()
+
+
+def get_fraud_alerts(limit: int = 20) -> List[Tuple]:
+    """Get recent fraud alerts"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT TOP {limit}
+                fs.NominationId,
+                fs.FraudScore,
+                fs.RiskLevel,
+                fs.FraudFlags,
+                nominator.FirstName as NominatorFirstName,
+                nominator.LastName as NominatorLastName,
+                beneficiary.FirstName as BeneficiaryFirstName,
+                beneficiary.LastName as BeneficiaryLastName,
+                n.DollarAmount,
+                n.NominationDate
+            FROM FraudScores fs
+            JOIN Nominations n ON fs.NominationId = n.NominationId
+            JOIN Users nominator ON n.NominatorId = nominator.UserId
+            JOIN Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
+            WHERE fs.RiskLevel IN ('High', 'Medium')
+            ORDER BY n.NominationDate DESC
+        """)
+        return cursor.fetchall()
+
+
+def get_approval_metrics() -> dict:
+    """Get approval/rejection metrics"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as TotalNominations,
+                SUM(CASE WHEN Status = 'Approved' THEN 1 ELSE 0 END) as ApprovedCount,
+                SUM(CASE WHEN Status = 'Rejected' THEN 1 ELSE 0 END) as RejectedCount,
+                AVG(CAST(DATEDIFF(DAY, NominationDate, ApprovedDate) AS FLOAT)) as AvgDaysToApproval
+            FROM Nominations
+            WHERE ApprovedDate IS NOT NULL
+        """)
+        row = cursor.fetchone()
+        if row:
+            total = row[0] or 0
+            approved = row[1] or 0
+            return {
+                'totalNominations': total,
+                'approvedCount': approved,
+                'rejectedCount': row[2] or 0,
+                'avgDaysToApproval': row[3] or 0,
+                'approvalRate': approved / total if total > 0 else 0
+            }
+        return {}
+
+
+def get_diversity_metrics() -> dict:
+    """Calculate diversity metrics for award distribution"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        # Get unique recipients and their award counts
+        cursor.execute("""
+            SELECT 
+                COUNT(DISTINCT BeneficiaryId) as UniqueRecipients,
+                COUNT(*) as TotalNominations
+            FROM Nominations
+            WHERE Status IN ('Approved', 'Paid')
+        """)
+        row = cursor.fetchone()
+        unique_recipients = row[0] or 1
+        total_nominations = row[1] or 1
+        
+        # Get individual recipient counts for Gini calculation
+        cursor.execute("""
+            SELECT COUNT(*) as RecipientCount
+            FROM Nominations
+            WHERE Status IN ('Approved', 'Paid')
+            GROUP BY BeneficiaryId
+        """)
+        counts = [r[0] for r in cursor.fetchall()]
+        
+        # Calculate Gini coefficient
+        if counts:
+            counts.sort()
+            n = len(counts)
+            cumsum = 0
+            for i, c in enumerate(counts):
+                cumsum += (i + 1) * c
+            gini = (2 * cumsum) / (n * sum(counts)) - (n + 1) / n
+        else:
+            gini = 0
+        
+        # Get top recipient percentage
+        cursor.execute("""
+            SELECT TOP 1 COUNT(*) as TopRecipientCount
+            FROM Nominations
+            WHERE Status IN ('Approved', 'Paid')
+            GROUP BY BeneficiaryId
+            ORDER BY COUNT(*) DESC
+        """)
+        top_row = cursor.fetchone()
+        top_recipient_count = top_row[0] if top_row else 0
+        top_recipient_percent = (top_recipient_count / total_nominations * 100) if total_nominations > 0 else 0
+        
+        return {
+            'uniqueRecipients': unique_recipients,
+            'totalNominations': total_nominations,
+            'avgNominationsPerRecipient': total_nominations / unique_recipients if unique_recipients > 0 else 0,
+            'giniCoefficient': gini,
+            'topRecipientPercent': top_recipient_percent
+        }
+
 
 
 

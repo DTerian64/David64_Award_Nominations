@@ -1,6 +1,9 @@
 param frontDoorName string = 'Award-Nomination-ADF'
-param location string = 'global'   // Front Door is global, but parameter for consistency
+param location string = 'global'
+param originEastHostname string   // passed in from containerRuntime.outputs.apiEastFqdn
+param originWestHostname string   // passed in from containerRuntime.outputs.apiWestFqdn
 
+// ── Profile ───────────────────────────────────────────────────────────────────
 resource frontDoorProfile 'Microsoft.Cdn/profiles@2025-04-15' = {
   name: frontDoorName
   location: location
@@ -13,6 +16,7 @@ resource frontDoorProfile 'Microsoft.Cdn/profiles@2025-04-15' = {
   }
 }
 
+// ── Origin Group ──────────────────────────────────────────────────────────────
 resource originGroup 'Microsoft.Cdn/profiles/origingroups@2025-04-15' = {
   parent: frontDoorProfile
   name: 'og-award-api'
@@ -30,14 +34,15 @@ resource originGroup 'Microsoft.Cdn/profiles/origingroups@2025-04-15' = {
   }
 }
 
+// ── Origins ───────────────────────────────────────────────────────────────────
 resource originEast 'Microsoft.Cdn/profiles/origingroups/origins@2025-04-15' = {
   parent: originGroup
   name: 'eastus'
   properties: {
-    hostName: 'award-api-eastus.<your-unique-suffix>.eastus.azurecontainerapps.io'   // ← replace with actual hostname after first deploy
+    hostName: originEastHostname
     httpPort: 80
     httpsPort: 443
-    originHostHeader: 'award-api-eastus.<your-unique-suffix>.eastus.azurecontainerapps.io'
+    originHostHeader: originEastHostname
     priority: 1
     weight: 50
     enabledState: 'Enabled'
@@ -49,10 +54,10 @@ resource originWest 'Microsoft.Cdn/profiles/origingroups/origins@2025-04-15' = {
   parent: originGroup
   name: 'westus'
   properties: {
-    hostName: 'award-api-westus.<your-unique-suffix>.westus.azurecontainerapps.io'   // ← replace with actual hostname after first deploy
+    hostName: originWestHostname
     httpPort: 80
     httpsPort: 443
-    originHostHeader: 'award-api-westus.<your-unique-suffix>.westus.azurecontainerapps.io'
+    originHostHeader: originWestHostname
     priority: 1
     weight: 50
     enabledState: 'Enabled'
@@ -60,6 +65,7 @@ resource originWest 'Microsoft.Cdn/profiles/origingroups/origins@2025-04-15' = {
   }
 }
 
+// ── Endpoint ──────────────────────────────────────────────────────────────────
 resource endpoint 'Microsoft.Cdn/profiles/afdendpoints@2025-04-15' = {
   parent: frontDoorProfile
   name: 'award-nomination-api'
@@ -71,6 +77,7 @@ resource endpoint 'Microsoft.Cdn/profiles/afdendpoints@2025-04-15' = {
   }
 }
 
+// ── Route ─────────────────────────────────────────────────────────────────────
 resource route 'Microsoft.Cdn/profiles/afdendpoints/routes@2025-04-15' = {
   parent: endpoint
   name: 'rt-award-api'
@@ -91,5 +98,6 @@ resource route 'Microsoft.Cdn/profiles/afdendpoints/routes@2025-04-15' = {
   }
 }
 
+// ── Outputs ───────────────────────────────────────────────────────────────────
 output endpoint string = endpoint.properties.hostName
 output profileId string = frontDoorProfile.id

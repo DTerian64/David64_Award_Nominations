@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, CheckCircle, Clock, DollarSign, Users, Award } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, DollarSign, Users, Award, BarChart3 } from 'lucide-react';
 import { 
   AuthenticatedTemplate, 
   UnauthenticatedTemplate, 
@@ -9,6 +9,7 @@ import { SignInButton } from './components/SignInButton';
 import { SignOutButton } from './components/SignOutButton';
 import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
 import { ImpersonationBanner } from './components/ImpersonationBanner';
+import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { useImpersonation } from './contexts/ImpersonationContext';
 import { getAccessToken } from './services/api';
 
@@ -106,7 +107,7 @@ const AwardNominationApp: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [nominations, setNominations] = useState<Nomination[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<Nomination[]>([]);
-  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals'>('nominate');
+  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'analytics'>('nominate');
   const [loading, setLoading] = useState(false);
   
   // Nomination form state
@@ -371,6 +372,19 @@ const AwardNominationApp: React.FC = () => {
                 </span>
               )}
             </button>
+            {isAdmin && (
+              <button
+                onClick={() => setActiveTab('analytics')}
+                className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
+                  activeTab === 'analytics'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <BarChart3 className="w-5 h-5 inline-block mr-2" />
+                Analytics
+              </button>
+            )}
           </div>
         </div>
 
@@ -524,6 +538,13 @@ const AwardNominationApp: React.FC = () => {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'analytics' && isAdmin && (
+            <div className="bg-white rounded-lg shadow-md p-8">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">Analytics & Reporting</h2>
+              <AnalyticsDashboard />
             </div>
           )}
         </div>

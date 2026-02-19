@@ -826,6 +826,179 @@ async def generate_payroll_extract(nomination_id: int):
 
 
 # ============================================================================
+# ANALYTICS ENDPOINTS (Admin Only)
+# ============================================================================
+
+@app.get("/api/admin/analytics/overview")
+async def get_analytics_overview(
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role(['Admin']))
+):
+    """Get high-level analytics overview"""
+    try:
+        metrics = sqlhelper.get_analytics_overview()
+        return {
+            'totalNominationsAllTime': metrics.get('totalNominations', 0),
+            'totalAmountSpent': metrics.get('totalAmount', 0),
+            'approvedNominations': metrics.get('approvedCount', 0),
+            'pendingNominations': metrics.get('pendingCount', 0),
+            'averageAwardAmount': metrics.get('avgAmount', 0),
+            'rejectionRate': metrics.get('rejectionRate', 0),
+            'fraudAlertsThisMonth': len(sqlhelper.get_fraud_alerts(limit=100))
+        }
+    except Exception as e:
+        logger.error(f"Error fetching analytics overview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics/spending-trends")
+async def get_spending_trends(
+    days: int = Query(default=90, ge=1, le=365),
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role(['Admin']))
+):
+    """Get spending trends over time"""
+    try:
+        trends = sqlhelper.get_spending_trends(days=days)
+        return [
+            {
+                'date': row[0].isoformat(),
+                'nominationCount': row[1],
+                'amount': row[2]
+            }
+            for row in trends
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching spending trends: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics/department-spending")
+async def get_department_spending(
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role(['Admin']))
+):
+    """Get spending breakdown by department"""
+    try:
+        departments = sqlhelper.get_department_spending()
+        return [
+            {
+                'departmentName': row[0] or 'Unknown',
+                'nominationCount': row[1],
+                'totalSpent': row[2],
+                'averageAmount': row[3]
+            }
+            for row in departments
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching department spending: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics/top-recipients")
+async def get_top_recipients(
+    limit: int = Query(default=10, ge=1, le=50),
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role(['Admin']))
+):
+    """Get top award recipients"""
+    try:
+        recipients = sqlhelper.get_top_recipients(limit=limit)
+        return [
+            {
+                'UserId': row[0],
+                'FirstName': row[1],
+                'LastName': row[2],
+                'nominationCount': row[3],
+                'totalAmount': row[4]
+            }
+            for row in recipients
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching top recipients: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics/top-nominators")
+async def get_top_nominators(
+    limit: int = Query(default=10, ge=1, le=50),
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role(['Admin']))
+):
+    """Get top nominators"""
+    try:
+        nominators = sqlhelper.get_top_nominators(limit=limit)
+        return [
+            {
+                'UserId': row[0],
+                'FirstName': row[1],
+                'LastName': row[2],
+                'nominationCount': row[3],
+                'totalAmount': row[4]
+            }
+            for row in nominators
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching top nominators: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics/fraud-alerts")
+async def get_fraud_alerts(
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role(['Admin']))
+):
+    """Get recent fraud detection alerts"""
+    try:
+        alerts = sqlhelper.get_fraud_alerts(limit=limit)
+        return [
+            {
+                'NominationId': row[0],
+                'fraudScore': row[1],
+                'riskLevel': row[2],
+                'flags': row[3].split(',') if row[3] else [],
+                'nominatorName': f"{row[4]} {row[5]}",
+                'beneficiaryName': f"{row[6]} {row[7]}",
+                'amount': row[8],
+                'nominationDate': row[9].isoformat()
+            }
+            for row in alerts
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching fraud alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics/approval-metrics")
+async def get_approval_metrics(
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role(['Admin']))
+):
+    """Get approval and rejection metrics"""
+    try:
+        metrics = sqlhelper.get_approval_metrics()
+        return metrics
+    except Exception as e:
+        logger.error(f"Error fetching approval metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics/diversity-metrics")
+async def get_diversity_metrics(
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role(['Admin']))
+):
+    """Get award distribution diversity metrics"""
+    try:
+        metrics = sqlhelper.get_diversity_metrics()
+        return metrics
+    except Exception as e:
+        logger.error(f"Error fetching diversity metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # STARTUP
 # ============================================================================
 

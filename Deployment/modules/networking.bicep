@@ -1,11 +1,47 @@
 param dnsZoneName string
 param domainName string
-@secure() param email string
-@secure() param nameFirst string
-@secure() param nameLast string
-@secure() param phone string
-// add the other 8 contact params the same way...
 
+// contactAdmin
+@secure()
+param email string
+@secure()
+param nameFirst string
+@secure()
+param nameLast string
+@secure()
+param phone string
+
+// contactBilling
+@secure()
+param email_1 string
+@secure()
+param nameFirst_1 string
+@secure()
+param nameLast_1 string
+@secure()
+param phone_1 string
+
+// contactRegistrant
+@secure()
+param email_2 string
+@secure()
+param nameFirst_2 string
+@secure()
+param nameLast_2 string
+@secure()
+param phone_2 string
+
+// contactTech
+@secure()
+param email_3 string
+@secure()
+param nameFirst_3 string
+@secure()
+param nameLast_3 string
+@secure()
+param phone_3 string
+
+// ── DNS Zone ──────────────────────────────────────────────────────────────────
 resource dnsZone 'Microsoft.Network/dnszones@2023-07-01-preview' = {
   name: dnsZoneName
   location: 'global'
@@ -57,10 +93,13 @@ resource cnameAwards 'Microsoft.Network/dnszones/CNAME@2023-07-01-preview' = {
   name: 'awards'
   properties: {
     TTL: 3600
-    targetResource: { id: /* will be wired from frontend module output later */ }
+    CNAMERecord: {
+      cname: 'award-nomination-frontend.azurestaticapps.net'  // update after first frontend deploy if hostname differs
+    }
   }
 }
 
+// ── Domain Registration ───────────────────────────────────────────────────────
 resource appServiceDomain 'Microsoft.DomainRegistration/domains@2024-11-01' = {
   name: domainName
   location: 'global'
@@ -69,7 +108,34 @@ resource appServiceDomain 'Microsoft.DomainRegistration/domains@2024-11-01' = {
     autoRenew: false
     dnsType: 'AzureDns'
     dnsZoneId: dnsZone.id
-    contactAdmin: { email: email, nameFirst: nameFirst, nameLast: nameLast, phone: phone }
-    // repeat for billing, registrant, tech using the other params
+    contactAdmin: {
+      email: email
+      nameFirst: nameFirst
+      nameLast: nameLast
+      phone: phone
+    }
+    contactBilling: {
+      email: email_1
+      nameFirst: nameFirst_1
+      nameLast: nameLast_1
+      phone: phone_1
+    }
+    contactRegistrant: {
+      email: email_2
+      nameFirst: nameFirst_2
+      nameLast: nameLast_2
+      phone: phone_2
+    }
+    contactTech: {
+      email: email_3
+      nameFirst: nameFirst_3
+      nameLast: nameLast_3
+      phone: phone_3
+    }
+    consent: {}
   }
 }
+
+// ── Outputs ───────────────────────────────────────────────────────────────────
+output dnsZoneId string = dnsZone.id
+output nameServers array = dnsZone.properties.nameServers

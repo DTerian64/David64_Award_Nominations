@@ -50,3 +50,6 @@ resource getAwardNominationLogs 'Microsoft.OperationalInsights/workspaces/savedS
 
 output laWestId string = laWest.id
 output laEastId string = laEast.id
+
+output laWestCustomerId string = laWest.properties.customerId
+output laEastCustomerId string = laEast.properties.customerId

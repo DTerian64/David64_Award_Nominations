@@ -3,28 +3,43 @@ targetScope = 'resourceGroup'
 param locationEast string = 'eastus'
 param locationWest string = 'westus2'
 
-@secure() param sqlAdminPassword string
+@secure()
+param sqlAdminPassword string
 param sqlAdminLogin string = 'dterian'
 
-// Domain contact params (copy all 12 @secure() ones from your original file)
-@secure() param domains_terian_services_com_email string
-@secure() param domains_terian_services_com_nameFirst string
-@secure() param domains_terian_services_com_nameLast string
-@secure() param domains_terian_services_com_phone string
-@secure() param domains_terian_services_com_email_1 string
-@secure() param domains_terian_services_com_nameFirst_1 string
-@secure() param domains_terian_services_com_nameLast_1 string
-@secure() param domains_terian_services_com_phone_1 string
-@secure() param domains_terian_services_com_email_2 string
-@secure() param domains_terian_services_com_nameFirst_2 string
-@secure() param domains_terian_services_com_nameLast_2 string
-@secure() param domains_terian_services_com_phone_2 string
-@secure() param domains_terian_services_com_email_3 string
-@secure() param domains_terian_services_com_nameFirst_3 string
-@secure() param domains_terian_services_com_nameLast_3 string
-@secure() param domains_terian_services_com_phone_3 string
+@secure()
+param domains_terian_services_com_email string
+@secure()
+param domains_terian_services_com_nameFirst string
+@secure()
+param domains_terian_services_com_nameLast string
+@secure()
+param domains_terian_services_com_phone string
+@secure()
+param domains_terian_services_com_email_1 string
+@secure()
+param domains_terian_services_com_nameFirst_1 string
+@secure()
+param domains_terian_services_com_nameLast_1 string
+@secure()
+param domains_terian_services_com_phone_1 string
+@secure()
+param domains_terian_services_com_email_2 string
+@secure()
+param domains_terian_services_com_nameFirst_2 string
+@secure()
+param domains_terian_services_com_nameLast_2 string
+@secure()
+param domains_terian_services_com_phone_2 string
+@secure()
+param domains_terian_services_com_email_3 string
+@secure()
+param domains_terian_services_com_nameFirst_3 string
+@secure()
+param domains_terian_services_com_nameLast_3 string
+@secure()
+param domains_terian_services_com_phone_3 string
 
-// Resource names (you can parameterize more later)
 param acrName string = 'acrawardnomination'
 param kvName string = 'kv-awardnominations'
 param sqlServerName string = 'david64-sql'
@@ -32,8 +47,9 @@ param storageName string = 'awardnominationmodels'
 param dnsZoneName string = 'terian-services.com'
 param staticSiteName string = 'award-nomination-frontend'
 param frontDoorName string = 'Award-Nomination-ADF'
-param loadTestName string = 'award-nomination-load-testing'
-
+param frontDoorEndpoint string = ''   // empty on first deploy; pipeline passes real value on subsequent deploys
+@secure()
+param emailActionSecretKey string
 module monitoring './modules/monitoring.bicep' = {
   name: 'monitoring'
   params: { locationEast: locationEast, locationWest: locationWest }
@@ -45,9 +61,21 @@ module networking './modules/networking.bicep' = {
     dnsZoneName: dnsZoneName
     domainName: dnsZoneName
     email: domains_terian_services_com_email
-    // pass the other 11 domain contact params the same way
     nameFirst: domains_terian_services_com_nameFirst
-    // ... (add them all)
+    nameLast: domains_terian_services_com_nameLast
+    phone: domains_terian_services_com_phone
+    email_1: domains_terian_services_com_email_1
+    nameFirst_1: domains_terian_services_com_nameFirst_1
+    nameLast_1: domains_terian_services_com_nameLast_1
+    phone_1: domains_terian_services_com_phone_1
+    email_2: domains_terian_services_com_email_2
+    nameFirst_2: domains_terian_services_com_nameFirst_2
+    nameLast_2: domains_terian_services_com_nameLast_2
+    phone_2: domains_terian_services_com_phone_2
+    email_3: domains_terian_services_com_email_3
+    nameFirst_3: domains_terian_services_com_nameFirst_3
+    nameLast_3: domains_terian_services_com_nameLast_3
+    phone_3: domains_terian_services_com_phone_3
   }
 }
 
@@ -75,6 +103,12 @@ module containerRuntime './modules/container-runtime.bicep' = {
     locationWest: locationWest
     acrName: acrName
     kvName: kvName
+    laEastCustomerId: monitoring.outputs.laEastCustomerId
+    laWestCustomerId: monitoring.outputs.laWestCustomerId
+    laEastResourceId: monitoring.outputs.laEastId
+    laWestResourceId: monitoring.outputs.laWestId
+    frontDoorEndpoint: frontDoorEndpoint
+    emailActionSecretKey: emailActionSecretKey
   }
   dependsOn: [data, monitoring]
 }
@@ -86,9 +120,15 @@ module frontend './modules/frontend.bicep' = {
 
 module frontDoor './modules/frontdoor.bicep' = {
   name: 'frontDoor'
-  params: { frontDoorName: frontDoorName }
+  params: {
+    frontDoorName: frontDoorName
+    originEastHostname: containerRuntime.outputs.apiEastFqdn
+    originWestHostname: containerRuntime.outputs.apiWestFqdn
+  }
   dependsOn: [containerRuntime, frontend]
 }
 
 output frontDoorEndpoint string = frontDoor.outputs.endpoint
 output staticSiteDefaultHost string = frontend.outputs.defaultHostName
+output apiEastFqdn string = containerRuntime.outputs.apiEastFqdn
+output apiWestFqdn string = containerRuntime.outputs.apiWestFqdn
