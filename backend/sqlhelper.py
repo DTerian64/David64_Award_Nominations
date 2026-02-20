@@ -591,6 +591,48 @@ def get_top_nominators(limit: int = 10) -> List[Tuple]:
         return cursor.fetchall()
 
 
+def get_top_recipients_by_department(department: str, limit: int = 5) -> List[Tuple]:
+    """Get top recipients within a specific department"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT TOP {limit}
+                u.UserId,
+                u.FirstName,
+                u.LastName,
+                COUNT(n.NominationId) as NominationCount,
+                SUM(n.DollarAmount) as TotalAmount
+            FROM Nominations n
+            JOIN Users u ON n.BeneficiaryId = u.UserId
+            WHERE n.Status IN ('Approved', 'Paid')
+              AND u.Title = ?
+            GROUP BY u.UserId, u.FirstName, u.LastName
+            ORDER BY NominationCount DESC
+        """, (department,))
+        return cursor.fetchall()
+
+
+def get_top_nominators_by_department(department: str, limit: int = 5) -> List[Tuple]:
+    """Get top nominators within a specific department"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT TOP {limit}
+                u.UserId,
+                u.FirstName,
+                u.LastName,
+                COUNT(n.NominationId) as NominationCount,
+                SUM(n.DollarAmount) as TotalAmount
+            FROM Nominations n
+            JOIN Users u ON n.NominatorId = u.UserId
+            WHERE n.Status IN ('Approved', 'Paid')
+              AND u.Title = ?
+            GROUP BY u.UserId, u.FirstName, u.LastName
+            ORDER BY NominationCount DESC
+        """, (department,))
+        return cursor.fetchall()
+
+
 def get_fraud_alerts(limit: int = 20) -> List[Tuple]:
     """Get recent fraud alerts"""
     with get_db_context() as conn:

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3 } from 'lucide-react';
+import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import { getAccessToken } from '../services/api';
 
@@ -75,7 +75,12 @@ export const AnalyticsDashboard: React.FC = () => {
   const [diversityMetrics, setDiversityMetrics] = useState<DiversityMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity'>('overview');
+  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask'>('overview');
+  
+  // AI Q&A state
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResponse, setAiResponse] = useState<{ question: string; answer: string } | null>(null);
 
   useEffect(() => {
     fetchAnalytics();
@@ -133,6 +138,41 @@ export const AnalyticsDashboard: React.FC = () => {
     }
   };
 
+  const handleAskQuestion = async () => {
+    if (!aiQuestion.trim()) return;
+    
+    try {
+      setAiLoading(true);
+      const token = await getAccessToken();
+      const headers = new Headers({
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      });
+      
+      if (impersonatedUser && typeof impersonatedUser === 'string') {
+        headers.set('X-Impersonate-User', impersonatedUser);
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/admin/analytics/ask`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ question: aiQuestion })
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      setAiResponse(data);
+      setAiQuestion('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to get AI response');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   if (loading && !overview) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -155,12 +195,13 @@ export const AnalyticsDashboard: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Tab Navigation */}
-      <div className="flex gap-2 border-b border-gray-200">
+      <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },
           { id: 'spending', label: 'Spending Trends', icon: TrendingUp },
           { id: 'fraud', label: 'Fraud Alerts', icon: AlertTriangle },
-          { id: 'diversity', label: 'Diversity Metrics', icon: Users }
+          { id: 'diversity', label: 'Diversity Metrics', icon: Users },
+          { id: 'ask', label: 'Ask Analytics', icon: Send }
         ].map(tab => {
           const TabIcon = tab.icon;
           const isActive = selectedTab === (tab.id as any);
@@ -168,7 +209,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => setSelectedTab(tab.id as any)}
-              className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors ${
+              className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors whitespace-nowrap ${
                 isActive 
                   ? 'text-blue-600 border-b-2 border-blue-600' 
                   : 'text-gray-600 hover:text-gray-900'
@@ -317,6 +358,90 @@ export const AnalyticsDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ask Analytics Tab */}
+      {selectedTab === 'ask' && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
+            <Send size={20} />
+            Ask Analytics AI
+          </h2>
+          
+          <div className="space-y-4">
+            {/* Question Input */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Ask a question about your analytics
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={aiQuestion}
+                  onChange={(e) => setAiQuestion(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleAskQuestion()}
+                  placeholder="e.g., 'What department has the highest spending?' or 'Is our approval time improving?'"
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  disabled={aiLoading}
+                />
+                <button
+                  onClick={handleAskQuestion}
+                  disabled={aiLoading || !aiQuestion.trim()}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400 flex items-center gap-2"
+                >
+                  <Send size={18} />
+                  {aiLoading ? 'Thinking...' : 'Ask'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Powered by Azure OpenAI. Ask about trends, comparisons, recommendations, and insights.
+              </p>
+            </div>
+
+            {/* AI Response */}
+            {aiResponse && (
+              <div className="space-y-3 mt-6">
+                <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
+                  <p className="text-sm font-semibold text-blue-900 mb-2">Your question:</p>
+                  <p className="text-blue-800">{aiResponse.question}</p>
+                </div>
+                
+                <div className="bg-green-50 rounded-lg border border-green-200 p-4">
+                  <p className="text-sm font-semibold text-green-900 mb-2">AI Response:</p>
+                  <div className="text-green-800 whitespace-pre-wrap text-sm leading-relaxed">
+                    {aiResponse.answer}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sample Questions */}
+            {!aiResponse && (
+              <div className="mt-8 pt-6 border-t border-gray-200">
+                <p className="text-sm font-medium text-gray-700 mb-3">Example questions:</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {[
+                    'Which departments have the highest award spending?',
+                    'How has our approval rate changed recently?',
+                    'What patterns do you see in our fraud alerts?',
+                    'Are we achieving diversity in award distribution?'
+                  ].map((example, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setAiQuestion(example);
+                      }}
+                      className="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm text-gray-700"
+                    >
+                      <span className="text-gray-400 mr-2">→</span>
+                      {example}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

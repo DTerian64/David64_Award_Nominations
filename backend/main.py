@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from datetime import datetime
+from pydantic import BaseModel
 
 # Import authentication functions from auth.py
 from auth import (
@@ -996,6 +997,132 @@ async def get_diversity_metrics(
     except Exception as e:
         logger.error(f"Error fetching diversity metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# AI ANALYTICS ENDPOINT
+# ============================================================================
+
+class AnalyticsQuestion(BaseModel):
+    question: str
+
+
+@app.post("/api/admin/analytics/ask")
+async def ask_analytics_question(
+    req: AnalyticsQuestion,
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin"))
+):
+    """Ask an AI-powered question about analytics data"""
+    try:
+        from openai import AzureOpenAI
+        
+        # Initialize Azure OpenAI client
+        client = AzureOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_KEY", ""),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", "")
+        )        
+        
+        # Fetch all current analytics data
+        overview = sqlhelper.get_analytics_overview()
+        approval_metrics = sqlhelper.get_approval_metrics()
+        diversity_metrics = sqlhelper.get_diversity_metrics()
+        department_spending = sqlhelper.get_department_spending()
+        top_recipients = sqlhelper.get_top_recipients(limit=5)
+        top_nominators = sqlhelper.get_top_nominators(limit=5)
+        fraud_alerts = sqlhelper.get_fraud_alerts(limit=10)
+        
+        # Format analytics context
+        analytics_context = f"""
+        AWARD NOMINATION ANALYTICS DATA:
+        
+        Overview:
+        - Total Nominations: {overview.get('totalNominations', 0)}
+        - Total Amount Spent: ${overview.get('totalAmount', 0):,}
+        - Approved Nominations: {overview.get('approvedCount', 0)}
+        - Pending Nominations: {overview.get('pendingCount', 0)}
+        - Average Award Amount: ${overview.get('avgAmount', 0):.2f}
+        - Rejection Rate: {(overview.get('rejectionRate', 0) * 100):.1f}%
+        
+        Approval Metrics:
+        - Total Nominations: {approval_metrics.get('totalNominations', 0)}
+        - Approved: {approval_metrics.get('approvedCount', 0)}
+        - Rejected: {approval_metrics.get('rejectedCount', 0)}
+        - Average Days to Approval: {approval_metrics.get('avgDaysToApproval', 0):.1f}
+        - Approval Rate: {(approval_metrics.get('approvalRate', 0) * 100):.1f}%
+        
+        Diversity Metrics:
+        - Unique Recipients: {diversity_metrics.get('uniqueRecipients', 0)}
+        - Total Nominations: {diversity_metrics.get('totalNominations', 0)}
+        - Avg Nominations Per Recipient: {diversity_metrics.get('avgNominationsPerRecipient', 0):.2f}
+        - Gini Coefficient (Equality): {diversity_metrics.get('giniCoefficient', 0):.3f}
+        - Top Recipient Share: {diversity_metrics.get('topRecipientPercent', 0):.1f}%
+        
+        Global Top Recipients:
+        """
+        for recipient in top_recipients:
+            analytics_context += f"\n        - {recipient[1]} {recipient[2]}: {recipient[3]} awards, ${recipient[4]:,}"
+        
+        analytics_context += "\n\n        Global Top Nominators:\n"
+        for nominator in top_nominators:
+            analytics_context += f"\n        - {nominator[1]} {nominator[2]}: {nominator[3]} awards, ${nominator[4]:,}"
+        
+        analytics_context += "\n\n        Department Breakdown:\n"
+        for dept in department_spending:
+            analytics_context += f"\n        Department: {dept[0]}"
+            analytics_context += f"\n          - Award Count: {dept[1]}"
+            analytics_context += f"\n          - Total Spent: ${dept[2]:,}"
+            analytics_context += f"\n          - Avg Award: ${dept[3]:.0f}"
+            
+            # Get top recipients and nominators within this department
+            dept_recipients = sqlhelper.get_top_recipients_by_department(dept[0], limit=3)
+            if dept_recipients:
+                analytics_context += f"\n          - Top Recipients: "
+                analytics_context += ", ".join([f"{r[1]} {r[2]} ({r[3]} awards)" for r in dept_recipients])
+            
+            dept_nominators = sqlhelper.get_top_nominators_by_department(dept[0], limit=3)
+            if dept_nominators:
+                analytics_context += f"\n          - Top Nominators: "
+                analytics_context += ", ".join([f"{n[1]} {n[2]} ({n[3]} awards)" for n in dept_nominators])
+        
+        # Create prompt for AI
+        system_prompt = """You are an expert business analyst specializing in employee recognition programs. 
+        You have access to detailed award nomination analytics data including global metrics and department-by-department breakdowns.
+        You can answer questions about specific departments, roles, and individuals.
+        Be concise but thorough. Use data to support your responses. Provide recommendations when relevant.
+        If a user asks about a specific department, use the department breakdown data provided.
+        """
+        
+        user_prompt = f"""{analytics_context}
+        
+        Question: {req.question}
+        
+        Please provide a detailed, data-driven response based on the analytics data provided above."""
+        
+        logger.info(f"Received analytics question: {req.question[:50]}...")
+
+        # Call Azure OpenAI
+        response = client.chat.completions.create(
+            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-4.1"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        
+        logger.info(f"AI Analytics Question answered: {req.question[:50]}...")
+        
+        return {
+            "question": req.question,
+            "answer": response.choices[0].message.content
+        }
+        
+    except Exception as e:
+        logger.error(f"Error answering analytics question: {e}")
+        raise HTTPException(status_code=500, detail=f"AI Service Error: {str(e)}")
 
 
 # ============================================================================
