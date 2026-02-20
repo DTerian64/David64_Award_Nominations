@@ -153,7 +153,7 @@ resource apiEast 'Microsoft.App/containerapps@2025-02-02-preview' = {
       containers: [{
         name: 'award-api-eastus'
         image: '${acrName}.azurecr.io/award-nomination-api:latest'  // tag updated by CI/CD pipeline
-        resources: { cpu: '0.5', memory: '1Gi' }
+        resources: { cpu: '1', memory: '2Gi' }  // Increased from 0.5 CPU/1Gi for fraud detection workload
         env: concat(commonEnvVars, [
           { name: 'REGION',              value: 'eastus' }
           { name: 'CONTAINER_APP_NAME',  value: 'award-api-eastus' }
@@ -202,7 +202,7 @@ resource apiWest 'Microsoft.App/containerapps@2025-02-02-preview' = {
       containers: [{
         name: 'award-api-westus'
         image: '${acrName}.azurecr.io/award-nomination-api:latest'
-        resources: { cpu: '0.5', memory: '1Gi' }
+        resources: { cpu: '1', memory: '2Gi' }  // Increased from 0.5 CPU/1Gi for fraud detection workload
         env: concat(commonEnvVars, [
           { name: 'REGION',              value: 'westus' }
           { name: 'CONTAINER_APP_NAME',  value: 'award-api-westus' }

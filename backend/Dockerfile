@@ -44,5 +44,9 @@ EXPOSE 8000
 SHELL ["/bin/bash", "-c"]
 
 # Run with gunicorn + uvicorn
-CMD ["gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", "main:app"]
+# --timeout 120: Extend timeout to 120 seconds (fraud assessment + DB queries can take time)
+# -w 4: Use 4 workers for better concurrency (adjust based on CPU cores)
+# --graceful-timeout 30: Give workers 30s to finish gracefully
+CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", "--timeout", "120", "--graceful-timeout", "30", \
+     "--access-logfile", "-", "--error-logfile", "-", "main:app"]
