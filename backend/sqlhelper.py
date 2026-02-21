@@ -742,7 +742,12 @@ def get_diversity_metrics() -> dict:
             'topRecipientPercent': top_recipient_percent
         }
 
-
+def run_query(sql: str) -> list:
+    """Execute a raw SELECT query and return rows."""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        return cursor.fetchall()
 
 
 

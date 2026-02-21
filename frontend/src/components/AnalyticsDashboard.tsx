@@ -73,9 +73,12 @@ export const AnalyticsDashboard: React.FC = () => {
   const [fraudAlerts, setFraudAlerts] = useState<FraudAlert[]>([]);
   const [approvalMetrics, setApprovalMetrics] = useState<ApprovalMetrics | null>(null);
   const [diversityMetrics, setDiversityMetrics] = useState<DiversityMetrics | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask'>('overview');
+  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask'>('ask');
+  
+  // Track which tabs have been loaded to avoid refetching
+  const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(['ask']));
   
   // AI Q&A state
   const [aiQuestion, setAiQuestion] = useState('');
@@ -83,10 +86,8 @@ export const AnalyticsDashboard: React.FC = () => {
   const [aiResponse, setAiResponse] = useState<{ question: string; answer: string } | null>(null);
 
   useEffect(() => {
-    fetchAnalytics();
-    // Refresh every 5 minutes
-    const interval = setInterval(fetchAnalytics, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+    // Don't fetch on mount - wait for tab selection
+    // Refresh 'ask' tab doesn't need data, so we skip auto-refresh
   }, []);
 
   const apiFetch = async <T,>(path: string): Promise<T> => {
@@ -138,6 +139,25 @@ export const AnalyticsDashboard: React.FC = () => {
     }
   };
 
+  // Handle tab selection with lazy loading
+  const handleTabChange = async (tabId: string) => {
+    setSelectedTab(tabId as any);
+    
+    // If this tab hasn't been loaded yet, fetch its data
+    if (!loadedTabs.has(tabId) && tabId !== 'ask') {
+      try {
+        setLoading(true);
+        await fetchAnalytics();
+        setLoadedTabs(prev => new Set([...prev, tabId]));
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load analytics');
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
   const handleAskQuestion = async () => {
     if (!aiQuestion.trim()) return;
     
@@ -173,15 +193,7 @@ export const AnalyticsDashboard: React.FC = () => {
     }
   };
 
-  if (loading && !overview) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  if (error) {
+  if (error && selectedTab !== 'ask') {
     return (
       <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
         <div className="flex items-center gap-2">
@@ -197,18 +209,18 @@ export const AnalyticsDashboard: React.FC = () => {
       {/* Tab Navigation */}
       <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
         {[
+          { id: 'ask', label: 'Ask Analytics', icon: Send },
           { id: 'overview', label: 'Overview', icon: BarChart3 },
           { id: 'spending', label: 'Spending Trends', icon: TrendingUp },
           { id: 'fraud', label: 'Fraud Alerts', icon: AlertTriangle },
-          { id: 'diversity', label: 'Diversity Metrics', icon: Users },
-          { id: 'ask', label: 'Ask Analytics', icon: Send }
+          { id: 'diversity', label: 'Diversity Metrics', icon: Users }
         ].map(tab => {
           const TabIcon = tab.icon;
           const isActive = selectedTab === (tab.id as any);
           return (
             <button
               key={tab.id}
-              onClick={() => setSelectedTab(tab.id as any)}
+              onClick={() => handleTabChange(tab.id)}
               className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors whitespace-nowrap ${
                 isActive 
                   ? 'text-blue-600 border-b-2 border-blue-600' 
@@ -222,8 +234,15 @@ export const AnalyticsDashboard: React.FC = () => {
         })}
       </div>
 
+      {/* Loading Spinner for data tabs */}
+      {loading && selectedTab !== 'ask' && (
+        <div className="flex items-center justify-center h-96">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+      )}
+
       {/* Overview Tab */}
-      {selectedTab === 'overview' && overview && (
+      {selectedTab === 'overview' && !loading && overview && (
         <div className="space-y-6">
           {/* Key Metrics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -305,7 +324,7 @@ export const AnalyticsDashboard: React.FC = () => {
       )}
 
       {/* Spending Trends Tab */}
-      {selectedTab === 'spending' && (
+      {selectedTab === 'spending' && !loading && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold mb-4">90-Day Spending Trends</h2>
           <SpendingTrendChart trends={trends} />
@@ -313,7 +332,7 @@ export const AnalyticsDashboard: React.FC = () => {
       )}
 
       {/* Fraud Alerts Tab */}
-      {selectedTab === 'fraud' && (
+      {selectedTab === 'fraud' && !loading && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <span className="text-red-600">
@@ -326,7 +345,7 @@ export const AnalyticsDashboard: React.FC = () => {
       )}
 
       {/* Diversity Metrics Tab */}
-      {selectedTab === 'diversity' && diversityMetrics && (
+      {selectedTab === 'diversity' && !loading && diversityMetrics && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-white rounded-lg border border-gray-200 p-6">
