@@ -16,7 +16,7 @@ import os
 from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Any
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -43,8 +43,7 @@ from email_utils import (
     get_nomination_pending_email
 )
 
-from sql_agent import generate_sql
-
+from agents.sql_agent import generate_sql
 
 # ============================================================================
 # CONFIGURATION
@@ -1001,13 +1000,17 @@ async def get_diversity_metrics(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 # ============================================================================
-# AI ANALYTICS ENDPOINT
+# AI ANALYTICS — ASK ENDPOINT
 # ============================================================================
+
+from agents.ask_agent import AskAgent, AskResult
 
 class AnalyticsQuestion(BaseModel):
     question: str
 
+_ask_agent = AskAgent()   # shared, stateless
 
 @app.post("/api/admin/analytics/ask")
 async def ask_analytics_question(
@@ -1015,148 +1018,33 @@ async def ask_analytics_question(
     current_user: User = Depends(get_current_user_with_impersonation),
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
-    """Ask an AI-powered question about analytics data"""
-    try:
-        from openai import OpenAI
+    """Ask an AI-powered question about analytics data."""
+    logger.info("ask endpoint: %s", req.question[:80])
 
-        client = OpenAI(
-            api_key=os.getenv("AZURE_OPENAI_KEY", ""),            
-            base_url=os.getenv("AZURE_OPENAI_ENDPOINT", "")
-        )
+    result: AskResult = await _ask_agent.ask(req.question)
 
-        logger.info(f"Analytics question received: {req.question[:80]}")
+    if result.error:
+        logger.error("ask endpoint: agent returned error: %s", result.error)
+        raise HTTPException(status_code=500, detail=f"AI Service Error: {result.error}")
 
-        # ── Step 1: Ask the SQL agent to translate the question ──────────────
-        # Returns a T-SQL string if answerable from schema, or None if not.
-        sql = generate_sql(client, req.question)
+    logger.info(
+        "ask endpoint: answered (sql=%s, rows=%d, rag=%s)",
+        bool(result.sql), result.rows_fetched, result.used_rag,
+    )
 
-        # ── Step 2: Build the analytics context ──────────────────────────────
-        if sql:
-            # SQL agent produced a targeted query — fetch only the data we need
-            logger.info(f"sql_agent returned {sql} — executing targeted query")
-            try:
-                rows = sqlhelper.run_query(sql)          # ← one focused query
-                analytics_context = f"""
-                    TARGETED QUERY RESULT for: "{req.question}"
+    response : dict[str, Any]= {
+        "question": result.question,
+        "answer":   result.answer,
+    }
 
-                    SQL executed:
-                    {sql}
-
-                    Results ({len(rows)} rows):
-                    {_format_rows(rows)}
-                """
-            except Exception as query_err:
-                # SQL ran but failed (e.g. edge-case schema mismatch) — fall back
-                logger.warning(f"sql_agent query failed ({query_err}), falling back to full RAG")
-                sql = None
-
-        if not sql:
-            # Fallback: original broad data dump for questions outside the schema
-            # (e.g. "Is our approval time improving?" — needs trend analysis)
-            logger.info("Falling back to full analytics context (RAG)")
-            analytics_context = _build_full_analytics_context()
-
-        # ── Step 3: Same LLM call as before ──────────────────────────────────
-        deployment = os.getenv("AZURE_OPENAI_MODEL", "gpt-4.1")
-        system_prompt = """You are an expert business analyst specializing in employee recognition programs.
-                            You have access to award nomination analytics data.
-                            Be concise but thorough. Use data to support your responses. Provide recommendations when relevant."""
-
-        user_prompt = f"""{analytics_context}
-
-                        Question: {req.question}
-
-                        Please provide a detailed, data-driven response based on the data provided above."""
-
-        try:
-            response = client.chat.completions.create(
-                model=deployment,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_prompt},
-                ],
-                temperature=0.7,
-                max_tokens=1000,
-            )
-        except Exception as api_err:
-            error_str = str(api_err)
-            if "404" in error_str or "not found" in error_str.lower():
-                logger.error(
-                    f"Azure OpenAI deployment '{deployment}' not found. "
-                    f"Verify AZURE_OPENAI_MODEL env var matches your actual deployment name in Azure. "
-                    f"Error: {api_err}"
-                )
-            raise
-
-        logger.info(f"Analytics question answered: {req.question[:80]}")
-
-        return {
-            "question": req.question,
-            "answer":   response.choices[0].message.content,
+    if result.export_path:
+        response["export"] = {
+            "format":       result.export_format,
+            "file_size":    result.export_size,
+            "download_url": result.export_path,   # blob SAS URL
         }
 
-    except Exception as e:
-        logger.error(f"Error answering analytics question: {e}")
-        raise HTTPException(status_code=500, detail=f"AI Service Error: {str(e)}")
-
-def _format_rows(rows) -> str:
-    """Format raw SQL result rows into readable text for the LLM prompt."""
-    if not rows:
-        return "  (no results)"
-    lines = []
-    for i, row in enumerate(rows[:50], 1):   # cap at 50 rows to stay within token budget
-        lines.append(f"  Row {i}: {', '.join(str(v) for v in row)}")
-    if len(rows) > 50:
-        lines.append(f"  ... and {len(rows) - 50} more rows (truncated)")
-    return "\n".join(lines)
-
-
-def _build_full_analytics_context() -> str:
-    """Original broad data fetch — used as fallback for open-ended questions."""
-    overview            = sqlhelper.get_analytics_overview()
-    approval_metrics    = sqlhelper.get_approval_metrics()
-    diversity_metrics   = sqlhelper.get_diversity_metrics()
-    department_spending = sqlhelper.get_department_spending()
-    top_recipients      = sqlhelper.get_top_recipients(limit=5)
-    top_nominators      = sqlhelper.get_top_nominators(limit=5)
-
-    ctx = f"""
-    AWARD NOMINATION ANALYTICS DATA:
-
-    Overview:
-    - Total Nominations: {overview.get('totalNominations', 0)}
-    - Total Amount Spent: ${overview.get('totalAmount', 0):,}
-    - Approved Nominations: {overview.get('approvedCount', 0)}
-    - Pending Nominations: {overview.get('pendingCount', 0)}
-    - Average Award Amount: ${overview.get('avgAmount', 0):.2f}
-    - Rejection Rate: {(overview.get('rejectionRate', 0) * 100):.1f}%
-
-    Approval Metrics:
-    - Total Nominations: {approval_metrics.get('totalNominations', 0)}
-    - Approved: {approval_metrics.get('approvedCount', 0)}
-    - Rejected: {approval_metrics.get('rejectedCount', 0)}
-    - Average Days to Approval: {approval_metrics.get('avgDaysToApproval', 0):.1f}
-    - Approval Rate: {(approval_metrics.get('approvalRate', 0) * 100):.1f}%
-
-    Diversity Metrics:
-    - Unique Recipients: {diversity_metrics.get('uniqueRecipients', 0)}
-    - Gini Coefficient: {diversity_metrics.get('giniCoefficient', 0):.3f}
-    - Top Recipient Share: {diversity_metrics.get('topRecipientPercent', 0):.1f}%
-
-    Top Recipients:"""
-
-    for r in top_recipients:
-        ctx += f"\n- {r[1]} {r[2]}: {r[3]} awards, ${r[4]:,}"
-
-    ctx += "\n\nTop Nominators:"
-    for n in top_nominators:
-        ctx += f"\n- {n[1]} {n[2]}: {n[3]} nominations, ${n[4]:,}"
-
-    ctx += "\n\nDepartment Breakdown:"
-    for dept in department_spending:
-        ctx += f"\n- {dept[0]}: {dept[1]} awards, ${dept[2]:,} total, ${dept[3]:.0f} avg"
-
-    return ctx
+    return response
 
 
 # ============================================================================

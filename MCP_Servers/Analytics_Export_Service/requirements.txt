@@ -1,0 +1,5 @@
+mcp==1.26.0
+python-dotenv==1.0.1
+openpyxl==3.11.0
+reportlab==4.0.9
+pandas==2.2.0
