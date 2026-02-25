@@ -43,8 +43,6 @@ from email_utils import (
     get_nomination_pending_email
 )
 
-from agents.sql_agent import generate_sql
-
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -1005,7 +1003,7 @@ async def get_diversity_metrics(
 # AI ANALYTICS — ASK ENDPOINT
 # ============================================================================
 
-from agents.ask_agent import AskAgent, AskResult
+from agents import AskAgent, AskResult
 
 class AnalyticsQuestion(BaseModel):
     question: str
@@ -1028,8 +1026,8 @@ async def ask_analytics_question(
         raise HTTPException(status_code=500, detail=f"AI Service Error: {result.error}")
 
     logger.info(
-        "ask endpoint: answered (sql=%s, rows=%d, rag=%s)",
-        bool(result.sql), result.rows_fetched, result.used_rag,
+        "ask endpoint: answered (sql=%s, rows=%d)",
+        bool(result.sql), result.rows_fetched,
     )
 
     response : dict[str, Any]= {
@@ -1038,11 +1036,17 @@ async def ask_analytics_question(
     }
 
     if result.export_path:
+        fmt = (result.export_format or "file").upper()
+        filename = result.export_path.split("?")[0].split("/")[-1]
         response["export"] = {
             "format":       result.export_format,
             "file_size":    result.export_size,
-            "download_url": result.export_path,   # blob SAS URL
+            "label":        f"Download your {fmt} here",
+            "filename":     filename,
+            "download_url": result.export_path,
         }
+
+    logger.info("ask endpoint: export_path=%s, export_format=%s", result.export_path, result.export_format)
 
     return response
 
