@@ -19,15 +19,17 @@ from ..exporters import export_excel, export_pdf, export_csv   # see exporters/_
 
 logger = logging.getLogger(__name__)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Individual tool implementations
 # ─────────────────────────────────────────────────────────────────────────────
+_last_query_rows: list[dict] = []  # module-level var to store last query results for potential export by other tools
 
 async def _query_database(sql: str) -> dict[str, Any]:
+    global _last_query_rows 
     try:
-        raw_rows = sqlhelper.run_query(sql)
-        rows = _normalise_rows(raw_rows)
+        raw_rows, columns = sqlhelper.run_query_with_columns(sql)
+        rows = _normalise_rows(raw_rows, columns)
+        _last_query_rows = rows # store in module-level var for potential export by other tools
         logger.info("tool:query_database — %d rows returned", len(rows))
         return {
             "status": "success",
@@ -37,6 +39,7 @@ async def _query_database(sql: str) -> dict[str, Any]:
         }
     except Exception as err:
         logger.error("tool:query_database — query failed: %s", err)
+        _last_query_rows = []  # clear last query rows on error
         return {"status": "error", "message": str(err), "rows": [], "sql": sql}
 
 async def _get_analytics_overview() -> dict[str, Any]:
@@ -78,6 +81,10 @@ async def _export_to_excel(
     rows: list[dict],
     filename: str | None = None,
 ) -> dict[str, Any]:
+    global _last_query_rows
+    if not rows:
+        logger.warning("tool:export_to_excel — LLM omitted rows, injecting from last query (%d rows)", len(_last_query_rows))
+        rows = _last_query_rows
     logger.info("tool:export_to_excel — %d rows", len(rows))
     return await export_excel(question=question, answer=answer, rows=rows, filename=filename)
 
@@ -88,7 +95,13 @@ async def _export_to_pdf(
     rows: list[dict] | None = None,
     filename: str | None = None,
 ) -> dict[str, Any]:
+    global _last_query_rows
+    if not rows:
+        logger.warning("tool:export_to_pdf — LLM omitted rows, injecting from last query (%d rows)", len(_last_query_rows))
+        rows = _last_query_rows
     logger.info("tool:export_to_pdf — rows=%s", len(rows) if rows else 0)
+    if not rows:
+        logger.warning("tool:export_to_pdf — called with empty rows, check LLM tool call arguments")
     return await export_pdf(question=question, answer=answer, rows=rows, filename=filename)
 
 
@@ -96,6 +109,10 @@ async def _export_to_csv(
     rows: list[dict],
     filename: str | None = None,
 ) -> dict[str, Any]:
+    global _last_query_rows
+    if not rows:
+        logger.warning("tool:export_to_csv — LLM omitted rows, injecting from last query (%d rows)", len(_last_query_rows))
+        rows = _last_query_rows
     logger.info("tool:export_to_csv — %d rows", len(rows))
     return await export_csv(rows=rows, filename=filename)
 
@@ -120,6 +137,8 @@ async def dispatch(tool_name: str, tool_args: dict) -> str:
     Returns a JSON string — this is what gets appended to the message history
     as a 'tool' role message so the LLM can see the result.
     """
+    logger.info("tool:dispatch — %s called with args: %s", tool_name, json.dumps(tool_args, default=str))
+    
     fn = _REGISTRY.get(tool_name)
     if fn is None:
         logger.warning("tool:dispatch — unknown tool requested: %s", tool_name)
@@ -142,10 +161,12 @@ async def dispatch(tool_name: str, tool_args: dict) -> str:
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _normalise_rows(rows: list) -> list[dict]:
+def _normalise_rows(rows: list, columns: list[str] | None = None) -> list[dict]:
     """Convert list[tuple] → list[dict]. Pass-through if already dicts."""
     if not rows:
         return []
     if isinstance(rows[0], dict):
         return rows
+    if columns and len(columns) == len(rows[0]):
+        return [dict(zip(columns, row)) for row in rows]
     return [{f"col_{i}": v for i, v in enumerate(row)} for row in rows]

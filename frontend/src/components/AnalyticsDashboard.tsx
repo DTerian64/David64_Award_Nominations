@@ -83,7 +83,17 @@ export const AnalyticsDashboard: React.FC = () => {
   // AI Q&A state
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResponse, setAiResponse] = useState<{ question: string; answer: string } | null>(null);
+  const [aiResponse, setAiResponse] = useState<{ 
+                                                question: string; 
+                                                answer: string; 
+                                                export?: {
+                                                  format: string;
+                                                  file_size: number;
+                                                  label: string;
+                                                  filename: string;
+                                                  download_url: string;
+                                                };
+                                              } | null>(null);
 
   useEffect(() => {
     // Don't fetch on mount - wait for tab selection
@@ -429,13 +439,22 @@ export const AnalyticsDashboard: React.FC = () => {
                 
                 <div className="bg-green-50 rounded-lg border border-green-200 p-4">
                   <p className="text-sm font-semibold text-green-900 mb-2">AI Response:</p>
-                  <div className="text-green-800 whitespace-pre-wrap text-sm leading-relaxed">
+                  <div className="text-green-800 text-sm leading-relaxed whitespace-pre-wrap">
                     {aiResponse.answer}
+                  </div>                     
+                    {aiResponse.export && (                
+                      <a
+                        href={aiResponse.export.download_url}
+                        download={aiResponse.export.filename}
+                        className="inline-flex items-center gap-2 mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        {aiResponse.export.label}
+                      </a>
+                    )
+                  }
                   </div>
-                </div>
-              </div>
+                </div>              
             )}
-
             {/* Sample Questions */}
             {!aiResponse && (
               <div className="mt-8 pt-6 border-t border-gray-200">

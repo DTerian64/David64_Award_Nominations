@@ -104,7 +104,11 @@ TOOLS: list[ChatCompletionToolParam] = [
                     "rows": {
                         "type": "array",
                         "items": {"type": "object"},
-                        "description": "Optional data rows to include as a table in the PDF."
+                        "description": (
+                                        "REQUIRED. The exact rows array returned by query_database. "
+                                        "You MUST call query_database first and pass its rows here. "
+                                        "Never pass an empty array."
+                        )
                     },
                     "filename": {
                         "type": "string",

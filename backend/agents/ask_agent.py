@@ -134,6 +134,7 @@ class AskAgent:
                     messages    = messages,
                     tools       = TOOLS,
                     tool_choice = "auto",
+                    parallel_tool_calls  = False,
                     temperature = 0.7,
                     max_tokens  = 2000,
                 )

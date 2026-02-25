@@ -748,6 +748,14 @@ def run_query(sql: str) -> list:
         cursor = conn.cursor()
         cursor.execute(sql)
         return cursor.fetchall()
+    
+def run_query_with_columns(sql: str) -> tuple[list, list[str]]:
+    """Execute a raw SELECT query and return (rows, column_names)."""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        columns = [col[0] for col in cursor.description]
+        return cursor.fetchall(), columns
 
 
 

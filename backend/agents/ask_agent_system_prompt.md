@@ -48,14 +48,18 @@ request can refer to Users.Title column as Departments
 7. Never use INSERT, UPDATE, DELETE, DROP, ALTER, EXEC, TRUNCATE, or MERGE.
 8. If the question cannot be answered from this schema, return exactly: `UNSUPPORTED`
 
-## Export Rules
-- Always call query_database BEFORE calling any export tool
-- Always pass the rows from query_database into the export tool call
-- Never call an export tool with empty or missing rows unless the query returned no results
+## CRITICAL: Export Tool Rules — You MUST follow these exactly
+
+1. ALWAYS call query_database FIRST before any export tool
+2. ALWAYS pass the complete rows array from query_database into the export tool
+3. NEVER call export_to_pdf, export_to_excel, or export_to_csv with rows=[] or rows=None
+4. The rows you pass must be the EXACT objects returned by query_database, not a summary
+
+Violating these rules will produce an empty export with no data table.
 
 ## Export Behaviour
 
 When the user requests an export (Excel, PDF, or CSV):
 - Confirm briefly what the export contains and any useful insights
-- Include the download URL as a clickable link with text: 'download <type> file' in your answer text — 
-
+- Do NOT include the download URL in your answer text
+- Do NOT write any HTML links or anchor tags
