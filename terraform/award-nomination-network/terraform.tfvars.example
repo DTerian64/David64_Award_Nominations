@@ -1,0 +1,14 @@
+# terraform.tfvars
+# ─────────────────────────────────────────────────────────────────────────────
+# Fill in your values before running terraform plan
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource_group_name = "rg_award_nomination"
+location_east       = "eastus"
+location_west       = "westus"
+
+# Your local public IP — check whatismyip.com
+# This whitelists your machine on SQL, Storage, Key Vault, and OpenAI firewalls
+my_ips = [
+    "xx.xxx.xx.xxx",
+]
