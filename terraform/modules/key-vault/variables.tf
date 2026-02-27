@@ -6,13 +6,13 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region — matches existing KV (eastus)"
+  description = "Azure region"
   type        = string
   default     = "eastus"
 }
 
 variable "key_vault_name" {
-  description = "Key Vault name — globally unique, 3-24 chars, alphanumeric and hyphens"
+  description = "Key Vault name — globally unique, 3-24 chars"
   type        = string
 
   validation {
@@ -28,7 +28,7 @@ variable "public_network_access_enabled" {
 }
 
 variable "allowed_ips" {
-  description = "Local IPs to whitelist on KV firewall for debugging"
+  description = "Local IPs to whitelist on KV firewall"
   type        = list(string)
   default     = []
 }
@@ -53,6 +53,14 @@ variable "private_endpoint_subnet_id" {
 variable "private_dns_zone_id" {
   description = "Private DNS zone ID for privatelink.vaultcore.azure.net"
   type        = string
+}
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+variable "secrets" {
+  description = "Map of secret name → value to store in Key Vault"
+  type        = map(string)
+  sensitive   = true
+  default     = {}
 }
 
 variable "tags" {

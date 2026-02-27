@@ -3,15 +3,16 @@
 # Azure Key Vault
 #
 # Creates:
-#   - Key Vault (Standard SKU — matches kv-awardnominations)
-#   - Access policy for the Container Apps managed identity
-#   - Access policy for the deploying user/service principal
+#   - Key Vault (Standard SKU)
+#   - Access policy for deploying user
+#   - Access policy for Container Apps managed identities
+#   - KV Secrets — values come from terraform.tfvars (gitignored)
 #   - Private endpoint → subnet-privatelinks
 #   - Private DNS zone group registration
 #   - Network rules — deny public, whitelist local IPs
 #
-# Secrets are NOT created here — they are managed outside Terraform
-# (manually via portal or az cli) to avoid sensitive values in state.
+# Secret values live in terraform.tfvars (gitignored) and tfstate
+# (private Azure blob). They never touch GitHub.
 # ─────────────────────────────────────────────────────────────────────────────
 
 data "azurerm_client_config" "current" {}
@@ -23,16 +24,13 @@ resource "azurerm_key_vault" "kv" {
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 
-  # Matches existing: 90 day soft delete retention
-  soft_delete_retention_days = 90
-  purge_protection_enabled   = false
-
-  # Start with public access enabled — lock down after private endpoint confirmed
+  soft_delete_retention_days    = 90
+  purge_protection_enabled      = false
   public_network_access_enabled = var.public_network_access_enabled
 
   network_acls {
     default_action             = var.public_network_access_enabled ? "Allow" : "Deny"
-    bypass                     = ["AzureServices"]
+    bypass                     = "AzureServices"
     ip_rules                   = var.allowed_ips
     virtual_network_subnet_ids = var.aca_subnet_ids
   }
@@ -41,7 +39,6 @@ resource "azurerm_key_vault" "kv" {
 }
 
 # ── Access policy — deploying user ────────────────────────────────────────────
-# Gives the person running terraform apply full access to manage secrets
 resource "azurerm_key_vault_access_policy" "deployer" {
   key_vault_id = azurerm_key_vault.kv.id
   tenant_id    = data.azurerm_client_config.current.tenant_id
@@ -56,8 +53,7 @@ resource "azurerm_key_vault_access_policy" "deployer" {
   ]
 }
 
-# ── Access policy — Container Apps managed identity ───────────────────────────
-# Gives ACAs read access to secrets at runtime
+# ── Access policy — Container Apps managed identities ────────────────────────
 resource "azurerm_key_vault_access_policy" "aca" {
   for_each = toset(var.aca_principal_ids)
 
@@ -66,6 +62,22 @@ resource "azurerm_key_vault_access_policy" "aca" {
   object_id    = each.value
 
   secret_permissions = ["Get", "List"]
+}
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# Values come from var.secrets map in terraform.tfvars (gitignored)
+# Stored in tfstate (private Azure blob) — never in GitHub
+resource "azurerm_key_vault_secret" "secrets" {
+  for_each = nonsensitive(toset(keys(var.secrets)))
+
+  name         = each.key
+  value        = var.secrets[each.key]
+  key_vault_id = azurerm_key_vault.kv.id
+
+  # Access policy must exist before secrets can be written
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+
+  tags = var.tags
 }
 
 # ── Private endpoint ──────────────────────────────────────────────────────────

@@ -22,11 +22,11 @@ resource "azurerm_cognitive_account" "openai" {
   kind                = "OpenAI"
   sku_name            = "S0"
 
+  custom_subdomain_name         = var.openai_name
   public_network_access_enabled = var.public_network_access_enabled
 
   network_acls {
     default_action = var.public_network_access_enabled ? "Allow" : "Deny"
-    bypass         = ["AzureServices"]
     ip_rules       = var.allowed_ips
   }
 
@@ -34,7 +34,6 @@ resource "azurerm_cognitive_account" "openai" {
 }
 
 # ── Model deployment ──────────────────────────────────────────────────────────
-# Matches existing: gpt-4.1, GlobalStandard, 150K TPM capacity
 resource "azurerm_cognitive_deployment" "gpt4" {
   name                 = var.model_deployment_name
   cognitive_account_id = azurerm_cognitive_account.openai.id
@@ -45,8 +44,8 @@ resource "azurerm_cognitive_deployment" "gpt4" {
     version = var.model_version
   }
 
-  sku {
-    name     = "GlobalStandard"
+  scale {
+    type     = "GlobalStandard"
     capacity = var.model_capacity_tpm
   }
 }

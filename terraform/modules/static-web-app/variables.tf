@@ -1,63 +1,56 @@
-# modules/front-door/variables.tf
+# modules/static-web-app/variables.tf
 
 variable "resource_group_name" {
   description = "Resource group to deploy into"
   type        = string
 }
 
-variable "afd_profile_name" {
-  description = "AFD profile name"
+variable "location" {
+  description = "Azure region"
   type        = string
-  default     = "Award-Nomination-ADF"
+  default     = "westus2"
 }
 
-variable "afd_endpoint_name" {
-  description = "AFD endpoint name — becomes part of the public hostname"
-  type        = string
-  default     = "award-nomination-api"
-}
-
-variable "location_east" {
-  description = "East US region"
-  type        = string
-  default     = "eastus"
-}
-
-variable "location_west" {
-  description = "West US region"
-  type        = string
-  default     = "westus"
-}
-
-# ── From container-apps module outputs ────────────────────────────────────────
-variable "cae_east_id" {
-  description = "East CAE resource ID — used for Private Link origin"
+variable "app_name" {
+  description = "Static Web App name"
   type        = string
 }
 
-variable "cae_west_id" {
-  description = "West CAE resource ID — used for Private Link origin"
+variable "afd_hostname" {
+  description = "AFD public hostname — used as VITE_API_URL base"
   type        = string
 }
 
-variable "cae_east_static_ip" {
-  description = "East CAE internal load balancer IP"
+# ── Azure AD / MSAL settings for React frontend ───────────────────────────────
+variable "vite_api_url" {
+  description = "Backend API URL — injected as VITE_API_URL"
   type        = string
 }
 
-variable "cae_west_static_ip" {
-  description = "West CAE internal load balancer IP"
+variable "vite_api_client_id" {
+  description = "Azure AD API app registration client ID — VITE_API_CLIENT_ID"
   type        = string
 }
 
-variable "cae_east_default_domain" {
-  description = "East CAE default domain"
+variable "vite_api_scope" {
+  description = "Azure AD API scope — VITE_API_SCOPE e.g. api://CLIENT_ID/access_as_user"
   type        = string
 }
 
-variable "cae_west_default_domain" {
-  description = "West CAE default domain"
+variable "vite_client_id" {
+  description = "Azure AD SPA app registration client ID — VITE_CLIENT_ID"
   type        = string
+}
+
+variable "vite_tenant_id" {
+  description = "Azure AD tenant ID — VITE_TENANT_ID"
+  type        = string
+}
+
+variable "custom_domain" {
+  description = "Optional custom domain. Leave empty to skip."
+  type        = string
+  default     = ""
 }
 
 variable "tags" {

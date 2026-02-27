@@ -1,7 +1,4 @@
-# environments/prod/backend.tf
-# ─────────────────────────────────────────────────────────────────────────────
-# Terraform state backend — prod state file
-# ─────────────────────────────────────────────────────────────────────────────
+# environments/dev/backend.tf
 
 terraform {
   required_version = ">= 1.5.0"
@@ -10,6 +7,10 @@ terraform {
     azurerm = {
       source  = "hashicorp/azurerm"
       version = "~> 3.100"
+    }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 2.0"
     }
   }
 
@@ -24,3 +25,5 @@ terraform {
 provider "azurerm" {
   features {}
 }
+
+provider "azuread" {}

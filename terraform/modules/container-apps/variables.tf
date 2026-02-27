@@ -1,4 +1,4 @@
-# modules/log-analytics/variables.tf
+# modules/container-apps/variables.tf
 
 variable "resource_group_name" {
   description = "Resource group to deploy into"
@@ -6,36 +6,118 @@ variable "resource_group_name" {
 }
 
 variable "location_east" {
-  description = "East US region for the East workspace"
+  description = "East US region"
   type        = string
   default     = "eastus"
 }
 
 variable "location_west" {
-  description = "West US region for the West workspace"
+  description = "West US region"
   type        = string
   default     = "westus"
 }
 
-variable "workspace_name_east" {
-  description = "Log Analytics workspace name for East US CAE"
+# ── CAE names ─────────────────────────────────────────────────────────────────
+variable "cae_name_east" {
+  description = "Container App Environment name — East US"
+  type        = string
+  default     = "cae-award-eastus"
+}
+
+variable "cae_name_west" {
+  description = "Container App Environment name — West US"
+  type        = string
+  default     = "cae-award-westus"
+}
+
+# ── Container App names ───────────────────────────────────────────────────────
+variable "app_name_east" {
+  description = "Container App name — East US"
+  type        = string
+  default     = "award-api-eastus"
+}
+
+variable "app_name_west" {
+  description = "Container App name — West US"
+  type        = string
+  default     = "award-api-westus"
+}
+
+# ── Networking — from networking module outputs ───────────────────────────────
+variable "subnet_aca_east_id" {
+  description = "East ACA subnet ID (delegated to Microsoft.App/environments)"
   type        = string
 }
 
-variable "workspace_name_west" {
-  description = "Log Analytics workspace name for West US CAE"
+variable "subnet_aca_west_id" {
+  description = "West ACA subnet ID (delegated to Microsoft.App/environments)"
   type        = string
 }
 
-variable "retention_in_days" {
-  description = "Log retention in days — matches existing (30)"
+# ── Log Analytics — from log-analytics module outputs ────────────────────────
+variable "log_analytics_workspace_east_id" {
+  description = "East Log Analytics workspace resource ID"
+  type        = string
+}
+
+variable "log_analytics_workspace_west_id" {
+  description = "West Log Analytics workspace resource ID"
+  type        = string
+}
+
+# ── ACR — from container-registry module outputs ──────────────────────────────
+variable "acr_login_server" {
+  description = "ACR login server URL e.g. acrawardnomination.azurecr.io"
+  type        = string
+}
+
+variable "acr_admin_username" {
+  description = "ACR admin username"
+  type        = string
+  sensitive   = true
+}
+
+variable "acr_admin_password" {
+  description = "ACR admin password"
+  type        = string
+  sensitive   = true
+}
+
+# ── Container sizing — matches existing (0.5 CPU, 1Gi) ───────────────────────
+variable "cpu" {
+  description = "CPU allocation per container"
   type        = number
-  default     = 30
+  default     = 0.5
+}
 
-  validation {
-    condition     = var.retention_in_days >= 30 && var.retention_in_days <= 730
-    error_message = "Retention must be between 30 and 730 days."
-  }
+variable "memory" {
+  description = "Memory allocation per container"
+  type        = string
+  default     = "1Gi"
+}
+
+variable "min_replicas" {
+  description = "Minimum replicas — 0 allows scale to zero"
+  type        = number
+  default     = 1
+}
+
+variable "max_replicas" {
+  description = "Maximum replicas"
+  type        = number
+  default     = 3
+}
+
+# ── Environment variables ─────────────────────────────────────────────────────
+# Passed in from environments/prod/main.tf using outputs from other modules
+# Format: [{ name = "KEY", value = "VALUE" }, ...]
+variable "environment_variables" {
+  description = "Environment variables to inject into Container Apps"
+  type = list(object({
+    name  = string
+    value = string
+  }))
+  default = []
 }
 
 variable "tags" {

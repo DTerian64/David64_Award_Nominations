@@ -1,13 +1,10 @@
 # environments/prod/terraform.tfvars
-# ─────────────────────────────────────────────────────────────────────────────
-# Production — matches existing Azure resource names exactly (no suffix)
 # DO NOT COMMIT — gitignored
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource_group_name = "rg_award_nomination"
 environment         = "prod"
 
-# Your local public IPs — check whatismyip.com
 my_ips = [
   "YOUR_HOME_IP",
   "YOUR_OFFICE_IP",
@@ -28,22 +25,29 @@ storage_account_name = "awardnominationmodels"
 key_vault_name = "kv-awardnominations"
 
 # OpenAI
-openai_name        = "award-nomination-open-AI"
-model_capacity_tpm = 150
+openai_name         = "award-nomination-open-AI"
+openai_api_version  = "2024-02-01"
+model_capacity_tpm  = 150
 
-# Log Analytics — existing workspace names
+# Log Analytics
 workspace_name_east = "workspace-rgawardnomination6aem"
 workspace_name_west = "workspace-rgawardnomination57mY"
 
-# Container App Environments
+# Container Apps
 cae_name_east = "cae-award-eastus"
 cae_name_west = "cae-award-westus"
-
-# Container Apps
 app_name_east = "award-api-eastus"
 app_name_west = "award-api-westus"
 min_replicas  = 1
 max_replicas  = 3
+
+# Static ACA config
+location_east                 = "eastus"
+model_blob_name               = "fraud_detection_model.pkl"
+api_base_url                  = "https://award-nomination-api.azurefd.net"
+logging_level                 = "INFO"
+blob_sas_expiry_hours         = 24
+email_action_token_expiry_hours = 24
 
 # Front Door
 afd_profile_name  = "Award-Nomination-ADF"
@@ -54,3 +58,17 @@ swa_name = "award-nomination-frontend"
 
 # Grafana
 grafana_name = "awardnomination-grafana"
+
+# ── Key Vault secrets ─────────────────────────────────────────────────────────
+# Fill in real values — this file is gitignored
+secrets = {
+  SQL-USER                  = "YOUR_SQL_ADMIN_LOGIN"
+  SQL-PASSWORD              = "YOUR_SQL_ADMIN_PASSWORD"
+  AZURE-STORAGE-KEY         = "YOUR_STORAGE_KEY"
+  AZURE-OPENAI-KEY          = "YOUR_OPENAI_KEY"
+  GMAIL-APP-PASSWORD        = "YOUR_GMAIL_APP_PASSWORD"
+  GMAIL-USER                = "YOUR_GMAIL_ADDRESS"
+  FROM-EMAIL                = "YOUR_FROM_EMAIL"
+  FROM-NAME                 = "Award Nominations"
+  EMAIL-ACTION-SECRET-KEY   = "YOUR_EMAIL_SECRET_KEY"
+}

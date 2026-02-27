@@ -1,35 +1,41 @@
-# modules/static-web-app/outputs.tf
+# modules/grafana/outputs.tf
 
-output "static_web_app_id" {
-  description = "Static Web App resource ID"
-  value       = azurerm_static_web_app.frontend.id
+output "grafana_id" {
+  description = "Grafana workspace resource ID"
+  value       = azurerm_dashboard_grafana.grafana.id
 }
 
-output "default_hostname" {
-  description = "Default SWA hostname — e.g. purple-sand-abc123.azurestaticapps.net"
-  value       = azurerm_static_web_app.frontend.default_host_name
+output "grafana_name" {
+  description = "Grafana workspace name"
+  value       = azurerm_dashboard_grafana.grafana.name
 }
 
-output "api_key" {
-  description = "Deployment token — add to GitHub repo secret AZURE_STATIC_WEB_APPS_API_TOKEN"
-  value       = azurerm_static_web_app.frontend.api_key
-  sensitive   = true
+output "grafana_endpoint" {
+  description = "Grafana dashboard URL — open in browser to access dashboards"
+  value       = azurerm_dashboard_grafana.grafana.endpoint
+}
+
+output "grafana_principal_id" {
+  description = "Grafana managed identity — used to grant access to other resources"
+  value       = azurerm_dashboard_grafana.grafana.identity[0].principal_id
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POST-DEPLOY NOTE — GitHub Actions deployment token
+# POST-DEPLOY NOTE — Register provider if apply fails
 # ─────────────────────────────────────────────────────────────────────────────
-# When deploying to a NEW subscription, the SWA gets a new deployment token.
-# Update your GitHub repo secret with the new token:
+# If terraform apply fails with "subscription not registered":
 #
-#   # Get the token
-#   terraform output -raw static_web_app_api_key
+#   az provider register --namespace Microsoft.Dashboard
+#   az provider show --namespace Microsoft.Dashboard --query registrationState
 #
-#   # Set it in GitHub (requires gh cli)
-#   gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN \
-#     --repo DTerian64/David64_Award_Nominations \
-#     --body "$(terraform output -raw static_web_app_api_key)"
+# Wait for "Registered" then re-run terraform apply.
 #
-# Without this update, GitHub Actions will deploy to the OLD SWA
-# in the old subscription, not the new one.
+# POST-DEPLOY NOTE — Grant team members Grafana access
+# ─────────────────────────────────────────────────────────────────────────────
+# Add team members via portal or az cli:
+#
+#   az role assignment create \
+#     --assignee user@domain.com \
+#     --role "Grafana Viewer" \
+#     --scope <grafana_id output>
 # ─────────────────────────────────────────────────────────────────────────────

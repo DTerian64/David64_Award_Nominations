@@ -1,6 +1,7 @@
 # environments/prod/main.tf
 # ─────────────────────────────────────────────────────────────────────────────
 # Production environment — wires all modules together
+# App registrations are READ from existing Azure AD (not managed by Terraform)
 # ─────────────────────────────────────────────────────────────────────────────
 
 locals {
@@ -14,8 +15,26 @@ locals {
 # ── 0. Resource Group ─────────────────────────────────────────────────────────
 resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
-  location = "eastus"
+  location = var.location_east
   tags     = local.tags
+}
+
+# ── Azure AD — read existing prod app registrations (do not modify) ───────────
+data "azuread_client_config" "current" {}
+
+data "azuread_application" "api" {
+  display_name = "Award Nomination"
+}
+
+data "azuread_application" "frontend" {
+  display_name = "Award Nomination System - Frontend"
+}
+
+locals {
+  vite_tenant_id     = data.azuread_client_config.current.tenant_id
+  vite_api_client_id = data.azuread_application.api.client_id
+  vite_client_id     = data.azuread_application.frontend.client_id
+  vite_api_scope     = "api://${data.azuread_application.api.client_id}/access_as_user"
 }
 
 # ── 1. Networking ─────────────────────────────────────────────────────────────
@@ -27,6 +46,7 @@ module "networking" {
   vnet_east_address_space = "10.0.0.0/16"
   vnet_west_address_space = "10.1.0.0/16"
   tags                    = local.tags
+  depends_on              = [azurerm_resource_group.rg]
 }
 
 # ── 2. SQL ────────────────────────────────────────────────────────────────────
@@ -35,6 +55,7 @@ module "sql" {
 
   resource_group_name        = var.resource_group_name
   server_name                = var.sql_server_name
+  database_name              = var.sql_database_name
   admin_login                = var.sql_admin_login
   admin_password             = var.sql_admin_password
   allowed_ips                = var.my_ips
@@ -79,6 +100,11 @@ module "key_vault" {
   private_dns_zone_id        = module.networking.dns_zone_kv_id
   aca_principal_ids          = []
   tags                       = local.tags
+
+  secrets = merge(var.secrets, {
+    AZURE-STORAGE-KEY = module.storage.primary_access_key
+    AZURE-OPENAI-KEY  = module.openai.primary_access_key
+  })
 }
 
 # ── 6. OpenAI ─────────────────────────────────────────────────────────────────
@@ -124,15 +150,23 @@ module "container_apps" {
   acr_admin_password              = module.container_registry.admin_password
 
   environment_variables = [
-    { name = "AZURE_OPENAI_ENDPOINT",    value = module.openai.endpoint },
-    { name = "AZURE_OPENAI_MODEL",       value = module.openai.model_deployment_name },
-    { name = "KEY_VAULT_URL",            value = module.key_vault.vault_uri },
-    { name = "DB_SERVER",                value = module.sql.server_fqdn },
-    { name = "DB_NAME",                  value = module.sql.database_name },
-    { name = "AZURE_STORAGE_ACCOUNT",    value = module.storage.storage_account_name },
-    { name = "BLOB_CONTAINER_EXTRACTS",  value = module.storage.extracts_container_name },
-    { name = "BLOB_CONTAINER_ML_MODELS", value = module.storage.ml_models_container_name },
-    { name = "ENVIRONMENT",              value = var.environment },
+    { name = "SQL_SERVER",                      value = module.sql.server_fqdn },
+    { name = "SQL_DATABASE",                    value = module.sql.database_name },
+    { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
+    { name = "MODEL_CONTAINER",                 value = module.storage.ml_models_container_name },
+    { name = "EXTRACTS_CONTAINER",              value = module.storage.extracts_container_name },
+    { name = "AZURE_OPENAI_ENDPOINT",           value = module.openai.endpoint },
+    { name = "AZURE_OPENAI_MODEL",              value = module.openai.model_deployment_name },
+    { name = "KEY_VAULT_URL",                   value = module.key_vault.vault_uri },
+    { name = "ENVIRONMENT",                     value = var.environment },
+    { name = "REGION",                          value = var.location_east },
+    { name = "CONTAINER_APP_NAME",              value = var.app_name_east },
+    { name = "AZURE_OPENAI_API_VERSION",        value = var.openai_api_version },
+    { name = "MODEL_BLOB_NAME",                 value = var.model_blob_name },
+    { name = "API_BASE_URL",                    value = var.api_base_url },
+    { name = "LOGGING_LEVEL",                   value = var.logging_level },
+    { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
+    { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
   ]
 
   tags = local.tags
@@ -161,7 +195,15 @@ module "static_web_app" {
   resource_group_name = var.resource_group_name
   app_name            = var.swa_name
   afd_hostname        = module.front_door.afd_endpoint_hostname
-  tags                = local.tags
+
+  # Azure AD values wired from existing app registrations
+  vite_api_url       = "https://${module.front_door.afd_endpoint_hostname}"
+  vite_tenant_id     = local.vite_tenant_id
+  vite_api_client_id = local.vite_api_client_id
+  vite_client_id     = local.vite_client_id
+  vite_api_scope     = local.vite_api_scope
+
+  tags = local.tags
 }
 
 # ── 11. Grafana ───────────────────────────────────────────────────────────────

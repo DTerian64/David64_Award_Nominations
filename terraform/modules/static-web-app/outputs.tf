@@ -1,46 +1,35 @@
-# modules/front-door/outputs.tf
+# modules/static-web-app/outputs.tf
 
-output "afd_profile_id" {
-  description = "AFD profile resource ID"
-  value       = azurerm_cdn_frontdoor_profile.afd.id
+output "static_web_app_id" {
+  description = "Static Web App resource ID"
+  value       = azurerm_static_web_app.frontend.id
 }
 
-output "afd_endpoint_hostname" {
-  description = "Public AFD hostname — e.g. award-nomination-api.azurefd.net"
-  value       = azurerm_cdn_frontdoor_endpoint.endpoint.host_name
+output "default_hostname" {
+  description = "Default SWA hostname — e.g. purple-sand-abc123.azurestaticapps.net"
+  value       = azurerm_static_web_app.frontend.default_host_name
 }
 
-output "afd_endpoint_id" {
-  description = "AFD endpoint resource ID — consumed by static-web-app module"
-  value       = azurerm_cdn_frontdoor_endpoint.endpoint.id
-}
-
-output "waf_policy_id" {
-  description = "WAF policy resource ID"
-  value       = azurerm_cdn_frontdoor_firewall_policy.waf.id
+output "api_key" {
+  description = "Deployment token — add to GitHub repo secret AZURE_STATIC_WEB_APPS_API_TOKEN"
+  value       = azurerm_static_web_app.frontend.api_key
+  sensitive   = true
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POST-DEPLOY MANUAL STEP — Private Link approval
+# POST-DEPLOY NOTE — GitHub Actions deployment token
 # ─────────────────────────────────────────────────────────────────────────────
-# After terraform apply, AFD creates a pending private endpoint connection
-# to each CAE. These MUST be approved manually before traffic flows.
+# When deploying to a NEW subscription, the SWA gets a new deployment token.
+# Update your GitHub repo secret with the new token:
 #
-# Approve via az cli:
-#   # Get the pending connection name for East CAE
-#   az containerapp env show \
-#     --name cae-award-eastus \
-#     --resource-group rg_award_nomination \
-#     --query "properties.privateEndpointConnections" -o table
+#   # Get the token
+#   terraform output -raw static_web_app_api_key
 #
-#   # Approve it
-#   az network private-endpoint-connection approve \
-#     --resource-group rg_award_nomination \
-#     --name <connection-name> \
-#     --resource-name cae-award-eastus \
-#     --type Microsoft.App/managedEnvironments \
-#     --description "Approved AFD Private Link"
+#   # Set it in GitHub (requires gh cli)
+#   gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN \
+#     --repo DTerian64/David64_Award_Nominations \
+#     --body "$(terraform output -raw static_web_app_api_key)"
 #
-# Repeat for West CAE (cae-award-westus).
-# Until approved, AFD returns 502 Bad Gateway.
+# Without this update, GitHub Actions will deploy to the OLD SWA
+# in the old subscription, not the new one.
 # ─────────────────────────────────────────────────────────────────────────────

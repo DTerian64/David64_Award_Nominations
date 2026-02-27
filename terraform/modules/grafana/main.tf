@@ -1,40 +1,57 @@
-# modules/static-web-app/main.tf
+# modules/grafana/main.tf
 # ─────────────────────────────────────────────────────────────────────────────
-# Azure Static Web App
+# Azure Managed Grafana
 #
 # Creates:
-#   - Static Web App (Free SKU — matches award-nomination-frontend)
-#   - Linked to GitHub repo + branch for automated deployments
+#   - Grafana workspace (Standard SKU — matches awardnomination-grafana)
+#   - Links to both Log Analytics workspaces as data sources
 #
-# GitHub Actions integration:
-#   Azure generates a deployment token on creation. This token is
-#   automatically added to the GitHub repo as a secret by the resource.
-#   GitHub Actions workflow uses this token to deploy the React SPA.
+# Access:
+#   Grafana uses Azure AD for authentication. Users need the
+#   "Grafana Admin", "Grafana Editor", or "Grafana Viewer" role
+#   assigned on the Grafana resource to log in.
 #
-# NOTE: Free SKU limitations:
-#   - 100GB bandwidth/month
-#   - No custom authentication providers
-#   - No staging environments
-#   Upgrade to Standard if you need staging slots or custom auth.
-#
-# The AFD hostname is injected as an app setting so the React app
-# knows where to call the backend API.
+# NOTE: The azurerm_dashboard_grafana resource requires the
+#   "Azure Managed Grafana" provider feature to be registered:
+#   az provider register --namespace Microsoft.Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 
-resource "azurerm_static_web_app" "frontend" {
-  name                = var.app_name
+resource "azurerm_dashboard_grafana" "grafana" {
+  name                = var.grafana_name
   resource_group_name = var.resource_group_name
   location            = var.location
-  sku_tier            = "Free"
-  sku_size            = "Free"
+  sku                 = "Standard"
+
+  # Allows Grafana to query Azure Monitor / Log Analytics
+  azure_monitor_workspace_integrations {
+    resource_id = var.log_analytics_workspace_east_id
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
 
   tags = var.tags
 }
 
-# ── App settings — environment variables for the React build ─────────────────
-resource "azurerm_static_web_app_custom_domain" "domain" {
-  count              = var.custom_domain != "" ? 1 : 0
-  static_web_app_id  = azurerm_static_web_app.frontend.id
-  domain_name        = var.custom_domain
-  validation_type    = "cname-delegation"
+# ── Grafana Admin role for the deploying user ─────────────────────────────────
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_role_assignment" "grafana_admin" {
+  scope                = azurerm_dashboard_grafana.grafana.id
+  role_definition_name = "Grafana Admin"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# ── Monitoring Reader — lets Grafana query Log Analytics workspaces ───────────
+resource "azurerm_role_assignment" "grafana_monitoring_reader_east" {
+  scope                = var.log_analytics_workspace_east_id
+  role_definition_name = "Monitoring Reader"
+  principal_id         = azurerm_dashboard_grafana.grafana.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "grafana_monitoring_reader_west" {
+  scope                = var.log_analytics_workspace_west_id
+  role_definition_name = "Monitoring Reader"
+  principal_id         = azurerm_dashboard_grafana.grafana.identity[0].principal_id
 }

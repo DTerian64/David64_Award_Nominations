@@ -1,4 +1,4 @@
-# modules/static-web-app/variables.tf
+# modules/grafana/variables.tf
 
 variable "resource_group_name" {
   description = "Resource group to deploy into"
@@ -6,26 +6,25 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region — matches existing SWA (westus2)"
+  description = "Azure region — matches existing Grafana (westus2)"
   type        = string
   default     = "westus2"
 }
 
-variable "app_name" {
-  description = "Static Web App name"
+variable "grafana_name" {
+  description = "Grafana workspace name — globally unique"
   type        = string
-  default     = "award-nomination-frontend"
+  default     = "awardnomination-grafana"
 }
 
-variable "afd_hostname" {
-  description = "AFD public hostname — injected as REACT_APP_API_URL for the React build"
+variable "log_analytics_workspace_east_id" {
+  description = "East Log Analytics workspace resource ID — Grafana data source"
   type        = string
 }
 
-variable "custom_domain" {
-  description = "Optional custom domain e.g. awards.yourdomain.com. Leave empty to skip."
+variable "log_analytics_workspace_west_id" {
+  description = "West Log Analytics workspace resource ID — Grafana data source"
   type        = string
-  default     = ""
 }
 
 variable "tags" {
