@@ -1,0 +1,56 @@
+# environments/dev/terraform.tfvars
+# ─────────────────────────────────────────────────────────────────────────────
+# Dev — all resources suffixed with -dev, separate resource group
+# DO NOT COMMIT — gitignored
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource_group_name = "rg_award_nomination_dev"
+environment         = "dev"
+
+# Your local public IPs
+my_ips = [
+  "YOUR_HOME_IP",
+  "YOUR_OFFICE_IP",
+]
+
+# SQL
+sql_server_name    = "david64-sql-dev"
+sql_admin_login    = "YOUR_SQL_ADMIN_LOGIN"
+sql_admin_password = "YOUR_SQL_ADMIN_PASSWORD"
+
+# ACR
+acr_name = "acrawardnominationdev"
+
+# Storage
+storage_account_name = "awardnominationdev"
+
+# Key Vault
+key_vault_name = "kv-awardnominations-dev"
+
+# OpenAI
+openai_name        = "award-nomination-openai-dev"
+model_capacity_tpm = 10
+
+# Log Analytics
+workspace_name_east = "workspace-award-eastus-dev"
+workspace_name_west = "workspace-award-westus-dev"
+
+# Container App Environments
+cae_name_east = "cae-award-eastus-dev"
+cae_name_west = "cae-award-westus-dev"
+
+# Container Apps
+app_name_east = "award-api-eastus-dev"
+app_name_west = "award-api-westus-dev"
+min_replicas  = 0
+max_replicas  = 1
+
+# Front Door
+afd_profile_name  = "Award-Nomination-ADF-dev"
+afd_endpoint_name = "award-nomination-api-dev"
+
+# Static Web App
+swa_name = "award-nomination-frontend-dev"
+
+# Grafana
+grafana_name = "awardnomination-grafana-dev"

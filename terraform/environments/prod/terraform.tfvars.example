@@ -1,0 +1,56 @@
+# environments/prod/terraform.tfvars
+# ─────────────────────────────────────────────────────────────────────────────
+# Production — matches existing Azure resource names exactly (no suffix)
+# DO NOT COMMIT — gitignored
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource_group_name = "rg_award_nomination"
+environment         = "prod"
+
+# Your local public IPs — check whatismyip.com
+my_ips = [
+  "YOUR_HOME_IP",
+  "YOUR_OFFICE_IP",
+]
+
+# SQL
+sql_server_name    = "david64-sql"
+sql_admin_login    = "YOUR_SQL_ADMIN_LOGIN"
+sql_admin_password = "YOUR_SQL_ADMIN_PASSWORD"
+
+# ACR
+acr_name = "acrawardnomination"
+
+# Storage
+storage_account_name = "awardnominationmodels"
+
+# Key Vault
+key_vault_name = "kv-awardnominations"
+
+# OpenAI
+openai_name        = "award-nomination-open-AI"
+model_capacity_tpm = 150
+
+# Log Analytics — existing workspace names
+workspace_name_east = "workspace-rgawardnomination6aem"
+workspace_name_west = "workspace-rgawardnomination57mY"
+
+# Container App Environments
+cae_name_east = "cae-award-eastus"
+cae_name_west = "cae-award-westus"
+
+# Container Apps
+app_name_east = "award-api-eastus"
+app_name_west = "award-api-westus"
+min_replicas  = 1
+max_replicas  = 3
+
+# Front Door
+afd_profile_name  = "Award-Nomination-ADF"
+afd_endpoint_name = "award-nomination-api"
+
+# Static Web App
+swa_name = "award-nomination-frontend"
+
+# Grafana
+grafana_name = "awardnomination-grafana"
