@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Terraform .gitignore
+# Place this in the terraform/ root folder
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Terraform working directories — downloaded providers and modules
+**/.terraform/
+**/.terraform.lock.hcl
+
+# State files — never commit, lives in Azure blob storage
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Sensitive variable files — fill these in locally, never commit
+**/terraform.tfvars
+
+# Inspection files created during troubleshooting
+tfstate-inspect.json
+
+# Plan output files — contain sensitive data
+*.tfplan
+
+# Override files — local developer overrides, not for sharing
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI config file
+.terraformrc
+terraform.rc

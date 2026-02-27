@@ -1,0 +1,138 @@
+{
+  "location": "westus2",
+  "sku": null,
+  "version": "12.0"
+}
+{
+  "maxSizeBytes": 34359738368,
+  "sku": {
+    "capacity": 2,
+    "family": "Gen5",
+    "name": "GP_S_Gen5",
+    "size": null,
+    "tier": "GeneralPurpose"
+  },
+  "zoneRedundant": false
+}
+{
+  "adminUserEnabled": true,
+  "location": "westus2",
+  "sku": {
+    "name": "Basic",
+    "tier": "Basic"
+  }
+}
+{
+  "location": "eastus",
+  "sku": {
+    "family": "A",
+    "name": "Standard"
+  },
+  "softDeleteRetentionInDays": 90
+}
+{
+  "kind": "OpenAI",
+  "location": "eastus",
+  "sku": {
+    "capacity": null,
+    "family": null,
+    "name": "S0",
+    "size": null,
+    "tier": null
+  }
+}
+[
+  {
+    "model": {
+      "callRateLimit": null,
+      "format": "OpenAI",
+      "name": "gpt-4.1",
+      "publisher": null,
+      "source": null,
+      "sourceAccount": null,
+      "version": "2025-04-14"
+    },
+    "name": "gpt-4.1",
+    "sku": {
+      "capacity": 150,
+      "family": null,
+      "name": "GlobalStandard",
+      "size": null,
+      "tier": null
+    }
+  }
+]
+{
+  "accessTier": null,
+  "kind": "StorageV2",
+  "location": "eastus",
+  "sku": {
+    "name": "Standard_LRS",
+    "tier": "Standard"
+  }
+}
+{
+  "cpu": 0.5,
+  "location": "East US",
+  "maxReplicas": null,
+  "memory": "1Gi",
+  "minReplicas": null,
+  "targetPort": 8000
+}
+{
+  "cpu": 0.5,
+  "location": "West US",
+  "maxReplicas": null,
+  "memory": "1Gi",
+  "minReplicas": null,
+  "targetPort": 8000
+}
+{
+  "location": "Global",
+  "sku": {
+    "name": "Standard_AzureFrontDoor"
+  }
+}
+[
+  {
+    "healthProbe": null,
+    "loadBalancing": {
+      "additionalLatencyInMilliseconds": 0,
+      "sampleSize": 4,
+      "successfulSamplesRequired": 3
+    },
+    "name": "og-award-api"
+  }
+]
+{
+  "branch": "main",
+  "buildProperties": null,
+  "location": "West US 2",
+  "repositoryUrl": "https://github.com/DTerian64/David64_Award_Nominations",
+  "sku": {
+    "capabilities": null,
+    "capacity": null,
+    "family": null,
+    "locations": null,
+    "name": "Free",
+    "size": null,
+    "skuCapacity": null,
+    "tier": "Free"
+  }
+}
+{
+  "location": "eastus",
+  "retentionInDays": 30,
+  "sku": {
+    "lastSkuUpdate": "2026-01-16T19:35:19.4113492Z",
+    "name": "PerGB2018"
+  }
+}
+{
+  "location": "westus",
+  "retentionInDays": 30,
+  "sku": {
+    "lastSkuUpdate": "2026-01-16T19:39:47.0025343Z",
+    "name": "PerGB2018"
+  }
+}
