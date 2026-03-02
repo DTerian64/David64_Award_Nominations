@@ -30,7 +30,6 @@ resource "azurerm_mssql_database" "db" {
   name         = var.database_name
   server_id    = azurerm_mssql_server.sql.id
   collation    = "SQL_Latin1_General_CP1_CI_AS"
-  license_type = "LicenseIncluded"
   max_size_gb  = 32
   zone_redundant = false
 
@@ -45,7 +44,7 @@ resource "azurerm_mssql_database" "db" {
 # ── Private endpoint ──────────────────────────────────────────────────────────
 resource "azurerm_private_endpoint" "sql" {
   name                = "pe-${var.server_name}"
-  location            = var.location
+  location            = var.location_east
   resource_group_name = var.resource_group_name
   subnet_id           = var.private_endpoint_subnet_id
   tags                = var.tags

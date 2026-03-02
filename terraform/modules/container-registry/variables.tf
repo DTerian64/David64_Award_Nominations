@@ -19,7 +19,7 @@ variable "acr_name" {
 variable "sku" {
   description = "ACR SKU: Basic, Standard, or Premium"
   type        = string
-  default     = "Basic"
+  default     = "Premium"
 
   validation {
     condition     = contains(["Basic", "Standard", "Premium"], var.sku)
@@ -53,4 +53,10 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+variable "location_east" {
+  description = "East US region — used for private endpoint (must match subnet region)"
+  type        = string
+  default     = "eastus"
 }

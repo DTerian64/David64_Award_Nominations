@@ -7,8 +7,6 @@
 #   - VNet West + ACA subnet
 #   - Bidirectional VNet peering
 #   - 5 Private DNS zones linked to both VNets
-#   - 5 Private endpoints (SQL, Blob, KV, OpenAI, ACR)
-#   - SQL + Storage firewall rules for local IP whitelist
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── East US VNet ──────────────────────────────────────────────────────────────
@@ -25,6 +23,12 @@ resource "azurerm_subnet" "aca_east" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.east.name
   address_prefixes     = [cidrsubnet(var.vnet_east_address_space, 8, 1)]
+
+  # Service endpoints allow ACA to access KV and Storage directly
+  service_endpoints = [
+    "Microsoft.KeyVault",
+    "Microsoft.Storage",
+  ]
 
   delegation {
     name = "aca-delegation"
@@ -58,6 +62,12 @@ resource "azurerm_subnet" "aca_west" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.west.name
   address_prefixes     = [cidrsubnet(var.vnet_west_address_space, 8, 1)]
+
+  # Service endpoints allow ACA to access KV and Storage directly
+  service_endpoints = [
+    "Microsoft.KeyVault",
+    "Microsoft.Storage",
+  ]
 
   delegation {
     name = "aca-delegation"

@@ -69,4 +69,6 @@ resource "azurerm_private_endpoint" "openai" {
     name                 = "dns-group-openai"
     private_dns_zone_ids = [var.private_dns_zone_id]
   }
+
+  depends_on = [azurerm_cognitive_deployment.gpt4]
 }

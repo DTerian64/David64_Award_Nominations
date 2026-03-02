@@ -19,11 +19,17 @@ crash.*.log
 # Sensitive variable files — fill these in locally, never commit
 **/terraform.tfvars
 
+# Template is safe to commit — no secrets
+!**/terraform.tfvars.template
+
 # Inspection files created during troubleshooting
 tfstate-inspect.json
 
 # Plan output files — contain sensitive data
 *.tfplan
+
+# Helping PowerShell scripts to run before mid and after terraform
+*.ps1
 
 # Override files — local developer overrides, not for sharing
 override.tf

@@ -21,12 +21,11 @@ resource "azurerm_resource_group" "rg" {
 
 # ── Azure AD — create new app registrations for dev ───────────────────────────
 module "app_registrations" {
-  source      = "../../modules/app-registrations"
-  environment = var.environment
-
-  # SWA URL added after first apply — leave empty on first run
-  # After first apply: add the SWA URL and re-apply to update redirect URIs
-  swa_urls = var.swa_redirect_urls
+  source             = "../../modules/app-registrations"
+  environment        = var.environment
+  api_client_id      = var.api_client_id
+  frontend_client_id = var.frontend_client_id
+  swa_urls           = var.swa_redirect_urls
 }
 
 # ── 1. Networking ─────────────────────────────────────────────────────────────
@@ -54,6 +53,7 @@ module "sql" {
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_sql_id
   tags                       = local.tags
+  depends_on                 = [azurerm_resource_group.rg]
 }
 
 # ── 3. Container Registry ─────────────────────────────────────────────────────
@@ -65,6 +65,7 @@ module "container_registry" {
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_acr_id
   tags                       = local.tags
+  depends_on                 = [azurerm_resource_group.rg]
 }
 
 # ── 4. Storage ────────────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ module "storage" {
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_blob_id
   tags                       = local.tags
+  depends_on                 = [azurerm_resource_group.rg]
 }
 
 # ── 5. Key Vault ──────────────────────────────────────────────────────────────
@@ -90,8 +92,9 @@ module "key_vault" {
   aca_subnet_ids             = [module.networking.subnet_aca_east_id, module.networking.subnet_aca_west_id]
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_kv_id
-  aca_principal_ids          = []
+  aca_principal_ids          = compact([var.aca_east_principal_id, var.aca_west_principal_id])
   tags                       = local.tags
+  depends_on                 = [azurerm_resource_group.rg, module.networking]
 
   secrets = merge(var.secrets, {
     AZURE-STORAGE-KEY = module.storage.primary_access_key
@@ -110,6 +113,7 @@ module "openai" {
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_openai_id
   tags                       = local.tags
+  depends_on                 = [azurerm_resource_group.rg]
 }
 
 # ── 7. Log Analytics ──────────────────────────────────────────────────────────
@@ -120,6 +124,7 @@ module "log_analytics" {
   workspace_name_east = var.workspace_name_east
   workspace_name_west = var.workspace_name_west
   tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg]
 }
 
 # ── 8. Container Apps ─────────────────────────────────────────────────────────
@@ -140,6 +145,7 @@ module "container_apps" {
   acr_login_server                = module.container_registry.login_server
   acr_admin_username              = module.container_registry.admin_username
   acr_admin_password              = module.container_registry.admin_password
+  depends_on                      = [azurerm_resource_group.rg]
 
   environment_variables = [
     { name = "SQL_SERVER",                      value = module.sql.server_fqdn },
@@ -178,6 +184,7 @@ module "front_door" {
   cae_east_default_domain = module.container_apps.cae_east_default_domain
   cae_west_default_domain = module.container_apps.cae_west_default_domain
   tags                    = local.tags
+  depends_on              = [azurerm_resource_group.rg]
 }
 
 # ── 10. Static Web App ────────────────────────────────────────────────────────
@@ -187,24 +194,11 @@ module "static_web_app" {
   resource_group_name = var.resource_group_name
   app_name            = var.swa_name
   afd_hostname        = module.front_door.afd_endpoint_hostname
-
-  # Azure AD values wired from newly created app registrations
-  vite_api_url       = "https://${module.front_door.afd_endpoint_hostname}"
-  vite_tenant_id     = module.app_registrations.tenant_id
-  vite_api_client_id = module.app_registrations.api_client_id
-  vite_client_id     = module.app_registrations.frontend_client_id
-  vite_api_scope     = module.app_registrations.api_scope
-
-  tags = local.tags
-}
-
-# ── 11. Grafana ───────────────────────────────────────────────────────────────
-module "grafana" {
-  source = "../../modules/grafana"
-
-  resource_group_name             = var.resource_group_name
-  grafana_name                    = var.grafana_name
-  log_analytics_workspace_east_id = module.log_analytics.workspace_east_id
-  log_analytics_workspace_west_id = module.log_analytics.workspace_west_id
-  tags                            = local.tags
+  vite_api_url        = "https://${module.front_door.afd_endpoint_hostname}"
+  vite_tenant_id      = module.app_registrations.tenant_id
+  vite_api_client_id  = module.app_registrations.api_client_id
+  vite_client_id      = module.app_registrations.frontend_client_id
+  vite_api_scope      = module.app_registrations.api_scope
+  tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg]
 }

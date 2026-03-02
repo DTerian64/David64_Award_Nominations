@@ -30,24 +30,7 @@ variable "openai_name"          { type = string }
 variable "openai_api_version"   { type = string }
 variable "model_capacity_tpm"   { type = number }
 
-# Log Analytics
-variable "workspace_name_east"  { type = string }
-variable "workspace_name_west"  { type = string }
-
-# Container Apps
-variable "cae_name_east"        { type = string }
-variable "cae_name_west"        { type = string }
-variable "app_name_east"        { type = string }
-variable "app_name_west"        { type = string }
-variable "min_replicas"         { type = number }
-variable "max_replicas"         { type = number }
-
-# Static ACA config
-variable "location_east" {
-  type    = string
-  default = "eastus"
-}
-variable "model_blob_name"      { type = string }
+# Log Analyticsvariable "model_blob_name"      { type = string }
 variable "api_base_url"         { type = string }
 variable "logging_level" {
   type    = string
@@ -76,10 +59,65 @@ variable "swa_redirect_urls" {
 }
 
 # Grafana
-variable "grafana_name"         { type = string }
+variable "workspace_name_east" {
+  description = "Log Analytics workspace name — East US"
+  type        = string
+}
 
-# Key Vault secrets
+variable "workspace_name_west" {
+  description = "Log Analytics workspace name — West US"
+  type        = string
+}
+
+variable "api_client_id" {
+  description = "Client ID of the manually created API app registration in Entra"
+  type        = string
+  default     = ""
+}
+
+variable "frontend_client_id" {
+  description = "Client ID of the manually created Frontend app registration in Entra"
+  type        = string
+  default     = ""
+}
+
+# Container Apps
+variable "cae_name_east"  { type = string }
+variable "cae_name_west"  { type = string }
+variable "app_name_east"  { type = string }
+variable "app_name_west"  { type = string }
+variable "min_replicas" {
+  type    = number
+  default = 0
+}
+variable "max_replicas" {
+  type    = number
+  default = 1
+}
+
+# Location
+variable "location_east" {
+  type    = string
+  default = "eastus"
+}
+
+# Secrets
 variable "secrets" {
   type      = map(string)
   sensitive = true
+}
+
+# Pass 2 — ACA principal IDs for Key Vault access policies
+variable "aca_east_principal_id" {
+  type    = string
+  default = ""
+}
+variable "aca_west_principal_id" {
+  type    = string
+  default = ""
+}
+
+variable "model_blob_name" {
+  type    = string
+  default = "fraud_detection_model.pkl"
 }

@@ -19,7 +19,6 @@ variable "server_name" {
 variable "database_name" {
   description = "SQL Database name"
   type        = string
-  default     = "AwardNominations"
 }
 
 variable "admin_login" {
@@ -51,7 +50,7 @@ variable "allowed_ips" {
 }
 
 variable "public_network_access_enabled" {
-  description = "Allow public network access. Set false after private endpoint is confirmed."
+  description = "Allow public network access. Set false after private endpoint confirmed."
   type        = bool
   default     = true
 }
@@ -60,4 +59,10 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+variable "location_east" {
+  description = "East US region — used for private endpoint (must match subnet region)"
+  type        = string
+  default     = "eastus"
 }
