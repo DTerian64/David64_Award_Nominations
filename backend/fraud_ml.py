@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
 from typing import Dict, Any
-import sqlhelper
+import sqlhelper2 as sqlhelper  # Use sqlhelper2 for database interactions
 import os
 from pathlib import Path
 

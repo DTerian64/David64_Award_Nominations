@@ -9,7 +9,7 @@ import jwt
 from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import OAuth2
 from typing import Optional, Dict, Any, Callable
-import sqlhelper
+import sqlhelper2 as sqlhelper  # Using sqlhelper2 for database interactions
 import logging
 logger = logging.getLogger(__name__) 
 

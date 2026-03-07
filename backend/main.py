@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,7 +30,7 @@ from auth import (
     is_admin
 )
 
-import sqlhelper
+import sqlhelper2 as sqlhelper  # Database helper functions for Azure SQL
 from models import (
     User, NominationCreate, Nomination, NominationApproval,
     StatusResponse, HealthResponse, AuditLog
@@ -60,7 +61,19 @@ from email_utils import send_email, get_nomination_submitted_email, get_nominati
 
 from fastapi.openapi.docs import get_swagger_ui_html
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan handler – runs startup logic, then yields control."""
+    # Startup: ensure all ORM-defined tables exist in the database
+    sqlhelper.create_all_tables()
+    logger.info("Database tables verified on startup.")
+    yield
+    # Shutdown: nothing to clean up (connection pool is managed per-request)
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Award Nomination System",
     description="Employee recognition and monetary award nomination system",
     version="1.0.0",
