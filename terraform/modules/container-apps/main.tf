@@ -23,9 +23,11 @@ resource "azurerm_container_app_environment" "east" {
   location                   = var.location_east
   log_analytics_workspace_id = var.log_analytics_workspace_east_id
 
-  # VNet injection — makes CAE internal only
+  # VNet injection — internal_load_balancer_enabled controls public vs private.
+  # false (default) → public IP, reachable by Front Door Standard.
+  # true            → private IP only, requires Front Door Premium + Private Link.
   infrastructure_subnet_id       = var.subnet_aca_east_id
-  internal_load_balancer_enabled = true
+  internal_load_balancer_enabled = var.internal_load_balancer_enabled
 
   tags = var.tags
 }
@@ -38,7 +40,7 @@ resource "azurerm_container_app_environment" "west" {
   log_analytics_workspace_id = var.log_analytics_workspace_west_id
 
   infrastructure_subnet_id       = var.subnet_aca_west_id
-  internal_load_balancer_enabled = true
+  internal_load_balancer_enabled = var.internal_load_balancer_enabled
 
   tags = var.tags
 }
@@ -69,7 +71,7 @@ resource "azurerm_container_app" "east" {
   }
 
   ingress {
-    external_enabled = false   # internal only — AFD connects via Private Link
+    external_enabled = true    # public — reachable by Front Door Standard
     target_port      = 8000
     transport        = "http"
 

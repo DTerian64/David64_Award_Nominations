@@ -1,6 +1,6 @@
 # modules/front-door/main.tf
 # ─────────────────────────────────────────────────────────────────────────────
-# Azure Front Door Premium + WAF Policy
+# Azure Front Door Standard + WAF Policy
 #
 # Origins connect to Container App Environments via public hostname.
 # AFD → public CAE domain (HTTPS) → Container App
@@ -11,7 +11,7 @@
 resource "azurerm_cdn_frontdoor_profile" "afd" {
   name                = var.afd_profile_name
   resource_group_name = var.resource_group_name
-  sku_name            = "Premium_AzureFrontDoor"
+  sku_name            = "Standard_AzureFrontDoor"
   tags                = var.tags
 }
 
@@ -53,8 +53,8 @@ resource "azurerm_cdn_frontdoor_origin" "east" {
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
 
   enabled                        = true
-  host_name                      = var.cae_east_default_domain
-  origin_host_header             = var.cae_east_default_domain
+  host_name                      = var.container_app_east_fqdn
+  origin_host_header             = var.container_app_east_fqdn
   priority                       = 1
   weight                         = 500
   certificate_name_check_enabled = true
@@ -65,8 +65,8 @@ resource "azurerm_cdn_frontdoor_origin" "west" {
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
 
   enabled                        = true
-  host_name                      = var.cae_west_default_domain
-  origin_host_header             = var.cae_west_default_domain
+  host_name                      = var.container_app_west_fqdn
+  origin_host_header             = var.container_app_west_fqdn
   priority                       = 1
   weight                         = 500
   certificate_name_check_enabled = true

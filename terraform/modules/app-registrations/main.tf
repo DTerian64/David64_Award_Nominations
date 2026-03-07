@@ -10,6 +10,11 @@ resource "azuread_application" "api" {
   display_name = "Award Nomination - ${var.environment}"
   owners       = [data.azuread_client_config.current.object_id]
 
+  # Required for Microsoft identity platform v2 tenants
+  api {
+    requested_access_token_version = 2
+  }
+
   feature_tags {
     enterprise = true
   }
@@ -28,6 +33,11 @@ resource "azuread_service_principal" "api" {
 resource "azuread_application" "frontend" {
   display_name = "Award Nomination Frontend - ${var.environment}"
   owners       = [data.azuread_client_config.current.object_id]
+
+  # Required for Microsoft identity platform v2 tenants
+  api {
+    requested_access_token_version = 2
+  }
 
   single_page_application {
     redirect_uris = concat(

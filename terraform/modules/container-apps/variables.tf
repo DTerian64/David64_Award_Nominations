@@ -120,6 +120,12 @@ variable "environment_variables" {
   default = []
 }
 
+variable "internal_load_balancer_enabled" {
+  description = "Set true to make the CAE internal-only (requires Front Door Premium + Private Link). Set false for public access via Front Door Standard."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

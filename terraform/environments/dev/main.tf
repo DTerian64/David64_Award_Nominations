@@ -21,11 +21,9 @@ resource "azurerm_resource_group" "rg" {
 
 # ── Azure AD — create new app registrations for dev ───────────────────────────
 module "app_registrations" {
-  source             = "../../modules/app-registrations"
-  environment        = var.environment
-  api_client_id      = var.api_client_id
-  frontend_client_id = var.frontend_client_id
-  swa_urls           = var.swa_redirect_urls
+  source      = "../../modules/app-registrations"
+  environment = var.environment
+  swa_urls    = var.swa_redirect_urls
 }
 
 # ── 1. Networking ─────────────────────────────────────────────────────────────
@@ -177,14 +175,10 @@ module "front_door" {
   resource_group_name     = var.resource_group_name
   afd_profile_name        = var.afd_profile_name
   afd_endpoint_name       = var.afd_endpoint_name
-  cae_east_id             = module.container_apps.cae_east_id
-  cae_west_id             = module.container_apps.cae_west_id
-  cae_east_static_ip      = module.container_apps.cae_east_static_ip
-  cae_west_static_ip      = module.container_apps.cae_west_static_ip
-  cae_east_default_domain = module.container_apps.cae_east_default_domain
-  cae_west_default_domain = module.container_apps.cae_west_default_domain
+  container_app_east_fqdn = module.container_apps.east_app_fqdn
+  container_app_west_fqdn = module.container_apps.west_app_fqdn
   tags                    = local.tags
-  depends_on              = [azurerm_resource_group.rg]
+  depends_on              = [azurerm_resource_group.rg, module.container_apps]
 }
 
 # ── 10. Static Web App ────────────────────────────────────────────────────────

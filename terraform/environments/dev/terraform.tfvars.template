@@ -61,10 +61,6 @@ swa_name = "award-nomination-frontend-dev"
 workspace_name_east = "workspace-award-eastus-dev"
 workspace_name_west = "workspace-award-westus-dev"
 
-# ── Azure AD app registrations — POPULATED_BY_SCRIPT (pre-terraform.ps1) ─────
-api_client_id      = ""
-frontend_client_id = ""
-
 # ── Pass 2 values — POPULATED_BY_SCRIPT (mid-terraform.ps1) ──────────────────
 aca_east_principal_id = ""
 aca_west_principal_id = ""

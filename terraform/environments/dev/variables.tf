@@ -30,7 +30,7 @@ variable "openai_name"          { type = string }
 variable "openai_api_version"   { type = string }
 variable "model_capacity_tpm"   { type = number }
 
-# Log Analyticsvariable "model_blob_name"      { type = string }
+# App config
 variable "api_base_url"         { type = string }
 variable "logging_level" {
   type    = string
@@ -58,7 +58,7 @@ variable "swa_redirect_urls" {
   default = []
 }
 
-# Grafana
+# Log Analytics
 variable "workspace_name_east" {
   description = "Log Analytics workspace name — East US"
   type        = string
@@ -67,18 +67,6 @@ variable "workspace_name_east" {
 variable "workspace_name_west" {
   description = "Log Analytics workspace name — West US"
   type        = string
-}
-
-variable "api_client_id" {
-  description = "Client ID of the manually created API app registration in Entra"
-  type        = string
-  default     = ""
-}
-
-variable "frontend_client_id" {
-  description = "Client ID of the manually created Frontend app registration in Entra"
-  type        = string
-  default     = ""
 }
 
 # Container Apps

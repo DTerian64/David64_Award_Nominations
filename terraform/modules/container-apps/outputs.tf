@@ -43,12 +43,12 @@ output "west_app_id" {
 }
 
 output "east_app_fqdn" {
-  description = "East Container App FQDN — internal only"
+  description = "East Container App FQDN — used as Front Door origin hostname"
   value       = azurerm_container_app.east.ingress[0].fqdn
 }
 
 output "west_app_fqdn" {
-  description = "West Container App FQDN — internal only"
+  description = "West Container App FQDN — used as Front Door origin hostname"
   value       = azurerm_container_app.west.ingress[0].fqdn
 }
 
