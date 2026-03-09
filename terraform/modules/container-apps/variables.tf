@@ -144,6 +144,20 @@ variable "key_vault_uri" {
   default     = ""
 }
 
+# ── User-Assigned Managed Identities ─────────────────────────────────────────
+# Created in the environment main.tf BEFORE the Container Apps, so KV access
+# policies can be granted before Azure tries to resolve KV-backed secrets.
+# Using user-assigned (not system-assigned) breaks the ordering race condition.
+variable "aca_east_identity_id" {
+  description = "Resource ID of the User-Assigned Managed Identity for the east Container App"
+  type        = string
+}
+
+variable "aca_west_identity_id" {
+  description = "Resource ID of the User-Assigned Managed Identity for the west Container App"
+  type        = string
+}
+
 variable "internal_load_balancer_enabled" {
   description = "Set true to make the CAE internal-only (requires Front Door Premium + Private Link). Set false for public access via Front Door Standard."
   type        = bool

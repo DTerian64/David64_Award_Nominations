@@ -64,9 +64,11 @@ resource "azurerm_container_app" "east" {
   revision_mode                = "Single"
   tags                         = var.tags
 
-  # System-assigned managed identity — used for KV access
+  # User-assigned managed identity — pre-authorized for KV access before this
+  # Container App is created, eliminating the system-assigned identity race condition.
   identity {
-    type = "SystemAssigned"
+    type         = "UserAssigned"
+    identity_ids = [var.aca_east_identity_id]
   }
 
   # Registry credentials for ACR image pull
@@ -83,15 +85,15 @@ resource "azurerm_container_app" "east" {
   }
 
   # ── Key Vault secret references ───────────────────────────────────────────
-  # Each entry creates an ACA secret that resolves its value from KV at runtime
-  # using the Container App's system-assigned managed identity.
+  # Each entry creates an ACA secret that resolves its value from KV at runtime.
+  # The user-assigned managed identity is referenced by its full resource ID.
   # The actual secret value is never stored in Terraform state.
   dynamic "secret" {
     for_each = { for ref in var.kv_secret_references : lower(ref.kv_secret_name) => ref }
     content {
       name                = secret.key
       key_vault_secret_id = "${trimsuffix(var.key_vault_uri, "/")}/secrets/${secret.value.kv_secret_name}"
-      identity            = "System"
+      identity            = var.aca_east_identity_id
     }
   }
 
@@ -155,7 +157,8 @@ resource "azurerm_container_app" "west" {
   tags                         = var.tags
 
   identity {
-    type = "SystemAssigned"
+    type         = "UserAssigned"
+    identity_ids = [var.aca_west_identity_id]
   }
 
   registry {
@@ -174,12 +177,12 @@ resource "azurerm_container_app" "west" {
     content {
       name                = secret.key
       key_vault_secret_id = "${trimsuffix(var.key_vault_uri, "/")}/secrets/${secret.value.kv_secret_name}"
-      identity            = "System"
+      identity            = var.aca_west_identity_id
     }
   }
 
   ingress {
-    external_enabled = false
+    external_enabled = true    # public — reachable by Front Door Standard
     target_port      = 8000
     transport        = "http"
 

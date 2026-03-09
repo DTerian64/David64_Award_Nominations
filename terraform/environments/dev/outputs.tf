@@ -27,13 +27,13 @@ output "swa_deployment_token" {
 }
 
 output "aca_east_principal_id" {
-  description = "East ACA managed identity — add to aca_principal_ids after first apply"
-  value       = module.container_apps.east_principal_id
+  description = "East User-Assigned Managed Identity principal ID (for reference)"
+  value       = azurerm_user_assigned_identity.aca_east.principal_id
 }
 
 output "aca_west_principal_id" {
-  description = "West ACA managed identity — add to aca_principal_ids after first apply"
-  value       = module.container_apps.west_principal_id
+  description = "West User-Assigned Managed Identity principal ID (for reference)"
+  value       = azurerm_user_assigned_identity.aca_west.principal_id
 }
 
 output "post_deploy_checklist" {
@@ -42,14 +42,12 @@ output "post_deploy_checklist" {
 
   Dev environment deployed. Complete these steps:
 
-  1. Add KV secrets:
-     az keyvault secret set --vault-name kv-awardnominations-dev --name "DB-PASSWORD"      --value "..."
-     az keyvault secret set --vault-name kv-awardnominations-dev --name "OPENAI-API-KEY"   --value "..."
-     az keyvault secret set --vault-name kv-awardnominations-dev --name "SENDGRID-API-KEY" --value "..."
+  1. KV secrets are auto-wired from module outputs (storage key, OpenAI key/endpoint,
+     SQL server/database). Remaining secrets (SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD,
+     etc.) must be present in terraform.tfvars secrets map before apply.
 
-  2. Update KV aca_principal_ids and re-apply:
-     terraform output aca_east_principal_id
-     terraform output aca_west_principal_id
+  2. KV access policies are fully automated via User-Assigned Managed Identities —
+     no manual two-pass apply required. Both MIs are created before Container Apps.
 
   3. Approve AFD Private Link in portal for both CAEs
 

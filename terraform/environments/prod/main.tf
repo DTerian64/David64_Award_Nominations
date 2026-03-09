@@ -88,6 +88,27 @@ module "storage" {
   tags                       = local.tags
 }
 
+# ── 4b. User-Assigned Managed Identities ─────────────────────────────────────
+# Created BEFORE Key Vault access policies and Container Apps.
+# This eliminates the system-assigned identity race condition where Azure tries to
+# validate KV-backed secrets before the access policy for the new identity exists.
+# Dependency order: MI → KV access policy → Container Apps (with KV secrets)
+resource "azurerm_user_assigned_identity" "aca_east" {
+  name                = "id-award-api-eastus-${var.environment}"
+  resource_group_name = var.resource_group_name
+  location            = var.location_east
+  tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg]
+}
+
+resource "azurerm_user_assigned_identity" "aca_west" {
+  name                = "id-award-api-westus-${var.environment}"
+  resource_group_name = var.resource_group_name
+  location            = "westus"
+  tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg]
+}
+
 # ── 5. Key Vault ──────────────────────────────────────────────────────────────
 # aca_principal_ids is intentionally empty here to avoid a circular dependency:
 #   Key Vault needs Container App principal IDs → Container Apps need KEY_VAULT_URL.
@@ -157,6 +178,12 @@ module "container_apps" {
   acr_admin_username              = module.container_registry.admin_username
   acr_admin_password              = module.container_registry.admin_password
   key_vault_uri                   = module.key_vault.vault_uri
+  aca_east_identity_id            = azurerm_user_assigned_identity.aca_east.id
+  aca_west_identity_id            = azurerm_user_assigned_identity.aca_west.id
+  # KV access policies must exist before Container Apps try to resolve KV secrets
+  depends_on                      = [azurerm_resource_group.rg, module.key_vault,
+                                     azurerm_key_vault_access_policy.aca_east,
+                                     azurerm_key_vault_access_policy.aca_west]
 
   # Non-secret config — passed as plain env vars
   environment_variables = [
@@ -192,27 +219,27 @@ module "container_apps" {
 }
 
 # ── Key Vault access policies for Container Apps ──────────────────────────────
-# Standalone resources break the circular dependency:
-#   KV is created first (no ACA deps) → Container Apps created with KEY_VAULT_URL
-#   → these policies created last, granting managed identities secret read access.
+# Reference the user-assigned MIs (created above) — not the Container Apps.
+# This breaks the ordering race: MI exists → KV policy granted → Container App
+# created with identity already authorized. No more 5s timeout errors.
 resource "azurerm_key_vault_access_policy" "aca_east" {
   key_vault_id = module.key_vault.key_vault_id
   tenant_id    = data.azuread_client_config.current.tenant_id
-  object_id    = module.container_apps.east_principal_id
+  object_id    = azurerm_user_assigned_identity.aca_east.principal_id
 
   secret_permissions = ["Get", "List"]
 
-  depends_on = [module.key_vault, module.container_apps]
+  depends_on = [module.key_vault, azurerm_user_assigned_identity.aca_east]
 }
 
 resource "azurerm_key_vault_access_policy" "aca_west" {
   key_vault_id = module.key_vault.key_vault_id
   tenant_id    = data.azuread_client_config.current.tenant_id
-  object_id    = module.container_apps.west_principal_id
+  object_id    = azurerm_user_assigned_identity.aca_west.principal_id
 
   secret_permissions = ["Get", "List"]
 
-  depends_on = [module.key_vault, module.container_apps]
+  depends_on = [module.key_vault, azurerm_user_assigned_identity.aca_west]
 }
 
 # ── 9. Front Door ─────────────────────────────────────────────────────────────

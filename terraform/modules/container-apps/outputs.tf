@@ -52,16 +52,11 @@ output "west_app_fqdn" {
   value       = azurerm_container_app.west.ingress[0].fqdn
 }
 
-# ── Managed identity outputs — consumed by key-vault module ──────────────────
-output "east_principal_id" {
-  description = "East Container App system-assigned managed identity object ID"
-  value       = azurerm_container_app.east.identity[0].principal_id
-}
-
-output "west_principal_id" {
-  description = "West Container App system-assigned managed identity object ID"
-  value       = azurerm_container_app.west.identity[0].principal_id
-}
+# ── Managed identity outputs ──────────────────────────────────────────────────
+# NOTE: Container Apps now use User-Assigned Managed Identities, which are
+# created in the environment main.tf before this module runs. KV access policies
+# reference those resources directly — not these outputs.
+# The identity_ids passed in are available from the environment main.tf directly.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # POST-DEPLOY NOTE
