@@ -6,7 +6,7 @@ export const getAccessToken = async (): Promise<string> => {
   
   if (accounts.length === 0) {
     throw new Error('No accounts found. Please sign in.');
-  }
+  } 
 
   const request = {
     ...loginRequest,

@@ -5,7 +5,7 @@ import {
   UnauthenticatedTemplate, 
   useMsal 
 } from '@azure/msal-react';
-import { SignInButton } from './components/SignInButton';
+import { SignInButton } from './components/SignInButton'; 
 import { SignOutButton } from './components/SignOutButton';
 import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
 import { ImpersonationBanner } from './components/ImpersonationBanner';
