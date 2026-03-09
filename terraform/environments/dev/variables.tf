@@ -95,16 +95,6 @@ variable "secrets" {
   sensitive = true
 }
 
-# Pass 2 — ACA principal IDs for Key Vault access policies
-variable "aca_east_principal_id" {
-  type    = string
-  default = ""
-}
-variable "aca_west_principal_id" {
-  type    = string
-  default = ""
-}
-
 variable "model_blob_name" {
   type    = string
   default = "fraud_detection_model.pkl"

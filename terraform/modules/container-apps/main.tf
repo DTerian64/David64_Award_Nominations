@@ -30,6 +30,13 @@ resource "azurerm_container_app_environment" "east" {
   internal_load_balancer_enabled = var.internal_load_balancer_enabled
 
   tags = var.tags
+
+  lifecycle {
+    # Azure auto-creates a managed resource group (ME_...) on first deploy and
+    # records it in state. Ignoring it prevents Terraform from forcing a CAE
+    # destroy/recreate on subsequent plans when it's not declared in config.
+    ignore_changes = [infrastructure_resource_group_name]
+  }
 }
 
 # ── Container App Environment — West US ───────────────────────────────────────
@@ -43,6 +50,10 @@ resource "azurerm_container_app_environment" "west" {
   internal_load_balancer_enabled = var.internal_load_balancer_enabled
 
   tags = var.tags
+
+  lifecycle {
+    ignore_changes = [infrastructure_resource_group_name]
+  }
 }
 
 # ── Container App — East US ───────────────────────────────────────────────────
@@ -65,9 +76,23 @@ resource "azurerm_container_app" "east" {
     password_secret_name = "acr-password"
   }
 
+  # ── ACR password secret ───────────────────────────────────────────────────
   secret {
     name  = "acr-password"
     value = var.acr_admin_password
+  }
+
+  # ── Key Vault secret references ───────────────────────────────────────────
+  # Each entry creates an ACA secret that resolves its value from KV at runtime
+  # using the Container App's system-assigned managed identity.
+  # The actual secret value is never stored in Terraform state.
+  dynamic "secret" {
+    for_each = { for ref in var.kv_secret_references : lower(ref.kv_secret_name) => ref }
+    content {
+      name                = secret.key
+      key_vault_secret_id = "${trimsuffix(var.key_vault_uri, "/")}/secrets/${secret.value.kv_secret_name}"
+      identity            = "System"
+    }
   }
 
   ingress {
@@ -92,7 +117,7 @@ resource "azurerm_container_app" "east" {
       cpu    = var.cpu
       memory = var.memory
 
-      # Environment variables — wired from other module outputs
+      # Non-secret config values — passed as plain env vars
       dynamic "env" {
         for_each = var.environment_variables
         content {
@@ -100,14 +125,23 @@ resource "azurerm_container_app" "east" {
           value = env.value.value
         }
       }
+
+      # KV-backed env vars — reference ACA secret names (not values directly)
+      dynamic "env" {
+        for_each = var.kv_secret_references
+        content {
+          name        = env.value.env_name
+          secret_name = lower(env.value.kv_secret_name)
+        }
+      }
     }
   }
 
   lifecycle {
-    # Never let terraform overwrite the image — GitHub Actions owns this
+    # image is owned by GitHub Actions — never reset it on terraform apply.
+    # secret is now fully managed by Terraform (ACR password + KV references).
     ignore_changes = [
       template[0].container[0].image,
-      secret,
     ]
   }
 }
@@ -133,6 +167,15 @@ resource "azurerm_container_app" "west" {
   secret {
     name  = "acr-password"
     value = var.acr_admin_password
+  }
+
+  dynamic "secret" {
+    for_each = { for ref in var.kv_secret_references : lower(ref.kv_secret_name) => ref }
+    content {
+      name                = secret.key
+      key_vault_secret_id = "${trimsuffix(var.key_vault_uri, "/")}/secrets/${secret.value.kv_secret_name}"
+      identity            = "System"
+    }
   }
 
   ingress {
@@ -163,13 +206,20 @@ resource "azurerm_container_app" "west" {
           value = env.value.value
         }
       }
+
+      dynamic "env" {
+        for_each = var.kv_secret_references
+        content {
+          name        = env.value.env_name
+          secret_name = lower(env.value.kv_secret_name)
+        }
+      }
     }
   }
 
   lifecycle {
     ignore_changes = [
       template[0].container[0].image,
-      secret,
     ]
   }
 }

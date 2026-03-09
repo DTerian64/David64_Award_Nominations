@@ -109,15 +109,39 @@ variable "max_replicas" {
 }
 
 # ── Environment variables ─────────────────────────────────────────────────────
-# Passed in from environments/prod/main.tf using outputs from other modules
-# Format: [{ name = "KEY", value = "VALUE" }, ...]
+# Non-secret config values passed as plain environment variables.
+# For secrets, use kv_secret_references instead — values never touch TF state.
 variable "environment_variables" {
-  description = "Environment variables to inject into Container Apps"
+  description = "Non-secret environment variables to inject into Container Apps"
   type = list(object({
     name  = string
     value = string
   }))
   default = []
+}
+
+# ── Key Vault secret references ───────────────────────────────────────────────
+# Three-tier chain: KV secret → ACA secret reference → env var
+#   1. KV holds the value (fetched at runtime by managed identity — never in state)
+#   2. ACA secret block references the KV secret URI
+#   3. Env var in the container references the ACA secret name
+#
+# Convention: kv_secret_name uses UPPER-HYPHEN (e.g. "SQL-PASSWORD")
+#             ACA secret name is derived as lower(kv_secret_name) (e.g. "sql-password")
+#             env_name is what the app reads (e.g. "SQL_PASSWORD")
+variable "kv_secret_references" {
+  description = "Secrets to pull from Key Vault and expose as env vars via ACA secret references"
+  type = list(object({
+    env_name       = string  # env var name the app reads:  "SQL_PASSWORD"
+    kv_secret_name = string  # Key Vault secret name:       "SQL-PASSWORD"
+  }))
+  default = []
+}
+
+variable "key_vault_uri" {
+  description = "Key Vault URI (e.g. https://kv-award-prod.vault.azure.net/) — required when kv_secret_references is non-empty"
+  type        = string
+  default     = ""
 }
 
 variable "internal_load_balancer_enabled" {

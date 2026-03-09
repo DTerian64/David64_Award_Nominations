@@ -89,6 +89,9 @@ module "storage" {
 }
 
 # ── 5. Key Vault ──────────────────────────────────────────────────────────────
+# aca_principal_ids is intentionally empty here to avoid a circular dependency:
+#   Key Vault needs Container App principal IDs → Container Apps need KEY_VAULT_URL.
+# Access policies are added as standalone resources below (after Container Apps).
 module "key_vault" {
   source = "../../modules/key-vault"
 
@@ -101,9 +104,14 @@ module "key_vault" {
   aca_principal_ids          = []
   tags                       = local.tags
 
+  # var.secrets (from terraform.tfvars) supplies: SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD
+  # Remaining secrets are derived from other module outputs so they stay in sync automatically.
   secrets = merge(var.secrets, {
-    AZURE-STORAGE-KEY = module.storage.primary_access_key
-    AZURE-OPENAI-KEY  = module.openai.primary_access_key
+    AZURE-STORAGE-KEY     = module.storage.primary_access_key
+    AZURE-OPENAI-KEY      = module.openai.primary_access_key
+    AZURE-OPENAI-ENDPOINT = module.openai.endpoint
+    SQL-SERVER            = module.sql.server_fqdn
+    SQL-DATABASE          = module.sql.database_name
   })
 }
 
@@ -148,14 +156,13 @@ module "container_apps" {
   acr_login_server                = module.container_registry.login_server
   acr_admin_username              = module.container_registry.admin_username
   acr_admin_password              = module.container_registry.admin_password
+  key_vault_uri                   = module.key_vault.vault_uri
 
+  # Non-secret config — passed as plain env vars
   environment_variables = [
-    { name = "SQL_SERVER",                      value = module.sql.server_fqdn },
-    { name = "SQL_DATABASE",                    value = module.sql.database_name },
     { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
     { name = "MODEL_CONTAINER",                 value = module.storage.ml_models_container_name },
     { name = "EXTRACTS_CONTAINER",              value = module.storage.extracts_container_name },
-    { name = "AZURE_OPENAI_ENDPOINT",           value = module.openai.endpoint },
     { name = "AZURE_OPENAI_MODEL",              value = module.openai.model_deployment_name },
     { name = "KEY_VAULT_URL",                   value = module.key_vault.vault_uri },
     { name = "ENVIRONMENT",                     value = var.environment },
@@ -169,7 +176,43 @@ module "container_apps" {
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
   ]
 
+  # Secret config — fetched from Key Vault at runtime via managed identity
+  kv_secret_references = [
+    { env_name = "SQL_SERVER",            kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE",          kv_secret_name = "SQL-DATABASE" },
+    { env_name = "SQL_USER",              kv_secret_name = "SQL-USER" },
+    { env_name = "SQL_PASSWORD",          kv_secret_name = "SQL-PASSWORD" },
+    { env_name = "AZURE_STORAGE_KEY",     kv_secret_name = "AZURE-STORAGE-KEY" },
+    { env_name = "GMAIL_APP_PASSWORD",    kv_secret_name = "GMAIL-APP-PASSWORD" },
+    { env_name = "AZURE_OPENAI_KEY",      kv_secret_name = "AZURE-OPENAI-KEY" },
+    { env_name = "AZURE_OPENAI_ENDPOINT", kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
+  ]
+
   tags = local.tags
+}
+
+# ── Key Vault access policies for Container Apps ──────────────────────────────
+# Standalone resources break the circular dependency:
+#   KV is created first (no ACA deps) → Container Apps created with KEY_VAULT_URL
+#   → these policies created last, granting managed identities secret read access.
+resource "azurerm_key_vault_access_policy" "aca_east" {
+  key_vault_id = module.key_vault.key_vault_id
+  tenant_id    = data.azuread_client_config.current.tenant_id
+  object_id    = module.container_apps.east_principal_id
+
+  secret_permissions = ["Get", "List"]
+
+  depends_on = [module.key_vault, module.container_apps]
+}
+
+resource "azurerm_key_vault_access_policy" "aca_west" {
+  key_vault_id = module.key_vault.key_vault_id
+  tenant_id    = data.azuread_client_config.current.tenant_id
+  object_id    = module.container_apps.west_principal_id
+
+  secret_permissions = ["Get", "List"]
+
+  depends_on = [module.key_vault, module.container_apps]
 }
 
 # ── 9. Front Door ─────────────────────────────────────────────────────────────
@@ -179,13 +222,10 @@ module "front_door" {
   resource_group_name     = var.resource_group_name
   afd_profile_name        = var.afd_profile_name
   afd_endpoint_name       = var.afd_endpoint_name
-  cae_east_id             = module.container_apps.cae_east_id
-  cae_west_id             = module.container_apps.cae_west_id
-  cae_east_static_ip      = module.container_apps.cae_east_static_ip
-  cae_west_static_ip      = module.container_apps.cae_west_static_ip
-  cae_east_default_domain = module.container_apps.cae_east_default_domain
-  cae_west_default_domain = module.container_apps.cae_west_default_domain
+  container_app_east_fqdn = module.container_apps.east_app_fqdn
+  container_app_west_fqdn = module.container_apps.west_app_fqdn
   tags                    = local.tags
+  depends_on              = [module.container_apps]
 }
 
 # ── 10. Static Web App ────────────────────────────────────────────────────────
