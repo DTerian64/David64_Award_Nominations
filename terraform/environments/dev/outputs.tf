@@ -26,16 +26,6 @@ output "swa_deployment_token" {
   sensitive   = true
 }
 
-output "aca_east_principal_id" {
-  description = "East User-Assigned Managed Identity principal ID (for reference)"
-  value       = azurerm_user_assigned_identity.aca_east.principal_id
-}
-
-output "aca_west_principal_id" {
-  description = "West User-Assigned Managed Identity principal ID (for reference)"
-  value       = azurerm_user_assigned_identity.aca_west.principal_id
-}
-
 output "post_deploy_checklist" {
   description = "Steps to complete after terraform apply"
   value       = <<-EOT
@@ -49,10 +39,11 @@ output "post_deploy_checklist" {
   2. KV access policies are fully automated via User-Assigned Managed Identities —
      no manual two-pass apply required. Both MIs are created before Container Apps.
 
-  3. Approve AFD Private Link in portal for both CAEs
+  3. Run mid-terraform.ps1 (Pass 2 prep):
+     Patches swa_redirect_urls in terraform.tfvars and sets
+     AZURE_STATIC_WEB_APPS_API_TOKEN in the GitHub 'development' environment.
 
-  4. Update GitHub secret SWA_TOKEN_DEV:
-     terraform output -raw swa_deployment_token
+  4. Run Pass 2: terraform plan / apply, then .\post-terraform.ps1
 
   5. Create dev branch and trigger first deploy:
      git checkout -b dev
