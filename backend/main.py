@@ -191,15 +191,7 @@ async def swagger_ui_redirect():
 _cors_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
 ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
 
-# Add development origins if needed
-if os.getenv("ENVIRONMENT", "production") == "development":
-    ALLOWED_ORIGINS.extend([
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-    ])
-    
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
