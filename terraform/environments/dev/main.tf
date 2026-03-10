@@ -192,6 +192,7 @@ module "container_apps" {
     { name = "AZURE_OPENAI_API_VERSION",        value = var.openai_api_version },
     { name = "MODEL_BLOB_NAME",                 value = var.model_blob_name },
     { name = "API_BASE_URL",                    value = var.api_base_url },
+    { name = "CORS_ALLOWED_ORIGINS",            value = "https://${module.static_web_app.default_hostname},http://localhost:5173,http://localhost:3000" },
     { name = "LOGGING_LEVEL",                   value = var.logging_level },
     { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },

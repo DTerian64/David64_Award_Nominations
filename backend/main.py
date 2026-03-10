@@ -184,8 +184,12 @@ async def swagger_ui_redirect():
     </html>
     """)
 
-# CORS Configuration
-ALLOWED_ORIGINS = ["https://awards.terian-services.com"]
+# CORS Configuration — fully injected via environment variable.
+# Format: comma-separated origins, e.g. "https://app.example.com,http://localhost:5173"
+# Set CORS_ALLOWED_ORIGINS in Terraform (deployed) or .env (local dev).
+# No environment-specific logic here — same code runs in dev, prod, and SaaS.
+_cors_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
 
 # Add development origins if needed
 if os.getenv("ENVIRONMENT", "production") == "development":
@@ -195,8 +199,7 @@ if os.getenv("ENVIRONMENT", "production") == "development":
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
     ])
-
-
+    
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
