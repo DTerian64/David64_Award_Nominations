@@ -58,6 +58,13 @@ variable "swa_redirect_urls" {
   default = []
 }
 
+# CORS — populated by mid-terraform.ps1 after first apply
+variable "cors_allowed_origins" {
+  description = "Comma-separated CORS allowed origins injected into container app env vars"
+  type        = string
+  default     = ""
+}
+
 # Log Analytics
 variable "workspace_name_east" {
   description = "Log Analytics workspace name — East US"

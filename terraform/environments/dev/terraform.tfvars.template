@@ -62,7 +62,8 @@ workspace_name_east = "workspace-award-eastus-dev"
 workspace_name_west = "workspace-award-westus-dev"
 
 # ── Pass 2 values — POPULATED_BY_SCRIPT (mid-terraform.ps1) ──────────────────
-swa_redirect_urls = []
+swa_redirect_urls    = []
+cors_allowed_origins = ""
 
 # ── Key Vault secrets — fill in manually before terraform apply ───────────────
 # AZURE-STORAGE-KEY and AZURE-OPENAI-KEY are auto-wired from module outputs
