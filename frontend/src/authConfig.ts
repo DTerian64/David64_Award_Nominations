@@ -15,13 +15,13 @@ import type { Configuration } from "@azure/msal-browser";
 
 const clientId = import.meta.env.VITE_CLIENT_ID as string;
 const tenantId = import.meta.env.VITE_TENANT_ID as string;
-const apiClientId = import.meta.env.VITE_API_CLIENT_ID as string;
+const apiScope = import.meta.env.VITE_API_SCOPE as string;
 
 export const msalConfig: Configuration = {
   auth: {
     clientId,
     authority: `https://login.microsoftonline.com/${tenantId}`,
-    redirectUri: window.location.origin, // e.g., http://localhost:5173
+    redirectUri: window.location.origin + "/", // trailing slash must match app registration
   },
   cache: {
     cacheLocation: "sessionStorage", // or "localStorage"
@@ -30,12 +30,12 @@ export const msalConfig: Configuration = {
 };
 
 /**
- * Scope for your FastAPI API (Expose an API -> scope: access_as_user)
- * This must match the scope name you created in the BACKEND app registration.
+ * Scope for the FastAPI API — injected via VITE_API_SCOPE app setting (set by Terraform).
+ * Format: api://<tenantId>/<app-slug>/access_as_user
  */
 export const loginRequest = {
   scopes: [
-    `api://${apiClientId}/access_as_user`,
+    apiScope,
     "openid",
     "profile",
     "email",
