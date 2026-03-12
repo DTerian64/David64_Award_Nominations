@@ -55,7 +55,8 @@ afd_profile_name  = "Award-Nomination-ADF-dev"
 afd_endpoint_name = "award-nomination-api-dev"
 
 # ── Static Web App ────────────────────────────────────────────────────────────
-swa_name = "award-nomination-frontend-dev"
+swa_name          = "award-nomination-frontend-dev"
+swa_custom_domain = "dev-awards.terian-services.com"  # leave empty "" to skip
 
 # ── Log Analytics ─────────────────────────────────────────────────────────────
 workspace_name_east = "workspace-award-eastus-dev"

@@ -264,6 +264,7 @@ module "static_web_app" {
   vite_api_client_id  = module.app_registrations.api_client_id
   vite_client_id      = module.app_registrations.frontend_client_id
   vite_api_scope      = module.app_registrations.api_scope
+  custom_domain       = var.swa_custom_domain
   tags                = local.tags
   depends_on          = [azurerm_resource_group.rg]
 }

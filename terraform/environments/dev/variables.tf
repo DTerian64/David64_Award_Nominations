@@ -52,6 +52,12 @@ variable "afd_endpoint_name"    { type = string }
 # Static Web App
 variable "swa_name"             { type = string }
 
+variable "swa_custom_domain" {
+  description = "Optional custom domain for the SWA (e.g. dev-awards.terian-services.com). Leave empty to skip."
+  type        = string
+  default     = ""
+}
+
 # Azure AD — SWA redirect URIs added after first apply
 variable "swa_redirect_urls" {
   type    = list(string)

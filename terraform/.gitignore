@@ -28,8 +28,8 @@ tfstate-inspect.json
 # Plan output files — contain sensitive data
 *.tfplan
 
-# Helping PowerShell scripts to run before mid and after terraform
-*.ps1
+# PowerShell deployment scripts are committed — they contain no secrets
+# (secrets come from terraform.tfvars which IS gitignored)
 
 # Override files — local developer overrides, not for sharing
 override.tf
