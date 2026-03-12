@@ -25,9 +25,5 @@ resource "azurerm_static_web_app" "frontend" {
   tags = var.tags
 }
 
-resource "azurerm_static_web_app_custom_domain" "domain" {
-  count             = var.custom_domain != "" ? 1 : 0
-  static_web_app_id = azurerm_static_web_app.frontend.id
-  domain_name       = var.custom_domain
-  validation_type   = "cname-delegation"
-}
+# Custom domain is managed in the environment's main.tf (not here) so it can
+# explicitly depend on the DNS CNAME record being created first.

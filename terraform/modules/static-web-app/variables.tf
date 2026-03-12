@@ -47,12 +47,6 @@ variable "vite_tenant_id" {
   type        = string
 }
 
-variable "custom_domain" {
-  description = "Optional custom domain. Leave empty to skip."
-  type        = string
-  default     = ""
-}
-
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

@@ -58,6 +58,12 @@ variable "swa_custom_domain" {
   default     = ""
 }
 
+variable "dns_zone_resource_group" {
+  description = "Resource group containing the terian-services.com Azure DNS zone."
+  type        = string
+  default     = "rg_award_nomination"
+}
+
 # Azure AD — SWA redirect URIs added after first apply
 variable "swa_redirect_urls" {
   type    = list(string)

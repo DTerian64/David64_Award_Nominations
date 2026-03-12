@@ -252,6 +252,28 @@ module "front_door" {
   depends_on              = [azurerm_resource_group.rg, module.container_apps]
 }
 
+# ── DNS — CNAME for custom SWA domain ────────────────────────────────────────
+# terian-services.com is managed in Azure DNS (rg_award_nomination).
+# Creates dev-awards.terian-services.com → <swa-default-hostname> when
+# swa_custom_domain is set. Validation is handled by the SWA custom domain
+# resource (cname-delegation) which reads this same record.
+data "azurerm_dns_zone" "terian_services" {
+  count               = var.swa_custom_domain != "" ? 1 : 0
+  name                = "terian-services.com"
+  resource_group_name = var.dns_zone_resource_group
+}
+
+resource "azurerm_dns_cname_record" "swa_custom_domain" {
+  count               = var.swa_custom_domain != "" ? 1 : 0
+  name                = split(".", var.swa_custom_domain)[0]   # "dev-awards"
+  zone_name           = data.azurerm_dns_zone.terian_services[0].name
+  resource_group_name = var.dns_zone_resource_group
+  ttl                 = 3600
+  record              = module.static_web_app.default_hostname
+  tags                = local.tags
+  depends_on          = [module.static_web_app]
+}
+
 # ── 10. Static Web App ────────────────────────────────────────────────────────
 module "static_web_app" {
   source = "../../modules/static-web-app"
@@ -264,7 +286,16 @@ module "static_web_app" {
   vite_api_client_id  = module.app_registrations.api_client_id
   vite_client_id      = module.app_registrations.frontend_client_id
   vite_api_scope      = module.app_registrations.api_scope
-  custom_domain       = var.swa_custom_domain
   tags                = local.tags
   depends_on          = [azurerm_resource_group.rg]
+}
+
+# Custom domain — lives here (not in the module) so it can explicitly wait for
+# the DNS CNAME record before Azure attempts cname-delegation validation.
+resource "azurerm_static_web_app_custom_domain" "swa_custom_domain" {
+  count             = var.swa_custom_domain != "" ? 1 : 0
+  static_web_app_id = module.static_web_app.static_web_app_id
+  domain_name       = var.swa_custom_domain
+  validation_type   = "cname-delegation"
+  depends_on        = [azurerm_dns_cname_record.swa_custom_domain]
 }
