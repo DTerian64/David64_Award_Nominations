@@ -7,7 +7,7 @@ interface ImpersonationContextType {
   impersonatedUser: ImpersonatedUser | null;
   isImpersonating: boolean;
   isAdmin: boolean;
-  startImpersonation: (user: ImpersonatedUser) => void;
+  startImpersonation: (user: ImpersonatedUser) => void; 
   stopImpersonation: () => void;
   getEffectiveUser: () => string; // Returns UPN of current or impersonated user
 }
