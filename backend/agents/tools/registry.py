@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Any
 
-import sqlhelper
+import sqlhelper2 as sqlhelper  # our custom helper for running SQL queries and fetching analytics data
 from ..exporters import export_excel, export_pdf, export_csv   # see exporters/__init__.py
 
 logger = logging.getLogger(__name__)
