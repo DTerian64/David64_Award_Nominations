@@ -9,9 +9,13 @@ data "azuread_client_config" "current" {}
 resource "random_uuid" "api_scope_id" {}
 
 # ── API app registration ──────────────────────────────────────────────────────
+# Application ID URI uses tenant_id as the GUID — valid api:// format,
+# and tenant_id is known before the app is created (no self-reference cycle).
+# Format: api://<tenantId>/<app-slug>
 resource "azuread_application" "api" {
-  display_name = "Award Nomination - ${var.environment}"
-  owners       = [data.azuread_client_config.current.object_id]
+  display_name    = "Award Nomination - ${var.environment}"
+  identifier_uris = ["api://${data.azuread_client_config.current.tenant_id}/award-nomination-${var.environment}"]
+  owners          = [data.azuread_client_config.current.object_id]
 
   api {
     requested_access_token_version = 2
@@ -31,13 +35,6 @@ resource "azuread_application" "api" {
   feature_tags {
     enterprise = true
   }
-}
-
-# Sets api://<client-id> as the Application ID URI — done as a separate resource
-# to avoid a self-reference cycle (client_id is computed after app creation)
-resource "azuread_application_identifier_uri" "api" {
-  application_id = azuread_application.api.id
-  identifier_uri = "api://${azuread_application.api.client_id}"
 }
 
 resource "azuread_service_principal" "api" {

@@ -12,7 +12,7 @@ output "api_client_id" {
 
 output "api_scope" {
   description = "API scope URI → VITE_API_SCOPE"
-  value       = "api://${azuread_application.api.client_id}/access_as_user"
+  value       = "api://${data.azuread_client_config.current.tenant_id}/award-nomination-${var.environment}/access_as_user"
 }
 
 output "frontend_client_id" {

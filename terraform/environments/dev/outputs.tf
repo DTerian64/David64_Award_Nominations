@@ -26,6 +26,26 @@ output "swa_deployment_token" {
   sensitive   = true
 }
 
+output "vite_client_id" {
+  description = "Frontend SPA client ID → VITE_CLIENT_ID GitHub env var"
+  value       = module.app_registrations.frontend_client_id
+}
+
+output "vite_tenant_id" {
+  description = "Azure AD tenant ID → VITE_TENANT_ID GitHub env var"
+  value       = module.app_registrations.tenant_id
+}
+
+output "vite_api_scope" {
+  description = "API scope URI → VITE_API_SCOPE GitHub env var"
+  value       = module.app_registrations.api_scope
+}
+
+output "vite_api_client_id" {
+  description = "API app client ID → VITE_API_CLIENT_ID GitHub env var"
+  value       = module.app_registrations.api_client_id
+}
+
 output "post_deploy_checklist" {
   description = "Steps to complete after terraform apply"
   value       = <<-EOT
