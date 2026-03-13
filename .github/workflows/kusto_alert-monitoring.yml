@@ -1,0 +1,159 @@
+# .github/workflows/alert-monitoring.yml
+# Description: Runs alert queries every 15 minutes to check for critical issues
+# Trigger: Every 15 minutes
+
+name: Alert Monitoring
+
+on:
+  #schedule:
+  #  - cron: '*/15 * * * *'  # Every 15 minutes
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  check-alerts:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Install Azure CLI Extension
+      run: |
+        az extension add --name log-analytics
+    
+    - name: Get Workspace ID
+      id: workspace
+      run: |
+        WORKSPACE_ID=$(az monitor log-analytics workspace show \
+          --workspace-name "workspace-rgawardnomination6aem" \
+          --resource-group "rg_award_nomination" \
+          --query customerId \
+          --output tsv)
+        echo "workspace_id=$WORKSPACE_ID" >> $GITHUB_OUTPUT
+    
+    - name: Check for Error Spikes
+      id: error_spike
+      continue-on-error: true
+      run: |
+        QUERY=$(cat kusto-queries/alerts/error-spike.kql)
+        RESULT=$(az monitor log-analytics query \
+          --workspace "${{ steps.workspace.outputs.workspace_id }}" \
+          --analytics-query "$QUERY" \
+          --output json)
+        
+        ERROR_COUNT=$(echo "$RESULT" | jq -r '.[0].ErrorCount // 0')
+        ALERT_TRIGGERED=$(echo "$RESULT" | jq -r '.[0].AlertTriggered // "NO"')
+        
+        echo "error_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+        echo "alert_triggered=$ALERT_TRIGGERED" >> $GITHUB_OUTPUT
+        
+        if [ "$ALERT_TRIGGERED" = "YES" ]; then
+          echo "🚨 ERROR SPIKE DETECTED: $ERROR_COUNT errors in last 5 minutes"
+          exit 1
+        else
+          echo "✅ No error spike detected ($ERROR_COUNT errors)"
+        fi
+    
+    - name: Check for Critical Fraud
+      id: critical_fraud
+      continue-on-error: true
+      run: |
+        QUERY=$(cat kusto-queries/alerts/critical-fraud.kql)
+        RESULT=$(az monitor log-analytics query \
+          --workspace "${{ steps.workspace.outputs.workspace_id }}" \
+          --analytics-query "$QUERY" \
+          --output json)
+        
+        CRITICAL_COUNT=$(echo "$RESULT" | jq -r '.[0].CriticalCount // 0')
+        ALERT_TRIGGERED=$(echo "$RESULT" | jq -r '.[0].AlertTriggered // "NO"')
+        
+        echo "critical_count=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+        echo "alert_triggered=$ALERT_TRIGGERED" >> $GITHUB_OUTPUT
+        
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo "🚨 CRITICAL FRAUD DETECTED: $CRITICAL_COUNT nominations"
+          echo "$RESULT" | jq '.'
+          exit 1
+        else
+          echo "✅ No critical fraud detected"
+        fi
+    
+    - name: Check Email Failure Rate
+      id: email_failure
+      continue-on-error: true
+      run: |
+        QUERY=$(cat kusto-queries/alerts/email-failure-rate.kql)
+        RESULT=$(az monitor log-analytics query \
+          --workspace "${{ steps.workspace.outputs.workspace_id }}" \
+          --analytics-query "$QUERY" \
+          --output json)
+        
+        FAILURE_RATE=$(echo "$RESULT" | jq -r '.[0].FailureRate // 0')
+        ALERT_TRIGGERED=$(echo "$RESULT" | jq -r '.[0].AlertTriggered // "NO"')
+        
+        echo "failure_rate=$FAILURE_RATE" >> $GITHUB_OUTPUT
+        echo "alert_triggered=$ALERT_TRIGGERED" >> $GITHUB_OUTPUT
+        
+        if [ "$ALERT_TRIGGERED" != "NO" ]; then
+          echo "🚨 HIGH EMAIL FAILURE RATE: $FAILURE_RATE%"
+          exit 1
+        else
+          echo "✅ Email failure rate normal ($FAILURE_RATE%)"
+        fi
+    
+    - name: Create Alert Summary
+      if: always()
+      run: |
+        echo "# Alert Monitoring Summary" > alert-summary.md
+        echo "**Time:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> alert-summary.md
+        echo "" >> alert-summary.md
+        
+        # Error Spike
+        if [ "${{ steps.error_spike.outcome }}" = "failure" ]; then
+          echo "🚨 **Error Spike:** ${{ steps.error_spike.outputs.error_count }} errors detected" >> alert-summary.md
+        else
+          echo "✅ **Error Spike:** Normal (${{ steps.error_spike.outputs.error_count }} errors)" >> alert-summary.md
+        fi
+        
+        # Critical Fraud
+        if [ "${{ steps.critical_fraud.outcome }}" = "failure" ]; then
+          echo "🚨 **Critical Fraud:** ${{ steps.critical_fraud.outputs.critical_count }} nominations" >> alert-summary.md
+        else
+          echo "✅ **Critical Fraud:** None detected" >> alert-summary.md
+        fi
+        
+        # Email Failures
+        if [ "${{ steps.email_failure.outcome }}" = "failure" ]; then
+          echo "🚨 **Email Failure Rate:** ${{ steps.email_failure.outputs.failure_rate }}%" >> alert-summary.md
+        else
+          echo "✅ **Email Failure Rate:** Normal (${{ steps.email_failure.outputs.failure_rate }}%)" >> alert-summary.md
+        fi
+        
+        cat alert-summary.md
+    
+    - name: Send Critical Alert Notification
+      if: |
+        steps.error_spike.outcome == 'failure' ||
+        steps.critical_fraud.outcome == 'failure' ||
+        steps.email_failure.outcome == 'failure'
+      run: |
+        echo "🚨 CRITICAL ALERTS TRIGGERED!"
+        echo "This would send email/SMS/Slack notification"
+        # Add your notification logic here
+        
+        # Example: Send to Slack
+        # curl -X POST -H 'Content-type: application/json' \
+        #   --data "{\"text\":\"🚨 Critical Alert: $(cat alert-summary.md)\"}" \
+        #   ${{ secrets.SLACK_WEBHOOK_URL }}
+    
+    - name: Upload Alert Report
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: alert-report-${{ github.run_number }}
+        path: alert-summary.md

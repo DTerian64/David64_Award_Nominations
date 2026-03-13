@@ -1,0 +1,112 @@
+# .github/workflows/post-deployment-validation.yml
+# Description: Validates deployment by checking for errors in logs
+# Trigger: After successful deployment to production
+
+name: Post-Deployment Validation
+
+on:
+  workflow_dispatch:  # Manual trigger
+  workflow_run:
+    workflows: ["Run Post Deployment Logs Check"]  # Adjust to your deployment workflow name
+    types:
+      - completed
+
+jobs:
+  validate-deployment:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Install Azure CLI Log Analytics Extension
+      run: |
+        az extension add --name log-analytics
+    
+    - name: Wait for logs to propagate
+      run: |
+        echo "⏰ Waiting 2 minutes for logs to propagate to Log Analytics..."
+        sleep 120
+    
+    - name: Check for errors in last 10 minutes
+      id: check_errors
+      run: |
+        WORKSPACE_ID=$(az monitor log-analytics workspace show \
+          --workspace-name "workspace-rgawardnomination6aem" \
+          --resource-group "rg_award_nomination" \
+          --query customerId \
+          --output tsv)
+        
+        QUERY='ContainerAppConsoleLogs_CL
+        | where TimeGenerated > ago(10m)
+        | where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+        | extend LogData = parse_json(Log_s)
+        | where tostring(LogData.level) == "ERROR"
+        | summarize ErrorCount = count()'
+        
+        ERROR_COUNT=$(az monitor log-analytics query \
+          --workspace "$WORKSPACE_ID" \
+          --analytics-query "$QUERY" \
+          --output tsv \
+          --query '[0].ErrorCount')
+        
+        echo "Error count in last 10 minutes: $ERROR_COUNT"
+        echo "error_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+        
+        if [ "$ERROR_COUNT" -gt 5 ]; then
+          echo "❌ Deployment validation FAILED: $ERROR_COUNT errors detected"
+          exit 1
+        else
+          echo "✅ Deployment validation PASSED: $ERROR_COUNT errors (acceptable)"
+        fi
+    
+    - name: Check email health
+      run: |
+        WORKSPACE_ID=$(az monitor log-analytics workspace show \
+          --workspace-name "workspace-rgawardnomination6aem" \
+          --resource-group "rg_award_nomination" \
+          --query customerId \
+          --output tsv)
+        
+        QUERY='ContainerAppConsoleLogs_CL
+        | where TimeGenerated > ago(10m)
+        | where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+        | extend LogData = parse_json(Log_s)
+        | where tostring(LogData.logger) == "email_utils"
+        | summarize 
+            Total = count(),
+            Failed = countif(tostring(LogData.level) == "ERROR")
+        | extend FailureRate = round(todouble(Failed) / todouble(Total) * 100, 2)'
+        
+        RESULT=$(az monitor log-analytics query \
+          --workspace "$WORKSPACE_ID" \
+          --analytics-query "$QUERY" \
+          --output json)
+        
+        echo "Email health check results:"
+        echo "$RESULT" | jq '.'
+    
+    - name: Generate deployment report
+      if: always()
+      run: |
+        bash scripts/run-kusto-query.sh kusto-queries/monitoring/dashboard-summary.kql > deployment-report.txt
+        cat deployment-report.txt
+    
+    - name: Upload report as artifact
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-validation-report
+        path: deployment-report.txt
+    
+    - name: Post to Slack/Teams (optional)
+      if: failure()
+      run: |
+        # Add your notification logic here
+        echo "🚨 Deployment validation failed! Check the logs."

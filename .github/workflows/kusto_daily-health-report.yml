@@ -1,0 +1,110 @@
+# .github/workflows/daily-health-report.yml
+# Description: Generates daily health report from Kusto queries
+# Trigger: Every day at 9 AM Pacific Time
+
+name: Daily Health Report
+
+on:
+  #schedule:
+  #  - cron: '0 17 * * *'  # 9 AM Pacific = 5 PM UTC
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Install Azure CLI Extension
+      run: |
+        az extension add --name log-analytics
+    
+    - name: Generate Health Report
+      run: |
+        WORKSPACE_ID=$(az monitor log-analytics workspace show \
+          --workspace-name "workspace-rgawardnomination6aem" \
+          --resource-group "rg_award_nomination" \
+          --query customerId \
+          --output tsv)
+        
+        echo "# Award Nomination API - Daily Health Report" > report.md
+        echo "**Date:** $(date +'%Y-%m-%d')" >> report.md
+        echo "" >> report.md
+        
+        # Executive Summary
+        echo "## 📊 Executive Summary (Last 24 Hours)" >> report.md
+        QUERY=$(cat kusto-queries/monitoring/dashboard-summary.kql)
+        az monitor log-analytics query \
+          --workspace "$WORKSPACE_ID" \
+          --analytics-query "$QUERY" \
+          --output table >> report.md
+        
+        echo "" >> report.md
+        
+        # Error Summary
+        echo "## 🔴 Error Summary" >> report.md
+        QUERY=$(cat kusto-queries/errors/error-summary.kql)
+        az monitor log-analytics query \
+          --workspace "$WORKSPACE_ID" \
+          --analytics-query "$QUERY" \
+          --output table | head -20 >> report.md
+        
+        echo "" >> report.md
+        
+        # Fraud Detection
+        echo "## 🎲 High Risk Nominations" >> report.md
+        QUERY=$(cat kusto-queries/fraud/high-risk.kql)
+        az monitor log-analytics query \
+          --workspace "$WORKSPACE_ID" \
+          --analytics-query "$QUERY" \
+          --output table | head -20 >> report.md
+        
+        echo "" >> report.md
+        
+        # Email Health
+        echo "## 📧 Email Health" >> report.md
+        QUERY=$(cat kusto-queries/email/email-success-rate.kql)
+        az monitor log-analytics query \
+          --workspace "$WORKSPACE_ID" \
+          --analytics-query "$QUERY" \
+          --output table >> report.md
+        
+        echo "" >> report.md
+        
+        # Regional Performance
+        echo "## 🌎 Regional Performance" >> report.md
+        QUERY=$(cat kusto-queries/monitoring/performance-comparison.kql)
+        az monitor log-analytics query \
+          --workspace "$WORKSPACE_ID" \
+          --analytics-query "$QUERY" \
+          --output table >> report.md
+        
+        cat report.md
+    
+    - name: Upload Report
+      uses: actions/upload-artifact@v3
+      with:
+        name: daily-health-report-${{ github.run_number }}
+        path: report.md
+    
+    - name: Send Email Report (optional)
+      run: |
+        # Use sendmail, mailgun, or other service
+        # cat report.md | mail -s "Daily Health Report" david.terian@gmail.com
+        echo "📧 Email sending would happen here"
+    
+    - name: Post to Slack (optional)
+      if: always()
+      run: |
+        # Add Slack webhook notification
+        # curl -X POST -H 'Content-type: application/json' \
+        #   --data '{"text":"Daily health report generated"}' \
+        #   ${{ secrets.SLACK_WEBHOOK_URL }}
+        echo "💬 Slack notification would happen here"
