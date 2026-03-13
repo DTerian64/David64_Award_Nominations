@@ -17,6 +17,16 @@ const clientId = import.meta.env.VITE_CLIENT_ID as string;
 const tenantId = import.meta.env.VITE_TENANT_ID as string;
 const apiScope = import.meta.env.VITE_API_SCOPE as string;
 
+if (!clientId || !tenantId || !apiScope) {
+  throw new Error("Missing required Vite auth environment variables.");
+}
+else {
+  console.log("Loaded auth config from environment:");
+  console.log("clientId:", clientId);
+  console.log("tenantId:", tenantId);
+  console.log("apiScope:", apiScope);
+}
+
 export const msalConfig: Configuration = {
   auth: {
     clientId,
@@ -35,7 +45,7 @@ export const msalConfig: Configuration = {
  */
 export const loginRequest = {
   scopes: [
-    apiScope,
+    [apiScope],
     "openid",
     "profile",
     "email",

@@ -7,7 +7,7 @@ export const SignInButton: React.FC = () => {
 
   const handleLogin = async () => {
     try {
-      await instance.loginPopup(loginRequest);
+      await instance.loginRedirect(loginRequest);
     } catch (error) {
       console.error('Login error:', error);
     }
