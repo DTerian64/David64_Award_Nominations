@@ -1,0 +1,73 @@
+# environments/dev/terraform.tfvars
+# DO NOT COMMIT — gitignored
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource_group_name = "rg_award_nomination_dev"
+environment         = "dev"
+
+my_ips = [
+  "YOUR_HOME_IP",
+  "YOUR_OFFICE_IP",
+]
+
+# SQL
+sql_server_name    = "david64-sql-dev"
+sql_admin_login    = "YOUR_SQL_ADMIN_LOGIN"
+sql_admin_password = "YOUR_SQL_ADMIN_PASSWORD"
+
+# ACR
+acr_name = "acrawardnominationdev"
+
+# Storage
+storage_account_name = "awardnominationdev"
+
+# Key Vault
+key_vault_name = "kv-awardnominations-dev"
+
+# OpenAI
+openai_name         = "award-nomination-openai-dev"
+openai_api_version  = "2024-02-01"
+model_capacity_tpm  = 10
+
+# Log Analytics
+workspace_name_east = "workspace-award-eastus-dev"
+workspace_name_west = "workspace-award-westus-dev"
+
+# Container Apps
+cae_name_east = "cae-award-eastus-dev"
+cae_name_west = "cae-award-westus-dev"
+app_name_east = "award-api-eastus-dev"
+app_name_west = "award-api-westus-dev"
+min_replicas  = 0
+max_replicas  = 1
+
+# Static ACA config
+location_east                   = "eastus"
+model_blob_name                 = "fraud_detection_model.pkl"
+api_base_url                    = "https://award-nomination-api-dev.azurefd.net"
+logging_level                   = "DEBUG"
+blob_sas_expiry_hours           = 24
+email_action_token_expiry_hours = 24
+
+# Front Door
+afd_profile_name  = "Award-Nomination-ADF-dev"
+afd_endpoint_name = "award-nomination-api-dev"
+
+# Static Web App
+swa_name = "award-nomination-frontend-dev"
+
+# Grafana
+grafana_name = "awardnomination-grafana-dev"
+
+# ── Key Vault secrets ─────────────────────────────────────────────────────────
+secrets = {
+  SQL-USER                  = "YOUR_SQL_ADMIN_LOGIN"
+  SQL-PASSWORD              = "YOUR_SQL_ADMIN_PASSWORD"
+  AZURE-STORAGE-KEY         = "YOUR_STORAGE_KEY"
+  AZURE-OPENAI-KEY          = "YOUR_OPENAI_KEY"
+  GMAIL-APP-PASSWORD        = "YOUR_GMAIL_APP_PASSWORD"
+  GMAIL-USER                = "YOUR_GMAIL_ADDRESS"
+  FROM-EMAIL                = "YOUR_FROM_EMAIL"
+  FROM-NAME                 = "Award Nominations"
+  EMAIL-ACTION-SECRET-KEY   = "YOUR_EMAIL_SECRET_KEY"
+}
