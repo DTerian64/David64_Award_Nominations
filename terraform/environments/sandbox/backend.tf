@@ -22,7 +22,7 @@ terraform {
     resource_group_name  = "rg_platform"
     storage_account_name = "awardnomplatform"
     container_name       = "tfstate"
-    key                  = "dev.tfstate"
+    key                  = "sandbox.tfstate"
   }
 }
 

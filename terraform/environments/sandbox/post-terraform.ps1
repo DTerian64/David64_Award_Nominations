@@ -1,7 +1,7 @@
 # post-terraform.ps1
 # ─────────────────────────────────────────────────────────────────────────────
 # Run AFTER Pass 2 terraform apply
-# Creates dev branch and triggers first deployment
+# Creates sandbox branch and triggers first deployment
 #
 # Usage:
 #   cd terraform\environments\dev
@@ -28,8 +28,8 @@ Write-Host "  Frontend URL : $frontendUrl" -ForegroundColor Green
 Write-Host "  ACR Server   : $acrServer" -ForegroundColor Green
 Write-Host ""
 
-# ── Create dev branch (idempotent) ────────────────────────────────────────────
-Write-Host "Setting up dev branch..." -ForegroundColor Yellow
+# ── Create sandbox branch (idempotent) ────────────────────────────────────────────
+Write-Host "Setting up sandbox branch..." -ForegroundColor Yellow
 
 # Navigate to repo root (3 levels up from environments/dev)
 $repoRoot = Resolve-Path "..\..\..\"
@@ -39,11 +39,11 @@ $existingBranch = git branch --list dev
 if ($existingBranch) {
     Write-Host "  Branch 'dev' already exists — skipping" -ForegroundColor DarkYellow
 } else {
-    git checkout -b dev
+    git checkout -b sandbox
     Write-Host "  Branch 'dev' created" -ForegroundColor Green
 }
 
-# Push dev branch if not already on remote
+# Push sandbox branch if not already on remote
 $remoteBranch = git ls-remote --heads origin dev
 if (-not $remoteBranch) {
     git push -u origin dev
@@ -67,7 +67,7 @@ Write-Host ""
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  Dev environment fully deployed!" -ForegroundColor Green
+Write-Host "  Sandbox environment fully deployed!" -ForegroundColor Green
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  App URL      : $appUrl"     -ForegroundColor White

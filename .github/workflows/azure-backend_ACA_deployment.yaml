@@ -3,8 +3,9 @@ name: Deploy Backend to Azure Container Apps
 on:
   push:
     branches:
-      - main   # → production  (rg_award_nomination)
-      - dev    # → development (rg_award_nomination_dev)
+      - main     # → production    (rg_award_nomination)
+      - sandbox  # → sandbox       (rg_award_nomination_sandbox)
+      - dev      # → development   (rg_award_nomination_dev)
     paths:
       - 'backend/**'
   workflow_dispatch:
@@ -21,9 +22,8 @@ jobs:
 
     # Selects the GitHub Environment.
     # GitHub injects vars.* and secrets.* from that environment automatically.
-    # production  → main branch
-    # development → dev branch
-    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    # main    → production  |  sandbox → sandbox  |  dev → development
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'sandbox' && 'sandbox' || 'development' }}
 
     steps:
     - name: Checkout code
@@ -40,8 +40,10 @@ jobs:
 
     # ------------------------------------------------------------------
     # Build & push
-    # Prod tags:  latest  and  latest-<sha>
-    # Dev tags:   dev     and  dev-<sha>
+    # Prod tags:     latest   and  latest-<sha>
+    # Sandbox tags:  sandbox  and  sandbox-<sha>
+    # Dev tags:      dev      and  dev-<sha>
+    # IMAGE_TAG var is set per GitHub Environment (production/sandbox/development)
     # ------------------------------------------------------------------
     - name: Build Docker image
       run: |

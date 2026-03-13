@@ -4,8 +4,8 @@
 #
 # - Reads SWA URL and VITE_* values from terraform outputs
 # - Patches swa_redirect_urls + cors_allowed_origins in terraform.tfvars
-# - Sets AZURE_STATIC_WEB_APPS_API_TOKEN secret in the GitHub 'development' environment
-# - Sets VITE_* as GitHub Environment variables in 'development'
+# - Sets AZURE_STATIC_WEB_APPS_API_TOKEN secret in the GitHub 'sandbox' environment
+# - Sets VITE_* as GitHub Environment variables in 'sandbox'
 #   (the GitHub Actions runner has no access to Azure SWA app_settings at build
 #    time — values must be passed explicitly via the workflow env: block)
 #
@@ -22,7 +22,7 @@ $ErrorActionPreference = "Stop"
 
 Write-Host ""
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  Award Nomination — Mid-Terraform Setup (Dev)"        -ForegroundColor Cyan
+Write-Host "  Award Nomination — Mid-Terraform Setup (Sandbox)"        -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
 
@@ -76,24 +76,24 @@ Write-Host "  cors_allowed_origins: $corsOrigins" -ForegroundColor Green
 Set-Content $tfvarsPath $tfvars -NoNewline
 Write-Host ""
 
-# ── Update GitHub Environment secret + variables (development) ───────────────
-Write-Host "Updating GitHub 'development' environment secret and variables..." -ForegroundColor Yellow
+# ── Update GitHub Environment secret + variables (sandbox) ───────────────
+Write-Host "Updating GitHub 'sandbox' environment secret and variables..." -ForegroundColor Yellow
 $ghInstalled = Get-Command gh -ErrorAction SilentlyContinue
 if ($ghInstalled) {
     # Secret — SWA deployment token (needed by the GitHub Actions workflow)
-    $swaDeploymentToken | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --env development
+    $swaDeploymentToken | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --env sandbox
     Write-Host "  Secret  AZURE_STATIC_WEB_APPS_API_TOKEN updated" -ForegroundColor Green
 
     # Variables — VITE_* build-time values (passed via workflow env: block to Vite)
-    gh variable set VITE_CLIENT_ID     --env development --body $outputs.vite_client_id.value
-    gh variable set VITE_TENANT_ID     --env development --body $outputs.vite_tenant_id.value
-    gh variable set VITE_API_SCOPE     --env development --body $outputs.vite_api_scope.value
-    gh variable set VITE_API_URL       --env development --body $outputs.app_url.value
-    gh variable set VITE_API_CLIENT_ID --env development --body $outputs.vite_api_client_id.value
+    gh variable set VITE_CLIENT_ID     --env sandbox --body $outputs.vite_client_id.value
+    gh variable set VITE_TENANT_ID     --env sandbox --body $outputs.vite_tenant_id.value
+    gh variable set VITE_API_SCOPE     --env sandbox --body $outputs.vite_api_scope.value
+    gh variable set VITE_API_URL       --env sandbox --body $outputs.app_url.value
+    gh variable set VITE_API_CLIENT_ID --env sandbox --body $outputs.vite_api_client_id.value
     Write-Host "  Variables VITE_* updated" -ForegroundColor Green
 } else {
     Write-Host "  gh CLI not found — update manually:" -ForegroundColor DarkYellow
-    Write-Host "  GitHub → repo Settings → Environments → development → Secrets/Variables" -ForegroundColor DarkYellow
+    Write-Host "  GitHub → repo Settings → Environments → sandbox → Secrets/Variables" -ForegroundColor DarkYellow
     Write-Host "  Secret   : AZURE_STATIC_WEB_APPS_API_TOKEN = <run: terraform output -raw swa_deployment_token>" -ForegroundColor DarkYellow
     Write-Host "  Variable : VITE_CLIENT_ID     = $($outputs.vite_client_id.value)" -ForegroundColor DarkYellow
     Write-Host "  Variable : VITE_TENANT_ID     = $($outputs.vite_tenant_id.value)" -ForegroundColor DarkYellow

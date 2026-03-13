@@ -1,7 +1,7 @@
 # environments/dev/main.tf
 # ─────────────────────────────────────────────────────────────────────────────
-# Dev environment — wires all modules together
-# App registrations are CREATED by Terraform for dev
+# Sandbox environment — wires all modules together
+# App registrations are CREATED by Terraform for sandbox
 # ─────────────────────────────────────────────────────────────────────────────
 
 data "azurerm_client_config" "current" {}

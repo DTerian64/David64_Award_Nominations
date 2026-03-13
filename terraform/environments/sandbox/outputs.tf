@@ -1,7 +1,7 @@
-# environments/dev/outputs.tf
+# environments/sandbox/outputs.tf
 
 output "app_url" {
-  description = "Public URL for the dev application"
+  description = "Public URL for the sandbox application"
   value       = "https://${module.front_door.afd_endpoint_hostname}"
 }
 
@@ -50,7 +50,7 @@ output "post_deploy_checklist" {
   description = "Steps to complete after terraform apply"
   value       = <<-EOT
 
-  Dev environment deployed. Complete these steps:
+  Sandbox environment deployed. Complete these steps:
 
   1. KV secrets are auto-wired from module outputs (storage key, OpenAI key/endpoint,
      SQL server/database). Remaining secrets (SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD,
@@ -61,15 +61,15 @@ output "post_deploy_checklist" {
 
   3. Run mid-terraform.ps1 (Pass 2 prep):
      Patches swa_redirect_urls + cors_allowed_origins in terraform.tfvars and sets
-     AZURE_STATIC_WEB_APPS_API_TOKEN secret in the GitHub 'development' environment.
+     AZURE_STATIC_WEB_APPS_API_TOKEN secret in the GitHub 'sandbox' environment.
      AZURE_STATIC_WEB_APPS_API_TOKEN secret and VITE_* variables in the GitHub
-     'development' environment (build-time, passed via workflow env: block).
+     'sandbox' environment (build-time, passed via workflow env: block).
 
   4. Run Pass 2: terraform plan / apply, then .\post-terraform.ps1
 
-  5. Create dev branch and trigger first deploy:
-     git checkout -b dev
-     git push origin dev
+  5. Create sandbox branch and trigger first deploy:
+     git checkout -b sandbox
+     git push origin sandbox
 
   EOT
 }
