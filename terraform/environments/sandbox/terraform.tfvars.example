@@ -30,19 +30,20 @@ openai_api_version  = "2024-02-01"
 model_capacity_tpm  = 10
 
 # Log Analytics
-workspace_name_east = "workspace-award-eastus-sandbox"
-workspace_name_west = "workspace-award-westus-sandbox"
+workspace_name_primary   = "workspace-award-primary-sandbox"
+workspace_name_secondary = "workspace-award-secondary-sandbox"
 
 # Container Apps
-cae_name_east = "cae-award-eastus-sandbox"
-cae_name_west = "cae-award-westus-sandbox"
-app_name_east = "award-api-eastus-sandbox"
-app_name_west = "award-api-westus-sandbox"
-min_replicas  = 0
-max_replicas  = 1
+cae_name_primary   = "cae-award-primary-sandbox"
+cae_name_secondary = "cae-award-secondary-sandbox"
+app_name_primary   = "award-api-primary-sandbox"
+app_name_secondary = "award-api-secondary-sandbox"
+min_replicas       = 0
+max_replicas       = 1
 
 # Static ACA config
-location_east                   = "westus2"
+location_primary                = "westus2"
+location_secondary              = "westus"
 model_blob_name                 = "fraud_detection_model.pkl"
 api_base_url                    = "https://award-nomination-api-sandbox.azurefd.net"
 logging_level                   = "DEBUG"

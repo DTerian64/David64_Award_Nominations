@@ -3,10 +3,10 @@
 # Container App Environments + Container Apps
 #
 # Creates:
-#   - CAE East US (internal, VNet injected into subnet-aca-eastus)
-#   - CAE West US (internal, VNet injected into subnet-aca-westus)
-#   - Container App East US (award-api-eastus)
-#   - Container App West US (award-api-westus)
+#   - CAE East US (internal, VNet injected into subnet-aca-primaryus)
+#   - CAE West US (internal, VNet injected into subnet-aca-secondaryus)
+#   - Container App East US (award-api-primaryus)
+#   - Container App West US (award-api-secondaryus)
 #   - System-assigned managed identity on each Container App
 #
 # IMPORTANT: Image tag is set to a placeholder on initial deploy.
@@ -17,16 +17,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Container App Environment — East US ───────────────────────────────────────
-resource "azurerm_container_app_environment" "east" {
-  name                       = var.cae_name_east
+resource "azurerm_container_app_environment" "primary" {
+  name                       = var.cae_name_primary
   resource_group_name        = var.resource_group_name
-  location                   = var.location_east
-  log_analytics_workspace_id = var.log_analytics_workspace_east_id
+  location                   = var.location_primary
+  log_analytics_workspace_id = var.log_analytics_workspace_primary_id
 
   # VNet injection — internal_load_balancer_enabled controls public vs private.
   # false (default) → public IP, reachable by Front Door Standard.
   # true            → private IP only, requires Front Door Premium + Private Link.
-  infrastructure_subnet_id       = var.subnet_aca_east_id
+  infrastructure_subnet_id       = var.subnet_aca_primary_id
   internal_load_balancer_enabled = var.internal_load_balancer_enabled
 
   tags = var.tags
@@ -40,13 +40,13 @@ resource "azurerm_container_app_environment" "east" {
 }
 
 # ── Container App Environment — West US ───────────────────────────────────────
-resource "azurerm_container_app_environment" "west" {
-  name                       = var.cae_name_west
+resource "azurerm_container_app_environment" "secondary" {
+  name                       = var.cae_name_secondary
   resource_group_name        = var.resource_group_name
-  location                   = var.location_west
-  log_analytics_workspace_id = var.log_analytics_workspace_west_id
+  location                   = var.location_secondary
+  log_analytics_workspace_id = var.log_analytics_workspace_secondary_id
 
-  infrastructure_subnet_id       = var.subnet_aca_west_id
+  infrastructure_subnet_id       = var.subnet_aca_secondary_id
   internal_load_balancer_enabled = var.internal_load_balancer_enabled
 
   tags = var.tags
@@ -57,10 +57,10 @@ resource "azurerm_container_app_environment" "west" {
 }
 
 # ── Container App — East US ───────────────────────────────────────────────────
-resource "azurerm_container_app" "east" {
-  name                         = var.app_name_east
+resource "azurerm_container_app" "primary" {
+  name                         = var.app_name_primary
   resource_group_name          = var.resource_group_name
-  container_app_environment_id = azurerm_container_app_environment.east.id
+  container_app_environment_id = azurerm_container_app_environment.primary.id
   revision_mode                = "Single"
   tags                         = var.tags
 
@@ -68,7 +68,7 @@ resource "azurerm_container_app" "east" {
   # Container App is created, eliminating the system-assigned identity race condition.
   identity {
     type         = "UserAssigned"
-    identity_ids = [var.aca_east_identity_id]
+    identity_ids = [var.aca_primary_identity_id]
   }
 
   # Registry credentials for ACR image pull
@@ -93,7 +93,7 @@ resource "azurerm_container_app" "east" {
     content {
       name                = secret.key
       key_vault_secret_id = "${trimsuffix(var.key_vault_uri, "/")}/secrets/${secret.value.kv_secret_name}"
-      identity            = var.aca_east_identity_id
+      identity            = var.aca_primary_identity_id
     }
   }
 
@@ -149,16 +149,16 @@ resource "azurerm_container_app" "east" {
 }
 
 # ── Container App — West US ───────────────────────────────────────────────────
-resource "azurerm_container_app" "west" {
-  name                         = var.app_name_west
+resource "azurerm_container_app" "secondary" {
+  name                         = var.app_name_secondary
   resource_group_name          = var.resource_group_name
-  container_app_environment_id = azurerm_container_app_environment.west.id
+  container_app_environment_id = azurerm_container_app_environment.secondary.id
   revision_mode                = "Single"
   tags                         = var.tags
 
   identity {
     type         = "UserAssigned"
-    identity_ids = [var.aca_west_identity_id]
+    identity_ids = [var.aca_secondary_identity_id]
   }
 
   registry {
@@ -177,7 +177,7 @@ resource "azurerm_container_app" "west" {
     content {
       name                = secret.key
       key_vault_secret_id = "${trimsuffix(var.key_vault_uri, "/")}/secrets/${secret.value.kv_secret_name}"
-      identity            = var.aca_west_identity_id
+      identity            = var.aca_secondary_identity_id
     }
   }
 

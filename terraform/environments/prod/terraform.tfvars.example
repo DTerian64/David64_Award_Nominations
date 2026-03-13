@@ -30,19 +30,20 @@ openai_api_version  = "2024-02-01"
 model_capacity_tpm  = 150
 
 # Log Analytics
-workspace_name_east = "workspace-rgawardnomination6aem"
-workspace_name_west = "workspace-rgawardnomination57mY"
+workspace_name_primary   = "workspace-rgawardnomination6aem"
+workspace_name_secondary = "workspace-rgawardnomination57mY"
 
 # Container Apps
-cae_name_east = "cae-award-eastus"
-cae_name_west = "cae-award-westus"
-app_name_east = "award-api-eastus"
-app_name_west = "award-api-westus"
-min_replicas  = 1
-max_replicas  = 3
+cae_name_primary   = "cae-award-eastus"
+cae_name_secondary = "cae-award-westus"
+app_name_primary   = "award-api-eastus"
+app_name_secondary = "award-api-westus"
+min_replicas       = 1
+max_replicas       = 3
 
 # Static ACA config
-location_east                 = "eastus"
+location_primary   = "eastus"
+location_secondary = "westus"
 model_blob_name               = "fraud_detection_model.pkl"
 api_base_url                  = "https://award-nomination-api.azurefd.net"
 logging_level                 = "INFO"

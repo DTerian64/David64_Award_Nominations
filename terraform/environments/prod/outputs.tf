@@ -35,14 +35,14 @@ output "swa_deployment_token" {
   sensitive   = true
 }
 
-output "aca_east_principal_id" {
-  description = "East User-Assigned Managed Identity principal ID (for reference)"
-  value       = azurerm_user_assigned_identity.aca_east.principal_id
+output "aca_primary_principal_id" {
+  description = "Primary User-Assigned Managed Identity principal ID (for reference)"
+  value       = azurerm_user_assigned_identity.aca_primary.principal_id
 }
 
-output "aca_west_principal_id" {
-  description = "West User-Assigned Managed Identity principal ID (for reference)"
-  value       = azurerm_user_assigned_identity.aca_west.principal_id
+output "aca_secondary_principal_id" {
+  description = "Secondary User-Assigned Managed Identity principal ID (for reference)"
+  value       = azurerm_user_assigned_identity.aca_secondary.principal_id
 }
 
 output "post_deploy_checklist" {

@@ -25,14 +25,14 @@ resource "azurerm_role_assignment" "grafana_admin" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
-resource "azurerm_role_assignment" "grafana_monitoring_reader_east" {
-  scope                = var.log_analytics_workspace_east_id
+resource "azurerm_role_assignment" "grafana_monitoring_reader_primary" {
+  scope                = var.log_analytics_workspace_primary_id
   role_definition_name = "Monitoring Reader"
   principal_id         = azurerm_dashboard_grafana.grafana.identity[0].principal_id
 }
 
-resource "azurerm_role_assignment" "grafana_monitoring_reader_west" {
-  scope                = var.log_analytics_workspace_west_id
+resource "azurerm_role_assignment" "grafana_monitoring_reader_secondary" {
+  scope                = var.log_analytics_workspace_secondary_id
   role_definition_name = "Monitoring Reader"
   principal_id         = azurerm_dashboard_grafana.grafana.identity[0].principal_id
 }

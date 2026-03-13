@@ -48,25 +48,25 @@ resource "azurerm_cdn_frontdoor_origin_group" "api" {
   }
 }
 
-resource "azurerm_cdn_frontdoor_origin" "east" {
-  name                          = "origin-award-api-eastus"
+resource "azurerm_cdn_frontdoor_origin" "primary" {
+  name                          = "origin-award-api-primaryus"
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
 
   enabled                        = true
-  host_name                      = var.container_app_east_fqdn
-  origin_host_header             = var.container_app_east_fqdn
+  host_name                      = var.container_app_primary_fqdn
+  origin_host_header             = var.container_app_primary_fqdn
   priority                       = 1
   weight                         = 500
   certificate_name_check_enabled = true
 }
 
-resource "azurerm_cdn_frontdoor_origin" "west" {
-  name                          = "origin-award-api-westus"
+resource "azurerm_cdn_frontdoor_origin" "secondary" {
+  name                          = "origin-award-api-secondaryus"
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
 
   enabled                        = true
-  host_name                      = var.container_app_west_fqdn
-  origin_host_header             = var.container_app_west_fqdn
+  host_name                      = var.container_app_secondary_fqdn
+  origin_host_header             = var.container_app_secondary_fqdn
   priority                       = 1
   weight                         = 500
   certificate_name_check_enabled = true
@@ -77,8 +77,8 @@ resource "azurerm_cdn_frontdoor_route" "api" {
   cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.endpoint.id
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
   cdn_frontdoor_origin_ids = [
-    azurerm_cdn_frontdoor_origin.east.id,
-    azurerm_cdn_frontdoor_origin.west.id,
+    azurerm_cdn_frontdoor_origin.primary.id,
+    azurerm_cdn_frontdoor_origin.secondary.id,
   ]
 
   enabled                = true

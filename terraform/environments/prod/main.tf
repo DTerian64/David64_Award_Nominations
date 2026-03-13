@@ -15,7 +15,7 @@ locals {
 # ── 0. Resource Group ─────────────────────────────────────────────────────────
 resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
-  location = var.location_east
+  location = var.location_primary
   tags     = local.tags
 }
 
@@ -43,8 +43,8 @@ module "networking" {
 
   resource_group_name     = var.resource_group_name
   environment             = var.environment
-  vnet_east_address_space = "10.0.0.0/16"
-  vnet_west_address_space = "10.1.0.0/16"
+  vnet_primary_address_space = "10.0.0.0/16"
+  vnet_secondary_address_space = "10.1.0.0/16"
   tags                    = local.tags
   depends_on              = [azurerm_resource_group.rg]
 }
@@ -82,7 +82,7 @@ module "storage" {
   resource_group_name        = var.resource_group_name
   storage_account_name       = var.storage_account_name
   allowed_ips                = var.my_ips
-  aca_subnet_ids             = [module.networking.subnet_aca_east_id, module.networking.subnet_aca_west_id]
+  aca_subnet_ids             = [module.networking.subnet_aca_primary_id, module.networking.subnet_aca_secondary_id]
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_blob_id
   tags                       = local.tags
@@ -93,18 +93,18 @@ module "storage" {
 # This eliminates the system-assigned identity race condition where Azure tries to
 # validate KV-backed secrets before the access policy for the new identity exists.
 # Dependency order: MI → KV access policy → Container Apps (with KV secrets)
-resource "azurerm_user_assigned_identity" "aca_east" {
+resource "azurerm_user_assigned_identity" "aca_primary" {
   name                = "id-award-api-eastus-${var.environment}"
   resource_group_name = var.resource_group_name
-  location            = var.location_east
+  location            = var.location_primary
   tags                = local.tags
   depends_on          = [azurerm_resource_group.rg]
 }
 
-resource "azurerm_user_assigned_identity" "aca_west" {
+resource "azurerm_user_assigned_identity" "aca_secondary" {
   name                = "id-award-api-westus-${var.environment}"
   resource_group_name = var.resource_group_name
-  location            = "westus"
+  location            = var.location_secondary
   tags                = local.tags
   depends_on          = [azurerm_resource_group.rg]
 }
@@ -119,7 +119,7 @@ module "key_vault" {
   resource_group_name        = var.resource_group_name
   key_vault_name             = var.key_vault_name
   allowed_ips                = var.my_ips
-  aca_subnet_ids             = [module.networking.subnet_aca_east_id, module.networking.subnet_aca_west_id]
+  aca_subnet_ids             = [module.networking.subnet_aca_primary_id, module.networking.subnet_aca_secondary_id]
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_kv_id
   aca_principal_ids          = []
@@ -154,8 +154,8 @@ module "log_analytics" {
   source = "../../modules/log-analytics"
 
   resource_group_name = var.resource_group_name
-  workspace_name_east = var.workspace_name_east
-  workspace_name_west = var.workspace_name_west
+  workspace_name_primary = var.workspace_name_primary
+  workspace_name_secondary = var.workspace_name_secondary
   tags                = local.tags
 }
 
@@ -164,26 +164,26 @@ module "container_apps" {
   source = "../../modules/container-apps"
 
   resource_group_name             = var.resource_group_name
-  cae_name_east                   = var.cae_name_east
-  cae_name_west                   = var.cae_name_west
-  app_name_east                   = var.app_name_east
-  app_name_west                   = var.app_name_west
-  subnet_aca_east_id              = module.networking.subnet_aca_east_id
-  subnet_aca_west_id              = module.networking.subnet_aca_west_id
+  cae_name_primary                   = var.cae_name_primary
+  cae_name_secondary                   = var.cae_name_secondary
+  app_name_primary                   = var.app_name_primary
+  app_name_secondary                   = var.app_name_secondary
+  subnet_aca_primary_id              = module.networking.subnet_aca_primary_id
+  subnet_aca_secondary_id              = module.networking.subnet_aca_secondary_id
   min_replicas                    = var.min_replicas
   max_replicas                    = var.max_replicas
-  log_analytics_workspace_east_id = module.log_analytics.workspace_east_id
-  log_analytics_workspace_west_id = module.log_analytics.workspace_west_id
+  log_analytics_workspace_primary_id   = module.log_analytics.workspace_primary_id
+  log_analytics_workspace_secondary_id = module.log_analytics.workspace_secondary_id
   acr_login_server                = module.container_registry.login_server
   acr_admin_username              = module.container_registry.admin_username
   acr_admin_password              = module.container_registry.admin_password
   key_vault_uri                   = module.key_vault.vault_uri
-  aca_east_identity_id            = azurerm_user_assigned_identity.aca_east.id
-  aca_west_identity_id            = azurerm_user_assigned_identity.aca_west.id
+  aca_primary_identity_id         = azurerm_user_assigned_identity.aca_primary.id
+  aca_secondary_identity_id       = azurerm_user_assigned_identity.aca_secondary.id
   # KV access policies must exist before Container Apps try to resolve KV secrets
   depends_on                      = [azurerm_resource_group.rg, module.key_vault,
-                                     azurerm_key_vault_access_policy.aca_east,
-                                     azurerm_key_vault_access_policy.aca_west]
+                                     azurerm_key_vault_access_policy.aca_primary,
+                                     azurerm_key_vault_access_policy.aca_secondary]
 
   # Non-secret config — passed as plain env vars
   environment_variables = [
@@ -193,8 +193,8 @@ module "container_apps" {
     { name = "AZURE_OPENAI_MODEL",              value = module.openai.model_deployment_name },
     { name = "KEY_VAULT_URL",                   value = module.key_vault.vault_uri },
     { name = "ENVIRONMENT",                     value = var.environment },
-    { name = "REGION",                          value = var.location_east },
-    { name = "CONTAINER_APP_NAME",              value = var.app_name_east },
+    { name = "REGION",                          value = var.location_primary },
+    { name = "CONTAINER_APP_NAME",              value = var.app_name_primary },
     { name = "AZURE_OPENAI_API_VERSION",        value = var.openai_api_version },
     { name = "MODEL_BLOB_NAME",                 value = var.model_blob_name },
     { name = "API_BASE_URL",                    value = var.api_base_url },
@@ -222,24 +222,24 @@ module "container_apps" {
 # Reference the user-assigned MIs (created above) — not the Container Apps.
 # This breaks the ordering race: MI exists → KV policy granted → Container App
 # created with identity already authorized. No more 5s timeout errors.
-resource "azurerm_key_vault_access_policy" "aca_east" {
+resource "azurerm_key_vault_access_policy" "aca_primary" {
   key_vault_id = module.key_vault.key_vault_id
   tenant_id    = data.azuread_client_config.current.tenant_id
-  object_id    = azurerm_user_assigned_identity.aca_east.principal_id
+  object_id    = azurerm_user_assigned_identity.aca_primary.principal_id
 
   secret_permissions = ["Get", "List"]
 
-  depends_on = [module.key_vault, azurerm_user_assigned_identity.aca_east]
+  depends_on = [module.key_vault, azurerm_user_assigned_identity.aca_primary]
 }
 
-resource "azurerm_key_vault_access_policy" "aca_west" {
+resource "azurerm_key_vault_access_policy" "aca_secondary" {
   key_vault_id = module.key_vault.key_vault_id
   tenant_id    = data.azuread_client_config.current.tenant_id
-  object_id    = azurerm_user_assigned_identity.aca_west.principal_id
+  object_id    = azurerm_user_assigned_identity.aca_secondary.principal_id
 
   secret_permissions = ["Get", "List"]
 
-  depends_on = [module.key_vault, azurerm_user_assigned_identity.aca_west]
+  depends_on = [module.key_vault, azurerm_user_assigned_identity.aca_secondary]
 }
 
 # ── 9. Front Door ─────────────────────────────────────────────────────────────
@@ -249,8 +249,8 @@ module "front_door" {
   resource_group_name     = var.resource_group_name
   afd_profile_name        = var.afd_profile_name
   afd_endpoint_name       = var.afd_endpoint_name
-  container_app_east_fqdn = module.container_apps.east_app_fqdn
-  container_app_west_fqdn = module.container_apps.west_app_fqdn
+  container_app_primary_fqdn   = module.container_apps.primary_app_fqdn
+  container_app_secondary_fqdn = module.container_apps.secondary_app_fqdn
   tags                    = local.tags
   depends_on              = [module.container_apps]
 }
@@ -279,7 +279,7 @@ module "grafana" {
 
   resource_group_name             = var.resource_group_name
   grafana_name                    = var.grafana_name
-  log_analytics_workspace_east_id = module.log_analytics.workspace_east_id
-  log_analytics_workspace_west_id = module.log_analytics.workspace_west_id
+  log_analytics_workspace_primary_id   = module.log_analytics.workspace_primary_id
+  log_analytics_workspace_secondary_id = module.log_analytics.workspace_secondary_id
   tags                            = local.tags
 }

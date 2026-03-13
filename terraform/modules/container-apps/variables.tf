@@ -5,62 +5,62 @@ variable "resource_group_name" {
   type        = string
 }
 
-variable "location_east" {
+variable "location_primary" {
   description = "East US region"
   type        = string
-  default     = "eastus"
+  default     = "primaryus"
 }
 
-variable "location_west" {
+variable "location_secondary" {
   description = "West US region"
   type        = string
-  default     = "westus"
+  default     = "secondaryus"
 }
 
 # ── CAE names ─────────────────────────────────────────────────────────────────
-variable "cae_name_east" {
+variable "cae_name_primary" {
   description = "Container App Environment name — East US"
   type        = string
-  default     = "cae-award-eastus"
+  default     = "cae-award-primaryus"
 }
 
-variable "cae_name_west" {
+variable "cae_name_secondary" {
   description = "Container App Environment name — West US"
   type        = string
-  default     = "cae-award-westus"
+  default     = "cae-award-secondaryus"
 }
 
 # ── Container App names ───────────────────────────────────────────────────────
-variable "app_name_east" {
+variable "app_name_primary" {
   description = "Container App name — East US"
   type        = string
-  default     = "award-api-eastus"
+  default     = "award-api-primaryus"
 }
 
-variable "app_name_west" {
+variable "app_name_secondary" {
   description = "Container App name — West US"
   type        = string
-  default     = "award-api-westus"
+  default     = "award-api-secondaryus"
 }
 
 # ── Networking — from networking module outputs ───────────────────────────────
-variable "subnet_aca_east_id" {
+variable "subnet_aca_primary_id" {
   description = "East ACA subnet ID (delegated to Microsoft.App/environments)"
   type        = string
 }
 
-variable "subnet_aca_west_id" {
+variable "subnet_aca_secondary_id" {
   description = "West ACA subnet ID (delegated to Microsoft.App/environments)"
   type        = string
 }
 
 # ── Log Analytics — from log-analytics module outputs ────────────────────────
-variable "log_analytics_workspace_east_id" {
+variable "log_analytics_workspace_primary_id" {
   description = "East Log Analytics workspace resource ID"
   type        = string
 }
 
-variable "log_analytics_workspace_west_id" {
+variable "log_analytics_workspace_secondary_id" {
   description = "West Log Analytics workspace resource ID"
   type        = string
 }
@@ -148,13 +148,13 @@ variable "key_vault_uri" {
 # Created in the environment main.tf BEFORE the Container Apps, so KV access
 # policies can be granted before Azure tries to resolve KV-backed secrets.
 # Using user-assigned (not system-assigned) breaks the ordering race condition.
-variable "aca_east_identity_id" {
-  description = "Resource ID of the User-Assigned Managed Identity for the east Container App"
+variable "aca_primary_identity_id" {
+  description = "Resource ID of the User-Assigned Managed Identity for the primary Container App"
   type        = string
 }
 
-variable "aca_west_identity_id" {
-  description = "Resource ID of the User-Assigned Managed Identity for the west Container App"
+variable "aca_secondary_identity_id" {
+  description = "Resource ID of the User-Assigned Managed Identity for the secondary Container App"
   type        = string
 }
 

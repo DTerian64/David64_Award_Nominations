@@ -78,21 +78,21 @@ variable "cors_allowed_origins" {
 }
 
 # Log Analytics
-variable "workspace_name_east" {
-  description = "Log Analytics workspace name — East US"
+variable "workspace_name_primary" {
+  description = "Log Analytics workspace name — Primary region"
   type        = string
 }
 
-variable "workspace_name_west" {
-  description = "Log Analytics workspace name — West US"
+variable "workspace_name_secondary" {
+  description = "Log Analytics workspace name — Secondary region"
   type        = string
 }
 
 # Container Apps
-variable "cae_name_east"  { type = string }
-variable "cae_name_west"  { type = string }
-variable "app_name_east"  { type = string }
-variable "app_name_west"  { type = string }
+variable "cae_name_primary"   { type = string }
+variable "cae_name_secondary" { type = string }
+variable "app_name_primary"   { type = string }
+variable "app_name_secondary" { type = string }
 variable "min_replicas" {
   type    = number
   default = 0
@@ -103,9 +103,14 @@ variable "max_replicas" {
 }
 
 # Location
-variable "location_east" {
+variable "location_primary" {
   type    = string
   default = "westus2"
+}
+
+variable "location_secondary" {
+  type    = string
+  default = "westus"
 }
 
 # Secrets

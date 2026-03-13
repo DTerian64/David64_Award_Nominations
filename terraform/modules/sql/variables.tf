@@ -61,8 +61,8 @@ variable "tags" {
   default     = {}
 }
 
-variable "location_east" {
-  description = "East US region — used for private endpoint (must match subnet region)"
+variable "location_primary" {
+  description = "Primary region — used for private endpoint (must match subnet region)"
   type        = string
-  default     = "eastus"
+  default     = "westus2"
 }

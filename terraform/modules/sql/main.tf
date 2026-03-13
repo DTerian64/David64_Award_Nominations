@@ -44,7 +44,7 @@ resource "azurerm_mssql_database" "db" {
 # ── Private endpoint ──────────────────────────────────────────────────────────
 resource "azurerm_private_endpoint" "sql" {
   name                = "pe-${var.server_name}"
-  location            = var.location_east
+  location            = var.location_primary
   resource_group_name = var.resource_group_name
   subnet_id           = var.private_endpoint_subnet_id
   tags                = var.tags

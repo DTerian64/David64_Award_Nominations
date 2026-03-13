@@ -1,25 +1,25 @@
 # modules/networking/outputs.tf
 
 # ── VNet IDs ──────────────────────────────────────────────────────────────────
-output "vnet_east_id" {
+output "vnet_primary_id" {
   description = "East US VNet resource ID"
-  value       = azurerm_virtual_network.east.id
+  value       = azurerm_virtual_network.primary.id
 }
 
-output "vnet_west_id" {
+output "vnet_secondary_id" {
   description = "West US VNet resource ID"
-  value       = azurerm_virtual_network.west.id
+  value       = azurerm_virtual_network.secondary.id
 }
 
 # ── Subnet IDs — consumed by container-apps and other modules ─────────────────
-output "subnet_aca_east_id" {
+output "subnet_aca_primary_id" {
   description = "East ACA subnet ID — pass to container-apps module"
-  value       = azurerm_subnet.aca_east.id
+  value       = azurerm_subnet.aca_primary.id
 }
 
-output "subnet_aca_west_id" {
+output "subnet_aca_secondary_id" {
   description = "West ACA subnet ID — pass to container-apps module"
-  value       = azurerm_subnet.aca_west.id
+  value       = azurerm_subnet.aca_secondary.id
 }
 
 output "subnet_private_endpoints_id" {

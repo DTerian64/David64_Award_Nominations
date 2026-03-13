@@ -35,15 +35,16 @@ openai_api_version = "2024-02-01"
 model_capacity_tpm = 10
 
 # ── Container Apps ────────────────────────────────────────────────────────────
-cae_name_east = "cae-award-eastus-dev"
-cae_name_west = "cae-award-westus-dev"
-app_name_east = "award-api-eastus-dev"
-app_name_west = "award-api-westus-dev"
+cae_name_primary   = "cae-award-primary-dev"
+cae_name_secondary = "cae-award-secondary-dev"
+app_name_primary   = "award-api-primary-dev"
+app_name_secondary = "award-api-secondary-dev"
 min_replicas  = 0
 max_replicas  = 1
 
 # ── App config ────────────────────────────────────────────────────────────────
-location_east                   = "westus2"
+location_primary                = "westus2"
+location_secondary              = "westus"
 model_blob_name                 = "fraud_detection_model.pkl"
 api_base_url                    = "https://award-nomination-api-dev.azurefd.net"
 logging_level                   = "DEBUG"
@@ -60,8 +61,8 @@ swa_custom_domain      = "dev-awards.terian-services.com"  # leave empty "" to s
 dns_zone_resource_group = "rg_platform"             # RG holding terian-services.com DNS zone
 
 # ── Log Analytics ─────────────────────────────────────────────────────────────
-workspace_name_east = "workspace-award-eastus-dev"
-workspace_name_west = "workspace-award-westus-dev"
+workspace_name_primary   = "workspace-award-primary-dev"
+workspace_name_secondary = "workspace-award-secondary-dev"
 
 # ── Pass 2 values — POPULATED_BY_SCRIPT (mid-terraform.ps1) ──────────────────
 swa_redirect_urls    = []

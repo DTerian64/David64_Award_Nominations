@@ -13,7 +13,7 @@
 #       wired directly to user-assigned managed identities in main.tf.
 #
 # Usage:
-#   cd terraform\environments\dev
+#   cd terraform\environments\sandbox
 #   .\mid-terraform.ps1
 # ─────────────────────────────────────────────────────────────────────────────
 

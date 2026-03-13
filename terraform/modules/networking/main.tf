@@ -10,19 +10,19 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── East US VNet ──────────────────────────────────────────────────────────────
-resource "azurerm_virtual_network" "east" {
-  name                = "vnet-award-eastus-${var.environment}"
-  location            = var.location_east
+resource "azurerm_virtual_network" "primary" {
+  name                = "vnet-award-primaryus-${var.environment}"
+  location            = var.location_primary
   resource_group_name = var.resource_group_name
-  address_space       = [var.vnet_east_address_space]
+  address_space       = [var.vnet_primary_address_space]
   tags                = var.tags
 }
 
-resource "azurerm_subnet" "aca_east" {
-  name                 = "subnet-aca-eastus-${var.environment}"
+resource "azurerm_subnet" "aca_primary" {
+  name                 = "subnet-aca-primaryus-${var.environment}"
   resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.east.name
-  address_prefixes     = [cidrsubnet(var.vnet_east_address_space, 8, 1)]
+  virtual_network_name = azurerm_virtual_network.primary.name
+  address_prefixes     = [cidrsubnet(var.vnet_primary_address_space, 8, 1)]
 
   # Service endpoints allow ACA to access KV and Storage directly
   service_endpoints = [
@@ -40,28 +40,28 @@ resource "azurerm_subnet" "aca_east" {
 }
 
 resource "azurerm_subnet" "private_endpoints" {
-  name                 = "subnet-privatelinks-eastus-${var.environment}"
+  name                 = "subnet-privatelinks-primaryus-${var.environment}"
   resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.east.name
-  address_prefixes     = [cidrsubnet(var.vnet_east_address_space, 8, 2)]
+  virtual_network_name = azurerm_virtual_network.primary.name
+  address_prefixes     = [cidrsubnet(var.vnet_primary_address_space, 8, 2)]
 
   private_endpoint_network_policies = "Disabled"
 }
 
 # ── West US VNet ──────────────────────────────────────────────────────────────
-resource "azurerm_virtual_network" "west" {
-  name                = "vnet-award-westus-${var.environment}"
-  location            = var.location_west
+resource "azurerm_virtual_network" "secondary" {
+  name                = "vnet-award-secondaryus-${var.environment}"
+  location            = var.location_secondary
   resource_group_name = var.resource_group_name
-  address_space       = [var.vnet_west_address_space]
+  address_space       = [var.vnet_secondary_address_space]
   tags                = var.tags
 }
 
-resource "azurerm_subnet" "aca_west" {
-  name                 = "subnet-aca-westus-${var.environment}"
+resource "azurerm_subnet" "aca_secondary" {
+  name                 = "subnet-aca-secondaryus-${var.environment}"
   resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.west.name
-  address_prefixes     = [cidrsubnet(var.vnet_west_address_space, 8, 1)]
+  virtual_network_name = azurerm_virtual_network.secondary.name
+  address_prefixes     = [cidrsubnet(var.vnet_secondary_address_space, 8, 1)]
 
   # Service endpoints allow ACA to access KV and Storage directly
   service_endpoints = [
@@ -79,20 +79,20 @@ resource "azurerm_subnet" "aca_west" {
 }
 
 # ── VNet Peering ──────────────────────────────────────────────────────────────
-resource "azurerm_virtual_network_peering" "east_to_west" {
-  name                         = "peer-east-to-west-${var.environment}"
+resource "azurerm_virtual_network_peering" "primary_to_secondary" {
+  name                         = "peer-primary-to-secondary-${var.environment}"
   resource_group_name          = var.resource_group_name
-  virtual_network_name         = azurerm_virtual_network.east.name
-  remote_virtual_network_id    = azurerm_virtual_network.west.id
+  virtual_network_name         = azurerm_virtual_network.primary.name
+  remote_virtual_network_id    = azurerm_virtual_network.secondary.id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
 }
 
-resource "azurerm_virtual_network_peering" "west_to_east" {
-  name                         = "peer-west-to-east-${var.environment}"
+resource "azurerm_virtual_network_peering" "secondary_to_primary" {
+  name                         = "peer-secondary-to-primary-${var.environment}"
   resource_group_name          = var.resource_group_name
-  virtual_network_name         = azurerm_virtual_network.west.name
-  remote_virtual_network_id    = azurerm_virtual_network.east.id
+  virtual_network_name         = azurerm_virtual_network.secondary.name
+  remote_virtual_network_id    = azurerm_virtual_network.primary.id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
 }
@@ -115,22 +115,22 @@ resource "azurerm_private_dns_zone" "zones" {
   tags                = var.tags
 }
 
-resource "azurerm_private_dns_zone_virtual_network_link" "east_links" {
+resource "azurerm_private_dns_zone_virtual_network_link" "primary_links" {
   for_each              = local.dns_zones
-  name                  = "link-${each.key}-eastus-${var.environment}"
+  name                  = "link-${each.key}-primaryus-${var.environment}"
   resource_group_name   = var.resource_group_name
   private_dns_zone_name = azurerm_private_dns_zone.zones[each.key].name
-  virtual_network_id    = azurerm_virtual_network.east.id
+  virtual_network_id    = azurerm_virtual_network.primary.id
   registration_enabled  = false
   tags                  = var.tags
 }
 
-resource "azurerm_private_dns_zone_virtual_network_link" "west_links" {
+resource "azurerm_private_dns_zone_virtual_network_link" "secondary_links" {
   for_each              = local.dns_zones
-  name                  = "link-${each.key}-westus-${var.environment}"
+  name                  = "link-${each.key}-secondaryus-${var.environment}"
   resource_group_name   = var.resource_group_name
   private_dns_zone_name = azurerm_private_dns_zone.zones[each.key].name
-  virtual_network_id    = azurerm_virtual_network.west.id
+  virtual_network_id    = azurerm_virtual_network.secondary.id
   registration_enabled  = false
   tags                  = var.tags
 }

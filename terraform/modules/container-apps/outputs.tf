@@ -1,55 +1,55 @@
 # modules/container-apps/outputs.tf
 
 # ── CAE outputs ───────────────────────────────────────────────────────────────
-output "cae_east_id" {
+output "cae_primary_id" {
   description = "East CAE resource ID"
-  value       = azurerm_container_app_environment.east.id
+  value       = azurerm_container_app_environment.primary.id
 }
 
-output "cae_west_id" {
+output "cae_secondary_id" {
   description = "West CAE resource ID"
-  value       = azurerm_container_app_environment.west.id
+  value       = azurerm_container_app_environment.secondary.id
 }
 
-output "cae_east_static_ip" {
+output "cae_primary_static_ip" {
   description = "East CAE internal load balancer static IP — used by AFD Private Link origin"
-  value       = azurerm_container_app_environment.east.static_ip_address
+  value       = azurerm_container_app_environment.primary.static_ip_address
 }
 
-output "cae_west_static_ip" {
+output "cae_secondary_static_ip" {
   description = "West CAE internal load balancer static IP — used by AFD Private Link origin"
-  value       = azurerm_container_app_environment.west.static_ip_address
+  value       = azurerm_container_app_environment.secondary.static_ip_address
 }
 
-output "cae_east_default_domain" {
+output "cae_primary_default_domain" {
   description = "East CAE default domain"
-  value       = azurerm_container_app_environment.east.default_domain
+  value       = azurerm_container_app_environment.primary.default_domain
 }
 
-output "cae_west_default_domain" {
+output "cae_secondary_default_domain" {
   description = "West CAE default domain"
-  value       = azurerm_container_app_environment.west.default_domain
+  value       = azurerm_container_app_environment.secondary.default_domain
 }
 
 # ── Container App outputs ─────────────────────────────────────────────────────
-output "east_app_id" {
+output "primary_app_id" {
   description = "East Container App resource ID"
-  value       = azurerm_container_app.east.id
+  value       = azurerm_container_app.primary.id
 }
 
-output "west_app_id" {
+output "secondary_app_id" {
   description = "West Container App resource ID"
-  value       = azurerm_container_app.west.id
+  value       = azurerm_container_app.secondary.id
 }
 
-output "east_app_fqdn" {
+output "primary_app_fqdn" {
   description = "East Container App FQDN — used as Front Door origin hostname"
-  value       = azurerm_container_app.east.ingress[0].fqdn
+  value       = azurerm_container_app.primary.ingress[0].fqdn
 }
 
-output "west_app_fqdn" {
+output "secondary_app_fqdn" {
   description = "West Container App FQDN — used as Front Door origin hostname"
-  value       = azurerm_container_app.west.ingress[0].fqdn
+  value       = azurerm_container_app.secondary.ingress[0].fqdn
 }
 
 # ── Managed identity outputs ──────────────────────────────────────────────────
@@ -70,7 +70,7 @@ output "west_app_fqdn" {
 #
 # Or update the image directly:
 #   az containerapp update \
-#     --name award-api-eastus \
+#     --name award-api-primaryus \
 #     --resource-group rg_award_nomination \
 #     --image acrawardnomination.azurecr.io/award-nomination-api:latest
 # ─────────────────────────────────────────────────────────────────────────────

@@ -17,27 +17,27 @@ variable "afd_endpoint_name" {
   default     = "award-nomination-api"
 }
 
-variable "location_east" {
+variable "location_primary" {
   description = "East US region"
   type        = string
-  default     = "eastus"
+  default     = "primaryus"
 }
 
-variable "location_west" {
+variable "location_secondary" {
   description = "West US region"
   type        = string
-  default     = "westus"
+  default     = "secondaryus"
 }
 
 # ── From container-apps module outputs ────────────────────────────────────────
 # Origins point directly to each Container App's public FQDN.
-# e.g. award-api-eastus.ambitiousflower-6294c285.eastus.azurecontainerapps.io
-variable "container_app_east_fqdn" {
+# e.g. award-api-primaryus.ambitiousflower-6294c285.primaryus.azurecontainerapps.io
+variable "container_app_primary_fqdn" {
   description = "East Container App public FQDN — used as AFD origin hostname"
   type        = string
 }
 
-variable "container_app_west_fqdn" {
+variable "container_app_secondary_fqdn" {
   description = "West Container App public FQDN — used as AFD origin hostname"
   type        = string
 }

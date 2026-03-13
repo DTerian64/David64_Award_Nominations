@@ -8,7 +8,7 @@
 #       not by this script.
 #
 # Usage:
-#   cd terraform\environments\dev
+#   cd terraform\environments\sandbox
 #   .\pre-terraform.ps1
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 
 Write-Host ""
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  Award Nomination — Pre-Terraform Setup (Dev)"        -ForegroundColor Cyan
+Write-Host "  Award Nomination — Pre-Terraform Setup (Sandbox)"    -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
 
