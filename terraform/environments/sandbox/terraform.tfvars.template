@@ -33,7 +33,6 @@ key_vault_name       = "kv-awardnominations-sandbox"
 openai_name        = "award-nomination-openai-sandbox"
 openai_api_version = "2024-02-01"
 model_capacity_tpm = 10
-
 # ── Container Apps ────────────────────────────────────────────────────────────
 cae_name_primary   = "cae-award-primary-sandbox"
 cae_name_secondary = "cae-award-secondary-sandbox"
@@ -43,8 +42,8 @@ min_replicas  = 0
 max_replicas  = 1
 
 # ── App config ────────────────────────────────────────────────────────────────
-location_primary                = "westus2"
-location_secondary              = "westus"
+location_primary                = "eastus"
+location_secondary              = "westus2"
 model_blob_name                 = "fraud_detection_model.pkl"
 api_base_url                    = "https://award-nomination-api-sandbox.azurefd.net"
 logging_level                   = "DEBUG"
