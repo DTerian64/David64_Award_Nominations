@@ -19,6 +19,12 @@ resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
   location = var.location_primary
   tags     = local.tags
+
+  lifecycle {
+    # RG location is metadata only — it does not control where resources are deployed.
+    # Prevent Terraform from destroying/recreating the RG if location_primary changes.
+    ignore_changes = [location]
+  }
 }
 
 # ── Azure AD — create new app registrations for dev ───────────────────────────

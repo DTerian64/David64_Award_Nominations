@@ -105,12 +105,12 @@ variable "max_replicas" {
 # Location
 variable "location_primary" {
   type    = string
-  default = "westus2"
+  default = "eastus"
 }
 
 variable "location_secondary" {
   type    = string
-  default = "westus"
+  default = "westus2"
 }
 
 # Secrets
