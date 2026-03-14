@@ -3,10 +3,10 @@
 # Container App Environments + Container Apps
 #
 # Creates:
-#   - CAE East US (internal, VNet injected into subnet-aca-primaryus)
-#   - CAE West US (internal, VNet injected into subnet-aca-secondaryus)
-#   - Container App East US (award-api-primaryus)
-#   - Container App West US (award-api-secondaryus)
+#   - CAE Primary region (VNet injected into subnet-aca-primary)
+#   - CAE Secondary region (VNet injected into subnet-aca-secondary)
+#   - Container App primary region
+#   - Container App secondary region
 #   - System-assigned managed identity on each Container App
 #
 # IMPORTANT: Image tag is set to a placeholder on initial deploy.

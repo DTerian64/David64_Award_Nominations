@@ -11,7 +11,7 @@
 
 # ── East US VNet ──────────────────────────────────────────────────────────────
 resource "azurerm_virtual_network" "primary" {
-  name                = "vnet-award-primaryus-${var.environment}"
+  name                = "vnet-award-primary-${var.environment}"
   location            = var.location_primary
   resource_group_name = var.resource_group_name
   address_space       = [var.vnet_primary_address_space]
@@ -19,7 +19,7 @@ resource "azurerm_virtual_network" "primary" {
 }
 
 resource "azurerm_subnet" "aca_primary" {
-  name                 = "subnet-aca-primaryus-${var.environment}"
+  name                 = "subnet-aca-primary-${var.environment}"
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.primary.name
   address_prefixes     = [cidrsubnet(var.vnet_primary_address_space, 8, 1)]
@@ -40,7 +40,7 @@ resource "azurerm_subnet" "aca_primary" {
 }
 
 resource "azurerm_subnet" "private_endpoints" {
-  name                 = "subnet-privatelinks-primaryus-${var.environment}"
+  name                 = "subnet-privatelinks-primary-${var.environment}"
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.primary.name
   address_prefixes     = [cidrsubnet(var.vnet_primary_address_space, 8, 2)]
@@ -50,7 +50,7 @@ resource "azurerm_subnet" "private_endpoints" {
 
 # ── West US VNet ──────────────────────────────────────────────────────────────
 resource "azurerm_virtual_network" "secondary" {
-  name                = "vnet-award-secondaryus-${var.environment}"
+  name                = "vnet-award-secondary-${var.environment}"
   location            = var.location_secondary
   resource_group_name = var.resource_group_name
   address_space       = [var.vnet_secondary_address_space]
@@ -58,7 +58,7 @@ resource "azurerm_virtual_network" "secondary" {
 }
 
 resource "azurerm_subnet" "aca_secondary" {
-  name                 = "subnet-aca-secondaryus-${var.environment}"
+  name                 = "subnet-aca-secondary-${var.environment}"
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.secondary.name
   address_prefixes     = [cidrsubnet(var.vnet_secondary_address_space, 8, 1)]
@@ -117,7 +117,7 @@ resource "azurerm_private_dns_zone" "zones" {
 
 resource "azurerm_private_dns_zone_virtual_network_link" "primary_links" {
   for_each              = local.dns_zones
-  name                  = "link-${each.key}-primaryus-${var.environment}"
+  name                  = "link-${each.key}-primary-${var.environment}"
   resource_group_name   = var.resource_group_name
   private_dns_zone_name = azurerm_private_dns_zone.zones[each.key].name
   virtual_network_id    = azurerm_virtual_network.primary.id
@@ -127,7 +127,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "primary_links" {
 
 resource "azurerm_private_dns_zone_virtual_network_link" "secondary_links" {
   for_each              = local.dns_zones
-  name                  = "link-${each.key}-secondaryus-${var.environment}"
+  name                  = "link-${each.key}-secondary-${var.environment}"
   resource_group_name   = var.resource_group_name
   private_dns_zone_name = azurerm_private_dns_zone.zones[each.key].name
   virtual_network_id    = azurerm_virtual_network.secondary.id

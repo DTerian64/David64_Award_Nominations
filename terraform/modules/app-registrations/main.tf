@@ -9,13 +9,12 @@ data "azuread_client_config" "current" {}
 resource "random_uuid" "api_scope_id" {}
 
 # ── API app registration ──────────────────────────────────────────────────────
-# Application ID URI uses tenant_id as the GUID — valid api:// format,
-# and tenant_id is known before the app is created (no self-reference cycle).
-# Format: api://<tenantId>/<app-slug>
 resource "azuread_application" "api" {
-  display_name    = "Award Nomination - ${var.environment}"
-  identifier_uris = ["api://${data.azuread_client_config.current.tenant_id}/award-nomination-${var.environment}"]
-  owners          = [data.azuread_client_config.current.object_id]
+  display_name     = "Award Nomination - ${var.environment}"
+  sign_in_audience = "AzureADMultipleOrgs"
+  owners           = [data.azuread_client_config.current.object_id]
+  # identifier_uris is set via azuread_application_identifier_uri below,
+  # because api://<clientId> requires a self-reference that can't be inlined.
 
   api {
     requested_access_token_version = 2
@@ -46,10 +45,18 @@ resource "azuread_service_principal" "api" {
   }
 }
 
+# Sets api://<clientId> as the Application ID URI.
+# Must be a separate resource — can't self-reference client_id inside azuread_application.
+resource "azuread_application_identifier_uri" "api" {
+  application_id = azuread_application.api.id
+  uri            = "api://${azuread_application.api.client_id}"
+}
+
 # ── SPA app registration ──────────────────────────────────────────────────────
 resource "azuread_application" "frontend" {
-  display_name = "Award Nomination Frontend - ${var.environment}"
-  owners       = [data.azuread_client_config.current.object_id]
+  display_name     = "Award Nomination Frontend - ${var.environment}"
+  sign_in_audience = "AzureADMultipleOrgs"
+  owners           = [data.azuread_client_config.current.object_id]
 
   api {
     requested_access_token_version = 2

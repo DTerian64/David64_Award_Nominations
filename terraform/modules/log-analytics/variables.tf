@@ -6,15 +6,13 @@ variable "resource_group_name" {
 }
 
 variable "location_primary" {
-  description = "Primary region for the primary workspace"
+  description = "Primary region — passed from environment, no default"
   type        = string
-  default     = "eastus"
 }
 
 variable "location_secondary" {
-  description = "Secondary region for the secondary workspace"
+  description = "Secondary region — passed from environment, no default"
   type        = string
-  default     = "westus"
 }
 
 variable "workspace_name_primary" {

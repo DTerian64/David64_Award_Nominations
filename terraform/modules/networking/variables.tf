@@ -16,15 +16,13 @@ variable "environment" {
 }
 
 variable "location_primary" {
-  description = "Primary region"
+  description = "Primary region — passed from environment, no default"
   type        = string
-  default     = "eastus"
 }
 
 variable "location_secondary" {
-  description = "Secondary region for ACA geo-redundancy"
+  description = "Secondary region — passed from environment, no default"
   type        = string
-  default     = "westus"
 }
 
 variable "vnet_primary_address_space" {

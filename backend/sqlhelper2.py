@@ -27,7 +27,7 @@ import logging
 
 from sqlalchemy import (
     create_engine, text,
-    Column, Integer, String, Float, DateTime, ForeignKey,
+    Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint,
 )
 from sqlalchemy.orm import (
     sessionmaker, DeclarativeBase, Session, relationship,
@@ -56,17 +56,45 @@ class Base(DeclarativeBase):
     pass
 
 
+class TenantORM(Base):
+    """
+    Maps to the [Tenants] table.
+
+    One row per customer organisation.  The AzureAdTenantId column stores the
+    Azure AD / Entra ID tenant GUID (the ``tid`` claim in every JWT issued by
+    that tenant) and is used to resolve which tenant a user belongs to at
+    authentication time.
+    """
+    __tablename__ = "Tenants"
+
+    TenantId        = Column(Integer, primary_key=True, autoincrement=True)
+    TenantName      = Column(String(256), nullable=False, unique=True)
+    AzureAdTenantId = Column(String(36),  nullable=False, unique=True)   # UUID string
+
+    # Reverse relationship — rarely needed directly, but handy for admin queries
+    users = relationship("UserORM", back_populates="tenant")
+
+
 class UserORM(Base):
     """Maps to the [Users] table."""
     __tablename__ = "Users"
 
     UserId            = Column(Integer, primary_key=True)
-    userPrincipalName = Column(String(256), nullable=False, unique=True)
+    userPrincipalName = Column(String(256), nullable=False)
     userEmail         = Column(String(256), nullable=True)
     FirstName         = Column(String(128), nullable=True)
     LastName          = Column(String(128), nullable=True)
     Title             = Column(String(256), nullable=True)
     ManagerId         = Column(Integer, ForeignKey("Users.UserId"), nullable=True)
+    TenantId          = Column(Integer, ForeignKey("Tenants.TenantId"), nullable=False)
+
+    __table_args__ = (
+        # UPN is unique per tenant, not globally
+        UniqueConstraint("userPrincipalName", "TenantId", name="uq_users_upn_tenant"),
+    )
+
+    # Tenant relationship
+    tenant = relationship("TenantORM", back_populates="users")
 
     # Self-referential manager relationship
     manager = relationship("UserORM", remote_side=[UserId])
@@ -271,6 +299,28 @@ def create_all_tables() -> None:
 
 
 # ===========================================================================
+# TENANT QUERIES
+# ===========================================================================
+
+def get_tenant_by_aad_id(aad_tenant_id: str) -> Optional[Tuple]:
+    """
+    Resolve an Azure AD tenant GUID (the ``tid`` JWT claim) to an internal
+    Tenant row.
+
+    Returns: (TenantId, TenantName, AzureAdTenantId) or None if not registered.
+    """
+    with get_db_context() as session:
+        return session.execute(
+            text("""
+                SELECT TenantId, TenantName, AzureAdTenantId
+                FROM Tenants
+                WHERE AzureAdTenantId = :aad_id
+            """),
+            {"aad_id": aad_tenant_id},
+        ).fetchone()
+
+
+# ===========================================================================
 # USER QUERIES
 # ===========================================================================
 
@@ -292,7 +342,8 @@ def get_user_by_id(user_id: str) -> Optional[Tuple]:
 
 def get_user_by_upn(upn: str) -> Optional[Tuple]:
     """
-    Get user by User Principal Name (email).
+    Get user by User Principal Name (email) — tenant-unscoped.
+    Kept for backwards compatibility; prefer get_user_by_upn_and_tenant.
     Returns: (UserId, userPrincipalName, FirstName, LastName, Title, ManagerId)
     """
     with get_db_context() as session:
@@ -306,9 +357,27 @@ def get_user_by_upn(upn: str) -> Optional[Tuple]:
         ).fetchone()
 
 
-def get_all_users_except(user_id: int) -> List[Tuple]:
+def get_user_by_upn_and_tenant(upn: str, tenant_id: int) -> Optional[Tuple]:
     """
-    Get all users except the specified one.
+    Get user by UPN scoped to a specific internal TenantId.
+    This is the preferred lookup for all authenticated requests.
+    Returns: (UserId, userPrincipalName, FirstName, LastName, Title, ManagerId, TenantId)
+    """
+    with get_db_context() as session:
+        return session.execute(
+            text("""
+                SELECT UserId, userPrincipalName, FirstName, LastName, Title, ManagerId, TenantId
+                FROM Users
+                WHERE userPrincipalName = :upn
+                  AND TenantId = :tenant_id
+            """),
+            {"upn": upn, "tenant_id": tenant_id},
+        ).fetchone()
+
+
+def get_all_users_except(user_id: int, tenant_id: int) -> List[Tuple]:
+    """
+    Get all users in the given tenant except the specified one.
     Returns: List of (UserId, userPrincipalName, FirstName, LastName, Title, ManagerId)
     """
     with get_db_context() as session:
@@ -316,16 +385,17 @@ def get_all_users_except(user_id: int) -> List[Tuple]:
             text("""
                 SELECT UserId, userPrincipalName, FirstName, LastName, Title, ManagerId
                 FROM Users
-                WHERE UserId != :user_id
+                WHERE UserId    != :user_id
+                  AND TenantId   = :tenant_id
                 ORDER BY LastName, FirstName
             """),
-            {"user_id": user_id},
+            {"user_id": user_id, "tenant_id": tenant_id},
         ).fetchall()
 
 
-def get_user_manager_info(user_id: int) -> Optional[Tuple]:
+def get_user_manager_info(user_id: int, tenant_id: int) -> Optional[Tuple]:
     """
-    Get user's manager information.
+    Get user's manager information, scoped to the tenant.
     Returns: (ManagerId, FirstName, LastName)
     """
     with get_db_context() as session:
@@ -333,9 +403,10 @@ def get_user_manager_info(user_id: int) -> Optional[Tuple]:
             text("""
                 SELECT ManagerId, FirstName, LastName
                 FROM Users
-                WHERE UserId = :user_id
+                WHERE UserId   = :user_id
+                  AND TenantId = :tenant_id
             """),
-            {"user_id": user_id},
+            {"user_id": user_id, "tenant_id": tenant_id},
         ).fetchone()
 
 
@@ -396,9 +467,9 @@ def create_nomination(
         return nomination_id
 
 
-def get_pending_nominations_for_approver(approver_id: int) -> List[Tuple]:
+def get_pending_nominations_for_approver(approver_id: int, tenant_id: int) -> List[Tuple]:
     """
-    Get all pending nominations for a specific approver.
+    Get all pending nominations for a specific approver, scoped to the tenant.
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
                       DollarAmount, NominationDescription, NominationDate,
                       ApprovedDate, PayedDate, Status)
@@ -410,26 +481,31 @@ def get_pending_nominations_for_approver(approver_id: int) -> List[Tuple]:
                        n.DollarAmount, n.NominationDescription, n.NominationDate,
                        n.ApprovedDate, n.PayedDate, n.Status
                 FROM Nominations n
-                WHERE n.ApproverId = :approver_id AND n.Status = 'Pending'
+                JOIN Users u ON n.NominatorId = u.UserId
+                WHERE n.ApproverId = :approver_id
+                  AND n.Status     = 'Pending'
+                  AND u.TenantId   = :tenant_id
                 ORDER BY n.NominationDate DESC
             """),
-            {"approver_id": approver_id},
+            {"approver_id": approver_id, "tenant_id": tenant_id},
         ).fetchall()
 
 
-def get_nomination_approver(nomination_id: int) -> Optional[int]:
+def get_nomination_approver(nomination_id: int, tenant_id: int) -> Optional[int]:
     """
-    Get the approver ID for a nomination.
-    Returns: ApproverId
+    Get the approver ID for a nomination, verifying it belongs to the given tenant.
+    Returns: ApproverId, or None if not found / wrong tenant.
     """
     with get_db_context() as session:
         row = session.execute(
             text("""
-                SELECT ApproverId
-                FROM Nominations
-                WHERE NominationId = :nomination_id
+                SELECT n.ApproverId
+                FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
+                WHERE n.NominationId = :nomination_id
+                  AND u.TenantId     = :tenant_id
             """),
-            {"nomination_id": nomination_id},
+            {"nomination_id": nomination_id, "tenant_id": tenant_id},
         ).fetchone()
         return row[0] if row else None
 
@@ -530,9 +606,9 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
     return None
 
 
-def get_nomination_history(user_id: int) -> List[Tuple]:
+def get_nomination_history(user_id: int, tenant_id: int) -> List[Tuple]:
     """
-    Get nomination history for a user (as nominator).
+    Get nomination history for a user (as nominator), scoped to the tenant.
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
                       DollarAmount, NominationDescription, NominationDate,
                       ApprovedDate, PayedDate, Status)
@@ -544,10 +620,12 @@ def get_nomination_history(user_id: int) -> List[Tuple]:
                        n.DollarAmount, n.NominationDescription, n.NominationDate,
                        n.ApprovedDate, n.PayedDate, n.Status
                 FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
                 WHERE n.NominatorId = :user_id
+                  AND u.TenantId    = :tenant_id
                 ORDER BY n.NominationDate DESC
             """),
-            {"user_id": user_id},
+            {"user_id": user_id, "tenant_id": tenant_id},
         ).fetchall()
 
 
@@ -755,20 +833,23 @@ def save_fraud_assessment(
 # ANALYTICS QUERIES
 # ===========================================================================
 
-def get_analytics_overview() -> dict:
-    """Get high-level analytics metrics."""
+def get_analytics_overview(tenant_id: int) -> dict:
+    """Get high-level analytics metrics for a tenant."""
     with get_db_context() as session:
         row = session.execute(
             text("""
                 SELECT
                     COUNT(*)                                                AS totalNominations,
-                    SUM(DollarAmount)                                       AS totalAmount,
-                    SUM(CASE WHEN Status = 'Approved' THEN 1 ELSE 0 END)   AS approvedCount,
-                    SUM(CASE WHEN Status = 'Pending'  THEN 1 ELSE 0 END)   AS pendingCount,
-                    AVG(CAST(DollarAmount AS FLOAT))                        AS avgAmount,
-                    SUM(CASE WHEN Status = 'Rejected' THEN 1 ELSE 0 END)   AS rejectedCount
-                FROM Nominations
-            """)
+                    SUM(n.DollarAmount)                                     AS totalAmount,
+                    SUM(CASE WHEN n.Status = 'Approved' THEN 1 ELSE 0 END) AS approvedCount,
+                    SUM(CASE WHEN n.Status = 'Pending'  THEN 1 ELSE 0 END) AS pendingCount,
+                    AVG(CAST(n.DollarAmount AS FLOAT))                      AS avgAmount,
+                    SUM(CASE WHEN n.Status = 'Rejected' THEN 1 ELSE 0 END) AS rejectedCount
+                FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
+                WHERE u.TenantId = :tenant_id
+            """),
+            {"tenant_id": tenant_id},
         ).fetchone()
         if row:
             total = row[0] or 0
@@ -784,31 +865,28 @@ def get_analytics_overview() -> dict:
         return {}
 
 
-def get_spending_trends(days: int = 90) -> List[Tuple]:
-    """
-    Get spending trends over last N days.
-
-    Note: the original used an f-string to embed ``days`` directly into SQL.
-    Here we use a bound parameter (:neg_days) to prevent any risk of injection.
-    """
+def get_spending_trends(tenant_id: int, days: int = 90) -> List[Tuple]:
+    """Get spending trends over last N days for a tenant."""
     with get_db_context() as session:
         return session.execute(
             text("""
                 SELECT
-                    CAST(NominationDate AS DATE) AS PeriodDate,
-                    COUNT(*)                     AS NominationCount,
-                    SUM(DollarAmount)            AS TotalAmount
-                FROM Nominations
-                WHERE NominationDate >= DATEADD(DAY, :neg_days, CAST(GETDATE() AS DATE))
-                GROUP BY CAST(NominationDate AS DATE)
+                    CAST(n.NominationDate AS DATE) AS PeriodDate,
+                    COUNT(*)                       AS NominationCount,
+                    SUM(n.DollarAmount)            AS TotalAmount
+                FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
+                WHERE n.NominationDate >= DATEADD(DAY, :neg_days, CAST(GETDATE() AS DATE))
+                  AND u.TenantId = :tenant_id
+                GROUP BY CAST(n.NominationDate AS DATE)
                 ORDER BY PeriodDate DESC
             """),
-            {"neg_days": -abs(days)},
+            {"neg_days": -abs(days), "tenant_id": tenant_id},
         ).fetchall()
 
 
-def get_department_spending() -> List[Tuple]:
-    """Get spending by department."""
+def get_department_spending(tenant_id: int) -> List[Tuple]:
+    """Get spending by department for a tenant."""
     with get_db_context() as session:
         return session.execute(
             text("""
@@ -820,14 +898,16 @@ def get_department_spending() -> List[Tuple]:
                 FROM Nominations n
                 JOIN Users u ON n.BeneficiaryId = u.UserId
                 WHERE n.Status IN ('Approved', 'Paid')
+                  AND u.TenantId = :tenant_id
                 GROUP BY u.Title
                 ORDER BY TotalSpent DESC
-            """)
+            """),
+            {"tenant_id": tenant_id},
         ).fetchall()
 
 
-def get_top_recipients(limit: int = 10) -> List[Tuple]:
-    """Get top recipients by count."""
+def get_top_recipients(tenant_id: int, limit: int = 10) -> List[Tuple]:
+    """Get top recipients by count for a tenant."""
     with get_db_context() as session:
         return session.execute(
             text("""
@@ -840,15 +920,16 @@ def get_top_recipients(limit: int = 10) -> List[Tuple]:
                 FROM Nominations n
                 JOIN Users u ON n.BeneficiaryId = u.UserId
                 WHERE n.Status IN ('Approved', 'Paid')
+                  AND u.TenantId = :tenant_id
                 GROUP BY u.UserId, u.FirstName, u.LastName
                 ORDER BY NominationCount DESC
             """),
-            {"limit": limit},
+            {"limit": limit, "tenant_id": tenant_id},
         ).fetchall()
 
 
-def get_top_nominators(limit: int = 10) -> List[Tuple]:
-    """Get top nominators by count."""
+def get_top_nominators(tenant_id: int, limit: int = 10) -> List[Tuple]:
+    """Get top nominators by count for a tenant."""
     with get_db_context() as session:
         return session.execute(
             text("""
@@ -861,10 +942,11 @@ def get_top_nominators(limit: int = 10) -> List[Tuple]:
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
                 WHERE n.Status IN ('Approved', 'Paid')
+                  AND u.TenantId = :tenant_id
                 GROUP BY u.UserId, u.FirstName, u.LastName
                 ORDER BY NominationCount DESC
             """),
-            {"limit": limit},
+            {"limit": limit, "tenant_id": tenant_id},
         ).fetchall()
 
 
@@ -912,8 +994,8 @@ def get_top_nominators_by_department(department: str, limit: int = 5) -> List[Tu
         ).fetchall()
 
 
-def get_fraud_alerts(limit: int = 20) -> List[Tuple]:
-    """Get recent fraud alerts."""
+def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
+    """Get recent fraud alerts for a tenant."""
     with get_db_context() as session:
         return session.execute(
             text("""
@@ -929,29 +1011,33 @@ def get_fraud_alerts(limit: int = 20) -> List[Tuple]:
                     n.DollarAmount,
                     n.NominationDate
                 FROM FraudScores fs
-                JOIN Nominations n    ON fs.NominationId = n.NominationId
-                JOIN Users nominator   ON n.NominatorId   = nominator.UserId
-                JOIN Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
+                JOIN Nominations n     ON fs.NominationId  = n.NominationId
+                JOIN Users nominator   ON n.NominatorId    = nominator.UserId
+                JOIN Users beneficiary ON n.BeneficiaryId  = beneficiary.UserId
                 WHERE fs.RiskLevel IN ('High', 'Medium')
+                  AND nominator.TenantId = :tenant_id
                 ORDER BY n.NominationDate DESC
             """),
-            {"limit": limit},
+            {"limit": limit, "tenant_id": tenant_id},
         ).fetchall()
 
 
-def get_approval_metrics() -> dict:
-    """Get approval/rejection metrics."""
+def get_approval_metrics(tenant_id: int) -> dict:
+    """Get approval/rejection metrics for a tenant."""
     with get_db_context() as session:
         row = session.execute(
             text("""
                 SELECT
-                    COUNT(*) AS TotalNominations,
-                    SUM(CASE WHEN Status = 'Approved' THEN 1 ELSE 0 END) AS ApprovedCount,
-                    SUM(CASE WHEN Status = 'Rejected' THEN 1 ELSE 0 END) AS RejectedCount,
-                    AVG(CAST(DATEDIFF(DAY, NominationDate, ApprovedDate) AS FLOAT)) AS AvgDaysToApproval
-                FROM Nominations
-                WHERE ApprovedDate IS NOT NULL
-            """)
+                    COUNT(*)  AS TotalNominations,
+                    SUM(CASE WHEN n.Status = 'Approved' THEN 1 ELSE 0 END) AS ApprovedCount,
+                    SUM(CASE WHEN n.Status = 'Rejected' THEN 1 ELSE 0 END) AS RejectedCount,
+                    AVG(CAST(DATEDIFF(DAY, n.NominationDate, n.ApprovedDate) AS FLOAT)) AS AvgDaysToApproval
+                FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
+                WHERE n.ApprovedDate IS NOT NULL
+                  AND u.TenantId = :tenant_id
+            """),
+            {"tenant_id": tenant_id},
         ).fetchone()
         if row:
             total    = row[0] or 0
@@ -966,18 +1052,21 @@ def get_approval_metrics() -> dict:
         return {}
 
 
-def get_diversity_metrics() -> dict:
-    """Calculate diversity metrics for award distribution."""
+def get_diversity_metrics(tenant_id: int) -> dict:
+    """Calculate diversity metrics for award distribution within a tenant."""
     with get_db_context() as session:
         # Single session for all three queries – avoids three round-trips
         summary_row = session.execute(
             text("""
                 SELECT
-                    COUNT(DISTINCT BeneficiaryId) AS UniqueRecipients,
-                    COUNT(*)                      AS TotalNominations
-                FROM Nominations
-                WHERE Status IN ('Approved', 'Paid')
-            """)
+                    COUNT(DISTINCT n.BeneficiaryId) AS UniqueRecipients,
+                    COUNT(*)                        AS TotalNominations
+                FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
+                WHERE n.Status IN ('Approved', 'Paid')
+                  AND u.TenantId = :tenant_id
+            """),
+            {"tenant_id": tenant_id},
         ).fetchone()
         unique_recipients = summary_row[0] or 1
         total_nominations = summary_row[1] or 1
@@ -988,10 +1077,13 @@ def get_diversity_metrics() -> dict:
             for row in session.execute(
                 text("""
                     SELECT COUNT(*) AS RecipientCount
-                    FROM Nominations
-                    WHERE Status IN ('Approved', 'Paid')
-                    GROUP BY BeneficiaryId
-                """)
+                    FROM Nominations n
+                    JOIN Users u ON n.NominatorId = u.UserId
+                    WHERE n.Status IN ('Approved', 'Paid')
+                      AND u.TenantId = :tenant_id
+                    GROUP BY n.BeneficiaryId
+                """),
+                {"tenant_id": tenant_id},
             ).fetchall()
         ]
 
@@ -1007,11 +1099,14 @@ def get_diversity_metrics() -> dict:
         top_row = session.execute(
             text("""
                 SELECT TOP (1) COUNT(*) AS TopRecipientCount
-                FROM Nominations
-                WHERE Status IN ('Approved', 'Paid')
-                GROUP BY BeneficiaryId
+                FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
+                WHERE n.Status IN ('Approved', 'Paid')
+                  AND u.TenantId = :tenant_id
+                GROUP BY n.BeneficiaryId
                 ORDER BY COUNT(*) DESC
-            """)
+            """),
+            {"tenant_id": tenant_id},
         ).fetchone()
         top_recipient_count   = top_row[0] if top_row else 0
         top_recipient_percent = (

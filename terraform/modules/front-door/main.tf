@@ -49,7 +49,7 @@ resource "azurerm_cdn_frontdoor_origin_group" "api" {
 }
 
 resource "azurerm_cdn_frontdoor_origin" "primary" {
-  name                          = "origin-award-api-primaryus"
+  name                          = "origin-award-api-primary"
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
 
   enabled                        = true
@@ -61,7 +61,7 @@ resource "azurerm_cdn_frontdoor_origin" "primary" {
 }
 
 resource "azurerm_cdn_frontdoor_origin" "secondary" {
-  name                          = "origin-award-api-secondaryus"
+  name                          = "origin-award-api-secondary"
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
 
   enabled                        = true

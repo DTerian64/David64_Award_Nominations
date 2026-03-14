@@ -32,12 +32,14 @@ module "app_registrations" {
 module "networking" {
   source = "../../modules/networking"
 
-  resource_group_name     = var.resource_group_name
-  environment             = var.environment
+  resource_group_name          = var.resource_group_name
+  environment                  = var.environment
+  location_primary             = var.location_primary
+  location_secondary           = var.location_secondary
   vnet_primary_address_space   = "10.2.0.0/16"
   vnet_secondary_address_space = "10.3.0.0/16"
-  tags                    = local.tags
-  depends_on              = [azurerm_resource_group.rg]
+  tags                         = local.tags
+  depends_on                   = [azurerm_resource_group.rg]
 }
 
 # ── 2. SQL ────────────────────────────────────────────────────────────────────
@@ -146,24 +148,28 @@ module "openai" {
 module "log_analytics" {
   source = "../../modules/log-analytics"
 
-  resource_group_name = var.resource_group_name
+  resource_group_name      = var.resource_group_name
+  location_primary         = var.location_primary
+  location_secondary       = var.location_secondary
   workspace_name_primary   = var.workspace_name_primary
   workspace_name_secondary = var.workspace_name_secondary
-  tags                = local.tags
-  depends_on          = [azurerm_resource_group.rg]
+  tags                     = local.tags
+  depends_on               = [azurerm_resource_group.rg]
 }
 
 # ── 8. Container Apps ─────────────────────────────────────────────────────────
 module "container_apps" {
   source = "../../modules/container-apps"
 
-  resource_group_name             = var.resource_group_name
-  cae_name_primary                   = var.cae_name_primary
-  cae_name_secondary                 = var.cae_name_secondary
-  app_name_primary                   = var.app_name_primary
-  app_name_secondary                 = var.app_name_secondary
-  subnet_aca_primary_id              = module.networking.subnet_aca_primary_id
-  subnet_aca_secondary_id            = module.networking.subnet_aca_secondary_id
+  resource_group_name                  = var.resource_group_name
+  location_primary                     = var.location_primary
+  location_secondary                   = var.location_secondary
+  cae_name_primary                     = var.cae_name_primary
+  cae_name_secondary                   = var.cae_name_secondary
+  app_name_primary                     = var.app_name_primary
+  app_name_secondary                   = var.app_name_secondary
+  subnet_aca_primary_id                = module.networking.subnet_aca_primary_id
+  subnet_aca_secondary_id              = module.networking.subnet_aca_secondary_id
   min_replicas                       = var.min_replicas
   max_replicas                       = var.max_replicas
   log_analytics_workspace_primary_id   = module.log_analytics.workspace_primary_id

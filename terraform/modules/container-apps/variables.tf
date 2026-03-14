@@ -6,41 +6,35 @@ variable "resource_group_name" {
 }
 
 variable "location_primary" {
-  description = "East US region"
+  description = "Primary region — passed from environment, no default"
   type        = string
-  default     = "primaryus"
 }
 
 variable "location_secondary" {
-  description = "West US region"
+  description = "Secondary region — passed from environment, no default"
   type        = string
-  default     = "secondaryus"
 }
 
 # ── CAE names ─────────────────────────────────────────────────────────────────
 variable "cae_name_primary" {
-  description = "Container App Environment name — East US"
+  description = "Container App Environment name — primary region"
   type        = string
-  default     = "cae-award-primaryus"
 }
 
 variable "cae_name_secondary" {
-  description = "Container App Environment name — West US"
+  description = "Container App Environment name — secondary region"
   type        = string
-  default     = "cae-award-secondaryus"
 }
 
 # ── Container App names ───────────────────────────────────────────────────────
 variable "app_name_primary" {
-  description = "Container App name — East US"
+  description = "Container App name — primary region"
   type        = string
-  default     = "award-api-primaryus"
 }
 
 variable "app_name_secondary" {
-  description = "Container App name — West US"
+  description = "Container App name — secondary region"
   type        = string
-  default     = "award-api-secondaryus"
 }
 
 # ── Networking — from networking module outputs ───────────────────────────────

@@ -70,7 +70,7 @@ output "secondary_app_fqdn" {
 #
 # Or update the image directly:
 #   az containerapp update \
-#     --name award-api-primaryus \
+#     --name <app_name_primary> \
 #     --resource-group rg_award_nomination \
 #     --image acrawardnomination.azurecr.io/award-nomination-api:latest
 # ─────────────────────────────────────────────────────────────────────────────

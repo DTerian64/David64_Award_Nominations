@@ -226,8 +226,9 @@ def whoami(_claims=Depends(require_role("AWard_Nomination_Admin"))):
 async def get_users(user_context: dict = Depends(get_current_user_with_impersonation)):
     """Get all users for nomination selection"""
     effective_user = user_context["effective_user"]
-   
-    rows = sqlhelper.get_all_users_except(effective_user["UserId"])
+    tenant_id      = effective_user["TenantId"]
+
+    rows = sqlhelper.get_all_users_except(effective_user["UserId"], tenant_id)
     
     users = []
     for row in rows:
@@ -251,6 +252,7 @@ async def create_nomination(
 ):
     """Create a new nomination"""
     effective_user = user_context["effective_user"]
+    tenant_id      = effective_user["TenantId"]
 
     # Use structured logging
     logger.info(
@@ -261,9 +263,9 @@ async def create_nomination(
             "amount": float(nomination.DollarAmount)
         }
     )
-    
-    # Get beneficiary's manager
-    beneficiary = sqlhelper.get_user_manager_info(nomination.BeneficiaryId)
+
+    # Get beneficiary's manager — scoped to same tenant
+    beneficiary = sqlhelper.get_user_manager_info(nomination.BeneficiaryId, tenant_id)
     
     if not beneficiary:
         raise HTTPException(
@@ -403,8 +405,9 @@ async def create_nomination(
 async def get_pending_nominations(user_context: dict = Depends(get_current_user_with_impersonation)):
     """Get nominations pending approval for current user (as manager)"""
     effective_user = user_context["effective_user"]
-    
-    rows = sqlhelper.get_pending_nominations_for_approver(effective_user["UserId"])
+    tenant_id      = effective_user["TenantId"]
+
+    rows = sqlhelper.get_pending_nominations_for_approver(effective_user["UserId"], tenant_id)
     
     nominations = []
     for row in rows:
@@ -432,9 +435,10 @@ async def approve_nomination(
 ):
     """Approve or reject a nomination"""
     effective_user = user_context["effective_user"]
-    
-    # Verify user is the approver
-    approver_id = sqlhelper.get_nomination_approver(approval.NominationId)
+    tenant_id      = effective_user["TenantId"]
+
+    # Verify user is the approver — scoped to tenant to block cross-tenant manipulation
+    approver_id = sqlhelper.get_nomination_approver(approval.NominationId, tenant_id)
     
     if approver_id is None:
         raise HTTPException(
@@ -545,8 +549,9 @@ async def approve_nomination(
 async def get_nomination_history(user_context: dict = Depends(get_current_user_with_impersonation)):
     """Get nomination history for current user"""
     effective_user = user_context["effective_user"]
-    
-    rows = sqlhelper.get_nomination_history(effective_user["UserId"])
+    tenant_id      = effective_user["TenantId"]
+
+    rows = sqlhelper.get_nomination_history(effective_user["UserId"], tenant_id)
     
     nominations = []
     for row in rows:
@@ -843,8 +848,9 @@ async def get_analytics_overview(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Get high-level analytics overview"""
+    tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        metrics = sqlhelper.get_analytics_overview()
+        metrics = sqlhelper.get_analytics_overview(tenant_id)
         return {
             'totalNominationsAllTime': metrics.get('totalNominations', 0),
             'totalAmountSpent': metrics.get('totalAmount', 0),
@@ -852,7 +858,7 @@ async def get_analytics_overview(
             'pendingNominations': metrics.get('pendingCount', 0),
             'averageAwardAmount': metrics.get('avgAmount', 0),
             'rejectionRate': metrics.get('rejectionRate', 0),
-            'fraudAlertsThisMonth': len(sqlhelper.get_fraud_alerts(limit=100))
+            'fraudAlertsThisMonth': len(sqlhelper.get_fraud_alerts(tenant_id, limit=100))
         }
     except Exception as e:
         logger.error(f"Error fetching analytics overview: {e}")
@@ -866,8 +872,9 @@ async def get_spending_trends(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Get spending trends over time"""
+    tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        trends = sqlhelper.get_spending_trends(days=days)
+        trends = sqlhelper.get_spending_trends(tenant_id, days=days)
         return [
             {
                 'date': row[0].isoformat(),
@@ -887,8 +894,9 @@ async def get_department_spending(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Get spending breakdown by department"""
+    tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        departments = sqlhelper.get_department_spending()
+        departments = sqlhelper.get_department_spending(tenant_id)
         return [
             {
                 'departmentName': row[0] or 'Unknown',
@@ -910,8 +918,9 @@ async def get_top_recipients(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Get top award recipients"""
+    tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        recipients = sqlhelper.get_top_recipients(limit=limit)
+        recipients = sqlhelper.get_top_recipients(tenant_id, limit=limit)
         return [
             {
                 'UserId': row[0],
@@ -934,8 +943,9 @@ async def get_top_nominators(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Get top nominators"""
+    tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        nominators = sqlhelper.get_top_nominators(limit=limit)
+        nominators = sqlhelper.get_top_nominators(tenant_id, limit=limit)
         return [
             {
                 'UserId': row[0],
@@ -958,8 +968,9 @@ async def get_fraud_alerts(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Get recent fraud detection alerts"""
+    tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        alerts = sqlhelper.get_fraud_alerts(limit=limit)
+        alerts = sqlhelper.get_fraud_alerts(tenant_id, limit=limit)
         return [
             {
                 'NominationId': row[0],
@@ -984,8 +995,9 @@ async def get_approval_metrics(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Get approval and rejection metrics"""
+    tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        metrics = sqlhelper.get_approval_metrics()
+        metrics = sqlhelper.get_approval_metrics(tenant_id)
         return metrics
     except Exception as e:
         logger.error(f"Error fetching approval metrics: {e}")
@@ -998,8 +1010,9 @@ async def get_diversity_metrics(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Get award distribution diversity metrics"""
+    tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        metrics = sqlhelper.get_diversity_metrics()
+        metrics = sqlhelper.get_diversity_metrics(tenant_id)
         return metrics
     except Exception as e:
         logger.error(f"Error fetching diversity metrics: {e}")
