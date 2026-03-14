@@ -55,7 +55,7 @@ module "sql" {
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_sql_id
   tags                       = local.tags
-  depends_on                 = [azurerm_resource_group.rg]
+  depends_on                 = [azurerm_resource_group.rg, module.networking]
 }
 
 # ── 3. Container Registry ─────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ module "container_registry" {
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_acr_id
   tags                       = local.tags
-  depends_on                 = [azurerm_resource_group.rg]
+  depends_on                 = [azurerm_resource_group.rg, module.networking]
 }
 
 # ── 4. Storage ────────────────────────────────────────────────────────────────
@@ -75,13 +75,16 @@ module "storage" {
   source = "../../modules/storage"
 
   resource_group_name        = var.resource_group_name
+  location                   = var.location_primary
   storage_account_name       = var.storage_account_name
   allowed_ips                = var.my_ips
-  aca_subnet_ids             = [module.networking.subnet_aca_primary_id, module.networking.subnet_aca_secondary_id]
+  # Only the primary (westus2) ACA subnet — Azure blocks cross-region service-endpoint ACLs.
+  # Secondary ACA (eastus) reaches storage via VNet peering → private endpoint.
+  aca_subnet_ids             = [module.networking.subnet_aca_primary_id]
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_blob_id
   tags                       = local.tags
-  depends_on                 = [azurerm_resource_group.rg]
+  depends_on                 = [azurerm_resource_group.rg, module.networking]
 }
 
 # ── 4b. User-Assigned Managed Identities ─────────────────────────────────────
@@ -110,9 +113,11 @@ module "key_vault" {
   source = "../../modules/key-vault"
 
   resource_group_name        = var.resource_group_name
+  location                   = var.location_primary
   key_vault_name             = var.key_vault_name
   allowed_ips                = var.my_ips
-  aca_subnet_ids             = [module.networking.subnet_aca_primary_id, module.networking.subnet_aca_secondary_id]
+  # Only the primary (westus2) ACA subnet — same cross-region ACL restriction as storage.
+  aca_subnet_ids             = [module.networking.subnet_aca_primary_id]
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_kv_id
   aca_principal_ids          = []
@@ -135,13 +140,14 @@ module "openai" {
   source = "../../modules/openai"
 
   resource_group_name        = var.resource_group_name
+  location                   = var.location_primary
   openai_name                = var.openai_name
   model_capacity_tpm         = var.model_capacity_tpm
   allowed_ips                = var.my_ips
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_openai_id
   tags                       = local.tags
-  depends_on                 = [azurerm_resource_group.rg]
+  depends_on                 = [azurerm_resource_group.rg, module.networking]
 }
 
 # ── 7. Log Analytics ──────────────────────────────────────────────────────────

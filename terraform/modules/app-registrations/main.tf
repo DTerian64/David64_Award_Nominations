@@ -49,7 +49,7 @@ resource "azuread_service_principal" "api" {
 # Must be a separate resource — can't self-reference client_id inside azuread_application.
 resource "azuread_application_identifier_uri" "api" {
   application_id = azuread_application.api.id
-  uri            = "api://${azuread_application.api.client_id}"
+  identifier_uri = "api://${azuread_application.api.client_id}"
 }
 
 # ── SPA app registration ──────────────────────────────────────────────────────
