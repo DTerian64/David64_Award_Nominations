@@ -6,9 +6,8 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region — OpenAI model availability varies by region"
+  description = "Azure region — OpenAI model availability varies by region. Must be passed explicitly; no default to avoid silent region mismatch."
   type        = string
-  default     = "eastus"
 }
 
 variable "openai_name" {

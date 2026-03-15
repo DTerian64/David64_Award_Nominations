@@ -6,9 +6,8 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region"
+  description = "Azure region — must be passed explicitly; no default to avoid silent region mismatch"
   type        = string
-  default     = "eastus"
 }
 
 variable "key_vault_name" {

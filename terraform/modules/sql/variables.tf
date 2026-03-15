@@ -6,9 +6,8 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region for SQL Server"
+  description = "Azure region for SQL Server — must be passed explicitly; no default to avoid silent region mismatch"
   type        = string
-  default     = "westus2"
 }
 
 variable "server_name" {
@@ -61,8 +60,3 @@ variable "tags" {
   default     = {}
 }
 
-variable "location_primary" {
-  description = "Primary region — used for private endpoint (must match subnet region)"
-  type        = string
-  default     = "westus2"
-}

@@ -27,7 +27,26 @@ terraform {
 }
 
 provider "azurerm" {
-  features {}
+  features {
+    resource_group {
+      # Allow Terraform to delete the RG even if Azure-side resources still exist
+      # (e.g. orphaned NICs from failed partial applies). Azure API will force-delete all children.
+      prevent_deletion_if_contains_resources = false
+    }
+
+    key_vault {
+      # Purge soft-deleted Key Vault on destroy so the name is immediately reusable.
+      # Safe because purge_protection_enabled = false on the vault resource.
+      purge_soft_delete_on_destroy    = true
+      recover_soft_deleted_key_vaults = false
+    }
+
+    cognitive_account {
+      # Purge soft-deleted OpenAI / Cognitive Services account on destroy
+      # so the name is immediately reusable on the next apply.
+      purge_soft_delete_on_destroy = true
+    }
+  }
 }
 
 provider "azuread" {}

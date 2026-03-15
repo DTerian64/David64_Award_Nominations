@@ -53,6 +53,7 @@ module "sql" {
   source = "../../modules/sql"
 
   resource_group_name        = var.resource_group_name
+  location                   = var.location_primary
   server_name                = var.sql_server_name
   database_name              = var.sql_database_name
   admin_login                = var.sql_admin_login
@@ -69,6 +70,7 @@ module "container_registry" {
   source = "../../modules/container-registry"
 
   resource_group_name        = var.resource_group_name
+  location                   = var.location_primary
   acr_name                   = var.acr_name
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_acr_id
@@ -297,6 +299,7 @@ module "static_web_app" {
   source = "../../modules/static-web-app"
 
   resource_group_name = var.resource_group_name
+  location            = var.location_primary
   app_name            = var.swa_name
   afd_hostname        = module.front_door.afd_endpoint_hostname
   vite_api_url        = "https://${module.front_door.afd_endpoint_hostname}"
