@@ -105,7 +105,7 @@ variable "max_replicas" {
 # Location
 variable "location_primary" {
   type    = string
-  default = "eastus"
+  default = "eastus2"
 }
 
 variable "location_secondary" {
