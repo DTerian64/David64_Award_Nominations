@@ -37,6 +37,12 @@ variable "private_endpoint_subnet_id" {
   type        = string
 }
 
+variable "private_endpoint_location" {
+  description = "Azure region for the private endpoint NIC — must match the subnet's VNet region. Defaults to var.location; override when SQL is in a different region than the primary subnet (cross-region private link)."
+  type        = string
+  default     = ""
+}
+
 variable "private_dns_zone_id" {
   description = "Private DNS zone ID for privatelink.database.windows.net"
   type        = string

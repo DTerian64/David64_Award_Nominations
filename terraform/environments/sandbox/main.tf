@@ -53,7 +53,8 @@ module "sql" {
   source = "../../modules/sql"
 
   resource_group_name        = var.resource_group_name
-  location                   = var.location_primary
+  location                   = var.sql_location              # westus2 — SQL provisioning restricted in eastus/eastus2
+  private_endpoint_location  = var.location_primary          # eastus2 — PE NIC must match subnet region
   server_name                = var.sql_server_name
   database_name              = var.sql_database_name
   admin_login                = var.sql_admin_login

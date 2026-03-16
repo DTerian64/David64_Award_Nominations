@@ -4,7 +4,7 @@
 # Creates sandbox branch and triggers first deployment
 #
 # Usage:
-#   cd terraform\environments\dev
+#   cd terraform\environments\sandbox
 #   .\post-terraform.ps1
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 
 Write-Host ""
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  Award Nomination — Post-Terraform Setup (Dev)"       -ForegroundColor Cyan
+Write-Host "  Award Nomination — Post-Terraform Setup (Sandbox)"   -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
 
@@ -35,21 +35,21 @@ Write-Host "Setting up sandbox branch..." -ForegroundColor Yellow
 $repoRoot = Resolve-Path "..\..\..\"
 Push-Location $repoRoot
 
-$existingBranch = git branch --list dev
+$existingBranch = git branch --list sandbox
 if ($existingBranch) {
-    Write-Host "  Branch 'dev' already exists — skipping" -ForegroundColor DarkYellow
+    Write-Host "  Branch 'sandbox' already exists — skipping" -ForegroundColor DarkYellow
 } else {
     git checkout -b sandbox
-    Write-Host "  Branch 'dev' created" -ForegroundColor Green
+    Write-Host "  Branch 'sandbox' created" -ForegroundColor Green
 }
 
 # Push sandbox branch if not already on remote
-$remoteBranch = git ls-remote --heads origin dev
+$remoteBranch = git ls-remote --heads origin sandbox
 if (-not $remoteBranch) {
-    git push -u origin dev
-    Write-Host "  Branch 'dev' pushed to origin" -ForegroundColor Green
+    git push -u origin sandbox
+    Write-Host "  Branch 'sandbox' pushed to origin" -ForegroundColor Green
 } else {
-    Write-Host "  Branch 'dev' already on remote — skipping push" -ForegroundColor DarkYellow
+    Write-Host "  Branch 'sandbox' already on remote — skipping push" -ForegroundColor DarkYellow
 }
 
 Pop-Location
@@ -74,8 +74,8 @@ Write-Host "  App URL      : $appUrl"     -ForegroundColor White
 Write-Host "  Frontend URL : $frontendUrl" -ForegroundColor White
 Write-Host ""
 Write-Host "Remaining manual steps:" -ForegroundColor Yellow
-Write-Host "  1. Push a commit to 'dev' branch to trigger first GitHub Actions deployment"
-Write-Host "  2. Monitor deployment: GitHub → Actions → Deploy to Dev"
+Write-Host "  1. Push a commit to 'sandbox' branch to trigger first GitHub Actions deployment"
+Write-Host "  2. Monitor deployment: GitHub → Actions → Deploy to Sandbox"
 Write-Host "  3. Once deployed, verify app at: $frontendUrl"
 Write-Host "  4. When done testing: terraform destroy"
 Write-Host ""

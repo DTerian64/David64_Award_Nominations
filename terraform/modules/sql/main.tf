@@ -1,4 +1,10 @@
 # modules/sql/main.tf
+#
+# Cross-region private endpoint note:
+# On subscriptions where SQL provisioning is restricted in certain regions,
+# pass location = "westus2" (or wherever SQL is available) and
+# private_endpoint_location = var.location_primary (to match the subnet region).
+# Azure routes the connection over its backbone — fully supported.
 # ─────────────────────────────────────────────────────────────────────────────
 # Azure SQL Server + Database
 #
@@ -10,6 +16,10 @@
 #   - Firewall rules for local IP whitelist
 #   - Azure Services access (for ACAs)
 # ─────────────────────────────────────────────────────────────────────────────
+
+locals {
+  pe_location = var.private_endpoint_location != "" ? var.private_endpoint_location : var.location
+}
 
 resource "azurerm_mssql_server" "sql" {
   name                         = var.server_name
@@ -44,7 +54,7 @@ resource "azurerm_mssql_database" "db" {
 # ── Private endpoint ──────────────────────────────────────────────────────────
 resource "azurerm_private_endpoint" "sql" {
   name                = "pe-${var.server_name}"
-  location            = var.location
+  location            = local.pe_location   # subnet's region, not necessarily SQL server's region
   resource_group_name = var.resource_group_name
   subnet_id           = var.private_endpoint_subnet_id
   tags                = var.tags

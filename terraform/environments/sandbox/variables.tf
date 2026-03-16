@@ -113,6 +113,12 @@ variable "location_secondary" {
   default = "westus2"
 }
 
+variable "sql_location" {
+  description = "Azure region for SQL Server — subscription restricts SQL in eastus/eastus2. westus2 is confirmed available."
+  type        = string
+  default     = "westus2"
+}
+
 # Secrets
 variable "secrets" {
   type      = map(string)
