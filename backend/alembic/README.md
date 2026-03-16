@@ -42,7 +42,7 @@ alembic upgrade head
 
 ### 2. Seed tenant and user data
 
-After the schema is in place, run the seed script to populate:
+After the schema is in place, run the seed script to populate (./../Data/seed_tenants.py):
 - **Tenant 1** — Rideshare David64 Organization (from `Data/exportUsers_2026-03-09.csv`)
 - **Tenant 2** — ACME Corp (synthetic data, 120 employees)
 

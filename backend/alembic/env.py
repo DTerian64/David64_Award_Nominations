@@ -21,12 +21,22 @@ Usage (from the backend/ directory):
 """
 
 import os
+import sys
 import struct
 from logging.config import fileConfig
 from urllib.parse import quote_plus
 
 from alembic import context
 from sqlalchemy import create_engine, pool
+
+from dotenv import load_dotenv
+load_dotenv()  # loads backend/.env if present, silently skips if not
+
+# ---------------------------------------------------------------------------
+# Ensure backend/ is on sys.path so sqlhelper2 and models can be imported
+# regardless of which directory alembic is invoked from.
+# ---------------------------------------------------------------------------
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ---------------------------------------------------------------------------
 # Alembic Config object (alembic.ini)
@@ -40,7 +50,7 @@ if config.config_file_name is not None:
 # ---------------------------------------------------------------------------
 # Import metadata from the ORM models so autogenerate can detect schema diffs
 # ---------------------------------------------------------------------------
-from sqlhelper2 import Base  # noqa: E402  (after sys.path manipulation below)
+from sqlhelper2 import Base  # noqa: E402
 
 target_metadata = Base.metadata
 

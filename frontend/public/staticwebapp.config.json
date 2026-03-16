@@ -32,9 +32,23 @@
       }
     },
     {
+      "route": "/assets/*.js",
+      "headers": {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "public, max-age=31536000, immutable"
+      }
+    },
+    {
       "route": "/*.css",
       "headers": {
         "content-type": "text/css; charset=utf-8"
+      }
+    },
+    {
+      "route": "/assets/*.css",
+      "headers": {
+        "content-type": "text/css; charset=utf-8",
+        "cache-control": "public, max-age=31536000, immutable"
       }
     },
     {
