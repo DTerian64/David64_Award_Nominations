@@ -46,6 +46,36 @@ output "vite_api_client_id" {
   value       = module.app_registrations.api_client_id
 }
 
+output "acr_name" {
+  description = "ACR registry name — used by GitHub Actions (ACR_NAME var)"
+  value       = module.container_registry.acr_name
+}
+
+output "container_app_primary" {
+  description = "Primary Container App name — GitHub Actions CONTAINER_APP_EASTUS"
+  value       = var.app_name_primary
+}
+
+output "container_app_secondary" {
+  description = "Secondary Container App name — GitHub Actions CONTAINER_APP_WESTUS"
+  value       = var.app_name_secondary
+}
+
+output "resource_group_name" {
+  description = "Sandbox resource group name — GitHub Actions RESOURCE_GROUP"
+  value       = var.resource_group_name
+}
+
+output "frontdoor_profile" {
+  description = "Front Door profile name — GitHub Actions FRONTDOOR_PROFILE"
+  value       = var.afd_profile_name
+}
+
+output "frontdoor_endpoint" {
+  description = "Front Door endpoint name — GitHub Actions FRONTDOOR_ENDPOINT"
+  value       = var.afd_endpoint_name
+}
+
 output "post_deploy_checklist" {
   description = "Steps to complete after terraform apply"
   value       = <<-EOT

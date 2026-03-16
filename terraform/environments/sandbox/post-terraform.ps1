@@ -23,9 +23,48 @@ $outputs    = terraform output -json | ConvertFrom-Json
 $appUrl     = $outputs.app_url.value
 $frontendUrl = $outputs.frontend_url.value
 $acrServer  = $outputs.acr_login_server.value
+$acrName    = $outputs.acr_name.value
 Write-Host "  App URL      : $appUrl" -ForegroundColor Green
 Write-Host "  Frontend URL : $frontendUrl" -ForegroundColor Green
 Write-Host "  ACR Server   : $acrServer" -ForegroundColor Green
+Write-Host ""
+
+# ── Set GitHub 'sandbox' environment variables for CI/CD workflows ────────────
+Write-Host "Updating GitHub 'sandbox' environment variables for backend workflow..." -ForegroundColor Yellow
+$ghInstalled = Get-Command gh -ErrorAction SilentlyContinue
+if ($ghInstalled) {
+    # ACR
+    gh variable set ACR_NAME         --env sandbox --body $acrName
+    gh variable set ACR_LOGIN_SERVER --env sandbox --body $acrServer
+    gh variable set ACR_SECRET_NAME  --env sandbox --body "$acrName-password"
+
+    # Container Apps
+    gh variable set CONTAINER_APP_EASTUS --env sandbox --body $outputs.container_app_primary.value
+    gh variable set CONTAINER_APP_WESTUS --env sandbox --body $outputs.container_app_secondary.value
+
+    # Infra
+    gh variable set RESOURCE_GROUP     --env sandbox --body $outputs.resource_group_name.value
+    gh variable set FRONTDOOR_PROFILE  --env sandbox --body $outputs.frontdoor_profile.value
+    gh variable set FRONTDOOR_ENDPOINT --env sandbox --body $outputs.frontdoor_endpoint.value
+
+    # Static values
+    gh variable set IMAGE_TAG    --env sandbox --body "sandbox"
+    gh variable set ENVIRONMENT  --env sandbox --body "sandbox"
+
+    Write-Host "  GitHub sandbox environment variables updated" -ForegroundColor Green
+} else {
+    Write-Host "  gh CLI not found — set these manually in GitHub → repo Settings → Environments → sandbox → Variables:" -ForegroundColor DarkYellow
+    Write-Host "  ACR_NAME             = $acrName" -ForegroundColor DarkYellow
+    Write-Host "  ACR_LOGIN_SERVER     = $acrServer" -ForegroundColor DarkYellow
+    Write-Host "  ACR_SECRET_NAME      = $acrName-password" -ForegroundColor DarkYellow
+    Write-Host "  CONTAINER_APP_EASTUS = $($outputs.container_app_primary.value)" -ForegroundColor DarkYellow
+    Write-Host "  CONTAINER_APP_WESTUS = $($outputs.container_app_secondary.value)" -ForegroundColor DarkYellow
+    Write-Host "  RESOURCE_GROUP       = $($outputs.resource_group_name.value)" -ForegroundColor DarkYellow
+    Write-Host "  FRONTDOOR_PROFILE    = $($outputs.frontdoor_profile.value)" -ForegroundColor DarkYellow
+    Write-Host "  FRONTDOOR_ENDPOINT   = $($outputs.frontdoor_endpoint.value)" -ForegroundColor DarkYellow
+    Write-Host "  IMAGE_TAG            = sandbox" -ForegroundColor DarkYellow
+    Write-Host "  ENVIRONMENT          = sandbox" -ForegroundColor DarkYellow
+}
 Write-Host ""
 
 # ── Create sandbox branch (idempotent) ────────────────────────────────────────────
