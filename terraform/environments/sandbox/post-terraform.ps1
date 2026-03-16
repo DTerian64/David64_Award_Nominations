@@ -29,9 +29,44 @@ Write-Host "  Frontend URL : $frontendUrl" -ForegroundColor Green
 Write-Host "  ACR Server   : $acrServer" -ForegroundColor Green
 Write-Host ""
 
+# ── Create / refresh Azure service principal for GitHub Actions ───────────────
+Write-Host "Provisioning Azure service principal for GitHub Actions..." -ForegroundColor Yellow
+$ghInstalled = Get-Command gh -ErrorAction SilentlyContinue
+$subscriptionId = (az account show --query id -o tsv)
+$rgName         = $outputs.resource_group_name.value
+$acrResourceId  = "/subscriptions/$subscriptionId/resourceGroups/$rgName/providers/Microsoft.ContainerRegistry/registries/$acrName"
+$rgScope        = "/subscriptions/$subscriptionId/resourceGroups/$rgName"
+
+$spJson = az ad sp create-for-rbac `
+    --name "sp-award-nominations-sandbox" `
+    --role Contributor `
+    --scopes $rgScope `
+    --sdk-auth `
+    --output json 2>$null
+
+if ($LASTEXITCODE -eq 0) {
+    # Grant AcrPush on the registry so the workflow can push images
+    $appId = ($spJson | ConvertFrom-Json).clientId
+    az role assignment create `
+        --assignee $appId `
+        --role AcrPush `
+        --scope $acrResourceId | Out-Null
+    Write-Host "  Service principal created and AcrPush role assigned" -ForegroundColor Green
+
+    if ($ghInstalled) {
+        $spJson | gh secret set AZURE_CREDENTIALS --env sandbox
+        Write-Host "  Secret  AZURE_CREDENTIALS updated in GitHub sandbox environment" -ForegroundColor Green
+    } else {
+        Write-Host "  gh CLI not found — set AZURE_CREDENTIALS manually in GitHub → repo Settings → Environments → sandbox → Secrets" -ForegroundColor DarkYellow
+        Write-Host "  Value: $spJson" -ForegroundColor DarkYellow
+    }
+} else {
+    Write-Host "  Failed to create service principal — set AZURE_CREDENTIALS manually" -ForegroundColor Red
+}
+Write-Host ""
+
 # ── Set GitHub 'sandbox' environment variables for CI/CD workflows ────────────
 Write-Host "Updating GitHub 'sandbox' environment variables for backend workflow..." -ForegroundColor Yellow
-$ghInstalled = Get-Command gh -ErrorAction SilentlyContinue
 if ($ghInstalled) {
     # ACR
     gh variable set ACR_NAME         --env sandbox --body $acrName
