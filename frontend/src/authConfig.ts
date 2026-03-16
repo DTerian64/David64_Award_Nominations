@@ -45,7 +45,7 @@ export const msalConfig: Configuration = {
  */
 export const loginRequest = {
   scopes: [
-    [apiScope],
+    apiScope,
     "openid",
     "profile",
     "email",

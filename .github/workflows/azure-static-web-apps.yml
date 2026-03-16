@@ -31,10 +31,22 @@ jobs:
           submodules: true
           lfs: false
 
-      # VITE_* build variables are set as GitHub Environment variables by mid-terraform.ps1.
-      # The GitHub Actions runner has no access to Azure SWA app_settings at build time —
-      # those are Azure-side runtime config only. Values must be passed explicitly here
-      # so Vite can bake them in via import.meta.env.VITE_*.
+      # Build explicitly so we control the Node version, env vars, and output.
+      # Oryx auto-build is skipped (skip_app_build: true) to avoid it serving
+      # the raw source instead of the compiled dist/.
+      # VITE_* are baked into the bundle at build time via import.meta.env.VITE_*.
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+        env:
+          VITE_CLIENT_ID: ${{ vars.VITE_CLIENT_ID }}
+          VITE_TENANT_ID: ${{ vars.VITE_TENANT_ID }}
+          VITE_API_SCOPE: ${{ vars.VITE_API_SCOPE }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_API_CLIENT_ID: ${{ vars.VITE_API_CLIENT_ID }}
+
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
         with:
@@ -43,14 +55,8 @@ jobs:
           action: "upload"
           app_location: "./frontend"
           output_location: "dist"
-          config_file_location: "./frontend/public"
+          skip_app_build: true
           api_location: ""
-        env:
-          VITE_CLIENT_ID: ${{ vars.VITE_CLIENT_ID }}
-          VITE_TENANT_ID: ${{ vars.VITE_TENANT_ID }}
-          VITE_API_SCOPE: ${{ vars.VITE_API_SCOPE }}
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
-          VITE_API_CLIENT_ID: ${{ vars.VITE_API_CLIENT_ID }}
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
