@@ -6,7 +6,7 @@ export const SignOutButton = () => {
 
    const handleLogout = () => {
     // Change from logoutPopup to logoutRedirect
-    instance.logoutRedirect({
+    instance.logoutPopup({
       postLogoutRedirectUri: window.location.origin,
     });
   };

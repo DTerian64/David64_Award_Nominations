@@ -13,8 +13,13 @@ resource "azuread_application" "api" {
   display_name     = "Award Nomination - ${var.environment}"
   sign_in_audience = "AzureADMultipleOrgs"
   owners           = [data.azuread_client_config.current.object_id]
-  # identifier_uris is set via azuread_application_identifier_uri below,
-  # because api://<clientId> requires a self-reference that can't be inlined.
+  # identifier_uris is managed by azuread_application_identifier_uri below.
+  # ignore_changes prevents azuread_application from clearing the URI when it
+  # sends a PATCH — without this, the two resources fight over the same attribute.
+
+  lifecycle {
+    ignore_changes = [identifier_uris]
+  }
 
   api {
     requested_access_token_version = 2
