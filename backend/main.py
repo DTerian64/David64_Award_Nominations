@@ -195,7 +195,7 @@ ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,              # ✅ CRITICAL: Must be True for auth
+    allow_credentials=True,               # ✅ CRITICAL: Must be True for auth
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],                # ✅ Added: Expose response headers
