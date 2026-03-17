@@ -7,7 +7,10 @@ export const SignInButton: React.FC = () => {
 
   const handleLogin = async () => {
     try {
-      await instance.loginPopup(loginRequest);
+      const result = await instance.loginPopup(loginRequest);
+      // REQUIRED: set the active account so AuthenticatedTemplate flips immediately.
+      // loginPopup resolves with the account but MSAL doesn't auto-activate it.
+      instance.setActiveAccount(result.account);
     } catch (error) {
       console.error('Login error:', error);
     }
