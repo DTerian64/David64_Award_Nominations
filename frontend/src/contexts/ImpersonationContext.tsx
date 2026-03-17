@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect} from 'react';
 import type { ReactNode } from 'react';
 
 import { useMsal } from '@azure/msal-react';
-
+ 
 interface ImpersonationContextType {
   impersonatedUser: ImpersonatedUser | null;
   isImpersonating: boolean;
