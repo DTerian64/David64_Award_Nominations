@@ -1,4 +1,4 @@
-# environments/dev/terraform.tfvars.template
+# environments/sandbox/terraform.tfvars.template
 # ─────────────────────────────────────────────────────────────────────────────
 # COMMITTED — safe to commit, contains no secrets
 #
@@ -6,7 +6,7 @@
 #   Fresh start: Copy this file to terraform.tfvars and fill in YOUR_* values
 #   Reset after destroy: Run .\pre-terraform.ps1 which copies this automatically
 #
-# Values marked YOUR_* must be filled in manually before running terraform
+# Values marked YOUR_*            must be filled in manually before running terraform
 # Values marked POPULATED_BY_SCRIPT are written automatically by ps1 scripts
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -15,37 +15,37 @@ environment         = "sandbox"
 
 # ── Your IPs — add your home/office public IPs ────────────────────────────────
 my_ips = [
-  "76.157.73.162",  
+  "76.157.73.162",
 ]
 
 # ── SQL ───────────────────────────────────────────────────────────────────────
 sql_server_name    = "david64-sql-sandbox"
-sql_database_name  = "AwardNominationsDev"
+sql_database_name  = "AwardNominationsSandbox"
 sql_admin_login    = "YOUR_SQL_ADMIN_LOGIN"
 sql_admin_password = "YOUR_SQL_ADMIN_PASSWORD"
 
 # ── Resource names ────────────────────────────────────────────────────────────
-acr_name             = "acrawardnominationdev"
-storage_account_name = "awardnominationdev"
+acr_name             = "acrawardnomssandbox"
+storage_account_name = "awardnomssandbox"
 key_vault_name       = "kv-awardnominations-sandbox"
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
 openai_name        = "award-nomination-openai-sandbox"
 openai_api_version = "2024-02-01"
 model_capacity_tpm = 10
+
 # ── Container Apps ────────────────────────────────────────────────────────────
 cae_name_primary   = "cae-award-primary-sandbox"
 cae_name_secondary = "cae-award-secondary-sandbox"
 app_name_primary   = "award-api-primary-sandbox"
 app_name_secondary = "award-api-secondary-sandbox"
-min_replicas  = 0
-max_replicas  = 1
+min_replicas       = 0
+max_replicas       = 1
 
 # ── App config ────────────────────────────────────────────────────────────────
 location_primary                = "eastus2"
 location_secondary              = "westus2"
 model_blob_name                 = "fraud_detection_model.pkl"
-api_base_url                    = "https://award-nomination-api-sandbox.azurefd.net"
 logging_level                   = "DEBUG"
 blob_sas_expiry_hours           = 24
 email_action_token_expiry_hours = 24
@@ -55,26 +55,34 @@ afd_profile_name  = "Award-Nomination-ADF-sandbox"
 afd_endpoint_name = "award-nomination-api-sandbox"
 
 # ── Static Web App ────────────────────────────────────────────────────────────
-swa_name               = "award-nomination-frontend-sandbox"
-swa_custom_domain      = "sandbox-awards.terian-services.com"  # leave empty "" to skip
-dns_zone_resource_group = "rg_platform"             # RG holding terian-services.com DNS zone
+swa_name                = "award-nomination-frontend-sandbox"
+swa_custom_domain       = "sandbox-awards.terian-services.com"  # leave empty "" to skip
+dns_zone_resource_group = "rg_platform"                         # RG holding terian-services.com DNS zone
 
 # ── Log Analytics ─────────────────────────────────────────────────────────────
 workspace_name_primary   = "workspace-award-primary-sandbox"
 workspace_name_secondary = "workspace-award-secondary-sandbox"
 
 # ── Pass 2 values — POPULATED_BY_SCRIPT (mid-terraform.ps1) ──────────────────
+# api_base_url is the AFD endpoint hostname — only known after Pass 1 apply.
+# mid-terraform.ps1 reads it from `terraform output app_url` and writes it here.
+api_base_url         = "POPULATED_BY_SCRIPT"
 swa_redirect_urls    = []
 cors_allowed_origins = ""
 
-# ── Key Vault secrets — fill in manually before terraform apply ───────────────
-# AZURE-STORAGE-KEY and AZURE-OPENAI-KEY are auto-wired from module outputs
+# ── Secrets — fill in manually before terraform apply ────────────────────────
+# Email action token signing key — generate once per environment, never rotate
+# without also invalidating outstanding email links.
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+email_action_secret_key = "YOUR_EMAIL_ACTION_SECRET_KEY"
+
+# AZURE-STORAGE-KEY, AZURE-OPENAI-KEY, AZURE-OPENAI-ENDPOINT, SQL-SERVER,
+# and SQL-DATABASE are auto-wired from module outputs.
 secrets = {
-  SQL-USER                = "YOUR_SQL_ADMIN_LOGIN"
-  SQL-PASSWORD            = "YOUR_SQL_ADMIN_PASSWORD"
-  GMAIL-APP-PASSWORD      = "YOUR_GMAIL_APP_PASSWORD"
-  GMAIL-USER              = "YOUR_GMAIL_ADDRESS"
-  FROM-EMAIL              = "YOUR_FROM_EMAIL"
-  FROM-NAME               = "Award Nominations"
-  EMAIL-ACTION-SECRET-KEY = "YOUR_EMAIL_SECRET_KEY"
+  SQL-USER           = "YOUR_SQL_ADMIN_LOGIN"
+  SQL-PASSWORD       = "YOUR_SQL_ADMIN_PASSWORD"
+  GMAIL-APP-PASSWORD = "YOUR_GMAIL_APP_PASSWORD"
+  GMAIL-USER         = "YOUR_GMAIL_ADDRESS"
+  FROM-EMAIL         = "YOUR_FROM_EMAIL"
+  FROM-NAME          = "Award Nominations"
 }

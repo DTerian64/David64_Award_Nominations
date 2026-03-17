@@ -44,6 +44,11 @@ variable "email_action_token_expiry_hours" {
   type    = number
   default = 24
 }
+variable "email_action_secret_key" {
+  description = "Secret key used to sign and verify email action tokens"
+  type        = string
+  sensitive   = true
+}
 
 # Front Door
 variable "afd_profile_name"     { type = string }

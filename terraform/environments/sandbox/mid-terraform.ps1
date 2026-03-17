@@ -48,6 +48,15 @@ Write-Host ""
 # ── Patch Pass 2 values in terraform.tfvars ──────────────────────────────────
 Write-Host "Patching terraform.tfvars..." -ForegroundColor Yellow
 
+# api_base_url — AFD endpoint hostname, only known after Pass 1 creates the AFD
+$apiBaseUrl = $outputs.app_url.value
+if ($tfvars -match 'api_base_url\s*=\s*"[^"]*"') {
+    $tfvars = $tfvars -replace 'api_base_url\s*=\s*"[^"]*"', "api_base_url = `"$apiBaseUrl`""
+} else {
+    $tfvars += "`napi_base_url = `"$apiBaseUrl`""
+}
+Write-Host "  api_base_url        : $apiBaseUrl" -ForegroundColor Green
+
 # swa_redirect_urls — app registration allowed redirect URIs
 # Include both the default SWA URL and the custom domain (if set)
 $redirectUrls = "`"$frontendUrl/`""

@@ -217,6 +217,7 @@ module "container_apps" {
     { name = "LOGGING_LEVEL",                   value = var.logging_level },
     { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
+    { name = "EMAIL_ACTION_SECRET_KEY",         value = var.email_action_secret_key },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
