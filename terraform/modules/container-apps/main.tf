@@ -113,7 +113,7 @@ resource "azurerm_container_app" "primary" {
     max_replicas = var.max_replicas
 
     container {
-      name   = "award-api"
+      name   = var.app_name_primary
       # Placeholder image — GitHub Actions overwrites this on first deploy
       image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
       cpu    = var.cpu
@@ -197,7 +197,7 @@ resource "azurerm_container_app" "secondary" {
     max_replicas = var.max_replicas
 
     container {
-      name   = "award-api"
+      name   = var.app_name_secondary
       image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
       cpu    = var.cpu
       memory = var.memory
