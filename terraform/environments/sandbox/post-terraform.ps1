@@ -65,6 +65,35 @@ if ($LASTEXITCODE -eq 0) {
 }
 Write-Host ""
 
+# ── Set GitHub 'sandbox' secrets for backend workflow ────────────────────────
+# These are needed so the backend GitHub Actions workflow can push correct
+# SQL credentials into the Container App secrets (which otherwise override
+# the Key Vault references with empty strings).
+Write-Host "Setting GitHub 'sandbox' environment secrets for backend workflow..." -ForegroundColor Yellow
+if ($ghInstalled) {
+    # Read SQL config from terraform outputs
+    $sqlServer   = "$($outputs.sql_server_fqdn.value)"
+    $sqlDatabase = "$($outputs.sql_database_name.value)"
+
+    # Read SQL credentials from terraform.tfvars (not exposed as outputs for security)
+    $tfvarsContent = Get-Content "terraform.tfvars" -Raw
+    $sqlUser = if ($tfvarsContent -match 'sql_admin_login\s*=\s*"([^"]+)"')     { $Matches[1] } else { "" }
+    $sqlPass = if ($tfvarsContent -match 'sql_admin_password\s*=\s*"([^"]+)"') { $Matches[1] } else { "" }
+
+    gh secret set SQL_SERVER   --env sandbox --body $sqlServer
+    gh secret set SQL_DATABASE --env sandbox --body $sqlDatabase
+    gh secret set SQL_USER     --env sandbox --body $sqlUser
+    gh secret set SQL_PASSWORD --env sandbox --body $sqlPass
+    Write-Host "  GitHub sandbox SQL secrets updated" -ForegroundColor Green
+} else {
+    Write-Host "  gh CLI not found — set these manually in GitHub → repo Settings → Environments → sandbox → Secrets:" -ForegroundColor DarkYellow
+    Write-Host "  SQL_SERVER   = <sql-server>.database.windows.net" -ForegroundColor DarkYellow
+    Write-Host "  SQL_DATABASE = AwardNominationsSandbox" -ForegroundColor DarkYellow
+    Write-Host "  SQL_USER     = <sql_admin_login from terraform.tfvars>" -ForegroundColor DarkYellow
+    Write-Host "  SQL_PASSWORD = <sql_admin_password from terraform.tfvars>" -ForegroundColor DarkYellow
+}
+Write-Host ""
+
 # ── Set GitHub 'sandbox' environment variables for CI/CD workflows ────────────
 Write-Host "Updating GitHub 'sandbox' environment variables for backend workflow..." -ForegroundColor Yellow
 if ($ghInstalled) {

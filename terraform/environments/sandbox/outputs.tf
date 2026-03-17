@@ -76,6 +76,16 @@ output "frontdoor_endpoint" {
   value       = var.afd_endpoint_name
 }
 
+output "sql_server_fqdn" {
+  description = "SQL Server FQDN — GitHub Actions SQL_SERVER secret"
+  value       = "${var.sql_server_name}.database.windows.net"
+}
+
+output "sql_database_name" {
+  description = "SQL database name — GitHub Actions SQL_DATABASE secret"
+  value       = var.sql_database_name
+}
+
 output "post_deploy_checklist" {
   description = "Steps to complete after terraform apply"
   value       = <<-EOT
