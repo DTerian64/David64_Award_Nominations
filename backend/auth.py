@@ -123,6 +123,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
         )
 
         logger.info("Token claims (unverified): %s", list(unverified_payload.keys()))
+        logger.info(
+            "Token aud=%r  ver=%r  scp=%r",
+            unverified_payload.get("aud"),
+            unverified_payload.get("ver"),
+            unverified_payload.get("scp"),
+        )
 
         # ── 1. Extract Azure AD tenant ID (tid claim) ─────────────────────
         aad_tenant_id = unverified_payload.get("tid")
@@ -164,6 +170,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
 
         expected_issuer = f"https://login.microsoftonline.com/{aad_tenant_id}/v2.0"
         expected_audience = f"api://{CLIENT_ID}"
+
+        logger.info(
+            "Verifying token — expected_audience=%r  expected_issuer=%r",
+            expected_audience,
+            expected_issuer,
+        )
 
         payload = jwt.decode(
             token,
