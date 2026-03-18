@@ -40,8 +40,10 @@ export const msalConfig: Configuration = {
 };
 
 /**
- * Scope for the FastAPI API — injected via VITE_API_SCOPE app setting (set by Terraform).
- * Format: api://<tenantId>/<app-slug>/access_as_user
+ * loginRequest — used for the initial interactive sign-in only.
+ * Includes OIDC scopes so Azure AD returns an ID token with user profile claims,
+ * plus the API scope so an access token is also acquired in the same round-trip.
+ * The `claims` parameter requests app roles in the ID token (for role-based UI).
  */
 export const loginRequest = {
   scopes: [
@@ -50,13 +52,26 @@ export const loginRequest = {
     "profile",
     "email",
   ],
-extraQueryParameters: {
+  extraQueryParameters: {
     claims: JSON.stringify({
       id_token: {
-        roles: null
-      }
-    })
-  }
+        roles: null,
+      },
+    }),
+  },
+};
+
+/**
+ * apiTokenRequest — used by getAccessToken() in api.ts for every API call.
+ * Contains ONLY the API scope so MSAL returns the correct access token
+ * (aud = api://<CLIENT_ID>) rather than an ID token or OIDC token.
+ *
+ * Do NOT include openid/profile/email here — mixing OIDC scopes into a
+ * silent token acquisition request causes MSAL to fall back to interactive
+ * flows and can result in the wrong token type being returned.
+ */
+export const apiTokenRequest = {
+  scopes: [apiScope],
 };
 
 /**

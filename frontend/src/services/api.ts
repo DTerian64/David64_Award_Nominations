@@ -1,15 +1,15 @@
 import { msalInstance } from "../msalInstance";
-import { loginRequest, apiConfig } from '../authConfig';
+import { apiTokenRequest, apiConfig } from '../authConfig';
 
 export const getAccessToken = async (): Promise<string> => {
   const accounts = msalInstance.getAllAccounts();
-  
+
   if (accounts.length === 0) {
     throw new Error('No accounts found. Please sign in.');
-  } 
+  }
 
   const request = {
-    ...loginRequest,
+    ...apiTokenRequest,    // only the API scope — ensures aud = api://<CLIENT_ID>
     account: accounts[0],
   };
 
@@ -17,9 +17,13 @@ export const getAccessToken = async (): Promise<string> => {
     const response = await msalInstance.acquireTokenSilent(request);
     return response.accessToken;
   } catch (error) {
-    console.error('Silent token acquisition failed:', error);
-    const response = await msalInstance.acquireTokenPopup(request);
-    return response.accessToken;
+    // Silent acquisition failed (expired, no cache, consent needed, etc.).
+    // Use redirect rather than popup to avoid the same COOP issue as login.
+    console.error('Silent token acquisition failed, falling back to redirect:', error);
+    await msalInstance.acquireTokenRedirect(request);
+    // acquireTokenRedirect navigates away — execution stops here.
+    // The redirect will return to main.tsx where initialize() processes it.
+    throw new Error('Redirecting for token acquisition...');
   }
 };
 
