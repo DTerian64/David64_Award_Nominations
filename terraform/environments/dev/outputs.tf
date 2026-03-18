@@ -31,11 +31,6 @@ output "vite_client_id" {
   value       = module.app_registrations.frontend_client_id
 }
 
-output "vite_tenant_id" {
-  description = "Azure AD tenant ID → VITE_TENANT_ID GitHub env var"
-  value       = module.app_registrations.tenant_id
-}
-
 output "vite_api_scope" {
   description = "API scope URI → VITE_API_SCOPE GitHub env var"
   value       = module.app_registrations.api_scope

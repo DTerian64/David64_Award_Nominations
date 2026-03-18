@@ -9,11 +9,11 @@ The app is registered as AzureADMultipleOrgs (multi-tenant).  Every inbound
 JWT contains a ``tid`` claim — the Azure AD tenant GUID of the organisation
 that issued the token.  On each request we:
 
-  1. Decode the JWT (signature verification is skipped for now — add JWKS
-     verification here when moving to strict production mode).
-  2. Extract the ``tid`` claim.
-  3. Resolve ``tid`` → internal ``TenantId`` via the Tenants table.
+  1. Unverified-decode the JWT header/claims to extract ``tid`` and ``kid``.
+  2. Resolve ``tid`` → internal ``TenantId`` via the Tenants table.
      → 403 if the tenant is not registered (not a customer).
+  3. Fully verify the JWT signature using the per-tenant JWKS endpoint,
+     and validate audience, issuer, and expiry.
   4. Look up the user by (UPN, TenantId).
      → 404 if the user does not exist in that tenant's roster.
   5. Return a user-context dict that includes TenantId on every request,
@@ -24,10 +24,19 @@ MSAL authority
 The OAuth2 scheme uses the ``/common`` endpoint so that users from any
 registered tenant can sign in.  Single-tenant authority strings (e.g.
 ``/{TENANT_ID}/``) are rejected by Azure for multi-tenant apps.
+
+JWKS verification
+-----------------
+Keys are fetched from the Microsoft Entra ID JWKS endpoint and cached
+in memory by PyJWT's PyJWKClient (TTL ~5 min, re-fetched on unknown kid).
+Per-tenant issuer validation (``https://login.microsoftonline.com/{tid}/v2.0``)
+ensures tokens from un-registered tenants cannot be replayed even if the
+``tid`` allowlist check were somehow bypassed.
 """
 
 import os
 import jwt
+from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import OAuth2
 from typing import Optional, Dict, Any, Callable
@@ -41,10 +50,21 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 CLIENT_ID = os.getenv("CLIENT_ID")
+if not CLIENT_ID:
+    raise RuntimeError(
+        "CLIENT_ID environment variable is not set. "
+        "This is required for JWT audience validation. "
+        "Add CLIENT_ID to the Container App environment variables in Terraform."
+    )
 
 # /common accepts tokens from ANY registered tenant.
 # Individual tenant authority strings break multi-tenant login.
 AUTHORITY = "https://login.microsoftonline.com/common"
+
+# JWKS client — caches signing keys in memory; re-fetches on unknown kid.
+# Using /common so any tenant's keys can be resolved from a single client.
+_JWKS_URI = f"{AUTHORITY}/discovery/v2.0/keys"
+_jwks_client = PyJWKClient(_JWKS_URI, cache_keys=True)
 
 # ============================================================================
 # OAUTH2 SCHEME  (Swagger UI support)
@@ -52,8 +72,9 @@ AUTHORITY = "https://login.microsoftonline.com/common"
 
 oauth2_scheme = OAuth2(
     flows={
-        "implicit": {
+        "authorizationCode": {
             "authorizationUrl": f"{AUTHORITY}/oauth2/v2.0/authorize",
+            "tokenUrl":         f"{AUTHORITY}/oauth2/v2.0/token",
             "scopes": {
                 f"api://{CLIENT_ID}/access_as_user": "Access the API as the signed-in user",
                 "openid": "OpenID Connect",
@@ -73,6 +94,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
     Validate a Microsoft Entra ID token, resolve the tenant, and return
     the authenticated user context.
 
+    Verification steps:
+      1. Unverified decode → extract tid (tenant) and kid (signing key ID).
+      2. Validate tid against the registered-tenant allowlist (403 if unknown).
+      3. Fetch the signing key from the Microsoft JWKS endpoint (cached).
+      4. Fully verify the JWT: signature, audience, issuer, and expiry.
+      5. Look up the user scoped to the resolved internal TenantId.
+
     Returns a dict with:
         UserId, userPrincipalName, FirstName, LastName, Title, ManagerId,
         TenantId, AadTenantId, roles
@@ -81,11 +109,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
         if token.startswith("Bearer "):
             token = token[7:]
 
-        # Decode without signature verification.
-        # TODO: replace with JWKS-based verification for production:
-        #   keys = fetch_jwks("https://login.microsoftonline.com/common/discovery/v2.0/keys")
-        #   jwt.decode(token, keys, algorithms=["RS256"], audience=CLIENT_ID)
-        payload = jwt.decode(
+        # ── Pass 1: unverified decode to extract tid for tenant resolution ─
+        # We must know the tenant before we can validate the issuer claim,
+        # and we must validate the tenant before spending effort on crypto.
+        unverified_payload = jwt.decode(
             token,
             options={
                 "verify_signature": False,
@@ -95,10 +122,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
             },
         )
 
-        logger.info("Token claims: %s", list(payload.keys()))
+        logger.info("Token claims (unverified): %s", list(unverified_payload.keys()))
 
         # ── 1. Extract Azure AD tenant ID (tid claim) ─────────────────────
-        aad_tenant_id = payload.get("tid")
+        aad_tenant_id = unverified_payload.get("tid")
         if not aad_tenant_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -106,6 +133,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
             )
 
         # ── 2. Resolve tid → internal TenantId ────────────────────────────
+        # Validates the tenant is a registered customer BEFORE doing any
+        # crypto work. Unknown tenants are rejected early (fail-fast).
         tenant_row = sqlhelper.get_tenant_by_aad_id(aad_tenant_id)
         if not tenant_row:
             logger.warning("Unregistered tenant attempted login: tid=%s", aad_tenant_id)
@@ -120,6 +149,32 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
         tenant_id   = tenant_row[0]   # internal integer TenantId
         tenant_name = tenant_row[1]
         logger.info("Resolved tenant: %s (id=%d)", tenant_name, tenant_id)
+
+        # ── Pass 2: full cryptographic verification ────────────────────────
+        # Fetch the signing key that matches the token's kid header.
+        # PyJWKClient caches keys and re-fetches on cache miss.
+        try:
+            signing_key = _jwks_client.get_signing_key_from_jwt(token)
+        except Exception as e:
+            logger.error("JWKS key fetch/match failed: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token signing key could not be verified.",
+            )
+
+        expected_issuer = f"https://login.microsoftonline.com/{aad_tenant_id}/v2.0"
+        expected_audience = f"api://{CLIENT_ID}"
+
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=expected_audience,
+            issuer=expected_issuer,
+            options={"verify_exp": True},
+        )
+
+        logger.info("Token fully verified — issuer: %s", expected_issuer)
 
         # ── 3. Extract UPN ─────────────────────────────────────────────────
         upn = (

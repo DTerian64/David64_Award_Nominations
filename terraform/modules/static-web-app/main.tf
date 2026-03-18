@@ -19,7 +19,8 @@ resource "azurerm_static_web_app" "frontend" {
     VITE_API_CLIENT_ID = var.vite_api_client_id
     VITE_API_SCOPE     = var.vite_api_scope
     VITE_CLIENT_ID     = var.vite_client_id
-    VITE_TENANT_ID     = var.vite_tenant_id
+    # VITE_TENANT_ID removed — frontend now uses /organizations authority
+    # so no tenant ID is needed at build time.
   }
 
   tags = var.tags

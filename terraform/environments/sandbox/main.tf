@@ -218,6 +218,8 @@ module "container_apps" {
     { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
     { name = "EMAIL_ACTION_SECRET_KEY",         value = var.email_action_secret_key },
+    # CLIENT_ID is required by auth.py for JWT audience validation (api://<client_id>).
+    { name = "CLIENT_ID",                       value = module.app_registrations.api_client_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -305,7 +307,6 @@ module "static_web_app" {
   app_name            = var.swa_name
   afd_hostname        = module.front_door.afd_endpoint_hostname
   vite_api_url        = "https://${module.front_door.afd_endpoint_hostname}"
-  vite_tenant_id      = module.app_registrations.tenant_id
   vite_api_client_id  = module.app_registrations.api_client_id
   vite_client_id      = module.app_registrations.frontend_client_id
   vite_api_scope      = module.app_registrations.api_scope

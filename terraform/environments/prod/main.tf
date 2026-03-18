@@ -31,7 +31,8 @@ data "azuread_application" "frontend" {
 }
 
 locals {
-  vite_tenant_id     = data.azuread_client_config.current.tenant_id
+  # vite_tenant_id removed — frontend now uses /organizations authority,
+  # no tenant ID needed at build time.
   vite_api_client_id = data.azuread_application.api.client_id
   vite_client_id     = data.azuread_application.frontend.client_id
   vite_api_scope     = "api://${data.azuread_application.api.client_id}/access_as_user"
@@ -207,6 +208,8 @@ module "container_apps" {
     { name = "LOGGING_LEVEL",                   value = var.logging_level },
     { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
+    # CLIENT_ID is required by auth.py for JWT audience validation (api://<client_id>).
+    { name = "CLIENT_ID",                       value = local.vite_api_client_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -271,7 +274,6 @@ module "static_web_app" {
 
   # Azure AD values wired from existing app registrations
   vite_api_url       = "https://${module.front_door.afd_endpoint_hostname}"
-  vite_tenant_id     = local.vite_tenant_id
   vite_api_client_id = local.vite_api_client_id
   vite_client_id     = local.vite_client_id
   vite_api_scope     = local.vite_api_scope

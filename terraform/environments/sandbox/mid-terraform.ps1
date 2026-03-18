@@ -94,8 +94,8 @@ if ($ghInstalled) {
     Write-Host "  Secret  AZURE_STATIC_WEB_APPS_API_TOKEN updated" -ForegroundColor Green
 
     # Variables — VITE_* build-time values (passed via workflow env: block to Vite)
+    # Note: VITE_TENANT_ID is no longer needed — frontend uses /organizations authority.
     gh variable set VITE_CLIENT_ID     --env sandbox --body $outputs.vite_client_id.value
-    gh variable set VITE_TENANT_ID     --env sandbox --body $outputs.vite_tenant_id.value
     gh variable set VITE_API_SCOPE     --env sandbox --body $outputs.vite_api_scope.value
     gh variable set VITE_API_URL       --env sandbox --body $outputs.app_url.value
     gh variable set VITE_API_CLIENT_ID --env sandbox --body $outputs.vite_api_client_id.value
@@ -105,7 +105,6 @@ if ($ghInstalled) {
     Write-Host "  GitHub → repo Settings → Environments → sandbox → Secrets/Variables" -ForegroundColor DarkYellow
     Write-Host "  Secret   : AZURE_STATIC_WEB_APPS_API_TOKEN = <run: terraform output -raw swa_deployment_token>" -ForegroundColor DarkYellow
     Write-Host "  Variable : VITE_CLIENT_ID     = $($outputs.vite_client_id.value)" -ForegroundColor DarkYellow
-    Write-Host "  Variable : VITE_TENANT_ID     = $($outputs.vite_tenant_id.value)" -ForegroundColor DarkYellow
     Write-Host "  Variable : VITE_API_SCOPE     = $($outputs.vite_api_scope.value)" -ForegroundColor DarkYellow
     Write-Host "  Variable : VITE_API_URL       = $($outputs.app_url.value)" -ForegroundColor DarkYellow
     Write-Host "  Variable : VITE_API_CLIENT_ID = $($outputs.vite_api_client_id.value)" -ForegroundColor DarkYellow

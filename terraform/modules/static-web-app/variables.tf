@@ -41,11 +41,6 @@ variable "vite_client_id" {
   type        = string
 }
 
-variable "vite_tenant_id" {
-  description = "Azure AD tenant ID — VITE_TENANT_ID"
-  type        = string
-}
-
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
