@@ -5,8 +5,7 @@ export const SignOutButton = () => {
   const { instance } = useMsal();
 
    const handleLogout = () => {
-    // Change from logoutPopup to logoutRedirect
-    instance.logoutPopup({
+    instance.logoutRedirect({
       postLogoutRedirectUri: window.location.origin,
     });
   };
