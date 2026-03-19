@@ -81,11 +81,75 @@ resource "azurerm_cdn_frontdoor_route" "api" {
     azurerm_cdn_frontdoor_origin.secondary.id,
   ]
 
-  enabled                = true
-  forwarding_protocol    = "HttpsOnly"
-  https_redirect_enabled = true
-  patterns_to_match      = ["/*"]
-  supported_protocols    = ["Http", "Https"]
+  enabled                    = true
+  forwarding_protocol        = "HttpsOnly"
+  https_redirect_enabled     = true
+  patterns_to_match          = ["/*"]
+  supported_protocols        = ["Http", "Https"]
+  cdn_frontdoor_rule_set_ids = [azurerm_cdn_frontdoor_rule_set.cors.id]
+
+  depends_on = [azurerm_cdn_frontdoor_rule_set.cors]
+}
+
+# ── CORS Rules Engine ─────────────────────────────────────────────────────────
+# AFD strips Access-Control-Allow-Origin from backend responses by default.
+# These rules re-add the required CORS headers at the CDN layer for any request
+# that includes an Origin header (i.e. all cross-origin browser requests).
+
+resource "azurerm_cdn_frontdoor_rule_set" "cors" {
+  name                     = "corsruleset"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd.id
+}
+
+resource "azurerm_cdn_frontdoor_rule" "cors_headers" {
+  name                      = "AddCORSHeaders"
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.cors.id
+  order                     = 1
+  behavior_on_match         = "Continue"
+
+  conditions {
+    request_header_condition {
+      header_name      = "Origin"
+      operator         = "Any"
+      negate_condition = false
+    }
+  }
+
+  actions {
+    # Echo the request Origin back — required when allow_credentials=true (cannot use *)
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Access-Control-Allow-Origin"
+      value         = "{http_req_header_Origin}"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Access-Control-Allow-Credentials"
+      value         = "true"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Access-Control-Allow-Methods"
+      value         = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Access-Control-Allow-Headers"
+      value         = "Authorization, Content-Type, Accept, X-Requested-With"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Access-Control-Expose-Headers"
+      value         = "Content-Length, Content-Type"
+    }
+    response_header_action {
+      header_action = "Overwrite"
+      header_name   = "Vary"
+      value         = "Origin"
+    }
+  }
+
+  depends_on = [azurerm_cdn_frontdoor_rule_set.cors]
 }
 
 resource "azurerm_cdn_frontdoor_security_policy" "waf" {
