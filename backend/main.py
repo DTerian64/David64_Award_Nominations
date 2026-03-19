@@ -81,6 +81,25 @@ app = FastAPI(
     redoc_url=None,
 )
 
+# ============================================================================
+# CORS CONFIGURATION — must be added immediately after app creation, before routes
+# ============================================================================
+# Format: comma-separated origins, e.g. "https://app.example.com,http://localhost:5173"
+# Set CORS_ALLOWED_ORIGINS in Terraform (deployed) or .env (local dev).
+_cors_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
+logger.info("CORS allowed origins: %s", ALLOWED_ORIGINS)  # ← diagnostic: confirm env var is set
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,               # CRITICAL: Must be True for auth
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
+)
+
 # Custom Swagger UI with proper OAuth2 PKCE configuration
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
@@ -183,24 +202,6 @@ async def swagger_ui_redirect():
     </body>
     </html>
     """)
-
-# CORS Configuration — fully injected via environment variable.
-# Format: comma-separated origins, e.g. "https://app.example.com,http://localhost:5173"
-# Set CORS_ALLOWED_ORIGINS in Terraform (deployed) or .env (local dev).
-# No environment-specific logic here — same code runs in dev, prod, and SaaS.
-_cors_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
-ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,               # ✅ CRITICAL: Must be True for auth
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["*"],                # ✅ Added: Expose response headers
-    max_age=3600,                        # ✅ Added: Cache preflight for 1 hour
-)
 
 # ============================================================================
 # API ENDPOINTS
