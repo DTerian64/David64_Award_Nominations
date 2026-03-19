@@ -311,13 +311,23 @@ async def create_nomination(
         "nomination": nomination,
         "manager_id": manager_id
     })
-    fraud_result = fraud_ml.get_fraud_assessment({
-        'NominatorId': effective_user["UserId"],
-        'BeneficiaryId': nomination.BeneficiaryId,
-        'ApproverId': manager_id,
-        'DollarAmount': nomination.DollarAmount,
-        'NominationDate': datetime.now()
-    })
+    try:
+        fraud_result = fraud_ml.get_fraud_assessment({
+            'NominatorId': effective_user["UserId"],
+            'BeneficiaryId': nomination.BeneficiaryId,
+            'ApproverId': manager_id,
+            'DollarAmount': nomination.DollarAmount,
+            'NominationDate': datetime.now()
+        })
+    except Exception as fraud_exc:
+        logger.error("Fraud assessment raised an unhandled exception — defaulting to MANUAL_REVIEW", extra={"error": str(fraud_exc)})
+        fraud_result = {
+            'fraud_probability': 0.0,
+            'fraud_score': 0,
+            'risk_level': 'UNKNOWN',
+            'warning_flags': ['Fraud check unavailable — manual review required'],
+            'recommendation': 'MANUAL_REVIEW'
+        }
 
     # Log fraud assessment
     if fraud_result['risk_level'] in ('CRITICAL', 'HIGH'):        

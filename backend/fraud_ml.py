@@ -287,11 +287,14 @@ class FraudDetector:
         dollar_amount = nomination_data['DollarAmount']
         
         # Get overall statistics for z-score
+        # NOTE: SQL Server AVG/STDEV return NULL for empty or single-row tables.
+        # overall_stats can be (None, None) — a truthy non-empty tuple — so we must
+        # guard against None values explicitly, not just the tuple itself.
         overall_stats = sqlhelper.get_overall_amount_stats()
-        if overall_stats:
-            overall_mean = overall_stats[0]
-            overall_std = overall_stats[1]
-            amount_zscore = (dollar_amount - overall_mean) / overall_std if overall_std > 0 else 0
+        overall_mean = overall_stats[0] if overall_stats and overall_stats[0] is not None else None
+        overall_std  = overall_stats[1] if overall_stats and overall_stats[1] is not None else None
+        if overall_mean is not None and overall_std is not None and overall_std > 0:
+            amount_zscore = (dollar_amount - overall_mean) / overall_std
         else:
             amount_zscore = 0
         
@@ -349,69 +352,84 @@ class FraudDetector:
                 'recommendation': 'MANUAL_REVIEW'
             }
         
-        # Calculate features
-        features_df = self.calculate_features(nomination_data)
-        
-        # Scale features
-        features_scaled = self.scaler.transform(features_df)
-        
-        # Predict
-        fraud_probability = self.model.predict_proba(features_scaled)[0][1]
-        fraud_prediction = self.model.predict(features_scaled)[0]
-        
-        # Convert to fraud score (0-100)
-        fraud_score = int(fraud_probability * 100)
-        
-        # Determine risk level
-        if fraud_score >= 80:
-            risk_level = 'CRITICAL'
-            recommendation = 'BLOCK'
-        elif fraud_score >= 60:
-            risk_level = 'HIGH'
-            recommendation = 'MANUAL_REVIEW'
-        elif fraud_score >= 40:
-            risk_level = 'MEDIUM'
-            recommendation = 'FLAGGED'
-        elif fraud_score >= 20:
-            risk_level = 'LOW'
-            recommendation = 'MONITOR'
-        else:
-            risk_level = 'NONE'
-            recommendation = 'APPROVE'
-        
-        # Generate warning flags
-        warning_flags = []
-        
-        features = features_df.iloc[0]
-        
-        if features['NominatorTotalNominations'] > 50:
-            warning_flags.append('High frequency nominator')
-        
-        if features['PairNominationCount'] > 5:
-            warning_flags.append('Repeated beneficiary')
-        
-        if features['HasReciprocalNomination'] == 1:
-            warning_flags.append('Reciprocal nomination detected')
-        
-        if features['IsHighAmount'] == 1:
-            warning_flags.append('Unusually high amount')
-        
-        if features['NominatorConcentrationRatio'] > 5:
-            warning_flags.append('Limited beneficiary diversity')
-        
-        return {
-            'fraud_probability': round(fraud_probability, 4),
-            'fraud_score': fraud_score,
-            'risk_level': risk_level,
-            'warning_flags': warning_flags,
-            'recommendation': recommendation,
-            'feature_summary': {
-                'nominator_total_nominations': int(features['NominatorTotalNominations']),
-                'pair_nomination_count': int(features['PairNominationCount']),
-                'has_reciprocal': bool(features['HasReciprocalNomination']),
-                'amount_zscore': round(float(features['AmountZScore']), 2)
+        try:
+            # Calculate features
+            features_df = self.calculate_features(nomination_data)
+
+            # Scale features
+            features_scaled = self.scaler.transform(features_df)
+
+            # Predict
+            fraud_probability = self.model.predict_proba(features_scaled)[0][1]
+            fraud_prediction = self.model.predict(features_scaled)[0]
+
+            # Convert to fraud score (0-100)
+            fraud_score = int(fraud_probability * 100)
+
+            # Determine risk level
+            if fraud_score >= 80:
+                risk_level = 'CRITICAL'
+                recommendation = 'BLOCK'
+            elif fraud_score >= 60:
+                risk_level = 'HIGH'
+                recommendation = 'MANUAL_REVIEW'
+            elif fraud_score >= 40:
+                risk_level = 'MEDIUM'
+                recommendation = 'FLAGGED'
+            elif fraud_score >= 20:
+                risk_level = 'LOW'
+                recommendation = 'MONITOR'
+            else:
+                risk_level = 'NONE'
+                recommendation = 'APPROVE'
+
+            # Generate warning flags
+            warning_flags = []
+
+            features = features_df.iloc[0]
+
+            if features['NominatorTotalNominations'] > 50:
+                warning_flags.append('High frequency nominator')
+
+            if features['PairNominationCount'] > 5:
+                warning_flags.append('Repeated beneficiary')
+
+            if features['HasReciprocalNomination'] == 1:
+                warning_flags.append('Reciprocal nomination detected')
+
+            if features['IsHighAmount'] == 1:
+                warning_flags.append('Unusually high amount')
+
+            if features['NominatorConcentrationRatio'] > 5:
+                warning_flags.append('Limited beneficiary diversity')
+
+            return {
+                'fraud_probability': round(fraud_probability, 4),
+                'fraud_score': fraud_score,
+                'risk_level': risk_level,
+                'warning_flags': warning_flags,
+                'recommendation': recommendation,
+                'feature_summary': {
+                    'nominator_total_nominations': int(features['NominatorTotalNominations']),
+                    'pair_nomination_count': int(features['PairNominationCount']),
+                    'has_reciprocal': bool(features['HasReciprocalNomination']),
+                    'amount_zscore': round(float(features['AmountZScore']), 2)
+                }
             }
-        }
+
+        except Exception as e:
+            import traceback
+            logger.error(
+                "Fraud prediction failed — returning UNKNOWN/MANUAL_REVIEW fallback. Error: %s\n%s",
+                e, traceback.format_exc()
+            )
+            return {
+                'fraud_probability': 0.0,
+                'fraud_score': 0,
+                'risk_level': 'UNKNOWN',
+                'warning_flags': ['Fraud check error — manual review required'],
+                'recommendation': 'MANUAL_REVIEW'
+            }
 
 # ============================================================================
 # GLOBAL FRAUD DETECTOR INSTANCE
