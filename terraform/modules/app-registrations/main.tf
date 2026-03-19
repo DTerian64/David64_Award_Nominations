@@ -107,3 +107,13 @@ resource "azuread_service_principal" "frontend" {
     enterprise = true
   }
 }
+
+# Pre-authorize the frontend SPA to call the API without a user consent prompt.
+# Without this, the refresh-token grant for api://<api_client_id>/access_as_user
+# can fail with consent_required, causing MSAL to fall back to the cached ID token
+# instead of obtaining a proper access token (aud = api://<api_client_id>).
+resource "azuread_application_pre_authorized" "frontend_to_api" {
+  application_id       = azuread_application.api.id
+  authorized_client_id = azuread_application.frontend.client_id
+  permission_ids       = [random_uuid.api_scope_id.result]
+}
