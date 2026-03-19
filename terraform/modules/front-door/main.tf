@@ -139,11 +139,6 @@ resource "azurerm_cdn_frontdoor_rule" "cors_headers" {
     }
     response_header_action {
       header_action = "Overwrite"
-      header_name   = "Access-Control-Expose-Headers"
-      value         = "Content-Length, Content-Type"
-    }
-    response_header_action {
-      header_action = "Overwrite"
       header_name   = "Vary"
       value         = "Origin"
     }
