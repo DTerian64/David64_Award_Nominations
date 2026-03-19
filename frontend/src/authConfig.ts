@@ -41,14 +41,24 @@ export const msalConfig: Configuration = {
 
 /**
  * loginRequest — used for the initial interactive sign-in only.
- * Includes OIDC scopes so Azure AD returns an ID token with user profile claims,
- * plus the API scope so an access token is also acquired in the same round-trip.
+ * Contains ONLY OIDC scopes. The API scope is intentionally NOT included here.
+ *
+ * Why: if apiScope is mixed in here alongside openid/profile/email, MSAL caches
+ * the resulting access token under a combined scope key.  When acquireTokenSilent
+ * later asks for [apiScope] alone it can't find that cache entry and may fall
+ * back to returning the cached ID token in accessToken — causing a 401 because
+ * the backend expects aud=api://<CLIENT_ID> but gets aud=<FRONTEND_CLIENT_ID>.
+ *
+ * By keeping loginRequest OIDC-only, acquireTokenSilent({scopes:[apiScope]})
+ * always performs a clean refresh-token exchange and gets a properly scoped
+ * access token (aud = api://<CLIENT_ID>, scp = access_as_user).
+ *
  * The `claims` parameter requests app roles in the ID token (for role-based UI).
  */
 export const loginRequest = {
   scopes: [
-    apiScope,
-    "openid",
+    apiScope,       // included so Azure AD grants consent and caches the API
+    "openid",       // access token during the initial login round-trip.
     "profile",
     "email",
   ],
