@@ -100,6 +100,20 @@ app.add_middleware(
     max_age=3600,
 )
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+
+class CORSDiagnosticMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        origin = request.headers.get("origin", "<not present>")
+        logger.info("CORS diagnostic — method=%s path=%s origin=%s", request.method, request.url.path, origin)
+        response = await call_next(request)
+        acao = response.headers.get("access-control-allow-origin", "<not set>")
+        logger.info("CORS diagnostic — response access-control-allow-origin=%s", acao)
+        return response
+
+app.add_middleware(CORSDiagnosticMiddleware)
+
 # Custom Swagger UI with proper OAuth2 PKCE configuration
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
