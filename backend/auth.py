@@ -169,7 +169,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
             )
 
         expected_issuer = f"https://login.microsoftonline.com/{aad_tenant_id}/v2.0"
-        expected_audience = f"api://{CLIENT_ID}"
+        # Azure AD issues aud = plain client ID (GUID) rather than api://<CLIENT_ID>
+        # when the app registration has a bare GUID identifier URI that takes
+        # precedence over the api:// one (visible via ignore_changes on identifier_uris).
+        # Both forms unambiguously identify the same API so either is secure to accept.
+        expected_audience = CLIENT_ID
 
         logger.info(
             "Verifying token — expected_audience=%r  expected_issuer=%r",
