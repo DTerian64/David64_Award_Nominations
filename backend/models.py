@@ -25,7 +25,7 @@ class Nomination(BaseModel):
     ApproverId: int
     DollarAmount: int
     NominationDescription: str
-    NominationDate: date
+    NominationDate: datetime
     ApprovedDate: Optional[datetime] = None
     PayedDate: Optional[datetime] = None
     Status: Literal["Pending", "Approved", "Paid", "Rejected"]
