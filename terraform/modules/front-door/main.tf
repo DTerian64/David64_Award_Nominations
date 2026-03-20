@@ -135,7 +135,7 @@ resource "azurerm_cdn_frontdoor_rule" "cors_headers" {
     response_header_action {
       header_action = "Overwrite"
       header_name   = "Access-Control-Allow-Headers"
-      value         = "Authorization, Content-Type, Accept, X-Requested-With"
+      value         = "Authorization, Content-Type, Accept, X-Requested-With, X-Impersonate-User"
     }
     response_header_action {
       header_action = "Overwrite"

@@ -95,7 +95,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,               # CRITICAL: Must be True for auth
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With", "X-Impersonate-User"],
     expose_headers=["*"],
     max_age=3600,
 )
