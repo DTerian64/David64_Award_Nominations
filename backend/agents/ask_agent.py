@@ -36,7 +36,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
-from openai import OpenAI
+from openai import AzureOpenAI
 from openai.types.chat import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
 from openai.types.chat import (
@@ -107,7 +107,7 @@ class AskAgent:
     feeds results back into the conversation until the model stops calling tools.
     """
 
-    def __init__(self, openai_client: OpenAI | None = None):
+    def __init__(self, openai_client: AzureOpenAI | None = None):
         self._client     = openai_client
         self._deployment = os.getenv("AZURE_OPENAI_MODEL", "gpt-4.1")
 
@@ -197,13 +197,24 @@ class AskAgent:
             return AskResult(question=question, answer="", error=str(e))
 
     # ── private helpers ───────────────────────────────────────────────────────
-    def _get_client(self) -> OpenAI:
+    def _get_client(self) -> AzureOpenAI:
         if self._client is None:
-            self._client = OpenAI(
-                api_key  = os.getenv("AZURE_OPENAI_KEY", ""),
-                base_url = os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+            # Use AzureOpenAI (not the plain OpenAI client) so the SDK constructs
+            # the correct Azure path:
+            #   {azure_endpoint}/openai/deployments/{deployment}/chat/completions?api-version=...
+            #
+            # The plain OpenAI client with base_url simply appends /chat/completions,
+            # which gives a 404 against Azure OpenAI APIM.
+            #
+            # AZURE_OPENAI_ENDPOINT must be the bare resource URL, e.g.:
+            #   https://my-resource.openai.azure.com/
+            # Do NOT append /openai/v1 — AzureOpenAI handles the full path itself.
+            self._client = AzureOpenAI(
+                api_key         = os.getenv("AZURE_OPENAI_KEY", ""),
+                azure_endpoint  = os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+                api_version     = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
             )
-            logger.info("AskAgent: OpenAI client initialised (deployment=%s)", self._deployment)
+            logger.info("AskAgent: AzureOpenAI client initialised (deployment=%s)", self._deployment)
         return self._client
 
     def _build_initial_messages(self, question: str) -> list[ChatCompletionMessageParam]:
