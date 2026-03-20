@@ -112,16 +112,18 @@ class AskAgent:
         self._deployment = os.getenv("AZURE_OPENAI_MODEL", "gpt-4.1")
 
     # ── public entry point ────────────────────────────────────────────────────
-    async def ask(self, question: str) -> AskResult:
+    async def ask(self, question: str, tenant_id: int = 0) -> AskResult:
         """
         Run the full tool-calling agent loop for a question.
+        tenant_id must be the caller's internal TenantId — it is injected into
+        the system prompt and enforced at the SQL execution layer.
         Never raises — errors are captured in AskResult.error.
         """
-        logger.info("AskAgent.ask: %s", question[:80])
+        logger.info("AskAgent.ask: %s (tenant_id=%d)", question[:80], tenant_id)
 
         try:
             client   = self._get_client()
-            messages: list[ChatCompletionMessageParam] = self._build_initial_messages(question)
+            messages: list[ChatCompletionMessageParam] = self._build_initial_messages(question, tenant_id)
 
             tool_calls_log: list[ToolCall] = []
 
@@ -167,7 +169,7 @@ class AskAgent:
                     logger.info("AskAgent: tool_call → %s(%s)", tool_name,
                                 ", ".join(f"{k}=..." for k in tool_args))
 
-                    result_json = await dispatch(tool_name, tool_args)
+                    result_json = await dispatch(tool_name, tool_args, tenant_id)
                     result_dict = json.loads(result_json)
 
                     tool_calls_log.append(ToolCall(
@@ -217,10 +219,16 @@ class AskAgent:
             logger.info("AskAgent: AzureOpenAI client initialised (deployment=%s)", self._deployment)
         return self._client
 
-    def _build_initial_messages(self, question: str) -> list[ChatCompletionMessageParam]:
-        """Construct the opening system + user messages."""
+    def _build_initial_messages(self, question: str, tenant_id: int) -> list[ChatCompletionMessageParam]:
+        """Construct the opening system + user messages, injecting tenant context."""
+        tenant_context = (
+            f"\n\n## Tenant Context\n"
+            f"You are operating on behalf of **TenantId = {tenant_id}**.\n"
+            f"Every SQL query you generate MUST include a TenantId filter (Rule 9). "
+            f"The server will reject queries that are missing this filter."
+        )
         return [
-            ChatCompletionSystemMessageParam(role="system", content=_SYSTEM_PROMPT),
+            ChatCompletionSystemMessageParam(role="system", content=_SYSTEM_PROMPT + tenant_context),
             ChatCompletionUserMessageParam(role="user",   content=question),
         ]
 

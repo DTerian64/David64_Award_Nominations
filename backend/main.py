@@ -1050,9 +1050,10 @@ async def ask_analytics_question(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """Ask an AI-powered question about analytics data."""
-    logger.info("ask endpoint: %s", req.question[:80])
+    tenant_id = current_user["actual_user"]["TenantId"]
+    logger.info("ask endpoint: %s (tenant_id=%d)", req.question[:80], tenant_id)
 
-    result: AskResult = await _ask_agent.ask(req.question)
+    result: AskResult = await _ask_agent.ask(req.question, tenant_id=tenant_id)
 
     if result.error:
         logger.error("ask endpoint: agent returned error: %s", result.error)
