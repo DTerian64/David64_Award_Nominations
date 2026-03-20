@@ -124,10 +124,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
 
         logger.info("Token claims (unverified): %s", list(unverified_payload.keys()))
         logger.info(
-            "Token aud=%r  ver=%r  scp=%r",
+            "Token aud=%r  ver=%r  scp=%r  roles=%r",
             unverified_payload.get("aud"),
             unverified_payload.get("ver"),
             unverified_payload.get("scp"),
+            unverified_payload.get("roles", []),
         )
 
         # ── 1. Extract Azure AD tenant ID (tid claim) ─────────────────────
