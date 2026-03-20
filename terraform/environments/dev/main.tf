@@ -23,9 +23,11 @@ resource "azurerm_resource_group" "rg" {
 
 # ── Azure AD — create new app registrations for dev ───────────────────────────
 module "app_registrations" {
-  source      = "../../modules/app-registrations"
-  environment = var.environment
-  swa_urls    = var.swa_redirect_urls
+  source                = "../../modules/app-registrations"
+  environment           = var.environment
+  swa_urls              = var.swa_redirect_urls
+  admin_user_object_ids = var.admin_user_object_ids
+  admin_app_role_id     = var.admin_app_role_id
 }
 
 # ── 1. Networking ─────────────────────────────────────────────────────────────

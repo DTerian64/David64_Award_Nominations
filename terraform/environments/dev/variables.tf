@@ -70,6 +70,19 @@ variable "swa_redirect_urls" {
   default = []
 }
 
+# Azure AD — admin role assignments
+variable "admin_user_object_ids" {
+  description = "Object IDs of home-tenant or B2B-guest users to receive AWard_Nomination_Admin"
+  type        = list(string)
+  default     = []
+}
+
+variable "admin_app_role_id" {
+  description = "Override the generated app role UUID — only needed when importing an existing role into state."
+  type        = string
+  default     = ""
+}
+
 # CORS — populated by mid-terraform.ps1 after first apply
 variable "cors_allowed_origins" {
   description = "Comma-separated CORS allowed origins injected into container app env vars"

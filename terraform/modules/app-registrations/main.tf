@@ -8,6 +8,16 @@ data "azuread_client_config" "current" {}
 # Stable UUID for the access_as_user OAuth2 scope — persisted in state
 resource "random_uuid" "api_scope_id" {}
 
+# Stable UUID for the AWard_Nomination_Admin app role — generated once, persisted in state.
+resource "random_uuid" "admin_role_id" {}
+
+locals {
+  # Override via var.admin_app_role_id only when importing an existing role into state.
+  # For all normal (fresh) deployments leave the variable at its default "" and this
+  # will use the generated UUID.
+  admin_role_id = var.admin_app_role_id != "" ? var.admin_app_role_id : random_uuid.admin_role_id.result
+}
+
 # ── API app registration ──────────────────────────────────────────────────────
 resource "azuread_application" "api" {
   display_name     = "Award Nomination - ${var.environment}"
@@ -19,6 +29,15 @@ resource "azuread_application" "api" {
 
   lifecycle {
     ignore_changes = [identifier_uris]
+  }
+
+  app_role {
+    allowed_member_types = ["User", "Application"]
+    description          = "Administrator for Award Nomination application"
+    display_name         = "Application Administrator"
+    enabled              = true
+    id                   = local.admin_role_id
+    value                = "AWard_Nomination_Admin"
   }
 
   api {
@@ -106,6 +125,19 @@ resource "azuread_service_principal" "frontend" {
   feature_tags {
     enterprise = true
   }
+}
+
+# ── Admin role assignments (home-tenant users only) ───────────────────────────
+# Assigns AWard_Nomination_Admin to each object ID in var.admin_user_object_ids.
+# For B2B guest users: use their guest object ID from your home tenant.
+# For users in a truly separate tenant: assign the role in that tenant's portal
+# (Enterprise Applications → Award Nomination → Users and groups).
+resource "azuread_app_role_assignment" "admins" {
+  for_each = toset(var.admin_user_object_ids)
+
+  app_role_id         = local.admin_role_id
+  principal_object_id = each.value
+  resource_object_id  = azuread_service_principal.api.object_id
 }
 
 # Pre-authorize the frontend SPA to call the API without a user consent prompt.

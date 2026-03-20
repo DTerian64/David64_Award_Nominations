@@ -64,6 +64,17 @@ dns_zone_resource_group = "rg_platform"             # RG holding terian-services
 workspace_name_primary   = "workspace-award-primary-dev"
 workspace_name_secondary = "workspace-award-secondary-dev"
 
+# ── Admin RBAC ────────────────────────────────────────────────────────────────
+# Users to receive the AWard_Nomination_Admin app role.
+# Home-tenant users and B2B guests: add object IDs here.
+#   Find object IDs via: Azure AD → Users → <user> → Object ID
+# External-tenant users (not B2B guests): assign via their own tenant's portal
+#   Enterprise Applications → Award Nomination - dev → Users and groups
+admin_user_object_ids = [
+  "YOUR_HOME_TENANT_ADMIN_OBJECT_ID",
+  # "YOUR_SECOND_ADMIN_OBJECT_ID",
+]
+
 # ── Pass 2 values — POPULATED_BY_SCRIPT (mid-terraform.ps1) ──────────────────
 swa_redirect_urls    = []
 cors_allowed_origins = ""
