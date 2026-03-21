@@ -26,8 +26,6 @@ if (accounts.length > 0) {
   msalInstance.setActiveAccount(accounts[0]);
 }
 
-const isAuthenticated = accounts.length > 0;
-
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <MsalProvider instance={msalInstance}>
@@ -35,10 +33,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         {/*
           TenantConfigProvider wraps App so the correct locale/theme is
           applied before any text or colour is rendered.
-          We pass authenticated=true only when there is an account in the cache,
-          so unauthenticated users get the sign-in page immediately (defaults).
+          Authentication state is derived reactively inside TenantConfigProvider
+          via useMsal() so the config fetch triggers as soon as MSAL completes
+          the auth redirect — no page refresh needed.
         */}
-        <TenantConfigProvider authenticated={isAuthenticated}>
+        <TenantConfigProvider>
           <App />
         </TenantConfigProvider>
       </ImpersonationProvider>

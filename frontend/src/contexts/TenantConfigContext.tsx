@@ -23,6 +23,7 @@ import React, {
   useCallback,
   type ReactNode,
 } from 'react';
+import { useMsal } from '@azure/msal-react';
 import i18n from '../i18n';
 import { getAccessToken } from '../services/api';
 
@@ -88,15 +89,17 @@ function applyTheme(theme: TenantTheme): void {
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 interface TenantConfigProviderProps {
-  /** If false (unauthenticated) skip the fetch and use defaults immediately. */
-  authenticated: boolean;
   children: ReactNode;
 }
 
 export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
-  authenticated,
   children,
 }) => {
+  // Derive authenticated state from MSAL's reactive account list so the fetch
+  // triggers automatically after the auth redirect completes — not just on
+  // page refresh.
+  const { accounts } = useMsal();
+  const authenticated = accounts.length > 0;
   const [config, setConfig]       = useState<TenantConfig>(DEFAULT_CONFIG);
   const [isLoading, setIsLoading] = useState(true);
 
