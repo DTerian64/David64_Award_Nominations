@@ -1,4 +1,4 @@
-"""Add Config JSON column to Tenants table and seed ACME Corp config
+"""Add Config JSON column to Tenants table and seed all tenant configs
 
 Revision ID: 0002
 Revises: 0001
@@ -20,12 +20,16 @@ The column stores a JSON object with per-tenant UI customisation settings:
     }
   }
 
-NULL means "use application defaults" (en-US, USD, indigo theme).
+Every tenant row is explicitly seeded so that NULL in Config always means
+"row not yet migrated" rather than "use defaults".  The backend logs a
+warning if it encounters a NULL config and falls back to the application
+defaults (en-US / USD / indigo).
 
 Upgrade
 -------
 1. Add Config column (nullable, no default)
-2. Seed ACME Corp (TenantId = 2) with Korean / teal config
+2. Seed Tenant 1 (David64 / default org) with en-US / USD / indigo config
+3. Seed Tenant 2 (ACME Corp) with ko-KR / KRW / teal config
 
 Downgrade
 ---------
@@ -45,7 +49,21 @@ down_revision: Union[str, None] = "0001"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-# ── ACME Corp config ────────────────────────────────────────────────────────
+# ── Per-tenant config seeds ──────────────────────────────────────────────────
+
+# Tenant 1 — default org (en-US, USD, indigo theme)
+_TENANT1_CONFIG = {
+    "locale":   "en-US",
+    "currency": "USD",
+    "theme": {
+        "primaryColor":      "#4f46e5",   # indigo-600
+        "primaryHoverColor": "#4338ca",   # indigo-700
+        "primaryLightColor": "#e0e7ff",   # indigo-100
+        "primaryTextOnDark": "#ffffff",
+    },
+}
+
+# Tenant 2 — ACME Corp (ko-KR, KRW, teal theme)
 _ACME_CONFIG = {
     "locale":   "ko-KR",
     "currency": "KRW",
@@ -61,7 +79,11 @@ _ACME_CONFIG = {
 def upgrade() -> None:
     conn = op.get_bind()
 
-    # ── 1. Add Config column if it doesn't already exist ────────────────────
+    # ── 1. Add Config column (DDL — implicitly commits on SQL Server) ────────
+    # This MUST be done first and separately from the DML seeds below, because
+    # SQL Server's DDL auto-commits the current transaction.  Mixing DDL and
+    # DML in one transaction on SQL Server silently drops the DML if the DDL
+    # triggers an implicit commit mid-flight.
     col_exists = conn.execute(
         sa.text(
             "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
@@ -78,13 +100,34 @@ def upgrade() -> None:
             schema="dbo",
         )
 
-    # ── 2. Seed ACME Corp (TenantId = 2) with Korean / teal config ──────────
-    conn.execute(
-        sa.text(
-            "UPDATE dbo.Tenants SET Config = :cfg WHERE TenantId = 2"
-        ),
-        {"cfg": json.dumps(_ACME_CONFIG, ensure_ascii=False)},
-    )
+    # ── 2. Seed all tenants (DML — runs after DDL has committed) ────────────
+    # Use ISNULL guard so a re-run never overwrites a manually-set config.
+    seeds = [
+        (1, json.dumps(_TENANT1_CONFIG, ensure_ascii=False)),
+        (2, json.dumps(_ACME_CONFIG,    ensure_ascii=False)),
+    ]
+    for tenant_id, cfg in seeds:
+        result = conn.execute(
+            sa.text(
+                "UPDATE dbo.Tenants SET Config = :cfg "
+                "WHERE TenantId = :tid AND Config IS NULL"
+            ),
+            {"cfg": cfg, "tid": tenant_id},
+        )
+        rows = result.rowcount
+        if rows == 0:
+            # Either TenantId doesn't exist or Config was already set — log it
+            existing = conn.execute(
+                sa.text("SELECT Config FROM dbo.Tenants WHERE TenantId = :tid"),
+                {"tid": tenant_id},
+            ).fetchone()
+            if existing is None:
+                raise RuntimeError(
+                    f"Tenant seed failed: no row with TenantId={tenant_id} found in dbo.Tenants. "
+                    "Ensure the tenant exists before running this migration."
+                )
+            # Config already populated — skip (idempotent re-run)
+    conn.execute(sa.text("COMMIT"))
 
 
 def downgrade() -> None:

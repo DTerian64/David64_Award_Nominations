@@ -102,10 +102,13 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
 
   const fetchConfig = useCallback(async () => {
     if (!authenticated) {
+      console.info('[TenantConfig] Unauthenticated — using application defaults:', DEFAULT_CONFIG);
       applyTheme(DEFAULT_CONFIG.theme);
       setIsLoading(false);
       return;
     }
+
+    console.info('[TenantConfig] Fetching tenant config from', `${API_BASE_URL}/api/tenant/config`);
 
     try {
       const token = await getAccessToken();
@@ -115,6 +118,20 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
 
       if (res.ok) {
         const raw = await res.json() as Partial<TenantConfig>;
+        console.info('[TenantConfig] Raw response from backend:', raw);
+
+        // An empty object ({}) means the backend found no config row — treat as defaults
+        const hasConfig = raw.locale || raw.currency || raw.theme;
+        if (!hasConfig) {
+          console.warn(
+            '[TenantConfig] Backend returned empty config (no row in DB or NULL). ' +
+            'Falling back to application defaults:',
+            DEFAULT_CONFIG,
+          );
+          applyTheme(DEFAULT_CONFIG.theme);
+          // Config state stays as DEFAULT_CONFIG (already the initial value)
+          return;
+        }
 
         const merged: TenantConfig = {
           locale:   raw.locale   ?? DEFAULT_CONFIG.locale,
@@ -131,12 +148,27 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
         if (i18n.language !== lang) {
           await i18n.changeLanguage(lang);
         }
+
+        console.info(
+          `[TenantConfig] Applied config — locale: ${merged.locale} | ` +
+          `currency: ${merged.currency} | primaryColor: ${merged.theme.primaryColor} | ` +
+          `i18n language: ${lang}`,
+        );
       } else {
-        // Non-2xx — fall back to defaults silently
+        console.error(
+          `[TenantConfig] Failed to retrieve TenantConfiguration — HTTP ${res.status} ${res.statusText}. ` +
+          'Falling back to application defaults:',
+          DEFAULT_CONFIG,
+        );
         applyTheme(DEFAULT_CONFIG.theme);
       }
-    } catch {
-      // Network error or token failure — use defaults, don't crash
+    } catch (err) {
+      console.error(
+        '[TenantConfig] Failed to retrieve TenantConfiguration — network or token error:',
+        err,
+        '— Falling back to application defaults:',
+        DEFAULT_CONFIG,
+      );
       applyTheme(DEFAULT_CONFIG.theme);
     } finally {
       setIsLoading(false);

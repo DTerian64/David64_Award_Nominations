@@ -228,17 +228,55 @@ def whoami(_claims=Depends(require_role("AWard_Nomination_Admin"))):
 async def get_tenant_config(user_context: dict = Depends(get_current_user_with_impersonation)):
     """
     Return the per-tenant UI configuration (locale, currency, theme).
-    Returns an empty object when no config has been set (frontend uses defaults).
+    Returns an empty object when no config has been set; frontend falls back
+    to hardcoded defaults and logs a warning of its own.
     """
     import json as _json
-    tenant_id = user_context["actual_user"]["TenantId"]
-    raw = sqlhelper.get_tenant_config(tenant_id)
-    if raw:
-        try:
-            return _json.loads(raw)
-        except Exception:
-            logger.warning("Tenant %d has invalid Config JSON — returning defaults", tenant_id)
-    return {}
+    actual_user = user_context["actual_user"]
+    tenant_id   = actual_user["TenantId"]
+    upn         = actual_user.get("userPrincipalName", "unknown")
+
+    logger.debug(
+        "tenant_config: fetching config for tenant_id=%d upn=%s",
+        tenant_id, upn,
+    )
+
+    try:
+        raw = sqlhelper.get_tenant_config(tenant_id)
+    except Exception as exc:
+        logger.error(
+            "tenant_config: DB error retrieving config for tenant_id=%d — %s. "
+            "Returning empty config; frontend will use defaults.",
+            tenant_id, exc,
+        )
+        return {}
+
+    if raw is None:
+        logger.warning(
+            "tenant_config: no Config row found for tenant_id=%d (NULL or missing). "
+            "Returning empty config; frontend will use defaults.",
+            tenant_id,
+        )
+        return {}
+
+    try:
+        parsed = _json.loads(raw)
+        logger.debug(
+            "tenant_config: returning config for tenant_id=%d — "
+            "locale=%s currency=%s primaryColor=%s",
+            tenant_id,
+            parsed.get("locale",             "?"),
+            parsed.get("currency",           "?"),
+            parsed.get("theme", {}).get("primaryColor", "?"),
+        )
+        return parsed
+    except Exception as exc:
+        logger.error(
+            "tenant_config: invalid JSON in Config column for tenant_id=%d — %s. "
+            "Returning empty config; frontend will use defaults.",
+            tenant_id, exc,
+        )
+        return {}
 
 
 @app.get("/api/users", response_model=List[User])
