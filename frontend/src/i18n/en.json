@@ -1,0 +1,60 @@
+{
+  "app": {
+    "title": "Award Nomination System",
+    "subtitle": "Recognize outstanding achievements"
+  },
+  "nav": {
+    "nominate": "Nominate Employee",
+    "history": "My Nominations",
+    "approvals": "Pending Approvals",
+    "analytics": "Analytics"
+  },
+  "nominate": {
+    "heading": "Submit Award Nomination",
+    "selectEmployee": "Select Employee to Nominate",
+    "selectPlaceholder": "-- Select an employee --",
+    "awardAmount": "Award Amount",
+    "amountPlaceholder": "Enter amount (e.g., 500)",
+    "amountHint": "Amount must be between {{min}} and {{max}}",
+    "description": "Nomination Description",
+    "descriptionPlaceholder": "Describe the achievement or reason for this nomination...",
+    "charCount": "{{count}}/500 characters",
+    "submit": "Submit Nomination",
+    "submitting": "Submitting..."
+  },
+  "history": {
+    "heading": "My Nomination History",
+    "empty": "No nominations yet",
+    "nominatedOn": "Nominated on {{date}}"
+  },
+  "approvals": {
+    "heading": "Pending Approvals",
+    "empty": "No pending approvals",
+    "nominatedBy": "Nominated by {{name}} on {{date}}",
+    "approve": "Approve",
+    "reject": "Reject"
+  },
+  "analytics": {
+    "heading": "Analytics & Reporting"
+  },
+  "status": {
+    "Pending": "Pending",
+    "Approved": "Approved",
+    "Paid": "Paid",
+    "Rejected": "Rejected",
+    "Payed": "Paid"
+  },
+  "messages": {
+    "fillAllFields": "Please fill in all fields",
+    "amountRange": "Amount must be between {{min}} and {{max}}",
+    "submitSuccess": "Nomination submitted successfully!",
+    "approveSuccess": "Nomination approved successfully!",
+    "rejectSuccess": "Nomination rejection recorded.",
+    "approvalError": "Failed to process approval. Please try again.",
+    "submitError": "Failed to submit nomination. Please try again."
+  },
+  "auth": {
+    "signIn": "Sign in with Microsoft",
+    "signOut": "Sign Out"
+  }
+}

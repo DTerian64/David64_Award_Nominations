@@ -1,9 +1,11 @@
 import React from 'react';
 import { useMsal } from '@azure/msal-react';
+import { useTranslation } from 'react-i18next';
 import { loginRequest } from '../authConfig';
 
 export const SignInButton: React.FC = () => {
   const { instance } = useMsal();
+  const { t } = useTranslation();
 
   const handleLogin = () => {
     // loginRedirect navigates the main window to Microsoft's login page.
@@ -20,8 +22,12 @@ export const SignInButton: React.FC = () => {
   };
 
   return (
-    <button onClick={handleLogin} className="btn-primary">
-      Sign in with Microsoft
+    <button
+      onClick={handleLogin}
+      style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
+      className="px-6 py-3 rounded-lg font-semibold transition-colors"
+    >
+      {t('auth.signIn')}
     </button>
   );
 };

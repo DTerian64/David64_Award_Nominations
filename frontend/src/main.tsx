@@ -1,3 +1,7 @@
+// i18n must be imported before React so the instance is ready before any
+// component calls useTranslation().
+import './i18n';
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { MsalProvider } from "@azure/msal-react";
@@ -5,6 +9,7 @@ import App from "./App";
 import "./index.css";
 import { msalInstance } from "./msalInstance";
 import { ImpersonationProvider } from "./contexts/ImpersonationContext";
+import { TenantConfigProvider } from "./contexts/TenantConfigContext";
 
 // MSAL v4 requires explicit initialization before any auth operations.
 // Awaiting here (top-level await, valid in ES modules) ensures:
@@ -21,11 +26,21 @@ if (accounts.length > 0) {
   msalInstance.setActiveAccount(accounts[0]);
 }
 
+const isAuthenticated = accounts.length > 0;
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <MsalProvider instance={msalInstance}>
       <ImpersonationProvider>
-        <App />
+        {/*
+          TenantConfigProvider wraps App so the correct locale/theme is
+          applied before any text or colour is rendered.
+          We pass authenticated=true only when there is an account in the cache,
+          so unauthenticated users get the sign-in page immediately (defaults).
+        */}
+        <TenantConfigProvider authenticated={isAuthenticated}>
+          <App />
+        </TenantConfigProvider>
       </ImpersonationProvider>
     </MsalProvider>
   </React.StrictMode>

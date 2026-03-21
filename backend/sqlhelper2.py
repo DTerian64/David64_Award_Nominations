@@ -28,6 +28,7 @@ import logging
 from sqlalchemy import (
     create_engine, text,
     Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint,
+    Unicode,
 )
 from sqlalchemy.orm import (
     sessionmaker, DeclarativeBase, Session, relationship,
@@ -70,6 +71,7 @@ class TenantORM(Base):
     TenantId        = Column(Integer, primary_key=True, autoincrement=True)
     TenantName      = Column(String(256), nullable=False, unique=True)
     AzureAdTenantId = Column(String(36),  nullable=False, unique=True)   # UUID string
+    Config          = Column(Unicode(None), nullable=True)                 # NVARCHAR(MAX) JSON blob, NULL = defaults
 
     # Reverse relationship — rarely needed directly, but handy for admin queries
     users = relationship("UserORM", back_populates="tenant")
@@ -318,6 +320,21 @@ def get_tenant_by_aad_id(aad_tenant_id: str) -> Optional[Tuple]:
             """),
             {"aad_id": aad_tenant_id},
         ).fetchone()
+
+
+def get_tenant_config(tenant_id: int) -> Optional[str]:
+    """
+    Return the JSON config string for a tenant, or None if not set.
+
+    The caller is responsible for parsing the JSON.  None means the frontend
+    should use application defaults (English, USD, indigo theme).
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT Config FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+        return row[0] if row else None
 
 
 # ===========================================================================

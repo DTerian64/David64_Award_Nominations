@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, CheckCircle, Clock, DollarSign, Users, Award, BarChart3 } from 'lucide-react';
-import { 
-  AuthenticatedTemplate, 
-  UnauthenticatedTemplate, 
-  useMsal 
+import { AlertCircle, CheckCircle, Clock, Award, BarChart3 } from 'lucide-react';
+import {
+  AuthenticatedTemplate,
+  UnauthenticatedTemplate,
+  useMsal
 } from '@azure/msal-react';
-import { SignInButton } from './components/SignInButton'; 
+import { useTranslation } from 'react-i18next';
+import { SignInButton } from './components/SignInButton';
 import { SignOutButton } from './components/SignOutButton';
 import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
 import { ImpersonationBanner } from './components/ImpersonationBanner';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { useImpersonation } from './contexts/ImpersonationContext';
+import { useTenantConfig } from './contexts/TenantConfigContext';
 import { getAccessToken } from './services/api';
 
 // Types matching your backend
@@ -51,7 +53,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 async function apiFetch<T>(path: string, options: RequestInit = {}, impersonatedUPN?: string): Promise<T> {
   try {
     const token = await getAccessToken();
-    
+
     const headers = new Headers(options.headers);
 
     const hasBody = options.body !== undefined && options.body !== null;
@@ -60,14 +62,13 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, impersonated
     if (hasBody && !isFormData && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
-    
+
     headers.set('Authorization', `Bearer ${token}`);
 
-    // Add impersonation header if provided
     if (impersonatedUPN) {
       headers.set('X-Impersonate-User', impersonatedUPN);
     }
-    
+
     const res = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
       headers,
@@ -89,34 +90,26 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, impersonated
 const AwardNominationApp: React.FC = () => {
   const { accounts } = useMsal();
   const { getEffectiveUser, isImpersonating, isAdmin } = useImpersonation();
-  // ADD THIS DEBUG CODE:
-  useEffect(() => {
-  console.log('=== IMPERSONATION DEBUG ===');
-  console.log('isAdmin:', isAdmin);
-  console.log('isImpersonating:', isImpersonating);
-  console.log('accounts:', accounts);
-  if (accounts.length > 0) {
-    console.log('Token claims:', accounts[0]?.idTokenClaims);
-    console.log('Roles in token:', accounts[0]?.idTokenClaims?.roles);
-  }
-  console.log('========================');
-  }, [isAdmin, isImpersonating, accounts]);
-  
-  
+  const { formatCurrency, minAmount, maxAmount } = useTenantConfig();
+  const { t, i18n } = useTranslation();
+
+  // Format date according to the active locale
+  const formatDate = (dateStr: string) =>
+    new Date(dateStr).toLocaleDateString(i18n.language);
+
   const [_currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [nominations, setNominations] = useState<Nomination[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<Nomination[]>([]);
   const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'analytics'>('nominate');
   const [loading, setLoading] = useState(false);
-  
+
   // Nomination form state
   const [selectedBeneficiary, setSelectedBeneficiary] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [submitStatus, setSubmitStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Reload data when impersonation changes
   useEffect(() => {
     if (accounts.length > 0) {
       loadCurrentUser();
@@ -174,13 +167,19 @@ const AwardNominationApp: React.FC = () => {
 
   const handleSubmitNomination = async () => {
     if (!selectedBeneficiary || !amount || !description) {
-      setSubmitStatus({ type: 'error', message: 'Please fill in all fields' });
+      setSubmitStatus({ type: 'error', message: t('messages.fillAllFields') });
       return;
     }
 
     const dollarAmount = Number(amount);
-    if (dollarAmount < 50 || dollarAmount > 5000) {
-      setSubmitStatus({ type: 'error', message: 'Amount must be between $50 and $5,000' });
+    if (dollarAmount < minAmount || dollarAmount > maxAmount) {
+      setSubmitStatus({
+        type: 'error',
+        message: t('messages.amountRange', {
+          min: formatCurrency(minAmount),
+          max: formatCurrency(maxAmount),
+        }),
+      });
       return;
     }
 
@@ -189,31 +188,29 @@ const AwardNominationApp: React.FC = () => {
 
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-      
-      const payload = {
-        BeneficiaryId: Number(selectedBeneficiary),
-        DollarAmount: dollarAmount,
-        NominationDescription: description,
-      };
-      
+
       await apiFetch('/api/nominations', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          BeneficiaryId: Number(selectedBeneficiary),
+          DollarAmount:  dollarAmount,
+          NominationDescription: description,
+        }),
       }, impersonatedUPN);
-      
-      setSubmitStatus({ type: 'success', message: 'Nomination submitted successfully!' });
+
+      setSubmitStatus({ type: 'success', message: t('messages.submitSuccess') });
       setSelectedBeneficiary('');
       setAmount('');
       setDescription('');
-      
+
       setTimeout(() => {
         loadNominations();
         setSubmitStatus(null);
       }, 2000);
     } catch (error: any) {
-      setSubmitStatus({ 
-        type: 'error', 
-        message: error.message || 'Failed to submit nomination. Please try again.' 
+      setSubmitStatus({
+        type: 'error',
+        message: error.message || t('messages.submitError'),
       });
     } finally {
       setLoading(false);
@@ -222,31 +219,28 @@ const AwardNominationApp: React.FC = () => {
 
   const handleApproval = async (nominationId: number, approved: boolean) => {
     setLoading(true);
-    
+
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-      
+
       await apiFetch('/api/nominations/approve', {
         method: 'POST',
-        body: JSON.stringify({
-          NominationId: nominationId,
-          Approved: approved,
-        }),
+        body: JSON.stringify({ NominationId: nominationId, Approved: approved }),
       }, impersonatedUPN);
 
       await loadPendingApprovals();
       await loadNominations();
-      
-      setSubmitStatus({ 
-        type: 'success', 
-        message: `Nomination ${approved ? 'approved' : 'rejected'} successfully!` 
+
+      setSubmitStatus({
+        type: 'success',
+        message: approved ? t('messages.approveSuccess') : t('messages.rejectSuccess'),
       });
-      
+
       setTimeout(() => setSubmitStatus(null), 3000);
     } catch (error: any) {
-      setSubmitStatus({ 
-        type: 'error', 
-        message: error.message || 'Failed to process approval. Please try again.' 
+      setSubmitStatus({
+        type: 'error',
+        message: error.message || t('messages.approvalError'),
       });
     } finally {
       setLoading(false);
@@ -255,15 +249,15 @@ const AwardNominationApp: React.FC = () => {
 
   const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
     const styles: Record<string, string> = {
-      Pending: 'bg-yellow-100 text-yellow-800',
+      Pending:  'bg-yellow-100 text-yellow-800',
       Approved: 'bg-green-100 text-green-800',
-      Paid: 'bg-blue-100 text-blue-800',
-      Rejected: 'bg-red-100 text-red-800'
+      Paid:     'bg-blue-100 text-blue-800',
+      Payed:    'bg-blue-100 text-blue-800',
+      Rejected: 'bg-red-100 text-red-800',
     };
-    
     return (
       <span className={`px-3 py-1 rounded-full text-xs font-semibold ${styles[status] || 'bg-gray-100 text-gray-800'}`}>
-        {status}
+        {t(`status.${status}`, { defaultValue: status })}
       </span>
     );
   };
@@ -279,12 +273,12 @@ const AwardNominationApp: React.FC = () => {
         <div className="min-h-screen flex items-center justify-center p-4">
           <div className="max-w-md w-full">
             <div className="bg-white p-8 rounded-lg shadow-lg text-center">
-              <Award className="w-16 h-16 text-indigo-600 mx-auto mb-4" />
+              <Award className="w-16 h-16 mx-auto mb-4" style={{ color: 'var(--color-primary)' }} />
               <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                Award Nomination System
+                {t('app.title')}
               </h1>
               <p className="text-gray-600 mb-6">
-                Recognize outstanding achievements
+                {t('app.subtitle')}
               </p>
               <SignInButton />
             </div>
@@ -294,15 +288,15 @@ const AwardNominationApp: React.FC = () => {
 
       <AuthenticatedTemplate>
         <ImpersonationBanner />
-        
+
         <header className="bg-white shadow-sm border-b border-gray-200">
           <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center">
               <div className="flex items-center space-x-3">
-                <Award className="w-8 h-8 text-indigo-600" />
+                <Award className="w-8 h-8" style={{ color: 'var(--color-primary)' }} />
                 <div>
-                  <h1 className="text-2xl font-bold text-gray-900">Award Nomination System</h1>
-                  <p className="text-sm text-gray-600">Recognize outstanding achievements</p>
+                  <h1 className="text-2xl font-bold text-gray-900">{t('app.title')}</h1>
+                  <p className="text-sm text-gray-600">{t('app.subtitle')}</p>
                 </div>
               </div>
               <div className="flex items-center space-x-4">
@@ -333,77 +327,70 @@ const AwardNominationApp: React.FC = () => {
             </div>
           )}
 
+          {/* Tab bar */}
           <div className="bg-white rounded-lg shadow-sm p-1 flex space-x-1">
-            <button
-              onClick={() => setActiveTab('nominate')}
-              className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
-                activeTab === 'nominate'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <Users className="w-5 h-5 inline-block mr-2" />
-              Nominate Employee
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
-                activeTab === 'history'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <Clock className="w-5 h-5 inline-block mr-2" />
-              My Nominations
-            </button>
-            <button
-              onClick={() => setActiveTab('approvals')}
-              className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
-                activeTab === 'approvals'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <CheckCircle className="w-5 h-5 inline-block mr-2" />
-              Pending Approvals
-              {pendingApprovals.length > 0 && (
-                <span className="ml-2 bg-red-500 text-white text-xs rounded-full px-2 py-1">
-                  {pendingApprovals.length}
-                </span>
-              )}
-            </button>
+            {(['nominate', 'history', 'approvals'] as const).map((tab) => {
+              const isActive = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  style={isActive ? {
+                    backgroundColor: 'var(--color-primary)',
+                    color: 'var(--color-primary-text)',
+                  } : {}}
+                  className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
+                    isActive ? '' : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  {tab === 'nominate' && <Award className="w-5 h-5 inline-block mr-2" />}
+                  {tab === 'history' && <Clock className="w-5 h-5 inline-block mr-2" />}
+                  {tab === 'approvals' && <CheckCircle className="w-5 h-5 inline-block mr-2" />}
+                  {t(`nav.${tab}`)}
+                  {tab === 'approvals' && pendingApprovals.length > 0 && (
+                    <span className="ml-2 bg-red-500 text-white text-xs rounded-full px-2 py-1">
+                      {pendingApprovals.length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
             {isAdmin && (
               <button
                 onClick={() => setActiveTab('analytics')}
+                style={activeTab === 'analytics' ? {
+                  backgroundColor: 'var(--color-primary)',
+                  color: 'var(--color-primary-text)',
+                } : {}}
                 className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
-                  activeTab === 'analytics'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-gray-700 hover:bg-gray-100'
+                  activeTab === 'analytics' ? '' : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
                 <BarChart3 className="w-5 h-5 inline-block mr-2" />
-                Analytics
+                {t('nav.analytics')}
               </button>
             )}
           </div>
         </div>
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 pb-12">
+          {/* ── Nominate tab ─────────────────────────────────────────────── */}
           {activeTab === 'nominate' && (
             <div className="bg-white rounded-lg shadow-md p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">Submit Award Nomination</h2>
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('nominate.heading')}</h2>
 
               <div className="space-y-6">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Select Employee to Nominate
+                    {t('nominate.selectEmployee')}
                   </label>
                   <select
                     value={selectedBeneficiary}
                     onChange={(e) => setSelectedBeneficiary(e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none"
+                    style={{ accentColor: 'var(--color-primary)' }}
                   >
-                    <option value="">-- Select an employee --</option>
+                    <option value="">{t('nominate.selectPlaceholder')}</option>
                     {users.map(user => (
                       <option key={user.UserId} value={user.UserId}>
                         {user.FirstName} {user.LastName} - {user.Title}
@@ -414,58 +401,67 @@ const AwardNominationApp: React.FC = () => {
 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Award Amount ($)
+                    {t('nominate.awardAmount')}
                   </label>
-                  <div className="relative">
-                    <DollarSign className="absolute left-3 top-3.5 w-5 h-5 text-gray-400" />
-                    <input
-                      type="number"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      min="50"
-                      max="5000"
-                      step="50"
-                      placeholder="Enter amount (e.g., 500)"
-                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    />
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">Amount must be between $50 and $5,000</p>
+                  <input
+                    type="number"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    min={minAmount}
+                    max={maxAmount}
+                    step="50"
+                    placeholder={t('nominate.amountPlaceholder')}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    {t('nominate.amountHint', {
+                      min: formatCurrency(minAmount),
+                      max: formatCurrency(maxAmount),
+                    })}
+                  </p>
                 </div>
 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Nomination Description
+                    {t('nominate.description')}
                   </label>
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     rows={5}
-                    placeholder="Describe the achievement or reason for this nomination..."
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+                    placeholder={t('nominate.descriptionPlaceholder')}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none resize-none"
                     maxLength={500}
                   />
-                  <p className="mt-1 text-xs text-gray-500">{description.length}/500 characters</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {t('nominate.charCount', { count: description.length })}
+                  </p>
                 </div>
 
                 <button
                   onClick={handleSubmitNomination}
                   disabled={loading}
-                  className="w-full bg-indigo-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: loading ? undefined : 'var(--color-primary)',
+                    color: 'var(--color-primary-text)',
+                  }}
+                  className="w-full py-3 px-6 rounded-lg font-semibold transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
                 >
-                  {loading ? 'Submitting...' : 'Submit Nomination'}
+                  {loading ? t('nominate.submitting') : t('nominate.submit')}
                 </button>
               </div>
             </div>
           )}
 
+          {/* ── History tab ──────────────────────────────────────────────── */}
           {activeTab === 'history' && (
             <div className="bg-white rounded-lg shadow-md p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">My Nomination History</h2>
-              
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('history.heading')}</h2>
+
               {nominations.length === 0 ? (
                 <div className="text-center py-12">
                   <Award className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-600">No nominations yet</p>
+                  <p className="text-gray-600">{t('history.empty')}</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -477,11 +473,13 @@ const AwardNominationApp: React.FC = () => {
                             {getUserName(nom.BeneficiaryId)}
                           </h3>
                           <p className="text-sm text-gray-600">
-                            Nominated on {new Date(nom.NominationDate).toLocaleDateString()}
+                            {t('history.nominatedOn', { date: formatDate(nom.NominationDate) })}
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className="text-2xl font-bold text-indigo-600">${nom.DollarAmount}</p>
+                          <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
+                            {formatCurrency(nom.DollarAmount)}
+                          </p>
                           <StatusBadge status={nom.Status} />
                         </div>
                       </div>
@@ -493,14 +491,15 @@ const AwardNominationApp: React.FC = () => {
             </div>
           )}
 
+          {/* ── Approvals tab ────────────────────────────────────────────── */}
           {activeTab === 'approvals' && (
             <div className="bg-white rounded-lg shadow-md p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">Pending Approvals</h2>
-              
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('approvals.heading')}</h2>
+
               {pendingApprovals.length === 0 ? (
                 <div className="text-center py-12">
                   <CheckCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-600">No pending approvals</p>
+                  <p className="text-gray-600">{t('approvals.empty')}</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -512,10 +511,15 @@ const AwardNominationApp: React.FC = () => {
                             {getUserName(nom.BeneficiaryId)}
                           </h3>
                           <p className="text-sm text-gray-600">
-                            Nominated by {getUserName(nom.NominatorId)} on {new Date(nom.NominationDate).toLocaleDateString()}
+                            {t('approvals.nominatedBy', {
+                              name: getUserName(nom.NominatorId),
+                              date: formatDate(nom.NominationDate),
+                            })}
                           </p>
                         </div>
-                        <p className="text-2xl font-bold text-indigo-600">${nom.DollarAmount}</p>
+                        <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
+                          {formatCurrency(nom.DollarAmount)}
+                        </p>
                       </div>
                       <p className="text-gray-700 mb-4">{nom.NominationDescription}</p>
                       <div className="flex space-x-3">
@@ -524,14 +528,14 @@ const AwardNominationApp: React.FC = () => {
                           disabled={loading}
                           className="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:bg-gray-400"
                         >
-                          Approve
+                          {t('approvals.approve')}
                         </button>
                         <button
                           onClick={() => handleApproval(nom.NominationId, false)}
                           disabled={loading}
                           className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition-colors disabled:bg-gray-400"
                         >
-                          Reject
+                          {t('approvals.reject')}
                         </button>
                       </div>
                     </div>
@@ -541,9 +545,10 @@ const AwardNominationApp: React.FC = () => {
             </div>
           )}
 
+          {/* ── Analytics tab ────────────────────────────────────────────── */}
           {activeTab === 'analytics' && isAdmin && (
             <div className="bg-white rounded-lg shadow-md p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">Analytics & Reporting</h2>
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('analytics.heading')}</h2>
               <AnalyticsDashboard />
             </div>
           )}

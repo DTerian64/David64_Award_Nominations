@@ -224,6 +224,23 @@ def whoami(_claims=Depends(require_role("AWard_Nomination_Admin"))):
         "hostname": socket.gethostname(),
     }
 
+@app.get("/api/tenant/config")
+async def get_tenant_config(user_context: dict = Depends(get_current_user_with_impersonation)):
+    """
+    Return the per-tenant UI configuration (locale, currency, theme).
+    Returns an empty object when no config has been set (frontend uses defaults).
+    """
+    import json as _json
+    tenant_id = user_context["actual_user"]["TenantId"]
+    raw = sqlhelper.get_tenant_config(tenant_id)
+    if raw:
+        try:
+            return _json.loads(raw)
+        except Exception:
+            logger.warning("Tenant %d has invalid Config JSON — returning defaults", tenant_id)
+    return {}
+
+
 @app.get("/api/users", response_model=List[User])
 async def get_users(user_context: dict = Depends(get_current_user_with_impersonation)):
     """Get all users for nomination selection"""
