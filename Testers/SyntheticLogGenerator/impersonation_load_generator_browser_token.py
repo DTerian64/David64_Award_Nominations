@@ -1,6 +1,29 @@
 """
-Impersonation Load Generator - Browser Token Version
-Uses a token obtained from Swagger UI (no ROPC needed!)
+Impersonation Load Generator - Multi-Tenant / Sandbox Version
+=============================================================
+
+Runs two sequential tenant phases:
+  Phase 1 — Tenant 1  (en-US / USD / Indigo)
+  Phase 2 — Tenant 2  (ko-KR / KRW / Teal – ACME)
+
+Each phase:
+  1. Prompts for the tenant admin's Bearer token (copy from browser DevTools).
+  2. Fetches /api/users to discover the tenant's user pool.
+  3. Spawns CONCURRENT_USERS async workers that create nominations until
+     TARGET_NOMINATIONS_PER_TENANT successful creates are recorded.
+  4. Optionally auto-approves every created nomination via the beneficiary's
+     manager.
+  5. Prints per-tenant statistics, then moves to the next phase.
+
+A combined summary is printed at the end.
+
+Usage
+-----
+  python impersonation_load_generator_browser_token.py
+
+Environment variable overrides
+--------------------------------
+  API_BASE_URL   Override the API base URL (default: http://localhost:8000)
 """
 
 import asyncio
@@ -13,598 +36,612 @@ import logging
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
-API_BASE_URL = os.getenv(
-    "API_BASE_URL",
-    "https://award-nomination-api-bqb8ftbdfpemfyck.z02.azurefd.net"
-)
 
+API_BASE_URL = "https://award-nomination-api-sandbox-f5cnf7aze0d6e0h7.z02.azurefd.net" #API_BASE_URL", "http://localhost:8000")
 
-# ============================================================================
-# TOKEN FROM BROWSER
-# ============================================================================
+# Nominations to create per tenant phase
+TARGET_NOMINATIONS_PER_TENANT = 1000
 
-def get_token_from_user() -> str:
-    """
-    Get admin token from user (obtained via browser/Swagger UI)
-    
-    Instructions for getting the token:
-    1. Go to https://award-nomination-api-bqb8ftbdfpemfyck.z02.azurefd.net/docs
-    2. Click the "Authorize" button (lock icon)
-    3. Log in as david64.terian@terian-services.com
-    4. Open browser DevTools (F12)
-    5. Go to Application/Storage → Session Storage → your domain
-    6. Find the token (or check Network tab for Authorization header)
-    7. Copy the token and paste it here
-    """
-    print("="*70)
-    print("GET ADMIN TOKEN FROM SWAGGER UI")
-    print("="*70)
-    print("\n📋 Instructions:")
-    print(f"1. Open: {API_BASE_URL}/docs")
-    print("2. Click 'Authorize' button (green lock icon)")
-    print("3. Log in as david64.terian@terian-services.com")
-    print("4. After login, you'll be redirected back")
-    print("\n🔍 To get the token:")
-    print("   Option A - Easy way:")
-    print("     1. Try any endpoint (e.g., GET /api/users)")
-    print("     2. Open browser DevTools (F12) → Network tab")
-    print("     3. Find the request → Headers → Authorization")
-    print("     4. Copy everything after 'Bearer '")
-    print("\n   Option B - Direct from storage:")
-    print("     1. Open DevTools (F12) → Application tab")
-    print("     2. Session Storage → your domain")
-    print("     3. Look for a key with 'token' in the name")
-    print("     4. Copy the value")
-    print("\n" + "="*70)
-    
-    token = input("\n🔑 Paste your token here: ").strip()
-    
-    # Remove "Bearer " if user included it
-    if token.startswith("Bearer "):
-        token = token[7:]
-    
-    if not token:
-        raise ValueError("Token is required")
-    
-    logger.info(f"✅ Token received (length: {len(token)} chars)")
-    return token
+# Async workers per phase (keep low enough to avoid overwhelming localhost)
+CONCURRENT_USERS = 20
 
+# Delay range between actions per worker (seconds)
+ACTION_DELAY_MIN = 0.1
+ACTION_DELAY_MAX = 0.5
 
-# ============================================================================
-# IMPERSONATION-BASED LOAD GENERATOR
-# ============================================================================
+# ── Tenant phase definitions ─────────────────────────────────────────────────
 
-class ImpersonationLoadGenerator:
-    """
-    Load generator that uses admin impersonation to simulate users
-    """
-    
-    def __init__(
-        self,
-        admin_token: str,
-        concurrent_users: int = 50,
-        duration_hours: float = 0.25,
-        auto_approve: bool = True
-    ):
-        self.admin_token = admin_token
-        self.concurrent_users = concurrent_users
-        self.duration = duration_hours * 3600
-        self.auto_approve = auto_approve
-        self.api_base = API_BASE_URL
-        
-        # Will be populated from /api/users
-        self.users: List[Dict] = []
-        self.users_by_id: Dict[int, Dict] = {}
-        self.eligible_nominators: List[Dict] = []
-        self.eligible_beneficiaries: List[Dict] = []
-        self.managers: List[Dict] = []
-        
-        # Statistics
-        self.stats = {
-            "nominations_created": 0,
-            "nominations_approved": 0,
-            "nominations_failed": 0,
-            "approvals_failed": 0,
-            "fraud_blocked": 0
-        }
-    
-    def get_auth_headers(self, impersonate_upn: Optional[str] = None) -> Dict[str, str]:
-        """Get authorization headers with optional impersonation"""
-        headers = {
-            "Authorization": f"Bearer {self.admin_token}",
-            "Content-Type": "application/json"
-        }
-        
-        if impersonate_upn:
-            headers["X-Impersonate-User"] = impersonate_upn
-        
-        return headers
-    
-    async def fetch_users(self, session: aiohttp.ClientSession):
-        """Fetch all users from the API"""
-        logger.info("Fetching users from /api/users...")
-        
-        try:
-            async with session.get(
-                f"{self.api_base}/api/users",
-                headers=self.get_auth_headers(),
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise Exception(f"Failed to fetch users: {resp.status} - {text}")
-                
-                self.users = await resp.json()
-                
-                # Build lookup dictionary
-                self.users_by_id = {user["UserId"]: user for user in self.users}
-                
-                # Categorize users
-                for user in self.users:
-                    self.eligible_nominators.append(user)
-                    
-                    if user.get("ManagerId"):
-                        self.eligible_beneficiaries.append(user)
-                    
-                    if any(u.get("ManagerId") == user["UserId"] for u in self.users):
-                        if user not in self.managers:
-                            self.managers.append(user)
-                
-                logger.info(f"✅ Loaded {len(self.users)} users")
-                logger.info(f"   - {len(self.eligible_nominators)} potential nominators")
-                logger.info(f"   - {len(self.eligible_beneficiaries)} potential beneficiaries")
-                logger.info(f"   - {len(self.managers)} managers")
-                
-                if not self.eligible_beneficiaries:
-                    raise Exception("No eligible beneficiaries found (need users with ManagerId)")
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to fetch users: {e}")
-            raise
-    
-    async def create_nomination(
-        self,
-        session: aiohttp.ClientSession,
-        nominator_upn: str,
-        beneficiary_id: int,
-        dollar_amount: float,
-        description: str
-    ) -> Optional[Dict]:
-        """Create a nomination by impersonating a nominator"""
-        try:
-            data = {
-                "BeneficiaryId": beneficiary_id,
-                "DollarAmount": dollar_amount,
-                "NominationDescription": description
-            }
-            
-            async with session.post(
-                f"{self.api_base}/api/nominations",
-                json=data,
-                headers=self.get_auth_headers(impersonate_upn=nominator_upn),
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                text = await resp.text()
-                
-                if status == 201:
-                    self.stats["nominations_created"] += 1
-                    try:
-                        result = await resp.json() if text else {}
-                        nomination_id = result.get("NominationId")
-                        logger.info(
-                            f"✅ Nomination created: {nominator_upn} → "
-                            f"Beneficiary {beneficiary_id}, ${dollar_amount} (ID: {nomination_id})"
-                        )
-                        return result
-                    except:
-                        logger.info(
-                            f"✅ Nomination created: {nominator_upn} → "
-                            f"Beneficiary {beneficiary_id}, ${dollar_amount}"
-                        )
-                        return {"status": "created"}
-                
-                elif status == 400 and "fraud" in text.lower():
-                    self.stats["fraud_blocked"] += 1
-                    logger.warning(
-                        f"🚫 Nomination blocked (fraud): {nominator_upn} → "
-                        f"Beneficiary {beneficiary_id}, ${dollar_amount}"
-                    )
-                    return None
-                
-                else:
-                    self.stats["nominations_failed"] += 1
-                    logger.error(
-                        f"❌ Nomination failed ({status}): {nominator_upn} → "
-                        f"Beneficiary {beneficiary_id}, ${dollar_amount} - {text[:100]}"
-                    )
-                    return None
-        
-        except Exception as e:
-            self.stats["nominations_failed"] += 1
-            logger.error(f"❌ Nomination error: {nominator_upn} - {e}")
-            return None
-    
-    async def approve_nomination(
-        self,
-        session: aiohttp.ClientSession,
-        nomination_id: int,
-        manager_upn: str
-    ) -> bool:
-        """Approve a nomination by impersonating the manager"""
-        try:
-            # The endpoint is /api/nominations/approve (not /{id}/approve)
-            # It expects a JSON body with NominationId and Approved fields
-            data = {
-                "NominationId": nomination_id,
-                "Approved": True
-            }
-            
-            async with session.post(
-                f"{self.api_base}/api/nominations/approve",
-                json=data,
-                headers=self.get_auth_headers(impersonate_upn=manager_upn),
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                
-                if status == 200:
-                    self.stats["nominations_approved"] += 1
-                    logger.info(f"✅ Nomination approved: ID {nomination_id} by {manager_upn}")
-                    return True
-                else:
-                    self.stats["approvals_failed"] += 1
-                    text = await resp.text()
-                    logger.error(
-                        f"❌ Approval failed ({status}): ID {nomination_id} by {manager_upn} - {text[:100]}"
-                    )
-                    return False
-        
-        except Exception as e:
-            self.stats["approvals_failed"] += 1
-            logger.error(f"❌ Approval error: ID {nomination_id} - {e}")
-            return False
-    
-    async def generate_normal_behavior(self, session: aiohttp.ClientSession):
-        """70% - Normal, realistic nominations"""
-        nominator = random.choice(self.eligible_nominators)
-        beneficiary = random.choice(self.eligible_beneficiaries)
-        
-        if nominator["UserId"] == beneficiary["UserId"]:
-            return
-        
-        dollar_amount = random.choice([50, 100, 150, 200, 250, 300])
-        description = random.choice([
+TENANT_PHASES = [
+    {
+        "name": "Tenant 1",
+        "label": "en-US / USD / Indigo",
+        "admin_hint": "david64.terian@terian-services.com",
+        # USD amounts (integers matching the Amount field)
+        "amounts": [50, 100, 150, 200, 250, 300],
+        "descriptions_normal": [
             "Outstanding performance on the Q4 project delivery",
             "Exceptional teamwork and collaboration with the team",
             "Innovative solution that saved significant time and resources",
             "Going above and beyond to help customers succeed",
             "Mentoring and developing junior team members",
-            "Successfully leading critical project milestone to completion"
-        ])
-        
+            "Successfully leading a critical project milestone to completion",
+        ],
+        "descriptions_suspicious": ["Good work", "Nice job", "Great effort"],
+        "descriptions_fraudulent": ["x", ".", "good", "ok"],
+    },
+    {
+        "name": "Tenant 2",
+        "label": "ko-KR / KRW / Teal (ACME)",
+        "admin_hint": "(ACME tenant admin account)",
+        # KRW amounts — numerically larger than USD
+        "amounts": [50000, 100000, 150000, 200000, 250000, 300000],
+        "descriptions_normal": [
+            "4분기 프로젝트를 탁월하게 완수하였습니다",
+            "팀 협업 및 협력에서 뛰어난 성과를 보여주었습니다",
+            "시간과 자원을 크게 절감하는 혁신적인 해결책을 제시하였습니다",
+            "고객 성공을 위해 기대 이상의 노력을 기울였습니다",
+            "신입 팀원들의 멘토링과 역량 개발에 힘써주었습니다",
+            "중요한 프로젝트 마일스톤을 성공적으로 이끌었습니다",
+        ],
+        "descriptions_suspicious": ["수고했어요", "잘했어요", "최고예요"],
+        "descriptions_fraudulent": ["x", ".", "좋아요", "ok"],
+    },
+]
+
+
+# ============================================================================
+# TOKEN HELPER
+# ============================================================================
+
+def get_token_from_user(tenant_name: str, admin_hint: str) -> str:
+    """
+    Prompt the user to paste a Bearer token obtained from the browser.
+
+    Instructions:
+      1. Open {API_BASE_URL}/docs (Swagger UI) — or the running frontend.
+      2. Click "Authorize" and log in as the tenant admin.
+      3. Open DevTools (F12) → Network tab.
+      4. Trigger any API call (e.g., GET /api/users).
+      5. Copy the value after "Bearer " in the Authorization header.
+    """
+    print()
+    print("=" * 70)
+    print(f"  TOKEN REQUIRED — {tenant_name} ({admin_hint})")
+    print("=" * 70)
+    print(f"\n  1. Open: {API_BASE_URL}/docs")
+    print(f"  2. Log in as: {admin_hint}")
+    print(f"  3. DevTools (F12) → Network → any request → Authorization header")
+    print(f"  4. Copy everything after 'Bearer '")
+    print()
+
+    token = input("  🔑 Paste token here: ").strip()
+
+    if token.startswith("Bearer "):
+        token = token[7:]
+
+    if not token:
+        raise ValueError("Token is required — cannot proceed without authentication.")
+
+    logger.info(f"✅ Token accepted for {tenant_name} (length: {len(token)} chars)")
+    return token
+
+
+# ============================================================================
+# PER-TENANT LOAD GENERATOR
+# ============================================================================
+
+class TenantLoadGenerator:
+    """
+    Runs a count-based load test for a single tenant.
+    Workers stop as soon as TARGET_NOMINATIONS_PER_TENANT are recorded.
+    """
+
+    def __init__(
+        self,
+        admin_token: str,
+        phase_config: Dict,
+        target: int = TARGET_NOMINATIONS_PER_TENANT,
+        concurrent_users: int = CONCURRENT_USERS,
+        auto_approve: bool = True,
+    ):
+        self.admin_token = admin_token
+        self.phase = phase_config
+        self.target = target
+        self.concurrent_users = concurrent_users
+        self.auto_approve = auto_approve
+        self.api_base = API_BASE_URL
+
+        # User pool — populated by fetch_users()
+        self.users: List[Dict] = []
+        self.users_by_id: Dict[int, Dict] = {}
+        self.eligible_nominators: List[Dict] = []
+        self.eligible_beneficiaries: List[Dict] = []
+
+        self.stats = {
+            "nominations_created": 0,
+            "nominations_approved": 0,
+            "nominations_failed": 0,
+            "approvals_failed": 0,
+            "fraud_blocked": 0,
+        }
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _auth_headers(self, impersonate_upn: Optional[str] = None) -> Dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.admin_token}",
+            "Content-Type": "application/json",
+        }
+        if impersonate_upn:
+            headers["X-Impersonate-User"] = impersonate_upn
+        return headers
+
+    def _target_reached(self) -> bool:
+        return self.stats["nominations_created"] >= self.target
+
+    # ── User discovery ────────────────────────────────────────────────────────
+
+    async def fetch_users(self, session: aiohttp.ClientSession) -> None:
+        logger.info(f"[{self.phase['name']}] Fetching users from /api/users ...")
+
+        async with session.get(
+            f"{self.api_base}/api/users",
+            headers=self._auth_headers(),
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(
+                    f"[{self.phase['name']}] Failed to fetch users: "
+                    f"{resp.status} — {text}"
+                )
+            self.users = await resp.json()
+
+        self.users_by_id = {u["UserId"]: u for u in self.users}
+
+        for user in self.users:
+            self.eligible_nominators.append(user)
+            if user.get("ManagerId"):
+                self.eligible_beneficiaries.append(user)
+
+        logger.info(
+            f"[{self.phase['name']}] Loaded {len(self.users)} users — "
+            f"{len(self.eligible_nominators)} nominators, "
+            f"{len(self.eligible_beneficiaries)} beneficiaries"
+        )
+
+        if not self.eligible_beneficiaries:
+            raise RuntimeError(
+                f"[{self.phase['name']}] No eligible beneficiaries "
+                "(need users with ManagerId set)."
+            )
+
+    # ── Nomination creation ───────────────────────────────────────────────────
+
+    async def create_nomination(
+        self,
+        session: aiohttp.ClientSession,
+        nominator_upn: str,
+        beneficiary_id: int,
+        amount: int,
+        description: str,
+    ) -> Optional[Dict]:
+        """Create one nomination. Returns the response dict or None on failure."""
+        # Pre-flight: bail out if target already reached
+        if self._target_reached():
+            return None
+
+        payload = {
+            "BeneficiaryId": beneficiary_id,
+            "Amount": amount,
+            "NominationDescription": description,
+        }
+
+        try:
+            async with session.post(
+                f"{self.api_base}/api/nominations",
+                json=payload,
+                headers=self._auth_headers(impersonate_upn=nominator_upn),
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                status = resp.status
+                text = await resp.text()
+
+                if status == 201:
+                    self.stats["nominations_created"] += 1
+                    try:
+                        result = await resp.json() if text else {}
+                    except Exception:
+                        result = {"status": "created"}
+                    nom_id = result.get("NominationId", "?")
+                    logger.info(
+                        f"[{self.phase['name']}] ✅ #{self.stats['nominations_created']:04d} "
+                        f"NomId={nom_id} | {nominator_upn} → BeneficiaryId={beneficiary_id} "
+                        f"| Amount={amount}"
+                    )
+                    return result
+
+                elif status == 400 and "fraud" in text.lower():
+                    self.stats["fraud_blocked"] += 1
+                    logger.warning(
+                        f"[{self.phase['name']}] 🚫 Fraud blocked: "
+                        f"{nominator_upn} → {beneficiary_id} | Amount={amount}"
+                    )
+                    return None
+
+                else:
+                    self.stats["nominations_failed"] += 1
+                    logger.error(
+                        f"[{self.phase['name']}] ❌ Nomination failed ({status}): "
+                        f"{nominator_upn} → {beneficiary_id} — {text[:120]}"
+                    )
+                    return None
+
+        except Exception as exc:
+            self.stats["nominations_failed"] += 1
+            logger.error(
+                f"[{self.phase['name']}] ❌ Nomination error ({nominator_upn}): {exc}"
+            )
+            return None
+
+    # ── Approval ─────────────────────────────────────────────────────────────
+
+    async def approve_nomination(
+        self,
+        session: aiohttp.ClientSession,
+        nomination_id: int,
+        manager_upn: str,
+    ) -> bool:
+        try:
+            async with session.post(
+                f"{self.api_base}/api/nominations/approve",
+                json={"NominationId": nomination_id, "Approved": True},
+                headers=self._auth_headers(impersonate_upn=manager_upn),
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status == 200:
+                    self.stats["nominations_approved"] += 1
+                    logger.info(
+                        f"[{self.phase['name']}] ✅ Approved NomId={nomination_id} "
+                        f"by {manager_upn}"
+                    )
+                    return True
+                else:
+                    self.stats["approvals_failed"] += 1
+                    text = await resp.text()
+                    logger.error(
+                        f"[{self.phase['name']}] ❌ Approval failed ({resp.status}): "
+                        f"NomId={nomination_id} — {text[:120]}"
+                    )
+                    return False
+        except Exception as exc:
+            self.stats["approvals_failed"] += 1
+            logger.error(
+                f"[{self.phase['name']}] ❌ Approval error NomId={nomination_id}: {exc}"
+            )
+            return False
+
+    # ── Behaviour generators ─────────────────────────────────────────────────
+
+    async def _normal(self, session: aiohttp.ClientSession) -> None:
+        """70% — realistic single nomination, optionally auto-approved."""
+        nominator = random.choice(self.eligible_nominators)
+        beneficiary = random.choice(self.eligible_beneficiaries)
+
+        if nominator["UserId"] == beneficiary["UserId"]:
+            return
+
+        amount = random.choice(self.phase["amounts"])
+        description = random.choice(self.phase["descriptions_normal"])
+
         result = await self.create_nomination(
             session,
             nominator["userPrincipalName"],
             beneficiary["UserId"],
-            dollar_amount,
-            description
+            amount,
+            description,
         )
-        
+
         if self.auto_approve and result and result.get("NominationId"):
             manager_id = beneficiary.get("ManagerId")
             if manager_id and manager_id in self.users_by_id:
                 manager = self.users_by_id[manager_id]
-                await asyncio.sleep(random.uniform(0.5, 2.0))
+                await asyncio.sleep(random.uniform(0.2, 0.8))
                 await self.approve_nomination(
-                    session,
-                    result["NominationId"],
-                    manager["userPrincipalName"]
+                    session, result["NominationId"], manager["userPrincipalName"]
                 )
-    
-    async def generate_suspicious_behavior(self, session: aiohttp.ClientSession):
-        """20% - Suspicious patterns"""
+
+    async def _suspicious(self, session: aiohttp.ClientSession) -> None:
+        """20% — burst of nominations from one nominator to a small pool."""
         nominator = random.choice(self.eligible_nominators)
         pool_size = min(3, len(self.eligible_beneficiaries))
         beneficiary_pool = random.sample(self.eligible_beneficiaries, pool_size)
-        
-        for i in range(random.randint(3, 5)):
+
+        for _ in range(random.randint(3, 5)):
+            if self._target_reached():
+                break
             beneficiary = random.choice(beneficiary_pool)
             if nominator["UserId"] == beneficiary["UserId"]:
                 continue
-            
             await self.create_nomination(
                 session,
                 nominator["userPrincipalName"],
                 beneficiary["UserId"],
-                random.choice([50, 100]),
-                random.choice(["Good work", "Nice job", "Great effort"])
+                random.choice(self.phase["amounts"][:2]),   # low-end amounts
+                random.choice(self.phase["descriptions_suspicious"]),
             )
-            await asyncio.sleep(random.uniform(0.1, 0.3))
-    
-    async def generate_fraudulent_behavior(self, session: aiohttp.ClientSession):
-        """10% - Fraudulent patterns"""
+            await asyncio.sleep(random.uniform(0.05, 0.2))
+
+    async def _fraudulent(self, session: aiohttp.ClientSession) -> None:
+        """10% — rapid repeated nominations from one person to one target."""
         nominator = random.choice(self.eligible_nominators)
         beneficiary = random.choice(self.eligible_beneficiaries)
-        
+
         if nominator["UserId"] == beneficiary["UserId"]:
             return
-        
-        for i in range(random.randint(8, 12)):
+
+        for _ in range(random.randint(8, 12)):
+            if self._target_reached():
+                break
             await self.create_nomination(
                 session,
                 nominator["userPrincipalName"],
                 beneficiary["UserId"],
-                random.choice([50, 100, 150]),
-                random.choice(["x", ".", "good", "ok"])
+                random.choice(self.phase["amounts"][:2]),
+                random.choice(self.phase["descriptions_fraudulent"]),
             )
-            await asyncio.sleep(random.uniform(0.05, 0.15))
-    
-    async def user_session(self, session: aiohttp.ClientSession, virtual_user_id: int):
-        """Simulate one virtual user's session"""
-        elapsed = 0
+            await asyncio.sleep(random.uniform(0.03, 0.1))
+
+    # ── Worker ───────────────────────────────────────────────────────────────
+
+    async def _worker(self, session: aiohttp.ClientSession, worker_id: int) -> None:
+        """One virtual user — keeps firing actions until target is reached."""
         action_count = 0
-        
-        logger.info(f"🚀 Starting session for virtual user {virtual_user_id}")
-        
-        while elapsed < self.duration:
+        logger.info(f"[{self.phase['name']}] ▶ Worker {worker_id:02d} started")
+
+        while not self._target_reached():
             scenario = random.random()
-            
             try:
-                if scenario < 0.7:
-                    await self.generate_normal_behavior(session)
-                elif scenario < 0.9:
-                    await self.generate_suspicious_behavior(session)
+                if scenario < 0.70:
+                    await self._normal(session)
+                elif scenario < 0.90:
+                    await self._suspicious(session)
                 else:
-                    await self.generate_fraudulent_behavior(session)
-                
+                    await self._fraudulent(session)
                 action_count += 1
-            except Exception as e:
-                logger.error(f"❌ Error for virtual user {virtual_user_id}: {e}")
-            
-            wait_time = random.uniform(2, 10)
-            await asyncio.sleep(wait_time)
-            elapsed += wait_time
-        
+            except Exception as exc:
+                logger.error(
+                    f"[{self.phase['name']}] ❌ Worker {worker_id} error: {exc}"
+                )
+
+            await asyncio.sleep(random.uniform(ACTION_DELAY_MIN, ACTION_DELAY_MAX))
+
         logger.info(
-            f"✅ Session complete for virtual user {virtual_user_id}: "
-            f"{action_count} actions in {elapsed:.1f}s"
+            f"[{self.phase['name']}] ✔ Worker {worker_id:02d} done — "
+            f"{action_count} actions"
         )
-    
-    async def run(self):
-        """Run the load test"""
-        logger.info("="*70)
-        logger.info("Impersonation-Based Load Test Starting")
-        logger.info(f"  Virtual users: {self.concurrent_users}")
-        logger.info(f"  Duration: {self.duration/3600:.2f} hours")
-        logger.info(f"  Auto-approve: {self.auto_approve}")
+
+    # ── Runner ────────────────────────────────────────────────────────────────
+
+    async def run(self) -> Dict:
+        """Execute the full phase and return stats."""
+        start = datetime.now()
+        logger.info("")
+        logger.info("=" * 70)
+        logger.info(
+            f"  PHASE: {self.phase['name']}  ({self.phase['label']})"
+        )
+        logger.info(
+            f"  Target: {self.target} nominations | "
+            f"Workers: {self.concurrent_users} | "
+            f"Auto-approve: {self.auto_approve}"
+        )
         logger.info(f"  API: {self.api_base}")
-        logger.info("="*70)
-        
-        connector = aiohttp.TCPConnector(limit=100)
-        
+        logger.info("=" * 70)
+
+        connector = aiohttp.TCPConnector(limit=self.concurrent_users + 5)
         async with aiohttp.ClientSession(connector=connector) as session:
             await self.fetch_users(session)
-            
-            logger.info(f"\n▶️  Starting {self.concurrent_users} virtual user sessions...")
-            
-            tasks = [
-                self.user_session(session, user_id)
-                for user_id in range(1, self.concurrent_users + 1)
+
+            logger.info(
+                f"\n▶ Launching {self.concurrent_users} workers "
+                f"(target: {self.target} nominations) ...\n"
+            )
+
+            workers = [
+                self._worker(session, wid)
+                for wid in range(1, self.concurrent_users + 1)
             ]
-            
-            await asyncio.gather(*tasks)
-        
-        logger.info("\n" + "="*70)
-        logger.info("LOAD TEST COMPLETE - FINAL STATISTICS")
-        logger.info("="*70)
-        logger.info(f"Nominations Created:    {self.stats['nominations_created']:5d}")
-        logger.info(f"Nominations Approved:   {self.stats['nominations_approved']:5d}")
-        logger.info(f"Fraud Blocked:          {self.stats['fraud_blocked']:5d}")
-        logger.info(f"Nomination Failures:    {self.stats['nominations_failed']:5d}")
-        logger.info(f"Approval Failures:      {self.stats['approvals_failed']:5d}")
-        logger.info("="*70)
+            await asyncio.gather(*workers)
+
+        elapsed = (datetime.now() - start).total_seconds()
+        self.stats["elapsed_seconds"] = round(elapsed, 1)
+
+        logger.info("")
+        logger.info(f"  {self.phase['name']} complete in {elapsed:.1f}s")
+        logger.info(f"  Nominations created:  {self.stats['nominations_created']:5d}")
+        logger.info(f"  Nominations approved: {self.stats['nominations_approved']:5d}")
+        logger.info(f"  Fraud blocked:        {self.stats['fraud_blocked']:5d}")
+        logger.info(f"  Create failures:      {self.stats['nominations_failed']:5d}")
+        logger.info(f"  Approval failures:    {self.stats['approvals_failed']:5d}")
+
+        return self.stats
 
 
 # ============================================================================
-# MAIN EXECUTION
+# APPROVE-ALL HELPER  (option 2 from the main menu)
 # ============================================================================
 
-async def main():
-    """Main entry point for load testing"""
-    
-    try:
-        # Get token from user (via browser/Swagger)
-        admin_token = get_token_from_user()
-        
-        # Get test parameters
-        print(f"\n📊 Load Test Configuration")
-        concurrent_users = int(input(f"   Concurrent virtual users [50]: ") or "50")
-        duration_minutes = float(input(f"   Duration in minutes [15]: ") or "15")
-        auto_approve_input = input(f"   Auto-approve nominations? [Y/n]: ").lower()
-        auto_approve = auto_approve_input != 'n'
-        
-        # Create and run load generator
-        generator = ImpersonationLoadGenerator(
-            admin_token=admin_token,
-            concurrent_users=concurrent_users,
-            duration_hours=duration_minutes / 60,
-            auto_approve=auto_approve
-        )
-        
-        await generator.run()
-        return 0
-        
-    except KeyboardInterrupt:
-        logger.info("\n⚠️  Load test interrupted by user")
-        return 0
-    except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
-
-
-async def approve_pending():
+async def approve_all_pending(admin_token: str, tenant_label: str) -> int:
     """
-    Approve all pending nominations
-    
-    Workflow:
-    1. Get all managers from the user list
-    2. For each manager, impersonate them and get their pending nominations
-    3. Approve each pending nomination as that manager
+    Impersonate every manager in the tenant and approve their pending
+    nominations. Returns the number approved.
     """
-    
-    try:
-        # Get token from user
-        admin_token = get_token_from_user()
-        
-        logger.info("="*70)
-        logger.info("APPROVE PENDING NOMINATIONS")
-        logger.info("="*70)
-        
-        # Create a minimal generator instance just to use its methods
-        generator = ImpersonationLoadGenerator(
-            admin_token=admin_token,
-            concurrent_users=1,
-            duration_hours=0,
-            auto_approve=False
-        )
-        
-        connector = aiohttp.TCPConnector(limit=100)
-        
-        async with aiohttp.ClientSession(connector=connector) as session:
-            # Fetch all users first (needed to get manager info)
-            logger.info("\n1️⃣  Fetching user data...")
-            await generator.fetch_users(session)
-            
-            # Get all pending nominations by impersonating each manager
-            logger.info("\n2️⃣  Fetching pending nominations from all managers...")
-            logger.info(f"   Found {len(generator.managers)} managers to check")
-            
-            all_pending_nominations = []
-            
-            for manager in generator.managers:
-                manager_upn = manager["userPrincipalName"]
-                manager_name = f"{manager.get('FirstName', '')} {manager.get('LastName', '')}"
-                
-                try:
-                    # Impersonate this manager and get their pending nominations
-                    async with session.get(
-                        f"{generator.api_base}/api/nominations/pending",
-                        headers=generator.get_auth_headers(impersonate_upn=manager_upn),
-                        timeout=aiohttp.ClientTimeout(total=30)
-                    ) as resp:
-                        if resp.status == 200:
-                            manager_pending = await resp.json()
-                            if manager_pending:
-                                logger.info(f"   • {manager_name}: {len(manager_pending)} pending")
-                                # Add manager info to each nomination for later use
-                                for nom in manager_pending:
-                                    nom["_manager_upn"] = manager_upn
-                                    nom["_manager_name"] = manager_name
-                                all_pending_nominations.extend(manager_pending)
-                        elif resp.status == 404:
-                            # No pending nominations for this manager
-                            pass
-                        else:
-                            text = await resp.text()
-                            logger.warning(f"   ⚠️  Failed for {manager_name}: {resp.status} - {text[:100]}")
-                
-                except Exception as e:
-                    logger.warning(f"   ⚠️  Error fetching for {manager_name}: {e}")
-                    continue
-            
-            logger.info(f"\n   ✅ Found {len(all_pending_nominations)} total pending nominations")
-            
-            if not all_pending_nominations:
-                logger.info("\n✅ No pending nominations to approve!")
-                return 0
-            
-            # Process each pending nomination
-            logger.info(f"\n3️⃣  Approving {len(all_pending_nominations)} pending nominations...")
-            
-            approved_count = 0
-            failed_count = 0
-            
-            for i, nomination in enumerate(all_pending_nominations, 1):
-                nomination_id = nomination.get("NominationId")
-                beneficiary_id = nomination.get("BeneficiaryId")
-                dollar_amount = nomination.get("DollarAmount")
-                
-                # Get manager info that we stored earlier
-                manager_upn = nomination.get("_manager_upn")
-                manager_name = nomination.get("_manager_name")
-                
-                logger.info(f"\n   [{i}/{len(all_pending_nominations)}] Processing Nomination ID: {nomination_id}")
-                logger.info(f"      Beneficiary ID: {beneficiary_id}, Amount: ${dollar_amount}")
-                logger.info(f"      Approver: {manager_name} ({manager_upn})")
-                
-                # Approve the nomination
-                success = await generator.approve_nomination(
-                    session,
-                    nomination_id,
-                    manager_upn
+    logger.info(f"\n[{tenant_label}] Fetching all users to identify managers ...")
+
+    # Re-use a minimal generator instance just for its helper methods
+    phase_cfg = {"name": tenant_label, "amounts": [], "descriptions_normal": [],
+                 "descriptions_suspicious": [], "descriptions_fraudulent": []}
+    gen = TenantLoadGenerator(
+        admin_token=admin_token,
+        phase_config=phase_cfg,
+        target=0,
+        concurrent_users=1,
+        auto_approve=False,
+    )
+
+    connector = aiohttp.TCPConnector(limit=20)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        await gen.fetch_users(session)
+
+        managers = [
+            u for u in gen.users
+            if any(x.get("ManagerId") == u["UserId"] for x in gen.users)
+        ]
+        logger.info(f"[{tenant_label}] Found {len(managers)} managers")
+
+        all_pending: List[Dict] = []
+        for mgr in managers:
+            try:
+                async with session.get(
+                    f"{gen.api_base}/api/nominations/pending",
+                    headers=gen._auth_headers(impersonate_upn=mgr["userPrincipalName"]),
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status == 200:
+                        batch = await resp.json()
+                        for nom in batch:
+                            nom["_manager_upn"] = mgr["userPrincipalName"]
+                        all_pending.extend(batch)
+            except Exception as exc:
+                logger.warning(
+                    f"[{tenant_label}] Could not fetch pending for "
+                    f"{mgr['userPrincipalName']}: {exc}"
                 )
-                
-                if success:
-                    approved_count += 1
-                else:
-                    failed_count += 1
-                
-                # Small delay to avoid overwhelming the API
-                await asyncio.sleep(0.1)
-            
-            # Final summary
-            logger.info("\n" + "="*70)
-            logger.info("APPROVAL PROCESS COMPLETE")
-            logger.info("="*70)
-            logger.info(f"✅ Approved:        {approved_count}")
-            logger.info(f"❌ Failed:          {failed_count}")
-            logger.info(f"📊 Total Processed: {len(all_pending_nominations)}")
-            logger.info("="*70)
-            
-            return 0
-        
-    except KeyboardInterrupt:
-        logger.info("\n⚠️  Approval process interrupted by user")
-        return 0
-    except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
 
+        logger.info(
+            f"[{tenant_label}] Approving {len(all_pending)} pending nominations ..."
+        )
+        approved = 0
+        for nom in all_pending:
+            ok = await gen.approve_nomination(
+                session, nom["NominationId"], nom["_manager_upn"]
+            )
+            if ok:
+                approved += 1
+            await asyncio.sleep(0.05)
+
+    return approved
+
+
+# ============================================================================
+# MAIN — sequential multi-tenant load test
+# ============================================================================
+
+async def run_multitenant_load_test(auto_approve: bool) -> None:
+    """Run all TENANT_PHASES sequentially, collecting stats for each."""
+    all_stats = []
+
+    for phase in TENANT_PHASES:
+        print()
+        print("=" * 70)
+        print(f"  NEXT PHASE: {phase['name']}  ({phase['label']})")
+        print("=" * 70)
+
+        token = get_token_from_user(phase["name"], phase["admin_hint"])
+
+        gen = TenantLoadGenerator(
+            admin_token=token,
+            phase_config=phase,
+            target=TARGET_NOMINATIONS_PER_TENANT,
+            concurrent_users=CONCURRENT_USERS,
+            auto_approve=auto_approve,
+        )
+
+        stats = await gen.run()
+        all_stats.append({"phase": phase["name"], "label": phase["label"], **stats})
+
+    # ── Aggregate summary ─────────────────────────────────────────────────────
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info("  MULTI-TENANT LOAD TEST — AGGREGATE SUMMARY")
+    logger.info("=" * 70)
+    totals = {k: 0 for k in ("nominations_created", "nominations_approved",
+                               "nominations_failed", "approvals_failed",
+                               "fraud_blocked")}
+    for s in all_stats:
+        logger.info(
+            f"\n  {s['phase']} ({s['label']})  — {s.get('elapsed_seconds', 0):.1f}s"
+        )
+        for k in totals:
+            logger.info(f"    {k:<26s}: {s.get(k, 0):5d}")
+            totals[k] += s.get(k, 0)
+
+    logger.info("")
+    logger.info("  TOTALS ACROSS ALL TENANTS")
+    for k, v in totals.items():
+        logger.info(f"    {k:<26s}: {v:5d}")
+    logger.info("=" * 70)
+
+
+async def run_approve_pending() -> None:
+    """Approve all pending nominations — for each tenant separately."""
+    for phase in TENANT_PHASES:
+        print()
+        print("=" * 70)
+        print(f"  APPROVE PENDING — {phase['name']}  ({phase['label']})")
+        print("=" * 70)
+        token = get_token_from_user(phase["name"], phase["admin_hint"])
+        approved = await approve_all_pending(token, phase["name"])
+        logger.info(f"[{phase['name']}] ✅ Approved {approved} nominations")
+
+
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
 
 if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("AWARD NOMINATION LOAD TESTING TOOL")
-    print("="*70)
-    print("\nChoose an option:")
-    print("  1. Run Load Test (create nominations)")
-    print("  2. Approve Pending Nominations")
+    print()
+    print("=" * 70)
+    print("  AWARD NOMINATION — MULTI-TENANT LOAD TESTING TOOL")
+    print(f"  Target API : {API_BASE_URL}")
+    print(f"  Per tenant : {TARGET_NOMINATIONS_PER_TENANT} nominations")
+    print(f"  Workers    : {CONCURRENT_USERS} concurrent")
+    print("=" * 70)
+    print()
+    print("  1. Run load test (Tenant 1 → Tenant 2, 1 000 nominations each)")
+    print("  2. Approve all pending nominations (both tenants)")
     print("  3. Exit")
-    print("="*70)
-    
-    choice = input("\nEnter your choice (1-3): ").strip()
-    
+    print()
+
+    choice = input("  Enter choice (1-3): ").strip()
+
     if choice == "1":
-        exit_code = asyncio.run(main())
+        approve_input = input(
+            "  Auto-approve nominations? [Y/n]: "
+        ).strip().lower()
+        auto_approve = approve_input != "n"
+        exit_code = asyncio.run(run_multitenant_load_test(auto_approve))
+
     elif choice == "2":
-        exit_code = asyncio.run(approve_pending())
-    elif choice == "3":
-        logger.info("Exiting...")
+        asyncio.run(run_approve_pending())
         exit_code = 0
+
+    elif choice == "3":
+        logger.info("Exiting.")
+        exit_code = 0
+
     else:
-        logger.error("Invalid choice. Exiting...")
+        logger.error("Invalid choice. Exiting.")
         exit_code = 1
-    
+
     exit(exit_code)
