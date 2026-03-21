@@ -9,7 +9,7 @@ export interface User {
 
 export interface NominationCreate {
   BeneficiaryId: number;
-  DollarAmount: number;
+  Amount: number;
   NominationDescription: string;
 }
 
@@ -18,7 +18,8 @@ export interface Nomination {
   NominatorId: number;
   BeneficiaryId: number;
   ApproverId: number;
-  DollarAmount: number;
+  Amount: number;
+  Currency: string;
   NominationDescription: string;
   NominationDate: string;
   ApprovedDate: string | null;

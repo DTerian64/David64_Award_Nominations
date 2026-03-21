@@ -84,9 +84,9 @@ class UserORM(Base):
     UserId            = Column(Integer, primary_key=True)
     userPrincipalName = Column(String(256), nullable=False)
     userEmail         = Column(String(256), nullable=True)
-    FirstName         = Column(String(128), nullable=True)
-    LastName          = Column(String(128), nullable=True)
-    Title             = Column(String(256), nullable=True)
+    FirstName         = Column(Unicode(128), nullable=True)
+    LastName          = Column(Unicode(128), nullable=True)
+    Title             = Column(Unicode(256), nullable=True)
     ManagerId         = Column(Integer, ForeignKey("Users.UserId"), nullable=True)
     TenantId          = Column(Integer, ForeignKey("Tenants.TenantId"), nullable=False)
 
@@ -124,8 +124,9 @@ class NominationORM(Base):
     NominatorId           = Column(Integer, ForeignKey("Users.UserId"), nullable=False)
     BeneficiaryId         = Column(Integer, ForeignKey("Users.UserId"), nullable=False)
     ApproverId            = Column(Integer, ForeignKey("Users.UserId"), nullable=False)
-    DollarAmount          = Column(Integer, nullable=False)
-    NominationDescription = Column(String(500), nullable=True)
+    Amount                = Column(Integer, nullable=False)
+    Currency              = Column(String(3), nullable=False, default="USD")
+    NominationDescription = Column(Unicode(500), nullable=True)
     NominationDate        = Column(DateTime, server_default=text("GETDATE()"))
     Status                = Column(String(50), default="Pending")
     ApprovedDate          = Column(DateTime, nullable=True)
@@ -451,7 +452,8 @@ def create_nomination(
     nominator_id: int,
     beneficiary_id: int,
     approver_id: int,
-    dollar_amount: int,
+    amount: int,
+    currency: str,
     description: str,
 ) -> int:
     """
@@ -465,17 +467,18 @@ def create_nomination(
         result = session.execute(
             text("""
                 INSERT INTO Nominations
-                    (NominatorId, BeneficiaryId, ApproverId, DollarAmount,
+                    (NominatorId, BeneficiaryId, ApproverId, Amount, Currency,
                      NominationDescription, NominationDate, Status, ApprovedDate, PayedDate)
                 OUTPUT INSERTED.NominationId
-                VALUES (:nominator_id, :beneficiary_id, :approver_id, :dollar_amount,
+                VALUES (:nominator_id, :beneficiary_id, :approver_id, :amount, :currency,
                         :description, GETDATE(), 'Pending', NULL, NULL)
             """),
             {
                 "nominator_id":   nominator_id,
                 "beneficiary_id": beneficiary_id,
                 "approver_id":    approver_id,
-                "dollar_amount":  dollar_amount,
+                "amount":         amount,
+                "currency":       currency,
                 "description":    description,
             },
         )
@@ -488,14 +491,14 @@ def get_pending_nominations_for_approver(approver_id: int, tenant_id: int) -> Li
     """
     Get all pending nominations for a specific approver, scoped to the tenant.
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
-                      DollarAmount, NominationDescription, NominationDate,
+                      Amount, Currency, NominationDescription, NominationDate,
                       ApprovedDate, PayedDate, Status)
     """
     with get_db_context() as session:
         return session.execute(
             text("""
                 SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
-                       n.DollarAmount, n.NominationDescription, n.NominationDate,
+                       n.Amount, n.Currency, n.NominationDescription, n.NominationDate,
                        n.ApprovedDate, n.PayedDate, n.Status
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
@@ -589,7 +592,7 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
             text("""
                 SELECT
                     n.NominationId,
-                    n.DollarAmount,
+                    n.Amount,
                     nominator.userEmail                                AS NominatorEmail,
                     nominator.FirstName + ' ' + nominator.LastName    AS NominatorName,
                     beneficiary.FirstName + ' ' + beneficiary.LastName AS BeneficiaryName,
@@ -627,14 +630,14 @@ def get_nomination_history(user_id: int, tenant_id: int) -> List[Tuple]:
     """
     Get nomination history for a user (as nominator), scoped to the tenant.
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
-                      DollarAmount, NominationDescription, NominationDate,
+                      Amount, Currency, NominationDescription, NominationDate,
                       ApprovedDate, PayedDate, Status)
     """
     with get_db_context() as session:
         return session.execute(
             text("""
                 SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
-                       n.DollarAmount, n.NominationDescription, n.NominationDate,
+                       n.Amount, n.Currency, n.NominationDescription, n.NominationDate,
                        n.ApprovedDate, n.PayedDate, n.Status
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
@@ -649,12 +652,12 @@ def get_nomination_history(user_id: int, tenant_id: int) -> List[Tuple]:
 def get_nomination_for_payroll(nomination_id: int) -> Optional[Tuple]:
     """
     Get nomination details for payroll extract.
-    Returns: (BeneficiaryId, DollarAmount, NominationDate, FirstName, LastName)
+    Returns: (BeneficiaryId, Amount, NominationDate, FirstName, LastName)
     """
     with get_db_context() as session:
         return session.execute(
             text("""
-                SELECT n.BeneficiaryId, n.DollarAmount, n.NominationDate,
+                SELECT n.BeneficiaryId, n.Amount, n.NominationDate,
                        u.FirstName, u.LastName
                 FROM Nominations n
                 JOIN Users u ON n.BeneficiaryId = u.UserId
@@ -742,7 +745,7 @@ def get_nominator_history(nominator_id: int) -> List[Tuple]:
     with get_db_context() as session:
         return session.execute(
             text("""
-                SELECT NominationId, BeneficiaryId, DollarAmount, NominationDate
+                SELECT NominationId, BeneficiaryId, Amount, NominationDate
                 FROM Nominations
                 WHERE NominatorId = :nominator_id
                 ORDER BY NominationDate DESC
@@ -756,7 +759,7 @@ def get_beneficiary_history(beneficiary_id: int) -> List[Tuple]:
     with get_db_context() as session:
         return session.execute(
             text("""
-                SELECT NominationId, NominatorId, DollarAmount, NominationDate
+                SELECT NominationId, NominatorId, Amount, NominationDate
                 FROM Nominations
                 WHERE BeneficiaryId = :beneficiary_id
                 ORDER BY NominationDate DESC
@@ -814,8 +817,8 @@ def get_overall_amount_stats() -> Tuple[float, float]:
     with get_db_context() as session:
         result = session.execute(
             text("""
-                SELECT AVG(CAST(DollarAmount AS FLOAT)) AS MeanAmount,
-                       STDEV(CAST(DollarAmount AS FLOAT)) AS StdAmount
+                SELECT AVG(CAST(Amount AS FLOAT)) AS MeanAmount,
+                       STDEV(CAST(Amount AS FLOAT)) AS StdAmount
                 FROM Nominations
             """)
         ).fetchone()
@@ -857,10 +860,10 @@ def get_analytics_overview(tenant_id: int) -> dict:
             text("""
                 SELECT
                     COUNT(*)                                                AS totalNominations,
-                    SUM(n.DollarAmount)                                     AS totalAmount,
+                    SUM(n.Amount)                                     AS totalAmount,
                     SUM(CASE WHEN n.Status = 'Approved' THEN 1 ELSE 0 END) AS approvedCount,
                     SUM(CASE WHEN n.Status = 'Pending'  THEN 1 ELSE 0 END) AS pendingCount,
-                    AVG(CAST(n.DollarAmount AS FLOAT))                      AS avgAmount,
+                    AVG(CAST(n.Amount AS FLOAT))                      AS avgAmount,
                     SUM(CASE WHEN n.Status = 'Rejected' THEN 1 ELSE 0 END) AS rejectedCount
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
@@ -890,7 +893,7 @@ def get_spending_trends(tenant_id: int, days: int = 90) -> List[Tuple]:
                 SELECT
                     CAST(n.NominationDate AS DATE) AS PeriodDate,
                     COUNT(*)                       AS NominationCount,
-                    SUM(n.DollarAmount)            AS TotalAmount
+                    SUM(n.Amount)            AS TotalAmount
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
                 WHERE n.NominationDate >= DATEADD(DAY, :neg_days, CAST(GETDATE() AS DATE))
@@ -910,8 +913,8 @@ def get_department_spending(tenant_id: int) -> List[Tuple]:
                 SELECT
                     u.Title                            AS Department,
                     COUNT(n.NominationId)              AS NominationCount,
-                    SUM(n.DollarAmount)                AS TotalSpent,
-                    AVG(CAST(n.DollarAmount AS FLOAT)) AS AvgAmount
+                    SUM(n.Amount)                AS TotalSpent,
+                    AVG(CAST(n.Amount AS FLOAT)) AS AvgAmount
                 FROM Nominations n
                 JOIN Users u ON n.BeneficiaryId = u.UserId
                 WHERE n.Status IN ('Approved', 'Paid')
@@ -933,7 +936,7 @@ def get_top_recipients(tenant_id: int, limit: int = 10) -> List[Tuple]:
                     u.FirstName,
                     u.LastName,
                     COUNT(n.NominationId) AS NominationCount,
-                    SUM(n.DollarAmount)   AS TotalAmount
+                    SUM(n.Amount)   AS TotalAmount
                 FROM Nominations n
                 JOIN Users u ON n.BeneficiaryId = u.UserId
                 WHERE n.Status IN ('Approved', 'Paid')
@@ -955,7 +958,7 @@ def get_top_nominators(tenant_id: int, limit: int = 10) -> List[Tuple]:
                     u.FirstName,
                     u.LastName,
                     COUNT(n.NominationId) AS NominationCount,
-                    SUM(n.DollarAmount)   AS TotalAmount
+                    SUM(n.Amount)   AS TotalAmount
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
                 WHERE n.Status IN ('Approved', 'Paid')
@@ -977,7 +980,7 @@ def get_top_recipients_by_department(department: str, limit: int = 5) -> List[Tu
                     u.FirstName,
                     u.LastName,
                     COUNT(n.NominationId) AS NominationCount,
-                    SUM(n.DollarAmount)   AS TotalAmount
+                    SUM(n.Amount)   AS TotalAmount
                 FROM Nominations n
                 JOIN Users u ON n.BeneficiaryId = u.UserId
                 WHERE n.Status IN ('Approved', 'Paid')
@@ -999,7 +1002,7 @@ def get_top_nominators_by_department(department: str, limit: int = 5) -> List[Tu
                     u.FirstName,
                     u.LastName,
                     COUNT(n.NominationId) AS NominationCount,
-                    SUM(n.DollarAmount)   AS TotalAmount
+                    SUM(n.Amount)   AS TotalAmount
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
                 WHERE n.Status IN ('Approved', 'Paid')
@@ -1025,7 +1028,7 @@ def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
                     nominator.LastName    AS NominatorLastName,
                     beneficiary.FirstName AS BeneficiaryFirstName,
                     beneficiary.LastName  AS BeneficiaryLastName,
-                    n.DollarAmount,
+                    n.Amount,
                     n.NominationDate
                 FROM FraudScores fs
                 JOIN Nominations n     ON fs.NominationId  = n.NominationId

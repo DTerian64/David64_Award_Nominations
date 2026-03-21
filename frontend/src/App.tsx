@@ -30,7 +30,8 @@ interface Nomination {
   NominatorId: number;
   BeneficiaryId: number;
   ApproverId: number;
-  DollarAmount: number;
+  Amount: number;
+  Currency: string;
   NominationDescription: string;
   NominationDate: string;
   ApprovedDate: string | null;
@@ -193,7 +194,7 @@ const AwardNominationApp: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({
           BeneficiaryId: Number(selectedBeneficiary),
-          DollarAmount:  dollarAmount,
+          Amount:  dollarAmount,
           NominationDescription: description,
         }),
       }, impersonatedUPN);
@@ -478,7 +479,7 @@ const AwardNominationApp: React.FC = () => {
                         </div>
                         <div className="text-right">
                           <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
-                            {formatCurrency(nom.DollarAmount)}
+                            {formatCurrency(nom.Amount)}
                           </p>
                           <StatusBadge status={nom.Status} />
                         </div>
@@ -518,7 +519,7 @@ const AwardNominationApp: React.FC = () => {
                           </p>
                         </div>
                         <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
-                          {formatCurrency(nom.DollarAmount)}
+                          {formatCurrency(nom.Amount)}
                         </p>
                       </div>
                       <p className="text-gray-700 mb-4">{nom.NominationDescription}</p>

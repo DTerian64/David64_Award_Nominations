@@ -14,7 +14,7 @@ class User(BaseModel):
 
 class NominationCreate(BaseModel):
     BeneficiaryId: int
-    DollarAmount: int = Field(gt=0)
+    Amount: int = Field(gt=0)
     NominationDescription: str = Field(min_length=1, max_length=500)
 
 
@@ -23,7 +23,8 @@ class Nomination(BaseModel):
     NominatorId: int
     BeneficiaryId: int
     ApproverId: int
-    DollarAmount: int
+    Amount: int
+    Currency: str
     NominationDescription: str
     NominationDate: datetime
     ApprovedDate: Optional[datetime] = None

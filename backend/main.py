@@ -317,7 +317,7 @@ async def create_nomination(
         extra={
             "user_id": effective_user["UserId"],
             "beneficiary_id": nomination.BeneficiaryId,
-            "amount": float(nomination.DollarAmount)
+            "amount": float(nomination.Amount)
         }
     )
 
@@ -358,7 +358,7 @@ async def create_nomination(
             'NominatorId': effective_user["UserId"],
             'BeneficiaryId': nomination.BeneficiaryId,
             'ApproverId': manager_id,
-            'DollarAmount': nomination.DollarAmount,
+            'Amount': nomination.Amount,
             'NominationDate': datetime.now()
         })
     except Exception as fraud_exc:
@@ -395,11 +395,22 @@ async def create_nomination(
         )
     
     # Insert nomination using effective_user
+    # Resolve the tenant's currency from the DB config (server-authoritative)
+    import json as _json
+    _raw_cfg = sqlhelper.get_tenant_config(tenant_id)
+    _currency = "USD"
+    if _raw_cfg:
+        try:
+            _currency = _json.loads(_raw_cfg).get("currency", "USD")
+        except Exception:
+            pass
+
     nomination_id = sqlhelper.create_nomination(
         nominator_id=effective_user["UserId"],
         beneficiary_id=nomination.BeneficiaryId,
         approver_id=manager_id,
-        dollar_amount=nomination.DollarAmount,
+        amount=nomination.Amount,
+        currency=_currency,
         description=nomination.NominationDescription
     )
 
@@ -415,7 +426,7 @@ async def create_nomination(
     await log_action_if_impersonating(
         user_context,
         "created_nomination",
-        f"NominationId: {nomination_id}, Beneficiary: {beneficiary_name}, Amount: ${nomination.DollarAmount}"
+        f"NominationId: {nomination_id}, Beneficiary: {beneficiary_name}, Amount: {nomination.Amount} {_currency}"
     )
     
     # Send email to manager using template
@@ -441,7 +452,7 @@ async def create_nomination(
         manager_name=manager_name,
         nominator_name=f"{effective_user['FirstName']} {effective_user['LastName']}",
         beneficiary_name=beneficiary_name,
-        dollar_amount=float(nomination.DollarAmount),
+        dollar_amount=float(nomination.Amount),
         description=nomination.NominationDescription,
         approve_url=approve_url,
         reject_url=reject_url
@@ -483,14 +494,15 @@ async def get_pending_nominations(user_context: dict = Depends(get_current_user_
             NominatorId=row[1],
             BeneficiaryId=row[2],
             ApproverId=row[3],
-            DollarAmount=row[4],
-            NominationDescription=row[5],
-            NominationDate=row[6],
-            ApprovedDate=row[7],
-            PayedDate=row[8],
-            Status=row[9]  # Now reading Status from database
+            Amount=row[4],
+            Currency=row[5],
+            NominationDescription=row[6],
+            NominationDate=row[7],
+            ApprovedDate=row[8],
+            PayedDate=row[9],
+            Status=row[10]
         ))
-    
+
     await log_action_if_impersonating(user_context, "viewed_pending_approvals")
     return nominations
 
@@ -627,14 +639,15 @@ async def get_nomination_history(user_context: dict = Depends(get_current_user_w
             NominatorId=row[1],
             BeneficiaryId=row[2],
             ApproverId=row[3],
-            DollarAmount=row[4],
-            NominationDescription=row[5],
-            NominationDate=row[6],
-            ApprovedDate=row[7],
-            PayedDate=row[8],
-            Status=row[9]  # Now reading Status from database
+            Amount=row[4],
+            Currency=row[5],
+            NominationDescription=row[6],
+            NominationDate=row[7],
+            ApprovedDate=row[8],
+            PayedDate=row[9],
+            Status=row[10]
         ))
-    
+
     await log_action_if_impersonating(user_context, "viewed_nomination_history")
     return nominations
 
