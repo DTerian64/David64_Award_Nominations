@@ -122,6 +122,27 @@ TOOLS: list[ChatCompletionToolParam] = [
     {
         "type": "function",
         "function": {
+            "name": "get_fraud_model_info",
+            "description": (
+                "Return metadata about the trained fraud detection model for the current tenant. "
+                "Provides: model training date, number of training samples, ROC-AUC score, "
+                "the top 10 most important features (with importance weights), and the amount "
+                "mean/std-dev used as the baseline when computing amount z-scores. "
+                "Use this tool whenever the user asks about: fraud detection accuracy, which "
+                "signals or features drive fraud scores, the amount baseline for the tenant, "
+                "when the model was last trained, or to provide context for interpreting a "
+                "specific user's or nomination's fraud score."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "export_to_csv",
             "description": (
                 "Generate a CSV file from query results, upload to blob storage, "

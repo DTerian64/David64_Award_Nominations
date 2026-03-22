@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 import sqlhelper2 as sqlhelper  # our custom helper for running SQL queries and fetching analytics data
+import fraud_ml                 # singleton fraud_detector lives here; same process, no re-loading
 from ..exporters import export_excel, export_pdf, export_csv   # see exporters/__init__.py
 
 logger = logging.getLogger(__name__)
@@ -136,16 +137,79 @@ async def _export_to_csv(
     return await export_csv(rows=rows, filename=filename)
 
 
+async def _get_fraud_model_info(tenant_id: int = 0) -> dict[str, Any]:
+    """
+    Return metadata about the trained fraud detection model for the current
+    tenant, read directly from the in-memory FraudDetector singleton.
+
+    This gives the LLM the interpretive context it needs to explain fraud
+    scores — top features, AUC, training date, and the amount baseline used
+    when computing z-scores — without re-reading the pickle file or touching
+    the database.
+    """
+    model_data = fraud_ml.fraud_detector.tenant_models.get(tenant_id)
+
+    if model_data is None:
+        logger.warning("tool:get_fraud_model_info — no model loaded for tenant_id=%d", tenant_id)
+        return {
+            "status": "unavailable",
+            "tenant_id": tenant_id,
+            "message": (
+                f"No fraud detection model is loaded for tenant {tenant_id}. "
+                "Run train_fraud_model.py and upload the resulting .pkl to blob storage."
+            ),
+        }
+
+    # feature_importance is a pandas DataFrame — convert to plain list of dicts
+    fi = model_data.get("feature_importance")
+    if fi is not None:
+        top_features = (
+            fi.head(10)
+            .rename(columns={"Feature": "feature", "Importance": "importance"})
+            [["feature", "importance"]]
+            .to_dict(orient="records")
+        )
+    else:
+        top_features = []
+
+    training_date = model_data.get("training_date")
+    training_date_str = (
+        training_date.strftime("%Y-%m-%d %H:%M:%S")
+        if hasattr(training_date, "strftime")
+        else str(training_date)
+    )
+
+    logger.info(
+        "tool:get_fraud_model_info — returning model info for tenant_id=%d "
+        "(auc=%.3f, samples=%d)",
+        tenant_id,
+        model_data.get("auc") or 0.0,
+        model_data.get("training_samples", 0),
+    )
+
+    return {
+        "status": "success",
+        "tenant_id": tenant_id,
+        "training_date": training_date_str,
+        "training_samples": model_data.get("training_samples"),
+        "auc": model_data.get("auc"),
+        "amount_mean": model_data.get("amount_mean"),
+        "amount_std": model_data.get("amount_std"),
+        "top_features": top_features,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dispatch table  —  tool name → callable
 # ─────────────────────────────────────────────────────────────────────────────
 
 _REGISTRY: dict[str, Any] = {
-    "query_database":       _query_database,
+    "query_database":         _query_database,
     "get_analytics_overview": _get_analytics_overview,
-    "export_to_excel":      _export_to_excel,
-    "export_to_pdf":        _export_to_pdf,
-    "export_to_csv":        _export_to_csv,
+    "get_fraud_model_info":   _get_fraud_model_info,
+    "export_to_excel":        _export_to_excel,
+    "export_to_pdf":          _export_to_pdf,
+    "export_to_csv":          _export_to_csv,
 }
 
 
