@@ -112,18 +112,35 @@ class AskAgent:
         self._deployment = os.getenv("AZURE_OPENAI_MODEL", "gpt-4.1")
 
     # ── public entry point ────────────────────────────────────────────────────
-    async def ask(self, question: str, tenant_id: int = 0) -> AskResult:
+    async def ask(
+        self,
+        question:     str,
+        tenant_id:    int  = 0,
+        current_user: dict | None = None,
+    ) -> AskResult:
         """
         Run the full tool-calling agent loop for a question.
-        tenant_id must be the caller's internal TenantId — it is injected into
-        the system prompt and enforced at the SQL execution layer.
+
+        tenant_id     — caller's internal TenantId; injected into the system
+                        prompt and enforced at the SQL execution layer.
+        current_user  — dict from get_current_user_with_impersonation containing
+                        at minimum UserId, FirstName, LastName, Title.
+                        Injected into the system prompt so the LLM can resolve
+                        first-person references ("my nominations", "my fraud score").
         Never raises — errors are captured in AskResult.error.
         """
-        logger.info("AskAgent.ask: %s (tenant_id=%d)", question[:80], tenant_id)
+        logger.info(
+            "AskAgent.ask: %s (tenant_id=%d, user_id=%s)",
+            question[:80],
+            tenant_id,
+            current_user.get("UserId") if current_user else "unknown",
+        )
 
         try:
             client   = self._get_client()
-            messages: list[ChatCompletionMessageParam] = self._build_initial_messages(question, tenant_id)
+            messages: list[ChatCompletionMessageParam] = self._build_initial_messages(
+                question, tenant_id, current_user
+            )
 
             tool_calls_log: list[ToolCall] = []
 
@@ -219,17 +236,46 @@ class AskAgent:
             logger.info("AskAgent: AzureOpenAI client initialised (deployment=%s)", self._deployment)
         return self._client
 
-    def _build_initial_messages(self, question: str, tenant_id: int) -> list[ChatCompletionMessageParam]:
-        """Construct the opening system + user messages, injecting tenant context."""
+    def _build_initial_messages(
+        self,
+        question:     str,
+        tenant_id:    int,
+        current_user: dict | None = None,
+    ) -> list[ChatCompletionMessageParam]:
+        """Construct the opening system + user messages, injecting tenant and current-user context."""
+
         tenant_context = (
             f"\n\n## Tenant Context\n"
             f"You are operating on behalf of **TenantId = {tenant_id}**.\n"
             f"Every SQL query you generate MUST include a TenantId filter (Rule 9). "
             f"The server will reject queries that are missing this filter."
         )
+
+        if current_user:
+            first   = current_user.get("FirstName", "")
+            last    = current_user.get("LastName",  "")
+            user_id = current_user.get("UserId",    "")
+            title   = current_user.get("Title",     "")
+            user_context = (
+                f"\n\n## Current User\n"
+                f"The person asking this question is currently logged in as:\n"
+                f"- **UserId:** {user_id}\n"
+                f"- **Name:** {first} {last}\n"
+                f"- **Title:** {title}\n"
+                f"- **TenantId:** {tenant_id}\n\n"
+                f"When the question uses **\"I\"**, **\"me\"**, **\"my\"**, or **\"mine\"**, "
+                f"resolve them to **UserId = {user_id}**. "
+                f"Never ask the user for their identity — it is already known."
+            )
+        else:
+            user_context = ""
+
         return [
-            ChatCompletionSystemMessageParam(role="system", content=_SYSTEM_PROMPT + tenant_context),
-            ChatCompletionUserMessageParam(role="user",   content=question),
+            ChatCompletionSystemMessageParam(
+                role    = "system",
+                content = _SYSTEM_PROMPT + tenant_context + user_context,
+            ),
+            ChatCompletionUserMessageParam(role="user", content=question),
         ]
 
     def _build_result(
