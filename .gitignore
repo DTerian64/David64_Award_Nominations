@@ -54,3 +54,10 @@ logs/
 .coverage
 htmlcov/
 .tox/
+
+# ── ML model artefacts ────────────────────────────────────────────────────────
+# Trained models and generated charts are build outputs, not source.
+# They are uploaded to Azure Blob Storage after training — not committed.
+**/Output/
+analytics/**/*.pkl
+analytics/**/*.png
