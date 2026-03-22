@@ -355,10 +355,11 @@ async def create_nomination(
     })
     try:
         fraud_result = fraud_ml.get_fraud_assessment({
-            'NominatorId': effective_user["UserId"],
+            'TenantId':      tenant_id,
+            'NominatorId':   effective_user["UserId"],
             'BeneficiaryId': nomination.BeneficiaryId,
-            'ApproverId': manager_id,
-            'Amount': nomination.Amount,
+            'ApproverId':    manager_id,
+            'Amount':        nomination.Amount,
             'NominationDate': datetime.now()
         })
     except Exception as fraud_exc:
@@ -421,6 +422,22 @@ async def create_nomination(
             "user_id": effective_user["UserId"]
         }
     )
+
+    # Persist the fraud assessment so it feeds future model retraining
+    # and populates the analytics fraud dashboard.
+    try:
+        sqlhelper.save_fraud_assessment(
+            nomination_id=nomination_id,
+            fraud_score=fraud_result['fraud_score'],
+            risk_level=fraud_result['risk_level'],
+            warning_flags=", ".join(fraud_result.get('warning_flags', [])),
+        )
+    except Exception as save_exc:
+        # Non-fatal — nomination is already created; just log and continue.
+        logger.error(
+            "Failed to save fraud assessment for nomination %d: %s",
+            nomination_id, save_exc
+        )
     
     # Log if impersonating
     await log_action_if_impersonating(
@@ -696,21 +713,18 @@ async def refresh_fraud_model(current_user: dict = Depends(require_role("AWard_N
     
     try:
         updated = fraud_ml.refresh_model()
-        
-        if updated:
-            return {
-                "status": "success",
-                "message": "Fraud detection model updated successfully",
-                "model_trained": str(fraud_ml.fraud_detector.training_date),
-                "updated": True
-            }
-        else:
-            return {
-                "status": "success",
-                "message": "Model is already up to date",
-                "model_trained": str(fraud_ml.fraud_detector.training_date),
-                "updated": False
-            }
+
+        tenant_summaries = {
+            tid: str(m['training_date']) if m else "not loaded"
+            for tid, m in fraud_ml.fraud_detector.tenant_models.items()
+        }
+
+        return {
+            "status": "success",
+            "message": "Fraud detection models updated successfully" if updated else "Models already up to date",
+            "updated": updated,
+            "tenant_models": tenant_summaries
+        }
     
     except Exception as e:
         raise HTTPException(
@@ -726,17 +740,25 @@ async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_
     """
     import fraud_ml
     
-    if fraud_ml.fraud_detector.model is None:
+    tenant_models = fraud_ml.fraud_detector.tenant_models
+    if not any(m is not None for m in tenant_models.values()):
         return {
             "status": "not_loaded",
-            "message": "Fraud detection model is not loaded"
+            "message": "No fraud detection models are loaded"
         }
-    
+
     return {
         "status": "loaded",
-        "model_trained": str(fraud_ml.fraud_detector.training_date),
-        "feature_count": len(fraud_ml.fraud_detector.feature_columns),
-        "features": fraud_ml.fraud_detector.feature_columns
+        "tenant_models": {
+            tid: {
+                "model_trained":  str(m['training_date']),
+                "training_samples": m.get('training_samples'),
+                "auc":            m.get('auc'),
+                "feature_count":  len(m['feature_columns']),
+                "features":       m['feature_columns']
+            } if m else {"status": "not_loaded"}
+            for tid, m in tenant_models.items()
+        }
     }
 
 @app.get("/api/nominations/email-action", response_class=HTMLResponse)

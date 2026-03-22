@@ -812,15 +812,25 @@ def get_pair_nomination_count(nominator_id: int, beneficiary_id: int) -> int:
         return result[0] if result else 0
 
 
-def get_overall_amount_stats() -> Tuple[float, float]:
-    """Get mean and standard deviation of all nomination amounts."""
+def get_overall_amount_stats(tenant_id: int) -> Tuple[float, float]:
+    """
+    Get mean and standard deviation of nomination amounts for a single tenant.
+
+    Scoped to one tenant so that z-scores are meaningful within a currency.
+    For example, KRW amounts (50 000–300 000) must never be averaged with
+    USD amounts (50–300) — a mixed mean would make every Korean nomination
+    look like a fraud outlier.
+    """
     with get_db_context() as session:
         result = session.execute(
             text("""
-                SELECT AVG(CAST(Amount AS FLOAT)) AS MeanAmount,
-                       STDEV(CAST(Amount AS FLOAT)) AS StdAmount
-                FROM Nominations
-            """)
+                SELECT AVG(CAST(n.Amount AS FLOAT)) AS MeanAmount,
+                       STDEV(CAST(n.Amount AS FLOAT)) AS StdAmount
+                FROM dbo.Nominations n
+                JOIN dbo.Users u ON u.UserId = n.NominatorId
+                WHERE u.TenantId = :tenant_id
+            """),
+            {"tenant_id": tenant_id},
         ).fetchone()
         return result if result else (0.0, 0.0)
 
