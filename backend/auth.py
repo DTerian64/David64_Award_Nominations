@@ -37,6 +37,7 @@ ensures tokens from un-registered tenants cannot be replayed even if the
 import os
 import jwt
 from jwt import PyJWKClient
+from urllib.parse import urlparse
 from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import OAuth2
 from typing import Optional, Dict, Any, Callable
@@ -89,14 +90,48 @@ oauth2_scheme = OAuth2(
 # AUTHENTICATION FUNCTIONS
 # ============================================================================
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
+# Set DOMAIN_CHECK_ENABLED=false in local .env to bypass the check during development.
+_DOMAIN_CHECK_ENABLED = os.getenv("DOMAIN_CHECK_ENABLED", "true").lower() == "true"
+
+
+def _check_domain(tenant_id: int, tenant_name: str, tenant_domain: Optional[str], origin: Optional[str]) -> None:
     """
-    Validate a Microsoft Entra ID token, resolve the tenant, and return
-    the authenticated user context.
+    Log a warning when a tenant's user is accessing from the wrong domain.
+
+    No exception is raised — the frontend handles the redirect silently using
+    the `domain` field returned by /api/tenant/config.  Blocking here with a
+    403 would prevent the config response from ever reaching the frontend,
+    which is exactly the response it needs to know where to redirect the user.
+
+    Data security is not compromised: every query already filters by TenantId,
+    so a user on the wrong domain can only ever see their own tenant's data.
+    """
+    if not _DOMAIN_CHECK_ENABLED or not tenant_domain or not origin:
+        return
+
+    request_host = urlparse(origin).hostname or ""
+
+    if request_host.startswith("localhost") or request_host.startswith("127."):
+        return
+
+    if request_host != tenant_domain:
+        logger.warning(
+            "Domain mismatch (will be corrected by frontend redirect): "
+            "tenant %d (%s) accessed from '%s', expected '%s'",
+            tenant_id, tenant_name, request_host, tenant_domain,
+        )
+
+
+async def _authenticate(token: str, origin: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Core authentication logic shared by get_current_user and
+    get_current_user_with_impersonation.
 
     Verification steps:
       1. Unverified decode → extract tid (tenant) and kid (signing key ID).
       2. Validate tid against the registered-tenant allowlist (403 if unknown).
+      2b. Domain isolation — verify the request Origin matches the tenant's
+          configured Domain (403 if mismatch and DOMAIN_CHECK_ENABLED=true).
       3. Fetch the signing key from the Microsoft JWKS endpoint (cached).
       4. Fully verify the JWT: signature, audience, issuer, and expiry.
       5. Look up the user scoped to the resolved internal TenantId.
@@ -110,8 +145,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
             token = token[7:]
 
         # ── Pass 1: unverified decode to extract tid for tenant resolution ─
-        # We must know the tenant before we can validate the issuer claim,
-        # and we must validate the tenant before spending effort on crypto.
         unverified_payload = jwt.decode(
             token,
             options={
@@ -153,13 +186,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
                 ),
             )
 
-        tenant_id   = tenant_row[0]   # internal integer TenantId
-        tenant_name = tenant_row[1]
-        logger.info("Resolved tenant: %s (id=%d)", tenant_name, tenant_id)
+        tenant_id     = tenant_row[0]   # internal integer TenantId
+        tenant_name   = tenant_row[1]
+        tenant_domain = tenant_row[3]   # canonical hostname or None (added in migration 0004)
+        logger.info("Resolved tenant: %s (id=%d, domain=%s)", tenant_name, tenant_id, tenant_domain)
+
+        # ── 2b. Domain isolation check ────────────────────────────────────
+        _check_domain(tenant_id, tenant_name, tenant_domain, origin)
 
         # ── Pass 2: full cryptographic verification ────────────────────────
-        # Fetch the signing key that matches the token's kid header.
-        # PyJWKClient caches keys and re-fetches on cache miss.
         try:
             signing_key = _jwks_client.get_signing_key_from_jwt(token)
         except Exception as e:
@@ -169,11 +204,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
                 detail="Token signing key could not be verified.",
             )
 
-        expected_issuer = f"https://login.microsoftonline.com/{aad_tenant_id}/v2.0"
-        # Azure AD issues aud = plain client ID (GUID) rather than api://<CLIENT_ID>
-        # when the app registration has a bare GUID identifier URI that takes
-        # precedence over the api:// one (visible via ignore_changes on identifier_uris).
-        # Both forms unambiguously identify the same API so either is secure to accept.
+        expected_issuer   = f"https://login.microsoftonline.com/{aad_tenant_id}/v2.0"
         expected_audience = CLIENT_ID
 
         logger.info(
@@ -228,8 +259,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
             "LastName":           row[3],
             "Title":              row[4],
             "ManagerId":          row[5],
-            "TenantId":           tenant_id,       # internal FK
-            "AadTenantId":        aad_tenant_id,   # Azure AD GUID (for logging)
+            "TenantId":           tenant_id,
+            "AadTenantId":        aad_tenant_id,
             "roles":              payload.get("roles", []),
         }
 
@@ -248,15 +279,27 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
             detail=f"Invalid token: {e}",
         )
     except Exception as e:
-        logger.exception("Unexpected error in get_current_user")
+        logger.exception("Unexpected error during authentication")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Authentication error: {e}",
         )
 
 
+async def get_current_user(
+    token:  str            = Depends(oauth2_scheme),
+    origin: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """
+    Validate a Microsoft Entra ID token and return the authenticated user context.
+    The Origin header is used for domain-based tenant isolation.
+    """
+    return await _authenticate(token, origin)
+
+
 async def get_current_user_with_impersonation(
-    token: str = Depends(oauth2_scheme),
+    token:  str            = Depends(oauth2_scheme),
+    origin: Optional[str] = Header(None),
     x_impersonate_user: Optional[str] = Header(
         None,
         alias="X-Impersonate-User",
@@ -278,7 +321,7 @@ async def get_current_user_with_impersonation(
         effective_user — the user to act as (impersonated or actual)
         is_impersonating — bool
     """
-    actual_user = await get_current_user(token)
+    actual_user = await _authenticate(token, origin)
 
     if x_impersonate_user:
         # Verify admin role

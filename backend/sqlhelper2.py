@@ -72,6 +72,7 @@ class TenantORM(Base):
     TenantName      = Column(String(256), nullable=False, unique=True)
     AzureAdTenantId = Column(String(36),  nullable=False, unique=True)   # UUID string
     Config          = Column(Unicode(None), nullable=True)                 # NVARCHAR(MAX) JSON blob, NULL = defaults
+    Domain          = Column(String(253),  nullable=True,  unique=True)   # canonical public hostname, e.g. "acme-awards.terian-services.com"
 
     # Reverse relationship — rarely needed directly, but handy for admin queries
     users = relationship("UserORM", back_populates="tenant")
@@ -310,17 +311,33 @@ def get_tenant_by_aad_id(aad_tenant_id: str) -> Optional[Tuple]:
     Resolve an Azure AD tenant GUID (the ``tid`` JWT claim) to an internal
     Tenant row.
 
-    Returns: (TenantId, TenantName, AzureAdTenantId) or None if not registered.
+    Returns: (TenantId, TenantName, AzureAdTenantId, Domain) or None if not registered.
+    Domain may be None if no domain restriction has been configured for that tenant.
     """
     with get_db_context() as session:
         return session.execute(
             text("""
-                SELECT TenantId, TenantName, AzureAdTenantId
-                FROM Tenants
+                SELECT TenantId, TenantName, AzureAdTenantId, Domain
+                FROM dbo.Tenants
                 WHERE AzureAdTenantId = :aad_id
             """),
             {"aad_id": aad_tenant_id},
         ).fetchone()
+
+
+def get_tenant_domain(tenant_id: int) -> Optional[str]:
+    """
+    Return the canonical public hostname for a tenant, or None if not set.
+
+    Used by the /api/tenant/config endpoint to include the domain in the
+    response so the frontend can redirect users who land on the wrong domain.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT Domain FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+        return row[0] if row else None
 
 
 def get_tenant_config(tenant_id: int) -> Optional[str]:

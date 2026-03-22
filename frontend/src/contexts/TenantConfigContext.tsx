@@ -40,6 +40,7 @@ export interface TenantConfig {
   locale:   string;        // BCP 47 tag, e.g. "en-US" | "ko-KR"
   currency: string;        // ISO 4217, e.g. "USD" | "KRW"
   theme:    TenantTheme;
+  domain?:  string;        // canonical public hostname, e.g. "acme-awards.terian-services.com"
 }
 
 /** Defaults used for tenant 1 (and any tenant without a Config row). */
@@ -141,7 +142,30 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
           currency: raw.currency ?? DEFAULT_CONFIG.currency,
           theme:    raw.theme    ? { ...DEFAULT_CONFIG.theme, ...raw.theme }
                                  : DEFAULT_CONFIG.theme,
+          domain:   raw.domain,
         };
+
+        // ── Domain isolation redirect ─────────────────────────────────────
+        // If the user authenticated on the wrong domain (e.g. followed a stale
+        // bookmark or a shared link pointing to another tenant's portal), we
+        // silently redirect them to their correct domain before any UI renders.
+        // The backend passes the tenant's canonical domain in the config
+        // response, so this check happens at the earliest possible moment —
+        // right after the first authenticated API call completes.
+        // Localhost is always exempt so local development works without Domain
+        // entries in the database.
+        if (merged.domain) {
+          const currentHost = window.location.hostname;
+          const isLocalDev  = currentHost === 'localhost' || currentHost === '127.0.0.1';
+          if (!isLocalDev && currentHost !== merged.domain) {
+            console.warn(
+              `[TenantConfig] Domain mismatch — current: ${currentHost}, ` +
+              `expected: ${merged.domain}. Redirecting.`,
+            );
+            window.location.replace(`https://${merged.domain}`);
+            return; // halt — the page is about to unload
+          }
+        }
 
         setConfig(merged);
         applyTheme(merged.theme);
@@ -155,7 +179,7 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
         console.info(
           `[TenantConfig] Applied config — locale: ${merged.locale} | ` +
           `currency: ${merged.currency} | primaryColor: ${merged.theme.primaryColor} | ` +
-          `i18n language: ${lang}`,
+          `domain: ${merged.domain ?? 'unrestricted'} | i18n language: ${lang}`,
         );
       } else {
         console.error(

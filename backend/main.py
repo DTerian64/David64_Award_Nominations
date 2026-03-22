@@ -269,6 +269,13 @@ async def get_tenant_config(user_context: dict = Depends(get_current_user_with_i
             parsed.get("currency",           "?"),
             parsed.get("theme", {}).get("primaryColor", "?"),
         )
+
+        # Inject the tenant's canonical domain so the frontend can redirect
+        # users who land on the wrong hostname before they interact with the app.
+        domain = sqlhelper.get_tenant_domain(tenant_id)
+        if domain:
+            parsed["domain"] = domain
+
         return parsed
     except Exception as exc:
         logger.error(
