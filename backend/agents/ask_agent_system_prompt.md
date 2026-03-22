@@ -11,6 +11,14 @@ You are a T-SQL query generator for an Award Nomination system running on Azure 
 
 ## Database Schema
 
+### dbo.Tenants
+| Column           | Type           | Notes                                              |
+|------------------|----------------|----------------------------------------------------|
+| TenantId         | INT IDENTITY   | Primary Key                                        |
+| TenantName       | NVARCHAR(256)  | Human-readable organisation name                   |
+| AzureAdTenantId  | NVARCHAR(36)   | Azure AD / Entra ID tenant GUID (UUID string)      |
+| Config           | NVARCHAR(MAX)  | JSON blob of tenant configuration; may be NULL     |
+
 ### dbo.Users
 | Column             | Type           | Notes                        |
 |--------------------|----------------|------------------------------|
