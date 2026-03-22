@@ -3,8 +3,8 @@ Fraud Detection ML Model Training  —  Multi-Tenant Edition
 ===========================================================
 
 Trains one Random Forest model per tenant and saves each to its own pickle:
-    fraud_detection_model_tenant_1.pkl
-    fraud_detection_model_tenant_2.pkl
+    Output/fraud_detection_model_tenant_1.pkl
+    Output/fraud_detection_model_tenant_2.pkl
     ...
 
 Why separate files?
@@ -15,8 +15,8 @@ Why separate files?
     - Models can be retrained and uploaded independently without touching
       production scoring for other tenants.
 
-After training, upload each .pkl to Azure Blob Storage under the same
-filename so the backend FraudDetector picks them up on next restart.
+After training, upload each .pkl from Output/ to Azure Blob Storage under
+the same filename so the backend FraudDetector picks them up on next restart.
 """
 
 import os
@@ -39,6 +39,10 @@ load_dotenv(env_path)
 # Minimum labelled samples needed to train a meaningful model.
 # Below this threshold the tenant is skipped with a warning.
 MIN_TRAINING_SAMPLES = 50
+
+# All generated artefacts (.pkl models, .png charts) are written here.
+OUTPUT_DIR = Path(__file__).resolve().parent / "Output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================================
@@ -420,7 +424,7 @@ def score_and_save_historical(
 def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
     """
     Train a Random Forest for one tenant and persist it to
-    fraud_detection_model_tenant_{tenant_id}.pkl.
+    Output/fraud_detection_model_tenant_{tenant_id}.pkl.
     """
     print(f"\n[Tenant {tenant_id}] Training model ...")
 
@@ -523,7 +527,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
         'amount_std':  float(df['Amount'].std()),
     }
 
-    pkl_filename = f"fraud_detection_model_tenant_{tenant_id}.pkl"
+    pkl_filename = OUTPUT_DIR / f"fraud_detection_model_tenant_{tenant_id}.pkl"
     with open(pkl_filename, 'wb') as f:
         pickle.dump(model_data, f)
 
@@ -605,7 +609,7 @@ def create_visualizations(
         axes[1, 1].tick_params(axis='x', rotation=45)
 
     plt.tight_layout()
-    png_filename = f"fraud_detection_analysis_tenant_{tenant_id}.png"
+    png_filename = OUTPUT_DIR / f"fraud_detection_analysis_tenant_{tenant_id}.png"
     plt.savefig(png_filename, dpi=300, bbox_inches='tight')
     print(f"✓ Visualisation saved to '{png_filename}'")
     plt.close()
@@ -662,7 +666,7 @@ if __name__ == "__main__":
         print(f"  Tenant {tenant_id}: {status}")
 
     print("\nNext steps:")
-    print("  1. Review fraud_detection_analysis_tenant_N.png for each tenant.")
-    print("  2. Upload fraud_detection_model_tenant_N.pkl to Azure Blob Storage")
+    print("  1. Review Output/fraud_detection_analysis_tenant_N.png for each tenant.")
+    print("  2. Upload Output/fraud_detection_model_tenant_N.pkl to Azure Blob Storage")
     print("     (ml-models container) so the backend picks it up on next restart.")
     print("  3. Or call the /api/admin/refresh-fraud-model endpoint to hot-reload.")
