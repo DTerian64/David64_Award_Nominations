@@ -1,32 +1,51 @@
 """
-Fraud Detection ML Model Training
-Trains a machine learning model to detect fraudulent award nominations
+Fraud Detection ML Model Training  —  Multi-Tenant Edition
+===========================================================
+
+Trains one Random Forest model per tenant and saves each to its own pickle:
+    fraud_detection_model_tenant_1.pkl
+    fraud_detection_model_tenant_2.pkl
+    ...
+
+Why separate files?
+    - Amounts differ by orders of magnitude across currencies (USD vs KRW).
+      A shared model would make every KRW nomination look like an extreme
+      outlier against a USD mean — corrupting the AmountZScore feature.
+    - Fraud behavioural baselines (velocity, org patterns) differ by tenant.
+    - Models can be retrained and uploaded independently without touching
+      production scoring for other tenants.
+
+After training, upload each .pkl to Azure Blob Storage under the same
+filename so the backend FraudDetector picks them up on next restart.
 """
 
 import os
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import pyodbc
 import pickle
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
 import matplotlib.pyplot as plt
-import seaborn as sns
 from dotenv import load_dotenv
 from pathlib import Path
 
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
 
+# Minimum labelled samples needed to train a meaningful model.
+# Below this threshold the tenant is skipped with a warning.
+MIN_TRAINING_SAMPLES = 50
+
+
 # ============================================================================
 # DATABASE CONNECTION
 # ============================================================================
 
 def get_db_connection():
-    """Create database connection"""
     connection_string = (
         f"DRIVER={{ODBC Driver 18 for SQL Server}};"
         f"SERVER={os.getenv('SQL_SERVER')};"
@@ -39,200 +58,420 @@ def get_db_connection():
     )
     return pyodbc.connect(connection_string)
 
+
+# ============================================================================
+# TENANT DISCOVERY
+# ============================================================================
+
+def get_tenants(conn) -> list:
+    """Return [(TenantId, TenantName), ...] for all tenants in the database."""
+    df = pd.read_sql(
+        "SELECT TenantId, TenantName FROM dbo.Tenants ORDER BY TenantId", conn
+    )
+    return list(df.itertuples(index=False, name=None))
+
+
+# ============================================================================
+# DATA LOADING  (per-tenant)
+# ============================================================================
+
+def load_data(tenant_id: int) -> pd.DataFrame:
+    """
+    Load all Paid nominations for a single tenant together with their
+    fraud scores (if any have been labelled).
+
+    Tenant isolation is achieved by joining through Users, which carries
+    the TenantId foreign key.
+    """
+    print(f"\n[Tenant {tenant_id}] Loading data from database ...")
+
+    conn = get_db_connection()
+
+    query = """
+    SELECT
+        n.NominationId,
+        n.NominatorId,
+        n.BeneficiaryId,
+        n.ApproverId,
+        n.Amount,
+        n.Currency,
+        n.NominationDate,
+        n.ApprovedDate,
+        n.PayedDate,
+        n.Status,
+        fs.FraudScore,
+        fs.RiskLevel,
+        fs.FraudFlags,
+        CASE
+            WHEN fs.RiskLevel IN ('HIGH', 'CRITICAL') THEN 1
+            ELSE 0
+        END AS IsFraud
+    FROM dbo.Nominations n
+    JOIN dbo.Users u ON u.UserId = n.NominatorId
+    LEFT JOIN dbo.FraudScores fs ON n.NominationId = fs.NominationId
+    WHERE n.Status = 'Paid'
+      AND u.TenantId = ?
+    ORDER BY n.NominationDate
+    """
+
+    df = pd.read_sql(query, conn, params=[tenant_id])
+    conn.close()
+
+    print(f"[Tenant {tenant_id}] Loaded {len(df)} nominations")
+    if len(df) > 0:
+        fraud_count = df['IsFraud'].sum()
+        print(
+            f"[Tenant {tenant_id}] Fraud cases: {fraud_count} "
+            f"({fraud_count / len(df) * 100:.2f}%)"
+        )
+
+    return df
+
+
 # ============================================================================
 # FEATURE ENGINEERING
 # ============================================================================
 
-def extract_features(df):
+def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Extract and engineer features for fraud detection
-    
-    Features include:
-    - User behavior patterns
-    - Temporal patterns
-    - Amount patterns
-    - Relationship patterns
+    Build all features used by the Random Forest.
+
+    Key note on AmountZScore:
+        Computed from the tenant-isolated dataset, so it reflects the
+        per-tenant amount distribution (e.g. KRW 50 000–300 000 vs
+        USD 50–300).  Do NOT compute z-scores across tenants.
     """
-    
-    print("Extracting features...")
-    
-    # Convert dates
+    print("  Extracting features ...")
+
+    # ── Date parsing ────────────────────────────────────────────────────────
     df['NominationDate'] = pd.to_datetime(df['NominationDate'])
-    df['ApprovedDate'] = pd.to_datetime(df['ApprovedDate'])
-    df['PayedDate'] = pd.to_datetime(df['PayedDate'])
-    
-    # Temporal features
+    df['ApprovedDate']   = pd.to_datetime(df['ApprovedDate'])
+    df['PayedDate']      = pd.to_datetime(df['PayedDate'])
+
+    # ── Temporal features ───────────────────────────────────────────────────
     df['DayOfWeek'] = df['NominationDate'].dt.dayofweek
-    df['Month'] = df['NominationDate'].dt.month
-    df['Hour'] = df['NominationDate'].dt.hour
+    df['Month']     = df['NominationDate'].dt.month
+    df['Hour']      = df['NominationDate'].dt.hour
     df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
-    
-    # Time between events
-    df['HoursToApproval'] = (df['ApprovedDate'] - df['NominationDate']).dt.total_seconds() / 3600
-    df['HoursToPayment'] = (df['PayedDate'] - df['ApprovedDate']).dt.total_seconds() / 3600
-    
-    # Replace inf and negative values
+
+    df['HoursToApproval'] = (
+        (df['ApprovedDate'] - df['NominationDate']).dt.total_seconds() / 3600
+    )
+    df['HoursToPayment'] = (
+        (df['PayedDate'] - df['ApprovedDate']).dt.total_seconds() / 3600
+    )
     df['HoursToApproval'] = df['HoursToApproval'].replace([np.inf, -np.inf], np.nan)
-    df['HoursToPayment'] = df['HoursToPayment'].replace([np.inf, -np.inf], np.nan)
-    
-    # User behavior features (rolling windows)
-    print("Calculating user behavior features...")
-    
-    # Nominator behavior
-    nominator_stats = df.groupby('NominatorId').agg({
-        'NominationId': 'count',  # Total nominations by this nominator
-        'DollarAmount': ['mean', 'std', 'min', 'max'],
-        'BeneficiaryId': 'nunique'  # Unique beneficiaries
-    }).reset_index()
-    
-    nominator_stats.columns = ['NominatorId', 'NominatorTotalNominations', 
-                                'NominatorAvgAmount', 'NominatorStdAmount',
-                                'NominatorMinAmount', 'NominatorMaxAmount',
-                                'NominatorUniqueBeneficiaries']
-    
+    df['HoursToPayment']  = df['HoursToPayment'].replace([np.inf, -np.inf], np.nan)
+
+    # ── Nominator behaviour ─────────────────────────────────────────────────
+    print("  Calculating user behaviour features ...")
+
+    nominator_stats = df.groupby('NominatorId').agg(
+        NominatorTotalNominations=('NominationId', 'count'),
+        NominatorAvgAmount=('Amount', 'mean'),
+        NominatorStdAmount=('Amount', 'std'),
+        NominatorMinAmount=('Amount', 'min'),
+        NominatorMaxAmount=('Amount', 'max'),
+        NominatorUniqueBeneficiaries=('BeneficiaryId', 'nunique'),
+    ).reset_index()
+
     df = df.merge(nominator_stats, on='NominatorId', how='left')
-    
-    # Beneficiary behavior (how often they receive nominations)
-    beneficiary_stats = df.groupby('BeneficiaryId').agg({
-        'NominationId': 'count',
-        'DollarAmount': 'mean'
-    }).reset_index()
-    
-    beneficiary_stats.columns = ['BeneficiaryId', 'BeneficiaryTotalReceived', 
-                                  'BeneficiaryAvgAmountReceived']
-    
+
+    # ── Beneficiary behaviour ────────────────────────────────────────────────
+    beneficiary_stats = df.groupby('BeneficiaryId').agg(
+        BeneficiaryTotalReceived=('NominationId', 'count'),
+        BeneficiaryAvgAmountReceived=('Amount', 'mean'),
+    ).reset_index()
+
     df = df.merge(beneficiary_stats, on='BeneficiaryId', how='left')
-    
-    # Approver behavior
-    approver_stats = df.groupby('ApproverId').agg({
-        'NominationId': 'count',
-        'HoursToApproval': 'mean'
-    }).reset_index()
-    
-    approver_stats.columns = ['ApproverId', 'ApproverTotalApproved', 'ApproverAvgApprovalTime']
-    
+
+    # ── Approver behaviour ───────────────────────────────────────────────────
+    approver_stats = df.groupby('ApproverId').agg(
+        ApproverTotalApproved=('NominationId', 'count'),
+        ApproverAvgApprovalTime=('HoursToApproval', 'mean'),
+    ).reset_index()
+
     df = df.merge(approver_stats, on='ApproverId', how='left')
-    
-    # Relationship features
-    print("Calculating relationship features...")
-    
-    # Check for reciprocal nominations
+
+    # ── Relationship features ────────────────────────────────────────────────
+    print("  Calculating relationship features ...")
+
     reciprocal = df.merge(
         df[['NominatorId', 'BeneficiaryId']],
         left_on=['NominatorId', 'BeneficiaryId'],
         right_on=['BeneficiaryId', 'NominatorId'],
         how='inner',
-        suffixes=('', '_reciprocal')
+        suffixes=('', '_reciprocal'),
     )
-    
-    df['HasReciprocalNomination'] = df['NominationId'].isin(reciprocal['NominationId']).astype(int)
-    
-    # Repeated pair nominations (same nominator-beneficiary pair)
-    pair_counts = df.groupby(['NominatorId', 'BeneficiaryId']).size().reset_index(name='PairNominationCount')
+    df['HasReciprocalNomination'] = (
+        df['NominationId'].isin(reciprocal['NominationId']).astype(int)
+    )
+
+    pair_counts = (
+        df.groupby(['NominatorId', 'BeneficiaryId'])
+          .size()
+          .reset_index(name='PairNominationCount')
+    )
     df = df.merge(pair_counts, on=['NominatorId', 'BeneficiaryId'], how='left')
-    
-    # Amount features
-    df['AmountZScore'] = (df['DollarAmount'] - df['DollarAmount'].mean()) / df['DollarAmount'].std()
+
+    # ── Amount features (tenant-scoped z-score) ──────────────────────────────
+    amount_mean = df['Amount'].mean()
+    amount_std  = df['Amount'].std()
+
+    df['AmountZScore'] = (
+        (df['Amount'] - amount_mean) / amount_std
+        if amount_std and amount_std > 0
+        else 0.0
+    )
     df['IsHighAmount'] = (df['AmountZScore'] > 2).astype(int)
-    df['IsLowAmount'] = (df['AmountZScore'] < -2).astype(int)
-    
-    # Rapid approval flag
+    df['IsLowAmount']  = (df['AmountZScore'] < -2).astype(int)
+
+    # ── Derived ratios ───────────────────────────────────────────────────────
     df['IsRapidApproval'] = (df['HoursToApproval'] < 1).astype(int)
-    
-    # Concentration ratio (how diverse are nominator's choices)
-    df['NominatorConcentrationRatio'] = df['NominatorTotalNominations'] / (df['NominatorUniqueBeneficiaries'] + 1)
-    
-    print("Feature extraction complete!")
+    df['NominatorConcentrationRatio'] = (
+        df['NominatorTotalNominations'] / (df['NominatorUniqueBeneficiaries'] + 1)
+    )
+
+    print("  Feature extraction complete.")
     return df
 
+
 # ============================================================================
-# LOAD AND PREPARE DATA
+# FRAUD LABEL BOOTSTRAPPING
 # ============================================================================
 
-def load_data():
-    """Load nomination data and fraud scores from database"""
-    print("Loading data from database...")
-    
-    conn = get_db_connection()
-    
-    # Load nominations with fraud scores
-    query = """
-    SELECT 
-        n.*,
-        fs.FraudScore,
-        fs.RiskLevel,
-        fs.FraudFlags,
-        CASE WHEN fs.RiskLevel IN ('HIGH', 'CRITICAL') THEN 1 ELSE 0 END AS IsFraud
-    FROM dbo.Nominations n
-    LEFT JOIN dbo.FraudScores fs ON n.NominationId = fs.NominationId
-    WHERE n.Status = 'Paid'
-    ORDER BY n.NominationDate
+def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     """
-    
-    df = pd.read_sql(query, conn)
-    conn.close()
-    
-    print(f"Loaded {len(df)} nominations")
-    print(f"Fraud cases: {df['IsFraud'].sum()} ({df['IsFraud'].mean()*100:.2f}%)")
-    
+    Derive fraud labels from behavioural patterns when no FraudScores rows
+    exist yet (the typical cold-start situation after the first load test).
+
+    This is the chicken-and-egg problem: the model needs scored nominations
+    to learn from, but scores only exist once a model is running.  Bootstrapping
+    breaks the deadlock by using the patterns that the load generator deliberately
+    embeds in the data:
+
+      Fraudulent (10% of load): 8-12 rapid nominations, same nominator → same
+          beneficiary, very short descriptions.  Signature: PairNominationCount > 7.
+
+      Suspicious (20% of load): 3-5 nominations to a small pool.  Signature:
+          PairNominationCount in [3, 7] with high concentration ratio.
+
+      Normal (70% of load): single well-described nominations.
+
+    Labels assigned:
+      IsFraud = 1  →  PairNominationCount > 7   (clear fraudulent burst)
+      IsFraud = 1  →  NominatorConcentrationRatio > 8 AND
+                      NominatorTotalNominations  > 20  (concentrated + high volume)
+      IsFraud = 0  →  everything else
+    """
+    df = df.copy()
+    df['IsFraud'] = 0
+
+    # Primary signal: repeated same-pair nominations (fraudulent burst pattern)
+    df.loc[df['PairNominationCount'] > 7, 'IsFraud'] = 1
+
+    # Secondary signal: highly concentrated nominator (few beneficiaries, many noms)
+    df.loc[
+        (df['NominatorConcentrationRatio'] > 8) &
+        (df['NominatorTotalNominations']   > 20),
+        'IsFraud'
+    ] = 1
+
+    fraud_n   = int(df['IsFraud'].sum())
+    legit_n   = int((df['IsFraud'] == 0).sum())
+    fraud_pct = fraud_n / len(df) * 100
+
+    print(
+        f"[Tenant {tenant_id}] ⚡ Bootstrapped labels: "
+        f"{fraud_n} fraud ({fraud_pct:.1f}%), {legit_n} legitimate"
+    )
+
+    if fraud_n == 0:
+        raise ValueError(
+            f"[Tenant {tenant_id}] Bootstrap found no fraud patterns in the data. "
+            "Make sure the load generator ran with suspicious/fraudulent scenarios "
+            "(default 30% of traffic) before training."
+        )
+
     return df
 
+
 # ============================================================================
-# TRAIN MODEL
+# MODEL TRAINING  (per-tenant)
 # ============================================================================
 
-def train_model(df):
-    """Train fraud detection model"""
-    
-    # Extract features
+FEATURE_COLUMNS = [
+    'Amount',
+    'DayOfWeek',
+    'Month',
+    'IsWeekend',
+    'HoursToApproval',
+    'HoursToPayment',
+    'NominatorTotalNominations',
+    'NominatorAvgAmount',
+    'NominatorStdAmount',
+    'NominatorUniqueBeneficiaries',
+    'BeneficiaryTotalReceived',
+    'BeneficiaryAvgAmountReceived',
+    'ApproverTotalApproved',
+    'ApproverAvgApprovalTime',
+    'HasReciprocalNomination',
+    'PairNominationCount',
+    'AmountZScore',
+    'IsHighAmount',
+    'IsRapidApproval',
+    'NominatorConcentrationRatio',
+]
+
+
+def _risk_level(score: int) -> str:
+    if score >= 80: return 'CRITICAL'
+    if score >= 60: return 'HIGH'
+    if score >= 40: return 'MEDIUM'
+    if score >= 20: return 'LOW'
+    return 'NONE'
+
+
+def score_and_save_historical(
+    df: pd.DataFrame,
+    model_data: dict,
+    tenant_id: int,
+) -> None:
+    """
+    Score every nomination in df with the freshly trained model and upsert
+    the results into dbo.FraudScores.
+
+    Why this matters:
+      - Populates the FraudScores table so the analytics Fraud Score
+        Distribution chart has real data to display immediately after training.
+      - On the *next* retrain, load_data() will find real RiskLevel labels
+        (HIGH / CRITICAL) in FraudScores and use them instead of bootstrapped
+        rules, progressively improving model quality with every cycle.
+
+    Uses SQL Server MERGE so the function is safe to call multiple times —
+    existing rows are updated with scores from the improved model, missing
+    rows are inserted.
+    """
+    print(f"\n[Tenant {tenant_id}] Scoring {len(df)} historical nominations ...")
+
+    rf_model        = model_data['model']
+    scaler          = model_data['scaler']
+    feature_columns = model_data['feature_columns']
+
+    X        = df[feature_columns].fillna(0)
+    X_scaled = scaler.transform(X)
+    probas   = rf_model.predict_proba(X_scaled)
+
+    if probas.shape[1] < 2:
+        print(f"[Tenant {tenant_id}] ⚠  Single-class model — skipping score persistence.")
+        return
+
+    fraud_probs = probas[:, 1]
+
+    conn   = get_db_connection()
+    cursor = conn.cursor()
+
+    upserted = 0
+    for i, (_, row) in enumerate(df.iterrows()):
+        nom_id = int(row['NominationId'])
+        prob   = float(fraud_probs[i])
+        score  = int(prob * 100)
+        level  = _risk_level(score)
+
+        flags = []
+        if row.get('PairNominationCount', 0) > 5:
+            flags.append('Repeated beneficiary')
+        if row.get('HasReciprocalNomination', 0) == 1:
+            flags.append('Reciprocal nomination detected')
+        if row.get('NominatorConcentrationRatio', 0) > 5:
+            flags.append('Limited beneficiary diversity')
+        if row.get('IsHighAmount', 0) == 1:
+            flags.append('Unusually high amount')
+        flags_str = ', '.join(flags)
+
+        cursor.execute(
+            """
+            MERGE dbo.FraudScores AS target
+            USING (SELECT ? AS NominationId) AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN
+                UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
+                VALUES (?,            ?,          ?,         ?);
+            """,
+            (nom_id, score, level, flags_str, nom_id, score, level, flags_str),
+        )
+        upserted += 1
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    high_risk = sum(
+        1 for p in fraud_probs if int(p * 100) >= 60
+    )
+    print(
+        f"[Tenant {tenant_id}] ✓ Upserted {upserted} fraud scores "
+        f"({high_risk} HIGH/CRITICAL)"
+    )
+
+
+def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
+    """
+    Train a Random Forest for one tenant and persist it to
+    fraud_detection_model_tenant_{tenant_id}.pkl.
+    """
+    print(f"\n[Tenant {tenant_id}] Training model ...")
+
     df = extract_features(df)
-    
-    # Select feature columns
-    feature_columns = [
-        'DollarAmount',
-        'DayOfWeek',
-        'Month',
-        'IsWeekend',
-        'HoursToApproval',
-        'HoursToPayment',
-        'NominatorTotalNominations',
-        'NominatorAvgAmount',
-        'NominatorStdAmount',
-        'NominatorUniqueBeneficiaries',
-        'BeneficiaryTotalReceived',
-        'BeneficiaryAvgAmountReceived',
-        'ApproverTotalApproved',
-        'ApproverAvgApprovalTime',
-        'HasReciprocalNomination',
-        'PairNominationCount',
-        'AmountZScore',
-        'IsHighAmount',
-        'IsRapidApproval',
-        'NominatorConcentrationRatio'
-    ]
-    
-    # Remove rows with missing target
+
+    # If no FraudScores have been recorded yet (cold start after first load test),
+    # derive labels from the behavioural patterns embedded in the data.
+    if df['IsFraud'].sum() == 0:
+        print(
+            f"[Tenant {tenant_id}] ⚠  No FraudScores labels found — "
+            "bootstrapping from behavioural patterns."
+        )
+        df = bootstrap_fraud_labels(df, tenant_id)
+
     df_train = df[df['IsFraud'].notna()].copy()
-    
-    # Prepare features and target
-    X = df_train[feature_columns].fillna(0)
+    if len(df_train) < MIN_TRAINING_SAMPLES:
+        raise ValueError(
+            f"[Tenant {tenant_id}] Only {len(df_train)} labelled samples — "
+            f"need at least {MIN_TRAINING_SAMPLES} to train.  "
+            f"Run the load generator and label more data first."
+        )
+
+    n_fraud = int(df_train['IsFraud'].sum())
+    n_legit = int((df_train['IsFraud'] == 0).sum())
+    if n_fraud == 0 or n_legit == 0:
+        raise ValueError(
+            f"[Tenant {tenant_id}] Training set has only one class "
+            f"(fraud={n_fraud}, legitimate={n_legit}). "
+            "A classifier requires both classes. "
+            "Run more load test traffic or check bootstrap thresholds."
+        )
+
+    print(
+        f"[Tenant {tenant_id}]   Class balance — "
+        f"legitimate: {n_legit}, fraud: {n_fraud} "
+        f"({n_fraud / len(df_train) * 100:.1f}%)"
+    )
+
+    X = df_train[FEATURE_COLUMNS].fillna(0)
     y = df_train['IsFraud']
-    
-    print(f"\nTraining data shape: {X.shape}")
-    print(f"Features: {feature_columns}")
-    
-    # Split data
+
+    print(f"[Tenant {tenant_id}]   Training data shape: {X.shape}")
+
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
-    
-    # Scale features
+
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # Train Random Forest
-    print("\nTraining Random Forest model...")
+    X_test_scaled  = scaler.transform(X_test)
+
     rf_model = RandomForestClassifier(
         n_estimators=100,
         max_depth=10,
@@ -240,128 +479,190 @@ def train_model(df):
         min_samples_leaf=10,
         class_weight='balanced',
         random_state=42,
-        n_jobs=-1
+        n_jobs=-1,
     )
-    
     rf_model.fit(X_train_scaled, y_train)
-    
-    # Evaluate
-    y_pred = rf_model.predict(X_test_scaled)
+
+    # ── Evaluation ───────────────────────────────────────────────────────────
+    y_pred       = rf_model.predict(X_test_scaled)
     y_pred_proba = rf_model.predict_proba(X_test_scaled)[:, 1]
-    
-    print("\n" + "="*60)
-    print("MODEL EVALUATION - RANDOM FOREST")
-    print("="*60)
-    print("\nClassification Report:")
+
+    print(f"\n{'='*60}")
+    print(f"MODEL EVALUATION — Tenant {tenant_id}")
+    print(f"{'='*60}")
     print(classification_report(y_test, y_pred, target_names=['Legitimate', 'Fraud']))
-    
-    print("\nConfusion Matrix:")
-    cm = confusion_matrix(y_test, y_pred)
-    print(cm)
-    
+    print("Confusion Matrix:")
+    print(confusion_matrix(y_test, y_pred))
+
+    auc = None
     if len(np.unique(y_test)) > 1:
         auc = roc_auc_score(y_test, y_pred_proba)
-        print(f"\nROC AUC Score: {auc:.4f}")
-    
-    # Feature importance
+        print(f"ROC AUC Score: {auc:.4f}")
+
     feature_importance = pd.DataFrame({
-        'Feature': feature_columns,
-        'Importance': rf_model.feature_importances_
+        'Feature': FEATURE_COLUMNS,
+        'Importance': rf_model.feature_importances_,
     }).sort_values('Importance', ascending=False)
-    
+
     print("\nTop 10 Most Important Features:")
     print(feature_importance.head(10).to_string(index=False))
-    
-    # Save model
+
+    # ── Persist ──────────────────────────────────────────────────────────────
     model_data = {
-        'model': rf_model,
-        'scaler': scaler,
-        'feature_columns': feature_columns,
-        'training_date': datetime.now(),
-        'feature_importance': feature_importance
+        'tenant_id':          tenant_id,
+        'model':              rf_model,
+        'scaler':             scaler,
+        'feature_columns':    FEATURE_COLUMNS,
+        'training_date':      datetime.now(),
+        'training_samples':   len(df_train),
+        'auc':                auc,
+        'feature_importance': feature_importance,
+        # Amount stats for this tenant — used by fraud_ml.py to compute
+        # z-scores at inference time without crossing tenant boundaries.
+        'amount_mean': float(df['Amount'].mean()),
+        'amount_std':  float(df['Amount'].std()),
     }
-    
-    with open('fraud_detection_model.pkl', 'wb') as f:
+
+    pkl_filename = f"fraud_detection_model_tenant_{tenant_id}.pkl"
+    with open(pkl_filename, 'wb') as f:
         pickle.dump(model_data, f)
-    
-    print("\n✓ Model saved to 'fraud_detection_model.pkl'")
-    
-    # Create visualizations
-    create_visualizations(df, feature_importance, y_test, y_pred_proba)
-    
+
+    print(f"\n✓ Model saved to '{pkl_filename}'")
+
+    # ── Score all historical nominations and persist to dbo.FraudScores ──────
+    # This is the step that was missing: without it FraudScores stays empty,
+    # the analytics charts have no data, and every retrain is forced back to
+    # bootstrapped labels instead of graduating to real scored labels.
+    score_and_save_historical(df, model_data, tenant_id)
+
+    # ── Visualisations ───────────────────────────────────────────────────────
+    # Re-fetch df so the Fraud Score Distribution chart reflects the scores
+    # just written to dbo.FraudScores.
+    df_with_scores = load_data(tenant_id)
+    create_visualizations(df_with_scores, feature_importance, y_test, y_pred_proba, tenant_id)
+
     return model_data
 
+
 # ============================================================================
-# VISUALIZATIONS
+# VISUALISATIONS
 # ============================================================================
 
-def create_visualizations(df, feature_importance, y_test, y_pred_proba):
-    """Create fraud detection visualizations"""
-    
-    print("\nCreating visualizations...")
-    
+def create_visualizations(
+    df: pd.DataFrame,
+    feature_importance: pd.DataFrame,
+    y_test,
+    y_pred_proba,
+    tenant_id: int,
+) -> None:
+    print(f"\n[Tenant {tenant_id}] Creating visualisations ...")
+
     fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    
-    # 1. Feature Importance
-    axes[0, 0].barh(feature_importance.head(10)['Feature'], 
-                     feature_importance.head(10)['Importance'])
+    fig.suptitle(f"Fraud Detection Analysis — Tenant {tenant_id}", fontsize=14)
+
+    # 1. Feature importance
+    axes[0, 0].barh(
+        feature_importance.head(10)['Feature'],
+        feature_importance.head(10)['Importance'],
+    )
     axes[0, 0].set_xlabel('Importance')
     axes[0, 0].set_title('Top 10 Feature Importances')
     axes[0, 0].invert_yaxis()
-    
-    # 2. Fraud Score Distribution
+
+    # 2. Fraud-score distribution
     fraud_df = df[df['IsFraud'].notna()]
-    axes[0, 1].hist([fraud_df[fraud_df['IsFraud']==0]['FraudScore'],
-                      fraud_df[fraud_df['IsFraud']==1]['FraudScore']],
-                     bins=30, label=['Legitimate', 'Fraud'], alpha=0.7)
+    if 'FraudScore' in fraud_df.columns and fraud_df['FraudScore'].notna().any():
+        axes[0, 1].hist(
+            [
+                fraud_df[fraud_df['IsFraud'] == 0]['FraudScore'].dropna(),
+                fraud_df[fraud_df['IsFraud'] == 1]['FraudScore'].dropna(),
+            ],
+            bins=30, label=['Legitimate', 'Fraud'], alpha=0.7,
+        )
     axes[0, 1].set_xlabel('Fraud Score')
     axes[0, 1].set_ylabel('Count')
     axes[0, 1].set_title('Fraud Score Distribution')
     axes[0, 1].legend()
-    
-    # 3. ROC Curve
+
+    # 3. ROC curve
     if len(np.unique(y_test)) > 1:
-        fpr, tpr, thresholds = roc_curve(y_test, y_pred_proba)
-        axes[1, 0].plot(fpr, tpr, label=f'ROC Curve (AUC = {roc_auc_score(y_test, y_pred_proba):.3f})')
+        fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+        auc_val = roc_auc_score(y_test, y_pred_proba)
+        axes[1, 0].plot(fpr, tpr, label=f'ROC Curve (AUC = {auc_val:.3f})')
         axes[1, 0].plot([0, 1], [0, 1], 'k--', label='Random')
         axes[1, 0].set_xlabel('False Positive Rate')
         axes[1, 0].set_ylabel('True Positive Rate')
         axes[1, 0].set_title('ROC Curve')
         axes[1, 0].legend()
-    
-    # 4. Fraud by Risk Level
-    risk_counts = df[df['RiskLevel'].notna()]['RiskLevel'].value_counts()
-    axes[1, 1].bar(risk_counts.index, risk_counts.values)
-    axes[1, 1].set_xlabel('Risk Level')
-    axes[1, 1].set_ylabel('Count')
-    axes[1, 1].set_title('Nominations by Risk Level')
-    axes[1, 1].tick_params(axis='x', rotation=45)
-    
+
+    # 4. Nominations by risk level
+    if 'RiskLevel' in df.columns and df['RiskLevel'].notna().any():
+        risk_counts = df[df['RiskLevel'].notna()]['RiskLevel'].value_counts()
+        axes[1, 1].bar(risk_counts.index, risk_counts.values)
+        axes[1, 1].set_xlabel('Risk Level')
+        axes[1, 1].set_ylabel('Count')
+        axes[1, 1].set_title('Nominations by Risk Level')
+        axes[1, 1].tick_params(axis='x', rotation=45)
+
     plt.tight_layout()
-    plt.savefig('fraud_detection_analysis.png', dpi=300, bbox_inches='tight')
-    print("✓ Visualization saved to 'fraud_detection_analysis.png'")
-    
+    png_filename = f"fraud_detection_analysis_tenant_{tenant_id}.png"
+    plt.savefig(png_filename, dpi=300, bbox_inches='tight')
+    print(f"✓ Visualisation saved to '{png_filename}'")
     plt.close()
 
+
 # ============================================================================
-# MAIN EXECUTION
+# MAIN — iterate over all tenants
 # ============================================================================
 
 if __name__ == "__main__":
-    print("="*60)
-    print("FRAUD DETECTION ML MODEL TRAINING")
-    print("="*60)
-    
-    # Load data
-    df = load_data()
-    
-    # Train model
-    model_data = train_model(df)
-    
-    print("\n" + "="*60)
-    print("TRAINING COMPLETE!")
-    print("="*60)
+    print("=" * 60)
+    print("FRAUD DETECTION MODEL TRAINING  —  Multi-Tenant")
+    print("=" * 60)
+
+    conn = get_db_connection()
+    tenants = get_tenants(conn)
+    conn.close()
+
+    print(f"\nFound {len(tenants)} tenant(s): {[t[0] for t in tenants]}")
+
+    results = {}
+    for tenant_id, tenant_name in tenants:
+        print(f"\n{'='*60}")
+        print(f"  Tenant {tenant_id}: {tenant_name}")
+        print(f"{'='*60}")
+
+        try:
+            df = load_data(tenant_id)
+
+            if len(df) < MIN_TRAINING_SAMPLES:
+                print(
+                    f"⚠  Skipping Tenant {tenant_id} — only {len(df)} samples "
+                    f"(minimum {MIN_TRAINING_SAMPLES} required)."
+                )
+                results[tenant_id] = "SKIPPED (insufficient data)"
+                continue
+
+            model_data = train_model(df, tenant_id)
+            results[tenant_id] = (
+                f"OK  ({model_data['training_samples']} samples, "
+                f"AUC={model_data['auc']:.4f})"
+                if model_data['auc'] else
+                f"OK  ({model_data['training_samples']} samples)"
+            )
+
+        except Exception as exc:
+            print(f"❌  Tenant {tenant_id} failed: {exc}")
+            results[tenant_id] = f"FAILED — {exc}"
+
+    print("\n" + "=" * 60)
+    print("TRAINING SUMMARY")
+    print("=" * 60)
+    for tenant_id, status in results.items():
+        print(f"  Tenant {tenant_id}: {status}")
+
     print("\nNext steps:")
-    print("1. Review fraud_detection_analysis.png for insights")
-    print("2. Integrate fraud_detection_model.pkl into FastAPI")
-    print("3. Set up real-time fraud scoring for new nominations")
+    print("  1. Review fraud_detection_analysis_tenant_N.png for each tenant.")
+    print("  2. Upload fraud_detection_model_tenant_N.pkl to Azure Blob Storage")
+    print("     (ml-models container) so the backend picks it up on next restart.")
+    print("  3. Or call the /api/admin/refresh-fraud-model endpoint to hot-reload.")
