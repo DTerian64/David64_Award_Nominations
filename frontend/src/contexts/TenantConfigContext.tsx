@@ -101,8 +101,9 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
   // page refresh.
   const { accounts } = useMsal();
   const authenticated = accounts.length > 0;
-  const [config, setConfig]       = useState<TenantConfig>(DEFAULT_CONFIG);
-  const [isLoading, setIsLoading] = useState(true);
+  const [config, setConfig]             = useState<TenantConfig>(DEFAULT_CONFIG);
+  const [isLoading, setIsLoading]       = useState(true);
+  const [wrongDomain, setWrongDomain]   = useState<string | null>(null); // canonical domain when mismatch
 
   const fetchConfig = useCallback(async () => {
     if (!authenticated) {
@@ -145,36 +146,26 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
           domain:   raw.domain,
         };
 
-        // ── Domain isolation redirect ─────────────────────────────────────
+        // ── Domain isolation check ───────────────────────────────────────
         // If the user authenticated on the wrong domain (e.g. followed a stale
         // bookmark or a shared link pointing to another tenant's portal), we
-        // silently redirect them to their correct domain before any UI renders.
-        // The backend passes the tenant's canonical domain in the config
-        // response, so this check happens at the earliest possible moment —
-        // right after the first authenticated API call completes.
-        //
-        // We append ?login_hint=<upn> to the redirect URL so that main.tsx on
-        // the correct domain can call ssoSilent() using the existing Azure AD
-        // session cookie — the user is already authenticated with Azure AD and
-        // should not have to sign in again (ssoSilent uses prompt=none under
-        // the hood).  If the silent attempt fails (expired AD session) MSAL
-        // falls back to loginRedirect with the UPN pre-filled so the user only
-        // needs one click rather than re-typing their email.
-        //
+        // block rendering and show a clear error message pointing them to the
+        // correct URL.  We do NOT redirect automatically — automatic cross-
+        // domain redirects cause MSAL session loops because each origin has its
+        // own isolated token cache and the user ends up re-authenticating on
+        // the destination domain.
         // Localhost is always exempt so local development works without Domain
         // entries in the database.
         if (merged.domain) {
           const currentHost = window.location.hostname;
           const isLocalDev  = currentHost === 'localhost' || currentHost === '127.0.0.1';
           if (!isLocalDev && currentHost !== merged.domain) {
-            const upn  = accounts[0]?.username ?? '';
-            const hint = upn ? `?login_hint=${encodeURIComponent(upn)}` : '';
             console.warn(
               `[TenantConfig] Domain mismatch — current: ${currentHost}, ` +
-              `expected: ${merged.domain}. Redirecting with login_hint.`,
+              `expected: ${merged.domain}. Showing wrong-domain error.`,
             );
-            window.location.replace(`https://${merged.domain}${hint}`);
-            return; // halt — the page is about to unload
+            setWrongDomain(merged.domain);
+            return; // halt — the error screen will render instead of the app
           }
         }
 
@@ -235,6 +226,51 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
 
   // Block rendering until config is resolved so there is no locale/theme flash
   if (isLoading) return null;
+
+  // ── Wrong-domain error screen ──────────────────────────────────────────
+  // Shown when the user has authenticated successfully but they are on the
+  // wrong portal for their organisation.  A plain, style-free fallback is
+  // intentional — we deliberately avoid applying the tenant theme here
+  // because the tenant mismatch means we cannot know which theme is correct.
+  if (wrongDomain) {
+    const correctUrl = `https://${wrongDomain}`;
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', minHeight: '100vh',
+        fontFamily: 'system-ui, sans-serif', padding: '2rem', textAlign: 'center',
+        backgroundColor: '#f9fafb', color: '#111827',
+      }}>
+        <div style={{
+          maxWidth: '480px', background: '#fff', borderRadius: '12px',
+          padding: '2.5rem', boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
+          border: '1px solid #e5e7eb',
+        }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>⚠️</div>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.75rem' }}>
+            Wrong portal
+          </h1>
+          <p style={{ color: '#6b7280', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+            Your account is not registered for this portal. Please sign in at
+            your organisation's dedicated URL below.
+          </p>
+          <a
+            href={correctUrl}
+            style={{
+              display: 'inline-block', padding: '0.65rem 1.5rem',
+              background: '#4f46e5', color: '#fff', borderRadius: '8px',
+              textDecoration: 'none', fontWeight: 600, fontSize: '0.95rem',
+            }}
+          >
+            Go to {wrongDomain}
+          </a>
+          <p style={{ marginTop: '1.25rem', fontSize: '0.8rem', color: '#9ca3af' }}>
+            If you believe this is an error, please contact your IT administrator.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <TenantConfigContext.Provider
