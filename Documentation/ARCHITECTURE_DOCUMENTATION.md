@@ -643,7 +643,7 @@ terraform apply  # apply
 
 ## Support & Documentation
 
-- **Architecture diagram:** `Documentation/architecture_diagram.mmd` (Mermaid)
+- **Architecture diagram:** [Architecture-Diagram](Architecture-Diagram.md) (wiki page) · [`architecture_diagram.mmd`](architecture_diagram.mmd) (source)
 - **Sequence diagrams:** `Documentation/sequence_diagram.mmd`
 - **API documentation:** Swagger UI at `/docs` (each Container App)
 - **Terraform:** `terraform/` — modules and environment configs

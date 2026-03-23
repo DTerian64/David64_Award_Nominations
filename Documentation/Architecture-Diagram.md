@@ -1,0 +1,112 @@
+# Architecture Diagram
+
+> **Source file:** [`architecture_diagram.mmd`](architecture_diagram.mmd)
+> Edit the `.mmd` file to update this diagram — it is the single source of truth.
+> Render locally with VS Code (Mermaid Preview extension) or the Mermaid CLI.
+
+---
+
+```mermaid
+graph TB
+
+    %% ── Public Internet ───────────────────────────────────────────────────────
+    subgraph PUB["🌐 Public Internet"]
+        TENANTS["👥 Tenant Users<br/>acme-awards.terian-services.com<br/>sandbox-awards.terian-services.com<br/>dev-awards.terian-services.com"]
+        GH["⚙️ GitHub Actions<br/>CI/CD Pipelines"]
+    end
+
+    %% ── Azure Edge — the only public-facing ingress ───────────────────────────
+    subgraph EDGE["☁️ Azure Edge Network — PUBLIC INGRESS ONLY"]
+        DNS_Z["🌐 Azure DNS Zone<br/>terian-services.com<br/>Per-tenant CNAME records<br/>Managed by Terraform"]
+        SWA["📄 Azure Static Web Apps<br/>React SPA<br/>Per-tenant custom domains<br/>GitHub Actions deploy"]
+        AFD["🔀 Azure Front Door Standard<br/>◀ SOLE PUBLIC API INGRESS ▶<br/>WAF · SSL/TLS Termination<br/>50/50 weighted · Auto-failover"]
+    end
+
+    %% ── Azure Backbone — everything private from here ─────────────────────────
+    subgraph PRIV["🔒 Azure Backbone — Private Network (no public inbound)"]
+
+        subgraph VNETS["VNet-Peered Pair  ·  East US 10.2.0.0/16  ↔  West US 10.3.0.0/16"]
+            ACA_E["🐳 award-api-eastus<br/>FastAPI · Python 3.11<br/>VNet-Injected into subnet-aca-primary<br/>User-Assigned Managed Identity<br/>Key Vault secret refs at runtime"]
+            ACA_W["🐳 award-api-westus<br/>FastAPI · Python 3.11<br/>VNet-Injected into subnet-aca-secondary<br/>User-Assigned Managed Identity<br/>Key Vault secret refs at runtime"]
+        end
+
+        subgraph PAAS["Azure PaaS — Private Endpoint Access Only  (subnet-privatelinks)"]
+            SQL[("🗄️ Azure SQL Database<br/>AwardNominations<br/>Serverless Gen5 · TLS 1.2<br/>Tables: Users · Nominations<br/>FraudScores · AuditLog")]
+            KV["🔑 Azure Key Vault<br/>SQL · Storage · OpenAI secrets<br/>RBAC auth · Soft-delete 90 d<br/>Secrets from Terraform outputs"]
+            BLOB["📦 Azure Blob Storage<br/>ml-models container<br/>extracts container<br/>award-nomination-metrics"]
+            ACR["🐋 Azure Container Registry<br/>award-nomination-api<br/>Git-SHA + latest tags<br/>Private pull by ACAs"]
+            OAI["🤖 Azure OpenAI<br/>GPT-4o deployment<br/>AI Analytics Agent<br/>Natural language queries"]
+        end
+
+        subgraph OBS["📊 Observability"]
+            LA_E["Log Analytics<br/>East US workspace"]
+            LA_W["Log Analytics<br/>West US workspace"]
+            GRF["📈 Azure Managed Grafana<br/>Monitoring Reader on both<br/>Log Analytics workspaces"]
+        end
+
+    end
+
+    %% ── Identity & External Services ─────────────────────────────────────────
+    subgraph EXT["🔐 Identity & External Services"]
+        AAD["Microsoft Entra ID<br/>OAuth2 / OIDC · JWT validation<br/>Per-tenant AAD config<br/>App Roles · Terraform azuread"]
+        EMAIL["✉️ Email Service<br/>Gmail SMTP / SendGrid<br/>Manager approval notifications<br/>Secure single-use action tokens"]
+    end
+
+    %% Tenant users → DNS → SWA / AFD
+    TENANTS -->|"HTTPS – per-tenant subdomain"| DNS_Z
+    DNS_Z -->|"CNAME → SWA"| SWA
+    DNS_Z -->|"CNAME → AFD endpoint"| AFD
+
+    %% CI/CD
+    GH -->|"Deploy React SPA"| SWA
+    GH -->|"Build & Push Docker image"| ACR
+    GH -->|"az containerapp update"| ACA_E
+    GH -->|"az containerapp update"| ACA_W
+
+    %% AFD → Container Apps  (ONLY path from internet to private backend)
+    AFD -->|"Primary   /api/*"| ACA_E
+    AFD -->|"Failover  /api/*"| ACA_W
+
+    %% Container Apps → PaaS via Private Endpoints only
+    ACA_E -->|"🔒 Private Endpoint"| SQL
+    ACA_W -->|"🔒 Private Endpoint"| SQL
+    ACA_E -->|"🔒 Private Endpoint"| KV
+    ACA_W -->|"🔒 Private Endpoint"| KV
+    ACA_E -->|"🔒 Private Endpoint"| BLOB
+    ACA_W -->|"🔒 Private Endpoint"| BLOB
+    ACA_E -->|"🔒 Private Endpoint"| ACR
+    ACA_W -->|"🔒 Private Endpoint"| ACR
+    ACA_E -->|"🔒 Private Endpoint"| OAI
+    ACA_W -->|"🔒 Private Endpoint"| OAI
+
+    %% Observability
+    ACA_E -->|"Container logs"| LA_E
+    ACA_W -->|"Container logs"| LA_W
+    LA_E --> GRF
+    LA_W --> GRF
+
+    %% External identity & email
+    ACA_E -->|"Validate JWT"| AAD
+    ACA_W -->|"Validate JWT"| AAD
+    ACA_E -->|"Send approval email"| EMAIL
+    ACA_W -->|"Send approval email"| EMAIL
+
+    %% ── Styles ────────────────────────────────────────────────────────────────
+    style TENANTS fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style GH       fill:#ede7f6,stroke:#512da8,stroke-width:2px
+    style DNS_Z    fill:#e8eaf6,stroke:#283593,stroke-width:2px
+    style SWA      fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style AFD      fill:#e8f5e9,stroke:#1b5e20,stroke-width:4px
+    style ACA_E    fill:#fce4ec,stroke:#b71c1c,stroke-width:2px
+    style ACA_W    fill:#fce4ec,stroke:#b71c1c,stroke-width:2px
+    style SQL      fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    style KV       fill:#fff8e1,stroke:#e65100,stroke-width:2px
+    style BLOB     fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
+    style ACR      fill:#fbe9e7,stroke:#bf360c,stroke-width:2px
+    style OAI      fill:#e8eaf6,stroke:#283593,stroke-width:2px
+    style LA_E     fill:#e0f2f1,stroke:#004d40,stroke-width:2px
+    style LA_W     fill:#e0f2f1,stroke:#004d40,stroke-width:2px
+    style GRF      fill:#e0f2f1,stroke:#004d40,stroke-width:2px
+    style AAD      fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style EMAIL    fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+```
