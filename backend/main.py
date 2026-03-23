@@ -14,10 +14,10 @@ load_dotenv()
 
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, status, HTTPException, Query, Header
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Any
+from typing import List, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -27,7 +27,8 @@ from auth import (
     get_current_user_with_impersonation,
     require_role,
     log_action_if_impersonating,
-    is_admin
+    is_admin,
+    _authenticate,
 )
 
 import sqlhelper2 as sqlhelper  # Database helper functions for Azure SQL
@@ -223,6 +224,61 @@ def whoami(_claims=Depends(require_role("AWard_Nomination_Admin"))):
         "revision": os.getenv("CONTAINER_APP_REVISION", "unknown"),
         "hostname": socket.gethostname(),
     }
+
+@app.get("/api/public/domain-redirect")
+async def public_domain_redirect(
+    host: str = Query(..., description="The hostname the browser is currently on"),
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Pre-flight domain check — no authentication required.
+
+    The frontend calls this in main.tsx BEFORE React renders, so that users
+    with a cached session on the wrong domain are redirected immediately —
+    before they interact with any UI.
+
+    • If a Bearer token is provided the endpoint authenticates the caller,
+      retrieves their tenant's canonical domain, and compares it against
+      ``host``.  If they differ, ``canonical_domain`` is returned and the
+      frontend does window.location.replace() right away.
+
+    • If no token is supplied (unauthenticated cold load) the response is
+      { "canonical_domain": null } — the frontend proceeds normally and
+      domain isolation is handled later by TenantConfigContext after the
+      user signs in (the redirect there passes ?login_hint so MSAL can
+      attempt ssoSilent on the correct domain, avoiding a second sign-in).
+    """
+    # No token — can't resolve the user's tenant, nothing to redirect to.
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return {"canonical_domain": None}
+
+    token = authorization.split(" ", 1)[1]
+    try:
+        user = await _authenticate(token, origin=None)
+    except Exception:
+        # Expired / invalid token — treat as unauthenticated rather than
+        # returning 401; the frontend will fall through to the normal flow.
+        return {"canonical_domain": None}
+
+    tenant_id = user["TenantId"]
+    domain = sqlhelper.get_tenant_domain(tenant_id)
+
+    if not domain:
+        # Tenant has no canonical domain restriction configured.
+        return {"canonical_domain": None}
+
+    # Localhost is exempt so local development works without DB entries.
+    is_local = host in ("localhost", "127.0.0.1")
+    if is_local or host == domain:
+        return {"canonical_domain": None}
+
+    logger.info(
+        "domain_redirect: pre-flight mismatch for tenant_id=%d — "
+        "current host=%s, canonical=%s",
+        tenant_id, host, domain,
+    )
+    return {"canonical_domain": domain}
+
 
 @app.get("/api/tenant/config")
 async def get_tenant_config(user_context: dict = Depends(get_current_user_with_impersonation)):

@@ -152,17 +152,28 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
         // The backend passes the tenant's canonical domain in the config
         // response, so this check happens at the earliest possible moment —
         // right after the first authenticated API call completes.
+        //
+        // We append ?login_hint=<upn> to the redirect URL so that main.tsx on
+        // the correct domain can call ssoSilent() using the existing Azure AD
+        // session cookie — the user is already authenticated with Azure AD and
+        // should not have to sign in again (ssoSilent uses prompt=none under
+        // the hood).  If the silent attempt fails (expired AD session) MSAL
+        // falls back to loginRedirect with the UPN pre-filled so the user only
+        // needs one click rather than re-typing their email.
+        //
         // Localhost is always exempt so local development works without Domain
         // entries in the database.
         if (merged.domain) {
           const currentHost = window.location.hostname;
           const isLocalDev  = currentHost === 'localhost' || currentHost === '127.0.0.1';
           if (!isLocalDev && currentHost !== merged.domain) {
+            const upn  = accounts[0]?.username ?? '';
+            const hint = upn ? `?login_hint=${encodeURIComponent(upn)}` : '';
             console.warn(
               `[TenantConfig] Domain mismatch — current: ${currentHost}, ` +
-              `expected: ${merged.domain}. Redirecting.`,
+              `expected: ${merged.domain}. Redirecting with login_hint.`,
             );
-            window.location.replace(`https://${merged.domain}`);
+            window.location.replace(`https://${merged.domain}${hint}`);
             return; // halt — the page is about to unload
           }
         }
