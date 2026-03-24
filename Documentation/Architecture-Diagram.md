@@ -6,7 +6,7 @@
 
 ---
 
-```mermaid
+::: mermaid
 graph TB
 
     %% ── Public Internet ───────────────────────────────────────────────────────
@@ -109,4 +109,4 @@ graph TB
     style GRF      fill:#e0f2f1,stroke:#004d40,stroke-width:2px
     style AAD      fill:#fff9c4,stroke:#f57f17,stroke-width:2px
     style EMAIL    fill:#f1f8e9,stroke:#33691e,stroke-width:2px
-```
+:::
