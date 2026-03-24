@@ -9,6 +9,7 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    environment: sandbox
     steps:
       - uses: actions/checkout@v4
         with:
