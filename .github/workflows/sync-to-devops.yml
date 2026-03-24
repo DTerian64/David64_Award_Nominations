@@ -19,6 +19,5 @@ jobs:
         env:
           ADO_PAT: ${{ secrets.ADO_PAT }}
         run: |
-          B64_PAT=$(echo -n ":${ADO_PAT}" | base64 -w 0)
-          git remote add devops https://dev.azure.com/Terian-Services/Award_Nomination/_git/Award_Nomination
-          git -c http.extraHeader="Authorization: Basic ${B64_PAT}" push devops sandbox
+          git remote add devops "https://x:${ADO_PAT}@dev.azure.com/Terian-Services/Award_Nomination/_git/Award_Nomination"
+          git push devops sandbox
