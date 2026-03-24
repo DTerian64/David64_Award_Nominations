@@ -41,6 +41,12 @@ variable "vite_client_id" {
   type        = string
 }
 
+variable "vite_appinsights_connection_string" {
+  description = "Application Insights connection string — injected as VITE_APPINSIGHTS_CONNECTION_STRING at Vite build time"
+  type        = string
+  sensitive   = true
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

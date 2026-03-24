@@ -2,6 +2,10 @@
 // component calls useTranslation().
 import './i18n';
 
+// Initialise Azure Application Insights before React mounts so the first
+// page-view and any early exceptions are captured.
+import './appInsights';
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { MsalProvider } from "@azure/msal-react";

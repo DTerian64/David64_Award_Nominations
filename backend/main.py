@@ -13,6 +13,28 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+
+# ============================================================================
+# OBSERVABILITY — Azure Monitor / Application Insights
+# Must be configured before FastAPI, SQLAlchemy, and httpx are imported so the
+# OpenTelemetry auto-instrumentation patches are applied from the start.
+# configure_azure_monitor() reads APPLICATIONINSIGHTS_CONNECTION_STRING from
+# the environment automatically (set via Key Vault secret reference in prod,
+# .env for local dev).
+# ============================================================================
+_appinsights_conn_str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+if _appinsights_conn_str:
+    from azure.monitor.opentelemetry import configure_azure_monitor
+    configure_azure_monitor(
+        connection_string=_appinsights_conn_str,
+        # Optionally tune the sampling rate (1.0 = 100 %, the default):
+        # sampling_ratio=1.0,
+    )
+    logger.info("Azure Monitor OpenTelemetry configured.")
+else:
+    logger.warning(
+        "APPLICATIONINSIGHTS_CONNECTION_STRING not set — Azure Monitor disabled."
+    )
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query
 from fastapi.responses import HTMLResponse

@@ -131,11 +131,12 @@ module "key_vault" {
   # var.secrets (from terraform.tfvars) supplies: SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD
   # Remaining secrets are derived from other module outputs so they stay in sync automatically.
   secrets = merge(var.secrets, {
-    AZURE-STORAGE-KEY     = module.storage.primary_access_key
-    AZURE-OPENAI-KEY      = module.openai.primary_access_key
-    AZURE-OPENAI-ENDPOINT = module.openai.endpoint
-    SQL-SERVER            = module.sql.server_fqdn
-    SQL-DATABASE          = module.sql.database_name
+    AZURE-STORAGE-KEY                     = module.storage.primary_access_key
+    AZURE-OPENAI-KEY                      = module.openai.primary_access_key
+    AZURE-OPENAI-ENDPOINT                 = module.openai.endpoint
+    SQL-SERVER                            = module.sql.server_fqdn
+    SQL-DATABASE                          = module.sql.database_name
+    APPINSIGHTS-CONNECTION-STRING-BACKEND = module.application_insights.backend_connection_string
   })
 }
 
@@ -162,6 +163,18 @@ module "log_analytics" {
   workspace_name_primary   = var.workspace_name_primary
   workspace_name_secondary = var.workspace_name_secondary
   tags                     = local.tags
+}
+
+# ── 7b. Application Insights ──────────────────────────────────────────────────
+module "application_insights" {
+  source = "../../modules/application-insights"
+
+  resource_group_name        = var.resource_group_name
+  location                   = var.location_primary
+  environment                = var.environment
+  log_analytics_workspace_id = module.log_analytics.workspace_primary_id
+  tags                       = local.tags
+  depends_on                 = [azurerm_resource_group.rg, module.log_analytics]
 }
 
 # ── 8. Container Apps ─────────────────────────────────────────────────────────
@@ -220,8 +233,9 @@ module "container_apps" {
     { env_name = "SQL_PASSWORD",          kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY",     kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "GMAIL_APP_PASSWORD",    kv_secret_name = "GMAIL-APP-PASSWORD" },
-    { env_name = "AZURE_OPENAI_KEY",      kv_secret_name = "AZURE-OPENAI-KEY" },
-    { env_name = "AZURE_OPENAI_ENDPOINT", kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
+    { env_name = "AZURE_OPENAI_KEY",                     kv_secret_name = "AZURE-OPENAI-KEY" },
+    { env_name = "AZURE_OPENAI_ENDPOINT",                kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
+    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
   ]
 
   tags = local.tags
@@ -274,9 +288,10 @@ module "static_web_app" {
 
   # Azure AD values wired from existing app registrations
   vite_api_url       = "https://${module.front_door.afd_endpoint_hostname}"
-  vite_api_client_id = local.vite_api_client_id
-  vite_client_id     = local.vite_client_id
-  vite_api_scope     = local.vite_api_scope
+  vite_api_client_id                 = local.vite_api_client_id
+  vite_client_id                     = local.vite_client_id
+  vite_api_scope                     = local.vite_api_scope
+  vite_appinsights_connection_string = module.application_insights.frontend_connection_string
 
   tags = local.tags
 }

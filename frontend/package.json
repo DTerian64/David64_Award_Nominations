@@ -12,6 +12,7 @@
   "dependencies": {
     "@azure/msal-browser": "^4.28.0",
     "@azure/msal-react": "^3.0.24",
+    "@microsoft/applicationinsights-web": "^3.3.7",
     "i18next": "^25.9.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.0",
