@@ -8,6 +8,6 @@ Go to https://myaccount.google.com/security
 Enable 2-Step Verification (if not already enabled)
 Go to https://myaccount.google.com/apppasswords
 Click Create:
-App: Mail 
+App: Mail  
 Device: Other (Custom) → "Award Nomination API"
 Copy the 16-character password (format: xxxx xxxx xxxx xxxx)
