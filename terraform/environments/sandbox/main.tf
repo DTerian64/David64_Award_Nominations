@@ -230,6 +230,10 @@ module "container_apps" {
     { name = "API_BASE_URL",                    value = var.api_base_url },
     { name = "CORS_ALLOWED_ORIGINS",            value = var.cors_allowed_origins },
     { name = "LOGGING_LEVEL",                   value = var.logging_level },
+    # Disable only the FastAPI OTel auto-instrumentation — it wraps the ASGI
+    # callable outside Starlette's middleware chain and blocks OPTIONS preflight.
+    # All other instrumentation (SQLAlchemy, httpx, logging) remains active.
+    { name = "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS", value = "fastapi" },
     { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
     { name = "EMAIL_ACTION_SECRET_KEY",         value = var.email_action_secret_key },
