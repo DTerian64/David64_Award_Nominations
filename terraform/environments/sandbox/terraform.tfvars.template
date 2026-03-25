@@ -39,8 +39,8 @@ cae_name_primary   = "cae-award-primary-sandbox"
 cae_name_secondary = "cae-award-secondary-sandbox"
 app_name_primary   = "award-api-primary-sandbox"
 app_name_secondary = "award-api-secondary-sandbox"
-min_replicas       = 0
-max_replicas       = 1
+min_replicas       = 1
+max_replicas       = 3
 
 # ── App config ────────────────────────────────────────────────────────────────
 location_primary                = "eastus2"

@@ -219,7 +219,6 @@ module "container_apps" {
     { name = "MODEL_BLOB_NAME",                 value = var.model_blob_name },
     { name = "API_BASE_URL",                    value = var.api_base_url },
     { name = "LOGGING_LEVEL",                   value = var.logging_level },
-    { name = "OTEL_PYTHON_DISABLED_INSTRUMENTATIONS", value = "fastapi" },
     { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
     # CLIENT_ID is required by auth.py for JWT audience validation (api://<client_id>).
