@@ -81,6 +81,11 @@ app = FastAPI(
     redoc_url=None,
 )
 
+from azure.monitor.opentelemetry import configure_azure_monitor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+FastAPIInstrumentor.instrument_app(app)
+
 # ============================================================================
 # CORS CONFIGURATION — must be added immediately after app creation, before routes
 # ============================================================================
