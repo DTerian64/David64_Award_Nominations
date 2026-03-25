@@ -115,9 +115,20 @@ app.add_middleware(
 # OPTIONS preflight requests to fail with a non-2xx status.
 # ============================================================================
 if _appinsights_conn_str:
-    from azure.monitor.opentelemetry import configure_azure_monitor
-    configure_azure_monitor(connection_string=_appinsights_conn_str)
-    logger.info("Azure Monitor OpenTelemetry configured.")
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        configure_azure_monitor(
+            connection_string=_appinsights_conn_str,
+            # Disable the FastAPI/ASGI auto-instrumentation — it wraps the ASGI
+            # callable outside Starlette's middleware chain and causes OPTIONS
+            # preflight requests to fail (breaking CORS). Exceptions, SQL traces,
+            # httpx dependency calls, and log-based telemetry remain fully active.
+            instrumentation_options={"fastapi": {"enabled": False}},
+        )
+        logger.info("Azure Monitor OpenTelemetry configured (FastAPI instrumentation disabled).")
+    except Exception as exc:  # noqa: BLE001
+        # Never let observability bootstrap crash the application.
+        logger.warning("Azure Monitor OpenTelemetry failed to configure: %s", exc)
 else:
     logger.warning(
         "APPLICATIONINSIGHTS_CONNECTION_STRING not set — Azure Monitor disabled."
