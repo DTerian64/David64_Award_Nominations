@@ -13,13 +13,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-
-# Read the connection string early so it's available after app + CORS are set up.
-# configure_azure_monitor() is called AFTER app.add_middleware(CORSMiddleware)
-# to guarantee CORS stays as the outermost middleware. Calling it before app
-# creation causes the OTel ASGI middleware to sit in front of CORS, which makes
-# OPTIONS preflight requests return non-2xx and breaks all cross-origin requests.
-_appinsights_conn_str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -109,30 +102,18 @@ app.add_middleware(
 
 # ============================================================================
 # OBSERVABILITY — Azure Monitor / Application Insights
-# Called HERE (after CORS middleware) so the OTel ASGI middleware is injected
-# as an inner middleware and CORS remains the outermost layer.  Calling
-# configure_azure_monitor() before app creation inverts that order and causes
-# OPTIONS preflight requests to fail with a non-2xx status.
+# configure_azure_monitor() is intentionally NOT called here.
+#
+# Gunicorn pre-fork model: this module is loaded in the master process, then
+# workers are forked. Calling configure_azure_monitor() in the master causes
+# OTel background exporter threads to die in child processes and leaves global
+# OTel state in a half-initialized form that can interfere with the ASGI
+# middleware stack (including Starlette CORSMiddleware).
+#
+# Instead, configure_azure_monitor() is called in gunicorn.conf.py post_fork(),
+# which runs in each worker after forking — OTel is initialized fresh with
+# clean thread state per worker.
 # ============================================================================
-if _appinsights_conn_str:
-    try:
-        from azure.monitor.opentelemetry import configure_azure_monitor
-        configure_azure_monitor(
-            connection_string=_appinsights_conn_str,
-            # Disable the FastAPI/ASGI auto-instrumentation — it wraps the ASGI
-            # callable outside Starlette's middleware chain and causes OPTIONS
-            # preflight requests to fail (breaking CORS). Exceptions, SQL traces,
-            # httpx dependency calls, and log-based telemetry remain fully active.
-            instrumentation_options={"fastapi": {"enabled": False}},
-        )
-        logger.info("Azure Monitor OpenTelemetry configured (FastAPI instrumentation disabled).")
-    except Exception as exc:  # noqa: BLE001
-        # Never let observability bootstrap crash the application.
-        logger.warning("Azure Monitor OpenTelemetry failed to configure: %s", exc)
-else:
-    logger.warning(
-        "APPLICATIONINSIGHTS_CONNECTION_STRING not set — Azure Monitor disabled."
-    )
 
 
 # Custom Swagger UI with proper OAuth2 PKCE configuration
