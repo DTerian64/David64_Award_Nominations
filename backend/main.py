@@ -14,7 +14,7 @@ load_dotenv()
 
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query, Response
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Any
@@ -739,6 +739,10 @@ async def get_audit_logs(
 @app.get("/health", response_model=HealthResponse)
 def health():
     return HealthResponse(status="ok")
+
+@app.head("/health")
+def health_head():
+    return Response(status_code=200)    
 
 @app.post("/api/admin/refresh-fraud-model")
 async def refresh_fraud_model(current_user: dict = Depends(require_role("AWard_Nomination_Admin"))):
