@@ -136,6 +136,13 @@ resource "azurerm_container_app" "primary" {
           secret_name = lower(env.value.kv_secret_name)
         }
       }
+
+      # OTEL service name — unique per container instance
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = var.app_name_primary
+      }
+
     }
   }
 
@@ -208,6 +215,12 @@ resource "azurerm_container_app" "secondary" {
           name  = env.value.name
           value = env.value.value
         }
+      }
+
+      # OTEL service name — unique per container instance
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = var.app_name_secondary
       }
 
       dynamic "env" {
