@@ -34,6 +34,11 @@ if (connectionString) {
   });
 
   appInsights.loadAppInsights();
+
+  appInsights.addTelemetryInitializer((envelope) => {
+  envelope.tags["ai.cloud.role"] = import.meta.env.AI_CLOUD_ROLE || "award-nomination-app-frontend";
+});
+
   appInsights.trackPageView(); // record the initial page load
 } else {
   console.warn(

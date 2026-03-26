@@ -20,8 +20,7 @@ resource "azurerm_static_web_app" "frontend" {
     VITE_API_SCOPE                     = var.vite_api_scope
     VITE_CLIENT_ID                     = var.vite_client_id
     VITE_APPINSIGHTS_CONNECTION_STRING = var.vite_appinsights_connection_string
-    # VITE_TENANT_ID removed — frontend now uses /organizations authority
-    # so no tenant ID is needed at build time.
+    AI_CLOUD_ROLE                      = var.app_name
   }
 
   tags = var.tags
