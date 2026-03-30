@@ -1,0 +1,1345 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_AZURE_MONITOR",
+      "label": "Azure Monitor",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "grafana-azure-monitor-datasource",
+      "pluginName": "Azure Monitor"
+    }
+  ],
+  "__elements": {},
+  "__requires": [
+    {
+      "type": "panel",
+      "id": "barchart",
+      "name": "Bar chart",
+      "version": ""
+    },
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "12.3.1"
+    },
+    {
+      "type": "datasource",
+      "id": "grafana-azure-monitor-datasource",
+      "name": "Azure Monitor",
+      "version": "12.3.1"
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "The dashboard provides insights of Azure Apps via different metrics for app monitoring through Application Insights.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": true,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [
+        "Azure-AppInsights-Perf"
+      ],
+      "targetBlank": true,
+      "title": "Performance",
+      "tooltip": "",
+      "type": "dashboards",
+      "url": ""
+    },
+    {
+      "asDropdown": true,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [
+        "Azure-AppInsights-Failures"
+      ],
+      "targetBlank": true,
+      "title": "Failures",
+      "tooltip": "",
+      "type": "dashboards",
+      "url": ""
+    }
+  ],
+  "panels": [
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 67,
+      "panels": [
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "description": "Stat - single number",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "displayName": "Total API requests",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 3,
+            "w": 4,
+            "x": 0,
+            "y": 21
+          },
+          "id": 57,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "text": {
+              "titleSize": 14,
+              "valueSize": 45
+            },
+            "textMode": "value_and_name",
+            "wideLayout": false
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "requests\r\n| where name !startswith \"HEAD /health\"\r\n| where name !startswith \"OPTIONS \"\r\n| summarize [\"Total API Requests\"] = count()",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+                ],
+                "resultFormat": "table",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "",
+          "transparent": true,
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "decimals": 2,
+              "displayName": "API failure rate",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 3,
+            "w": 4,
+            "x": 4,
+            "y": 21
+          },
+          "id": 58,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "text": {
+              "titleSize": 14,
+              "valueSize": 45
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "requests\r\n| summarize\r\n    Total = count(),\r\n    Failed = countif(success == false)\r\n| extend FailureRate = round(100.0 * todouble(Failed) / iif(Total == 0, 1.0, todouble(Total)), 2)\r\n| project FailureRate",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+                ],
+                "resultFormat": "table",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "displayName": "P95 latency (ms)",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 3,
+            "w": 4,
+            "x": 8,
+            "y": 21
+          },
+          "id": 59,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "text": {
+              "titleSize": 14,
+              "valueSize": 45
+            },
+            "textMode": "value_and_name",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "requests\r\n| where name !startswith \"HEAD /health\"\r\n| where name !startswith \"OPTIONS \"\r\n| where name !startswith \"POST /api/admin/analytics\"\r\n| where success == true\r\n| summarize P95 = round(percentile(duration, 95), 0)\r\n| project P95",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+                ],
+                "resultFormat": "table",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 5
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 3,
+            "w": 4,
+            "x": 12,
+            "y": 21
+          },
+          "id": 62,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "text": {
+              "titleSize": 14,
+              "valueSize": 45
+            },
+            "textMode": "value_and_name",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "pageViews\r\n| summarize [\"Unique Users\"] = dcount(session_Id)",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-frontend-sandbox"
+                ],
+                "resultFormat": "table",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "displayName": "Pages viewed",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 10
+                  }
+                ]
+              },
+              "unit": "sishort"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 3,
+            "w": 4,
+            "x": 16,
+            "y": 21
+          },
+          "id": 61,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "vertical",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "text": {
+              "titleSize": 14,
+              "valueSize": 45
+            },
+            "textMode": "value_and_name",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "pageViews\r\n| summarize [\"Pages Viewed\"] = count()",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-frontend-sandbox"
+                ],
+                "resultFormat": "table",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "displayName": "Nominations",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 3,
+            "w": 4,
+            "x": 20,
+            "y": 21
+          },
+          "id": 68,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "vertical",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "text": {
+              "titleSize": 14,
+              "valueSize": 45
+            },
+            "textMode": "value_and_name",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "requests\r\n| where name == \"POST /api/nominations\"\r\n| where success == true\r\n| summarize [\"Nominations Submitted\"] = count()",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+                ],
+                "resultFormat": "table",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "",
+          "type": "stat"
+        }
+      ],
+      "title": "Heath at a glance",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "id": 66,
+      "panels": [
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "description": "",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "left",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 1,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 22
+          },
+          "id": 60,
+          "options": {
+            "barRadius": 0,
+            "barWidth": 0.7,
+            "fullHighlight": false,
+            "groupWidth": 0.7,
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "orientation": "auto",
+            "showValue": "auto",
+            "stacking": "none",
+            "text": {
+              "valueSize": 14
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "xTickLabelSpacing": 0
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "requests\r\n| where name !startswith \"HEAD /health\"\r\n| where name !startswith \"OPTIONS \"\r\n| summarize Requests = count() by bin(timestamp, 1h)\r\n| order by timestamp asc\r\n| project timestamp, Requests",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+                ],
+                "resultFormat": "time_series",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "API requests – last 24 h",
+          "type": "barchart"
+        },
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 1,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              },
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 22
+          },
+          "id": 63,
+          "options": {
+            "barRadius": 0,
+            "barWidth": 0.7,
+            "fullHighlight": false,
+            "groupWidth": 0.7,
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "orientation": "auto",
+            "showValue": "auto",
+            "stacking": "none",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "xTickLabelSpacing": 0
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "requests\r\n| where name !startswith \"HEAD /health\"\r\n| where name !startswith \"OPTIONS \"\r\n| summarize\r\n    Total = count(),\r\n    Failed = countif(success == false)\r\n    by bin(timestamp, 15min) \r\n| extend FailureRatePct = round(100.0 * todouble(Failed) / iif(Total == 0, 1.0, todouble(Total)), 2)\r\n| order by timestamp asc\r\n| project timestamp, FailureRatePct",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+                ],
+                "resultFormat": "time_series",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "API failure rate over time",
+          "type": "barchart"
+        },
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "#967302",
+                    "value": 500
+                  }
+                ]
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 30
+          },
+          "id": 56,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "requests\r\n| where name !startswith \"HEAD /health\"\r\n| where name !startswith \"OPTIONS \"\r\n| summarize\r\n    P95 = percentile(duration, 95),\r\n    SampleCount = count()\r\n    by bin(timestamp, 1h)\r\n| where SampleCount >= 5\r\n| order by timestamp asc\r\n| project timestamp, P95",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+                ],
+                "resultFormat": "logs",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "dimensionFilters": [],
+                "metricNamespace": "microsoft.insights/components",
+                "region": "eastus2",
+                "resources": [
+                  {
+                    "metricNamespace": "Microsoft.Insights/components",
+                    "region": "eastus2",
+                    "resourceGroup": "rg_award_nomination_sandbox",
+                    "resourceName": "appi-award-api-sandbox",
+                    "subscription": "4ddf12bb-5397-445f-bcaa-df4c7d3dfdca"
+                  }
+                ],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "subscription": "4ddf12bb-5397-445f-bcaa-df4c7d3dfdca",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "P95 latency (ms) – last 24 h",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 1,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 30
+          },
+          "id": 69,
+          "options": {
+            "barRadius": 0,
+            "barWidth": 0.97,
+            "fullHighlight": false,
+            "groupWidth": 0.7,
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "orientation": "auto",
+            "showValue": "auto",
+            "stacking": "none",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "xTickLabelSpacing": 0
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "azureLogAnalytics": {
+                "dashboardTime": true,
+                "mode": "raw",
+                "query": "requests\r\n| where name in (\r\n    \"POST /api/nominations\", \r\n    \"POST /api/nominations/approve\")\r\n| where success == true\r\n| summarize \r\n    Nominations = countif(name == \"POST /api/nominations\"),\r\n    Approvals = countif(name == \"POST /api/nominations/approve\")\r\n    by bin(timestamp, 1h)\r\n| order by timestamp asc\r\n| project timestamp, Nominations, Approvals",
+                "resources": [
+                  "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+                ],
+                "resultFormat": "table",
+                "timeColumn": "timestamp"
+              },
+              "azureMonitor": {
+                "allowedTimeGrainsMs": [],
+                "timeGrain": "auto"
+              },
+              "queryType": "Azure Log Analytics",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-azure-monitor-datasource",
+                "uid": "${DS_AZURE_MONITOR}"
+              }
+            }
+          ],
+          "title": "Nominations & Approvals - Last 24h",
+          "type": "barchart"
+        }
+      ],
+      "title": "Traffic shape",
+      "type": "row"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 2
+      },
+      "id": 70,
+      "panels": [],
+      "title": "Failures & action",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Endpoint"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 358
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failure %"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": 0
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 3
+      },
+      "id": 71,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Failure %"
+          }
+        ]
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "azureLogAnalytics": {
+            "dashboardTime": true,
+            "mode": "raw",
+            "query": "requests\r\n| where name !startswith \"HEAD /health\"\r\n| where name !startswith \"OPTIONS \"\r\n| summarize\r\n    TotalRequests = count(),\r\n    FailedRequests = countif(success == false)\r\n    by name\r\n| extend FailureRatePct = round(100.0 * todouble(FailedRequests) / todouble(TotalRequests), 2)\r\n| order by FailedRequests desc\r\n| project Endpoint = tostring(name), Failed = FailedRequests, Total = TotalRequests, [\"Failure %\"] = FailureRatePct\r\n| take 10",
+            "resources": [
+              "/subscriptions/4ddf12bb-5397-445f-bcaa-df4c7d3dfdca/resourceGroups/rg_award_nomination_sandbox/providers/Microsoft.Insights/components/appi-award-api-sandbox"
+            ],
+            "resultFormat": "table",
+            "timeColumn": "timestamp"
+          },
+          "azureMonitor": {
+            "allowedTimeGrainsMs": [],
+            "timeGrain": "auto"
+          },
+          "queryType": "Azure Log Analytics",
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          }
+        }
+      ],
+      "title": "Top failing API endpoints",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "",
+  "schemaVersion": 42,
+  "tags": [
+    "Azure-managed"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "includeAll": false,
+        "label": "Datasource",
+        "name": "am_ds",
+        "options": [],
+        "query": "grafana-azure-monitor-datasource",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "text": "microsoft.insights/components",
+          "value": "microsoft.insights/components"
+        },
+        "hide": 2,
+        "label": "Namespace",
+        "name": "ns",
+        "options": [
+          {
+            "selected": true,
+            "text": "microsoft.insights/components",
+            "value": "microsoft.insights/components"
+          }
+        ],
+        "query": "microsoft.insights/components",
+        "type": "custom"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "grafana-azure-monitor-datasource",
+          "uid": "${am_ds}"
+        },
+        "definition": "",
+        "includeAll": false,
+        "label": "Subscription",
+        "name": "sub",
+        "options": [],
+        "query": {
+          "grafanaTemplateVariableFn": {
+            "kind": "SubscriptionsQuery",
+            "rawQuery": "Subscriptions()"
+          },
+          "queryType": "Azure Subscriptions",
+          "refId": "A"
+        },
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "grafana-azure-monitor-datasource",
+          "uid": "${DS_AZURE_MONITOR}"
+        },
+        "definition": "",
+        "includeAll": false,
+        "label": "Resource Group",
+        "name": "rg",
+        "options": [],
+        "query": {
+          "azureResourceGraph": {
+            "query": "resources\r\n| where type =~ \"$ns\"\r\n| distinct resourceGroup\r\n"
+          },
+          "queryType": "Azure Resource Graph",
+          "refId": "A",
+          "subscription": "$sub",
+          "subscriptions": [
+            "$sub"
+          ]
+        },
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "grafana-azure-monitor-datasource",
+          "uid": "${am_ds}"
+        },
+        "definition": "ResourceNames($sub, $rg, $ns)",
+        "includeAll": false,
+        "label": "Resource",
+        "name": "res",
+        "options": [],
+        "query": {
+          "namespace": "$ns",
+          "queryType": "Azure Resource Names",
+          "refId": "A",
+          "resourceGroup": "$rg",
+          "subscription": "$sub"
+        },
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "GrafanaDashboard",
+  "uid": "subscriptions~4ddf12bb-5397-445f-bcaa-df4c7d3dfdca~resourceGroups~rg_awards_dashboard~providers~Microsoft.Dashboard~dashboards~GrafanaDashboard",
+  "version": 16,
+  "weekStart": ""
+}
