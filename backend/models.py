@@ -30,12 +30,28 @@ class Nomination(BaseModel):
     ApprovedDate: Optional[datetime] = None
     PayedDate: Optional[datetime] = None
     Status: Literal["Pending", "Approved", "Paid", "Rejected"]
+    # Business lifecycle data — when did the approver first receive the nomination
+    # request? Populated by the auxiliary worker after SMTP hand-off.
+    # None = approver not yet notified (event in flight or worker pending).
+    ApproverNotifiedAt: Optional[datetime] = None
 
 
 class NominationApproval(BaseModel):
     NominationId: int
     Approved: bool
     Comments: Optional[str] = None
+
+
+class ProcessedEvent(BaseModel):
+    """Represents a row in dbo.ProcessedEvents — the Service Bus idempotency log.
+    Used by the auxiliary worker to record every processed message and prevent
+    duplicate handling on redelivery (at-least-once delivery guarantee).
+    """
+    MessageId:    str               # Service Bus message ID (GUID string, PK)
+    EventType:    str               # e.g. 'nomination.created', 'nomination.approved'
+    NominationId: Optional[int] = None  # linked nomination, if applicable
+    ProcessedAt:  datetime          # UTC timestamp written at insert time
+    Result:       Literal["success", "skipped", "error"]
 
 
 class StatusResponse(BaseModel):
