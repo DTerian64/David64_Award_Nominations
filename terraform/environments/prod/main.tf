@@ -354,11 +354,14 @@ module "auxiliary" {
 
   # Secrets from Key Vault — fetched at runtime via managed identity
   kv_secret_references = [
-    { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
-    { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
-    { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
-    { env_name = "GMAIL_APP_PASSWORD",  kv_secret_name = "GMAIL-APP-PASSWORD" },
+    { env_name = "SQL_SERVER",                    kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE",                  kv_secret_name = "SQL-DATABASE" },
+    { env_name = "SQL_USER",                      kv_secret_name = "SQL-USER" },
+    { env_name = "SQL_PASSWORD",                  kv_secret_name = "SQL-PASSWORD" },
+    { env_name = "GMAIL_APP_PASSWORD",            kv_secret_name = "GMAIL-APP-PASSWORD" },
+    { env_name = "FROM_EMAIL",                    kv_secret_name = "FROM-EMAIL" },
+    { env_name = "FROM_NAME",                     kv_secret_name = "FROM-NAME" },
+    { env_name = "EMAIL_ACTION_SECRET_KEY",       kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
   ]
 

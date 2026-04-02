@@ -1,0 +1,127 @@
+name: Deploy Auxiliary Service to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main     # → production    (rg_award_nomination)
+      - sandbox  # → sandbox       (rg_award_nomination_sandbox)
+      - dev      # → development   (rg_award_nomination_dev)
+    paths:
+      - 'auxiliary-service/**'
+  workflow_dispatch:
+
+# Single image name across all environments — the tag (latest/sandbox/dev)
+# and the target container app differ per GitHub Environment.
+env:
+  IMAGE_NAME: award-auxiliary
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    # Selects the GitHub Environment, which determines which vars.* / secrets.*
+    # are injected. Same environments used by the backend workflow.
+    # main → production  |  sandbox → sandbox  |  dev → development
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'sandbox' && 'sandbox' || 'development' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Login to Azure Container Registry
+      run: |
+        az acr login --name ${{ vars.ACR_NAME }}
+
+    # ------------------------------------------------------------------
+    # Build & push
+    # Matches the backend tagging convention exactly:
+    #   Prod tags:    latest   and  latest-<sha>
+    #   Sandbox tags: sandbox  and  sandbox-<sha>
+    #   Dev tags:     dev      and  dev-<sha>
+    # ------------------------------------------------------------------
+    - name: Build Docker image
+      run: |
+        cd auxiliary-service
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker build -t ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} .
+        docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    - name: Push to Azure Container Registry
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    # ------------------------------------------------------------------
+    # Secrets — ACR password so the worker can pull the new image.
+    # KV-backed secrets (SQL, GMAIL_APP_PASSWORD, AppInsights) are already
+    # wired by Terraform as ACA secret references and need no intervention here.
+    # ------------------------------------------------------------------
+    - name: Set Container App secrets
+      run: |
+        ACR_PASSWORD=$(az acr credential show \
+          --name ${{ vars.ACR_NAME }} \
+          --query "passwords[0].value" -o tsv)
+
+        az containerapp secret set \
+          --name ${{ vars.CONTAINER_APP_AUXILIARY }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --secrets \
+            "${{ vars.ACR_SECRET_NAME }}=${ACR_PASSWORD}"
+
+    # ------------------------------------------------------------------
+    # Environment variables — non-secret config that either changes per
+    # deploy (API_BASE_URL derived from Front Door) or per environment.
+    #
+    # EMAIL_ACTION_SECRET_KEY, FROM_EMAIL, FROM_NAME are already wired
+    # by Terraform as Key Vault secret references — no action needed here.
+    # ------------------------------------------------------------------
+    - name: Set environment variables on Container App
+      run: |
+        FRONTDOOR_HOSTNAME=$(az afd endpoint show \
+          --profile-name ${{ vars.FRONTDOOR_PROFILE }} \
+          --endpoint-name ${{ vars.FRONTDOOR_ENDPOINT }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --query "hostName" -o tsv 2>/dev/null || echo "")
+
+        az containerapp update \
+          --name ${{ vars.CONTAINER_APP_AUXILIARY }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --set-env-vars \
+            "API_BASE_URL=https://${FRONTDOOR_HOSTNAME}" \
+            "EMAIL_ACTION_TOKEN_EXPIRY_HOURS=72" \
+            "ENVIRONMENT=${{ vars.ENVIRONMENT }}"
+
+    # ------------------------------------------------------------------
+    # Deploy — update the container app to the new SHA-tagged image.
+    # Terraform's lifecycle.ignore_changes on the image means subsequent
+    # terraform apply calls will never revert this back to the placeholder.
+    # ------------------------------------------------------------------
+    - name: Deploy to Container App
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        az containerapp update \
+          --name ${{ vars.CONTAINER_APP_AUXILIARY }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --image ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    - name: Deployment summary
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        echo "### Auxiliary Service Deployed! :rocket:"                                           >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                    >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ vars.ENVIRONMENT }}"                                           >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}"                                                 >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"          >> $GITHUB_STEP_SUMMARY
+        echo "**Container App:** ${{ vars.CONTAINER_APP_AUXILIARY }}"                             >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}"                                                      >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                    >> $GITHUB_STEP_SUMMARY
+        echo "KEDA will scale the worker from 0→1 when messages arrive on the Service Bus topic." >> $GITHUB_STEP_SUMMARY
