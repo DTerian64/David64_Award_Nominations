@@ -38,11 +38,9 @@ from models import (
 
 import fraud_ml
 
-from token_utils import verify_action_token, get_action_url
-from email_utils import (
-    get_action_confirmation_page, 
-    get_nomination_pending_email
-)
+from token_utils import verify_action_token
+from email_utils import get_action_confirmation_page
+from service_bus_publisher import publish_event
 
 # ============================================================================
 # CONFIGURATION
@@ -50,10 +48,6 @@ from email_utils import (
 
 TENANT_ID = os.getenv("TENANT_ID")
 CLIENT_ID = os.getenv("CLIENT_ID")
-
-# Email Configuration (Gmail SMTP)
-# Import email utilities
-from email_utils import send_email, get_nomination_submitted_email, get_nomination_approved_email
 
 # ============================================================================
 # FASTAPI APPLICATION
@@ -484,49 +478,17 @@ async def create_nomination(
         f"NominationId: {nomination_id}, Beneficiary: {beneficiary_name}, Amount: {nomination.Amount} {_currency}"
     )
     
-    # Send email to manager using template
-    nominator_name = f"{effective_user['FirstName']} {effective_user['LastName']}"
-    
-    # Generate secure action URLs
-    approve_url = get_action_url(
-        os.getenv("API_BASE_URL", "https://award-api-eastus.lemonpond-a2daba01.eastus.azurecontainerapps.io"),
-        int(nomination_id),
-        "approve",
-        int(manager_id)
-    )
-    
-    reject_url = get_action_url(
-        os.getenv("API_BASE_URL", "https://award-nomination-api-bqb8ftbdfpemfyck.z02.azurefd.net"),
-        int(nomination_id),
-        "reject",
-        int(manager_id)
-    )
-
-    # Use new template with action buttons
-    email_body = get_nomination_pending_email(
-        manager_name=manager_name,
-        nominator_name=f"{effective_user['FirstName']} {effective_user['LastName']}",
-        beneficiary_name=beneficiary_name,
-        dollar_amount=float(nomination.Amount),
-        description=nomination.NominationDescription,
-        approve_url=approve_url,
-        reject_url=reject_url
-    )
-
-    manager_email = manager[2]  # Use userEmail from manager data
-    # Send email notification
+    # Publish event — the auxiliary worker picks this up, reads fresh DB data,
+    # generates the approve/reject action URLs, and sends the manager email.
     try:
-        email_sent = await send_email(
-            to_email=manager_email,
-            subject=f"Award Nomination Pending Approval - {beneficiary_name}",
-            body=email_body
-        )
-        if not email_sent:
-            logger.warning(f"⚠️ Failed to send email to {manager_email}")            
-            # Don't fail the nomination if email fails - just log it
+        await publish_event("nomination.created", int(nomination_id))
     except Exception as e:
-        logger.warning(f"⚠️ Email send error: {e}")        
-        # Don't fail the nomination if email fails
+        logger.warning(
+            "⚠️ Failed to publish nomination.created event for nomination %d: %s",
+            nomination_id, e
+        )
+        # Non-fatal: nomination is already persisted; worker will not send email
+        # but the nomination itself is not rolled back.
     
     return StatusResponse(
         Status="Pending",
@@ -589,39 +551,26 @@ async def approve_nomination(
     if approval.Approved:
         # Approve nomination
         sqlhelper.approve_nomination(approval.NominationId)
-        
-        # Get nomination details for email
-        nom_details = sqlhelper.get_nomination_details(approval.NominationId)
-        if nom_details:
-            nominator_email = nom_details.get('nominator_email')
-            beneficiary_name = nom_details.get('beneficiary_name')
-            award_amount = nom_details.get('dollar_amount')
-            
-            # Send approval email to nominator
-            if nominator_email:
-                try:
-                    approval_body = get_nomination_approved_email(
-                        beneficiary_name or "the nominee",
-                        f"Monetary Award (${award_amount})"
-                    )
-                    await send_email(
-                        to_email=nominator_email,
-                        subject=f"✅ Nomination Approved - {beneficiary_name}",
-                        body=approval_body
-                    )
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to send approval email: {e}")                    
-        
+
+        # Publish event — auxiliary worker reads fresh DB data and emails the nominator
+        try:
+            await publish_event("nomination.approved", approval.NominationId)
+        except Exception as e:
+            logger.warning(
+                "⚠️ Failed to publish nomination.approved event for nomination %d: %s",
+                approval.NominationId, e
+            )
+
         # Log if impersonating
         await log_action_if_impersonating(
             user_context,
             "approved_nomination",
             f"NominationId: {approval.NominationId}"
         )
-        
+
         # Generate payroll extract file
         await generate_payroll_extract(approval.NominationId)
-        
+
         return StatusResponse(
             Status="Approved",
             Message="Nomination approved successfully"
@@ -629,50 +578,23 @@ async def approve_nomination(
     else:
         # Reject nomination
         sqlhelper.reject_nomination(approval.NominationId)
-        
-        # Get nomination details for email
-        nom_details = sqlhelper.get_nomination_details(approval.NominationId)
-        if nom_details:
-            nominator_email = nom_details.get('nominator_email')
-            beneficiary_name = nom_details.get('beneficiary_name')
-            award_amount = nom_details.get('dollar_amount')
-            
-            # Send rejection email to nominator
-            if nominator_email:
-                try:
-                    rejection_body = f"""
-                    <html>
-                    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                        <h2 style="color: #e74c3c;">Nomination Status Update</h2>
-                        <p>Your nomination has been reviewed:</p>
-                        <ul>
-                            <li><strong>Nominee:</strong> {beneficiary_name}</li>
-                            <li><strong>Award Amount:</strong> ${award_amount}</li>
-                            <li><strong>Status:</strong> <span style="color: #e74c3c;">Not Approved</span></li>
-                        </ul>
-                        <p>Thank you for your participation in the award nomination process.</p>
-                        <hr style="margin: 20px 0;">
-                        <p style="color: #7f8c8d; font-size: 12px;">
-                            This is an automated message from the Award Nomination System.
-                        </p>
-                    </body>
-                    </html>
-                    """
-                    await send_email(
-                        to_email=nominator_email,
-                        subject=f"Nomination Status - {beneficiary_name}",
-                        body=rejection_body
-                    )
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to send rejection email: {e}")                    
-        
+
+        # Publish event — auxiliary worker reads fresh DB data and emails the nominator
+        try:
+            await publish_event("nomination.approved", approval.NominationId)
+        except Exception as e:
+            logger.warning(
+                "⚠️ Failed to publish nomination.approved event for nomination %d: %s",
+                approval.NominationId, e
+            )
+
         # Log if impersonating
         await log_action_if_impersonating(
             user_context,
             "rejected_nomination",
             f"NominationId: {approval.NominationId}"
         )
-        
+
         return StatusResponse(
             Status="Rejected",
             Message="Nomination rejected"
@@ -870,83 +792,41 @@ async def handle_email_action(token: str = Query(..., description="Action token 
     try:
         if action == "approve":
             sqlhelper.approve_nomination(nomination_id)
-            
-            # Get nomination details for email
-            nom_details = sqlhelper.get_nomination_details(nomination_id)
-            if nom_details:
-                nominator_email = nom_details.get('nominator_email')
-                beneficiary_name = nom_details.get('beneficiary_name')
-                award_amount = nom_details.get('dollar_amount')
-                
-                # Send approval email to nominator
-                if nominator_email:
-                    try:
-                        from email_utils import send_email, get_nomination_approved_email
-                        approval_body = get_nomination_approved_email(
-                            beneficiary_name or "the nominee",
-                            f"Monetary Award (${award_amount})"
-                        )
-                        await send_email(
-                            to_email=nominator_email,
-                            subject=f"✅ Nomination Approved - {beneficiary_name}",
-                            body=approval_body
-                        )
-                    except Exception as e:
-                        logger.warning(f"⚠️ Failed to send approval email: {e}")                        
-            
+
+            # Publish event — auxiliary worker reads fresh DB data and emails the nominator
+            try:
+                await publish_event("nomination.approved", nomination_id)
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Failed to publish nomination.approved event for nomination %d: %s",
+                    nomination_id, e
+                )
+
             # Generate payroll extract
             await generate_payroll_extract(nomination_id)
-            
+
             return get_action_confirmation_page(
                 action="approved",
                 success=True,
-                message=f"The nomination has been approved successfully. The nominator has been notified via email."
+                message="The nomination has been approved successfully. The nominator has been notified via email."
             )
-            
+
         else:  # action == "reject"
             sqlhelper.reject_nomination(nomination_id)
-            
-            # Get nomination details for email
-            nom_details = sqlhelper.get_nomination_details(nomination_id)
-            if nom_details:
-                nominator_email = nom_details.get('nominator_email')
-                beneficiary_name = nom_details.get('beneficiary_name')
-                award_amount = nom_details.get('dollar_amount')
-                
-                # Send rejection email to nominator
-                if nominator_email:
-                    try:
-                        from email_utils import send_email
-                        rejection_body = f"""
-                        <html>
-                        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                            <h2 style="color: #e74c3c;">Nomination Status Update</h2>
-                            <p>Your nomination has been reviewed:</p>
-                            <ul>
-                                <li><strong>Nominee:</strong> {beneficiary_name}</li>
-                                <li><strong>Award Amount:</strong> ${award_amount}</li>
-                                <li><strong>Status:</strong> <span style="color: #e74c3c;">Not Approved</span></li>
-                            </ul>
-                            <p>Thank you for your participation in the award nomination process.</p>
-                            <hr style="margin: 20px 0;">
-                            <p style="color: #7f8c8d; font-size: 12px;">
-                                This is an automated message from the Award Nomination System.
-                            </p>
-                        </body>
-                        </html>
-                        """
-                        await send_email(
-                            to_email=nominator_email,
-                            subject=f"Nomination Status - {beneficiary_name}",
-                            body=rejection_body
-                        )
-                    except Exception as e:
-                        logger.warning(f"⚠️ Failed to send rejection email: {e}")                        
-            
+
+            # Publish event — auxiliary worker reads fresh DB data and emails the nominator
+            try:
+                await publish_event("nomination.approved", nomination_id)
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Failed to publish nomination.approved event for nomination %d: %s",
+                    nomination_id, e
+                )
+
             return get_action_confirmation_page(
                 action="rejected",
                 success=True,
-                message=f"The nomination has been rejected. The nominator has been notified via email."
+                message="The nomination has been rejected. The nominator has been notified via email."
             )
             
     except Exception as e:

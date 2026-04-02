@@ -246,8 +246,9 @@ module "container_apps" {
     { name = "EMAIL_ACTION_SECRET_KEY",         value = var.email_action_secret_key },
     # CLIENT_ID is required by auth.py for JWT audience validation (api://<client_id>).
     { name = "CLIENT_ID",                       value = module.app_registrations.api_client_id },
-    # Service Bus — FQNS is not sensitive; the MI credential grants access.
+    # Service Bus — neither FQNS nor topic name is sensitive; MI credential grants access.
     { name = "SERVICE_BUS_FQNS",                value = module.service_bus.namespace_fqns },
+    { name = "SERVICE_BUS_TOPIC_NAME",          value = module.service_bus.topic_name },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
