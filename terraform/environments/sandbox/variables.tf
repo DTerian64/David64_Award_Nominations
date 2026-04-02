@@ -147,3 +147,15 @@ variable "model_blob_name" {
   type    = string
   default = "fraud_detection_model.pkl"
 }
+
+# ── Service Bus ───────────────────────────────────────────────────────────────
+variable "service_bus_namespace_name" {
+  description = "Service Bus namespace name — globally unique. Convention: sb-award-{env}"
+  type        = string
+}
+
+# ── Auxiliary Container App ───────────────────────────────────────────────────
+variable "auxiliary_container_app_name" {
+  description = "Auxiliary Container App name — must be unique within the CAE. Convention: award-auxiliary-{env}"
+  type        = string
+}

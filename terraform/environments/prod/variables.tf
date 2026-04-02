@@ -82,3 +82,15 @@ variable "secrets" {
   type      = map(string)
   sensitive = true
 }
+
+# ── Service Bus ───────────────────────────────────────────────────────────────
+variable "service_bus_namespace_name" {
+  description = "Service Bus namespace name — globally unique. Convention: sb-award-prod"
+  type        = string
+}
+
+# ── Auxiliary Container App ───────────────────────────────────────────────────
+variable "auxiliary_container_app_name" {
+  description = "Auxiliary Container App name — must be unique within the CAE. Convention: award-auxiliary-prod"
+  type        = string
+}

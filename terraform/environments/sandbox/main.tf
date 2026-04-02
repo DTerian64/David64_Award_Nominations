@@ -102,7 +102,7 @@ module "storage" {
 # Created BEFORE Key Vault access policies and Container Apps.
 # This eliminates the system-assigned identity race condition where Azure tries to
 # validate KV-backed secrets before the access policy for the new identity exists.
-# Dependency order: MI → KV access policy → Container Apps (with KV secrets)
+# Dependency order: MI → KV access policy → resource (with KV secrets)
 resource "azurerm_user_assigned_identity" "aca_primary" {
   name                = "id-award-api-primary-${var.environment}"
   resource_group_name = var.resource_group_name
@@ -115,6 +115,16 @@ resource "azurerm_user_assigned_identity" "aca_secondary" {
   name                = "id-award-api-secondary-${var.environment}"
   resource_group_name = var.resource_group_name
   location            = var.location_secondary
+  tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg]
+}
+
+# Auxiliary Function identity — created here (before KV) so the KV access policy
+# and Service Bus RBAC assignments can be granted before the Function App is created.
+resource "azurerm_user_assigned_identity" "auxiliary_function" {
+  name                = "id-award-auxiliary-${var.environment}"
+  resource_group_name = var.resource_group_name
+  location            = var.location_primary
   tags                = local.tags
   depends_on          = [azurerm_resource_group.rg]
 }
@@ -210,10 +220,11 @@ module "container_apps" {
   key_vault_uri                      = module.key_vault.vault_uri
   aca_primary_identity_id            = azurerm_user_assigned_identity.aca_primary.id
   aca_secondary_identity_id          = azurerm_user_assigned_identity.aca_secondary.id
-  # KV access policies must exist before Container Apps try to resolve KV secrets
+  # KV access policies and Service Bus RBAC must exist before Container Apps start.
   depends_on                      = [azurerm_resource_group.rg, module.key_vault,
                                      azurerm_key_vault_access_policy.aca_primary,
-                                     azurerm_key_vault_access_policy.aca_secondary]
+                                     azurerm_key_vault_access_policy.aca_secondary,
+                                     module.service_bus]
 
   # Non-secret config — passed as plain env vars
   environment_variables = [
@@ -235,6 +246,8 @@ module "container_apps" {
     { name = "EMAIL_ACTION_SECRET_KEY",         value = var.email_action_secret_key },
     # CLIENT_ID is required by auth.py for JWT audience validation (api://<client_id>).
     { name = "CLIENT_ID",                       value = module.app_registrations.api_client_id },
+    # Service Bus — FQNS is not sensitive; the MI credential grants access.
+    { name = "SERVICE_BUS_FQNS",                value = module.service_bus.namespace_fqns },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -279,7 +292,97 @@ resource "azurerm_key_vault_access_policy" "aca_secondary" {
   depends_on = [module.key_vault, azurerm_user_assigned_identity.aca_secondary]
 }
 
-# ── 9. Front Door ─────────────────────────────────────────────────────────────
+# KV access policy — Auxiliary Function
+resource "azurerm_key_vault_access_policy" "auxiliary_function" {
+  key_vault_id = module.key_vault.key_vault_id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_user_assigned_identity.auxiliary_function.principal_id
+
+  secret_permissions = ["Get", "List"]
+
+  depends_on = [module.key_vault, azurerm_user_assigned_identity.auxiliary_function]
+}
+
+# ── 9. Service Bus ────────────────────────────────────────────────────────────
+module "service_bus" {
+  source = "../../modules/service-bus"
+
+  resource_group_name = var.resource_group_name
+  location            = var.location_primary
+  namespace_name      = var.service_bus_namespace_name
+  sku                 = "Standard"
+  max_delivery_count  = 5
+  tags                = local.tags
+
+  # Static string keys let Terraform plan for_each even when principal IDs are unknown.
+  sender_principal_ids = {
+    "aca-primary"   = azurerm_user_assigned_identity.aca_primary.principal_id
+    "aca-secondary" = azurerm_user_assigned_identity.aca_secondary.principal_id
+  }
+
+  receiver_principal_ids = {
+    "auxiliary-function" = azurerm_user_assigned_identity.auxiliary_function.principal_id
+  }
+
+  depends_on = [azurerm_resource_group.rg]
+}
+
+# ── 10. Auxiliary Container App ───────────────────────────────────────────────
+# Event-driven worker: Service Bus → KEDA → container (no HTTP ingress).
+# Scales to zero when idle; activates when messages arrive on award-events.
+# Generic dispatcher handles all event types: email, exports, HR sync, etc.
+module "auxiliary" {
+  source = "../../modules/auxiliary-container-app"
+
+  resource_group_name          = var.resource_group_name
+  location                     = var.location_primary
+  app_name                     = var.auxiliary_container_app_name
+  environment                  = var.environment
+  container_app_environment_id = module.container_apps.cae_primary_id
+
+  # User-assigned identity — pre-authorized for KV and Service Bus above
+  auxiliary_identity_id        = azurerm_user_assigned_identity.auxiliary_function.id
+  auxiliary_identity_client_id = azurerm_user_assigned_identity.auxiliary_function.client_id
+
+  # ACR — same registry as the API container apps
+  acr_login_server   = module.container_registry.login_server
+  acr_admin_username = module.container_registry.admin_username
+  acr_admin_password = module.container_registry.admin_password
+
+  # Service Bus — FQNS and topic/subscription for KEDA scaler + runtime
+  service_bus_fqns              = module.service_bus.namespace_fqns
+  service_bus_topic_name        = module.service_bus.topic_name
+  service_bus_subscription_name = module.service_bus.email_processor_subscription_name
+
+  # Key Vault — for KV-backed secret references
+  key_vault_uri = module.key_vault.vault_uri
+
+  # Scale to zero in sandbox — no cost when idle; KEDA activates on messages
+  min_replicas       = 0
+  max_replicas       = 2
+  keda_message_count = 5
+
+  # Secrets from Key Vault — fetched at runtime via managed identity
+  kv_secret_references = [
+    { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
+    { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
+    { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
+    { env_name = "GMAIL_APP_PASSWORD",  kv_secret_name = "GMAIL-APP-PASSWORD" },
+    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
+  ]
+
+  # KV access policy and Service Bus RBAC must exist before the Container App starts
+  depends_on = [
+    azurerm_key_vault_access_policy.auxiliary_function,
+    module.service_bus,
+    module.container_apps,
+  ]
+
+  tags = local.tags
+}
+
+# ── 11. Front Door ────────────────────────────────────────────────────────────
 module "front_door" {
   source = "../../modules/front-door"
 
