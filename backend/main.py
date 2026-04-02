@@ -448,7 +448,7 @@ async def create_nomination(
     )
 
     logger.info(
-        "Nomination created successfully",
+        "Nomination created successfully", 
         extra={
             "nomination_id": nomination_id,
             "user_id": effective_user["UserId"]
