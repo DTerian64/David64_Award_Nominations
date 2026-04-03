@@ -60,7 +60,12 @@ async def publish_event(event_type: str, nomination_id: int) -> None:
         application_properties={"event_type": event_type},
     )
 
-    credential = DefaultAzureCredential()
+    client_id = os.getenv("CLIENT_ID")
+    credential = DefaultAzureCredential(
+        managed_identity_client_id=client_id if client_id else None,
+        logging_enable=True,
+    )
+    
     try:
         async with ServiceBusClient(_FQNS, credential) as client:
             async with client.get_topic_sender(_TOPIC) as sender:
