@@ -355,6 +355,13 @@ module "auxiliary" {
   max_replicas       = 5
   keda_message_count = 5
 
+  # Non-secret env vars — must be Terraform-managed so they survive every
+  # terraform apply (unlike vars set only via az containerapp update --set-env-vars).
+  environment_variables = [
+    { name = "API_BASE_URL",                    value = var.api_base_url },
+    { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
+  ]
+
   # Secrets from Key Vault — fetched at runtime via managed identity
   kv_secret_references = [
     { env_name = "SQL_SERVER",                    kv_secret_name = "SQL-SERVER" },
