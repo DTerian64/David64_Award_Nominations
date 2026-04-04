@@ -29,6 +29,7 @@ import os
 import signal
 import sys
 import time
+from contextvars import ContextVar
 
 from azure.identity import DefaultAzureCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
@@ -36,15 +37,47 @@ from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
 
 from dispatcher import dispatch
 
+# ── Message-ID context ────────────────────────────────────────────────────────
+# Holds the Service Bus message_id for the message currently being processed.
+# Set in the receive loop before dispatch; reset after. Propagates automatically
+# to every logger in every module via _MessageIdFilter — no need to thread
+# message_id through function signatures or add it to every extra={} call.
+#
+# Usage in the receive loop:
+#   _token = _current_message_id.set(message_id)
+#   try:
+#       ...
+#   finally:
+#       _current_message_id.reset(_token)
+_current_message_id: ContextVar[str] = ContextVar("message_id", default="")
+
+
 # ── Logging ───────────────────────────────────────────────────────────────────
-# Custom formatter that appends any `extra` fields as key=value pairs.
-# Python's logging.basicConfig format string only renders built-in LogRecord
-# attributes — extra fields are attached to the record but never printed unless
-# a formatter explicitly reads them.  This formatter does that automatically,
-# so every logger.info(..., extra={...}) call throughout the codebase is visible
-# without modifying individual call sites.
+class _MessageIdFilter(logging.Filter):
+    """Injects the current message_id into every LogRecord.
+
+    This means every log line emitted while processing a Service Bus message —
+    regardless of which module emits it — contains message_id in its extras.
+    KQL queries can then filter by message_id across the entire processing chain:
+
+        | where Log_s has "4dffae70-baef-451f-808c-522636bbd3d7"
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Only inject if not already explicitly set by the caller.
+        if not hasattr(record, "message_id"):
+            mid = _current_message_id.get()
+            if mid:
+                record.message_id = mid
+        return True
+
+
 class _ExtraFormatter(logging.Formatter):
-    # Built-in LogRecord attributes — exclude these from the "extras" suffix.
+    """Appends any extra fields as key=value pairs after the log message.
+
+    Python's format string only renders built-in LogRecord attributes — extra
+    fields are attached to the record but never printed unless a formatter
+    explicitly reads them. This formatter does that automatically.
+    """
     _BUILTIN = frozenset({
         "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
         "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
@@ -70,10 +103,14 @@ _handler.setFormatter(_ExtraFormatter(
     datefmt="%Y-%m-%dT%H:%M:%SZ",
 ))
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
+
+# Attach the filter to the root logger so it applies to every module.
+logging.getLogger().addFilter(_MessageIdFilter())
+
 logger = logging.getLogger("auxiliary.main")
 
-# Temporarily enable DEBUG on the db layer so we can trace ProcessedEvents writes.
-# Remove or set back to INFO once the idempotency issue is diagnosed.
+# Temporarily enable DEBUG on the db layer to trace ProcessedEvents writes.
+# Remove once the idempotency behaviour is confirmed stable.
 logging.getLogger("auxiliary.db").setLevel(logging.DEBUG)
 
 from dotenv import load_dotenv
@@ -154,58 +191,70 @@ def main() -> None:
 
                     message_id = str(message.message_id)
 
-                    # Reassemble body — handle both AMQP encodings:
-                    #   data section  (bytes) → publisher used .encode("utf-8")
-                    #   value section (str)   → legacy messages published as plain str
-                    raw_body = message.body
+                    # Bind message_id into the logging context for the entire
+                    # duration of this message's processing. _MessageIdFilter
+                    # injects it into every LogRecord emitted by any module
+                    # (db, dispatcher, handlers) — no need to pass it through
+                    # function args or add it to every extra={} call.
+                    _mid_token = _current_message_id.set(message_id)
                     try:
-                        chunks = list(raw_body)
-                        if chunks and isinstance(chunks[0], (bytes, bytearray)):
-                            body_str = b"".join(chunks).decode("utf-8")
-                        else:
-                            body_str = "".join(str(c) for c in chunks)
-                    except Exception as body_exc:
-                        body_str = str(raw_body)
-                        logger.warning(
-                            "Could not reassemble message body cleanly — fell back to str()",
-                            extra={"message_id": message_id, "error": str(body_exc)},
-                        )
+                        # Reassemble body — handle both AMQP encodings:
+                        #   data section  (bytes) → publisher used .encode("utf-8")
+                        #   value section (str)   → legacy messages published as plain str
+                        raw_body = message.body
+                        try:
+                            chunks = list(raw_body)
+                            if chunks and isinstance(chunks[0], (bytes, bytearray)):
+                                body_str = b"".join(chunks).decode("utf-8")
+                            else:
+                                body_str = "".join(str(c) for c in chunks)
+                        except Exception as body_exc:
+                            body_str = str(raw_body)
+                            logger.warning(
+                                "Could not reassemble message body cleanly — fell back to str()",
+                                extra={"error": str(body_exc)},
+                            )
 
-                    logger.info(
-                        "Message received",
-                        extra={"message_id": message_id, "body": body_str[:200]}
-                    )
-
-                    try:
-                        payload = json.loads(body_str)
-                    except json.JSONDecodeError as exc:
-                        logger.error(
-                            "Invalid JSON in message body — dead-lettering",
-                            extra={"message_id": message_id, "error": str(exc)}
-                        )
-                        receiver.dead_letter_message(
-                            message,
-                            reason="InvalidJson",
-                            error_description=str(exc),
-                        )
-                        continue
-
-                    try:
-                        result = dispatch(message_id, payload)
-                        receiver.complete_message(message)
                         logger.info(
-                            "Message completed",
-                            extra={"message_id": message_id, "result": result}
+                            "Message received",
+                            extra={"body": body_str[:200]},
                         )
-                    except Exception as exc:
-                        logger.error(
-                            "Message processing failed — abandoning for retry",
-                            extra={"message_id": message_id, "error": str(exc)},
-                            exc_info=True,
-                        )
-                        # Abandon returns the message to the queue.
-                        # After max_delivery_count attempts it goes to the dead-letter queue.
-                        receiver.abandon_message(message)
+
+                        try:
+                            payload = json.loads(body_str)
+                        except json.JSONDecodeError as exc:
+                            logger.error(
+                                "Invalid JSON in message body — dead-lettering",
+                                extra={"error": str(exc)},
+                            )
+                            receiver.dead_letter_message(
+                                message,
+                                reason="InvalidJson",
+                                error_description=str(exc),
+                            )
+                            continue
+
+                        try:
+                            result = dispatch(message_id, payload)
+                            receiver.complete_message(message)
+                            logger.info(
+                                "Message completed",
+                                extra={"result": result},
+                            )
+                        except Exception as exc:
+                            logger.error(
+                                "Message processing failed — abandoning for retry",
+                                extra={"error": str(exc)},
+                                exc_info=True,
+                            )
+                            # Abandon returns the message to the queue.
+                            # After max_delivery_count attempts it goes to the DLQ.
+                            receiver.abandon_message(message)
+
+                    finally:
+                        # Always clear the message_id context, even on exception,
+                        # so the next message starts with a clean logging context.
+                        _current_message_id.reset(_mid_token)
 
     logger.info("Auxiliary worker shut down cleanly")
 

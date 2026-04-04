@@ -32,15 +32,20 @@ from azure.identity.aio import DefaultAzureCredential
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+# Suppress noisy SDK INFO messages — only show WARNING and above from azure libs.
+# azure.identity: "No environment configuration found.", "ManagedIdentityCredential will use IMDS", etc.
+# azure.servicebus / uamqp: AMQP connection/session/link state-change flood.
+for _noisy in ("azure.identity", "azure.core", "azure.servicebus", "uamqp"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 FQNS         = os.environ.get("SERVICE_BUS_FQNS",              "sb-award-sandbox.servicebus.windows.net")
 TOPIC        = os.environ.get("SERVICE_BUS_TOPIC_NAME",        "award-events")
 SUBSCRIPTION = os.environ.get("SERVICE_BUS_SUBSCRIPTION_NAME", "email-processor")
 
 
 async def resubmit(dry_run: bool, purge: bool = False) -> None:
-    credential = DefaultAzureCredential()
-
-    async with ServiceBusClient(FQNS, credential) as client:
+    async with DefaultAzureCredential() as credential, \
+               ServiceBusClient(FQNS, credential) as client:
         # Dead-letter receiver for the subscription
         dlq_receiver = client.get_subscription_receiver(
             topic_name=TOPIC,
@@ -109,7 +114,6 @@ async def resubmit(dry_run: bool, purge: bool = False) -> None:
                 await dlq_receiver.complete_message(dlq_msg)
                 logger.info("Completed DLQ message  id=%s", original_id)
 
-    await credential.close()
     if not dry_run:
         logger.info("Done — all DLQ messages %s.", "purged" if purge else "resubmitted")
 
