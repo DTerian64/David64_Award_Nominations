@@ -229,7 +229,6 @@ module "container_apps" {
     { name = "CORS_ALLOWED_ORIGINS",            value = var.cors_allowed_origins },
     { name = "LOGGING_LEVEL",                   value = var.logging_level },
     { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
-    { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
     # CLIENT_ID is required by auth.py for JWT audience validation (api://<client_id>).
     { name = "CLIENT_ID",                       value = module.app_registrations.api_client_id },
     # Service Bus — neither FQNS nor topic name is sensitive; MI credential grants access.
@@ -247,9 +246,10 @@ module "container_apps" {
     { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY",   kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "GMAIL_APP_PASSWORD",  kv_secret_name = "GMAIL-APP-PASSWORD" },
-    { env_name = "AZURE_OPENAI_KEY",                     kv_secret_name = "AZURE-OPENAI-KEY" },
-    { env_name = "AZURE_OPENAI_ENDPOINT",                kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
-    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
+    { env_name = "EMAIL_ACTION_SECRET_KEY",                  kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
+    { env_name = "AZURE_OPENAI_KEY",                         kv_secret_name = "AZURE-OPENAI-KEY" },
+    { env_name = "AZURE_OPENAI_ENDPOINT",                    kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
+    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING",    kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
   ]
 
   tags = local.tags
