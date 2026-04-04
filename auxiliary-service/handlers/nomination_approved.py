@@ -67,13 +67,15 @@ def handle(payload: dict) -> None:
     if status == "Approved":
         body = email_client.render_nomination_approved(
             beneficiary_name=details["beneficiary_name"],
-            dollar_amount=details["dollar_amount"],
+            dollar_amount=details["amount"],
+            currency=details["currency"],
         )
         subject = f"✅ Nomination Approved — {details['beneficiary_name']}"
     else:  # Rejected
         body = email_client.render_nomination_rejected(
             beneficiary_name=details["beneficiary_name"],
-            dollar_amount=details["dollar_amount"],
+            dollar_amount=details["amount"],
+            currency=details["currency"],
         )
         subject = f"Nomination Status — {details['beneficiary_name']}"
 

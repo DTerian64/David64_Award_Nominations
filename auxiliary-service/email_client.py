@@ -50,6 +50,25 @@ def send_email(to_email: str, subject: str, body: str) -> None:
     logger.info("Email sent", extra={"to": to_email, "subject": subject})
 
 
+# ── Currency formatting ───────────────────────────────────────────────────────
+# Map ISO 4217 codes to their conventional symbols. Unknown codes fall back to
+# the ISO code itself as a prefix (e.g. "CHF 1,000.00") — unambiguous and safe.
+_CURRENCY_SYMBOLS: dict[str, str] = {
+    "USD": "$",  "CAD": "CA$", "AUD": "A$",
+    "EUR": "€",  "GBP": "£",   "JPY": "¥",
+    "CNY": "¥",  "KRW": "₩",   "INR": "₹",
+    "BRL": "R$", "MXN": "$",   "CHF": "CHF ",
+}
+
+def _fmt(amount: float, currency: str) -> str:
+    """Format an amount with its currency symbol, e.g. '$1,234.56' or 'KRW 1,234'."""
+    symbol = _CURRENCY_SYMBOLS.get(currency.upper(), f"{currency.upper()} ")
+    # JPY and KRW are typically shown without decimal places
+    if currency.upper() in ("JPY", "KRW"):
+        return f"{symbol}{amount:,.0f}"
+    return f"{symbol}{amount:,.2f}"
+
+
 # ── HTML templates ────────────────────────────────────────────────────────────
 # Kept in sync with backend/email_utils.py. If the template changes in the
 # backend, update here too (Phase 5 will consolidate into a shared library).
@@ -59,11 +78,13 @@ def render_nomination_pending(
     nominator_name: str,
     beneficiary_name: str,
     dollar_amount: float,
+    currency: str,
     description: str,
     approve_url: str,
     reject_url: str,
 ) -> str:
     """Approver notification with Approve / Reject action buttons."""
+    formatted_amount = _fmt(dollar_amount, currency)
     return f"""
     <!DOCTYPE html>
     <html>
@@ -78,7 +99,7 @@ def render_nomination_pending(
             <p style="font-size: 16px;">Dear <strong>{manager_name}</strong>,</p>
             <p style="font-size: 16px;">
                 <strong>{nominator_name}</strong> has nominated <strong>{beneficiary_name}</strong>
-                for a monetary award of <strong>${dollar_amount:,.2f}</strong>.
+                for a monetary award of <strong>{formatted_amount}</strong>.
             </p>
         </div>
 
@@ -128,8 +149,9 @@ def render_nomination_pending(
     """
 
 
-def render_nomination_approved(beneficiary_name: str, dollar_amount: float) -> str:
+def render_nomination_approved(beneficiary_name: str, dollar_amount: float, currency: str) -> str:
     """Nominator notification — their nomination was approved."""
+    formatted_amount = _fmt(dollar_amount, currency)
     return f"""
     <html>
     <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -137,7 +159,7 @@ def render_nomination_approved(beneficiary_name: str, dollar_amount: float) -> s
         <p>Great news! Your nomination has been approved:</p>
         <ul>
             <li><strong>Nominee:</strong> {beneficiary_name}</li>
-            <li><strong>Award:</strong> Monetary Award (${dollar_amount:,.2f})</li>
+            <li><strong>Award:</strong> Monetary Award ({formatted_amount})</li>
         </ul>
         <p>The nominee will be notified of this honour.</p>
         <hr style="margin: 20px 0;">
@@ -149,8 +171,9 @@ def render_nomination_approved(beneficiary_name: str, dollar_amount: float) -> s
     """
 
 
-def render_nomination_rejected(beneficiary_name: str, dollar_amount: float) -> str:
+def render_nomination_rejected(beneficiary_name: str, dollar_amount: float, currency: str) -> str:
     """Nominator notification — their nomination was rejected."""
+    formatted_amount = _fmt(dollar_amount, currency)
     return f"""
     <html>
     <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -158,7 +181,7 @@ def render_nomination_rejected(beneficiary_name: str, dollar_amount: float) -> s
         <p>Your nomination has been reviewed:</p>
         <ul>
             <li><strong>Nominee:</strong> {beneficiary_name}</li>
-            <li><strong>Award:</strong> Monetary Award (${dollar_amount:,.2f})</li>
+            <li><strong>Award:</strong> Monetary Award ({formatted_amount})</li>
             <li><strong>Outcome:</strong> Not approved at this time</li>
         </ul>
         <p>

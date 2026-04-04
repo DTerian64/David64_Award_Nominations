@@ -66,7 +66,8 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
         cursor.execute("""
             SELECT
                 n.NominationId,
-                n.DollarAmount,
+                n.Amount,
+                n.Currency,
                 n.NominationDescription,
                 n.Status,
                 n.ApproverId,
@@ -78,9 +79,9 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
                 approver.FirstName + ' ' + approver.LastName AS ApproverName,
                 approver.userEmail        AS ApproverEmail
             FROM  dbo.Nominations n
-            INNER JOIN dbo.Users nominator  ON n.NominatorId  = nominator.UserId
+            INNER JOIN dbo.Users nominator   ON n.NominatorId   = nominator.UserId
             INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
-            INNER JOIN dbo.Users approver   ON n.ApproverId   = approver.UserId
+            INNER JOIN dbo.Users approver    ON n.ApproverId    = approver.UserId
             WHERE n.NominationId = ?
         """, (nomination_id,))
         row = cursor.fetchone()
@@ -89,18 +90,19 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
         return None
 
     return {
-        "nomination_id":    int(row[0]),
-        "dollar_amount":    float(row[1]),
-        "description":      row[2],
-        "status":           row[3],
-        "approver_id":      int(row[4]),
-        "nominator_id":     int(row[5]),
-        "nominator_name":   row[6],
-        "nominator_email":  row[7],
-        "beneficiary_name": row[8],
-        "beneficiary_email": row[9],
-        "approver_name":    row[10],
-        "approver_email":   row[11],
+        "nomination_id":     int(row[0]),
+        "amount":            float(row[1]),
+        "currency":          row[2],
+        "description":       row[3],
+        "status":            row[4],
+        "approver_id":       int(row[5]),
+        "nominator_id":      int(row[6]),
+        "nominator_name":    row[7],
+        "nominator_email":   row[8],
+        "beneficiary_name":  row[9],
+        "beneficiary_email": row[10],
+        "approver_name":     row[11],
+        "approver_email":    row[12],
     }
 
 

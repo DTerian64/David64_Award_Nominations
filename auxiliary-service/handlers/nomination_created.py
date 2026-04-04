@@ -74,7 +74,8 @@ def handle(payload: dict) -> None:
         extra={
             "nomination_id":  nomination_id,
             "approver_email": details["approver_email"],
-            "dollar_amount":  details["dollar_amount"],
+            "amount":         details["amount"],
+            "currency":       details["currency"],
         }
     )
 
@@ -87,7 +88,8 @@ def handle(payload: dict) -> None:
         manager_name=details["approver_name"],
         nominator_name=details["nominator_name"],
         beneficiary_name=details["beneficiary_name"],
-        dollar_amount=details["dollar_amount"],
+        dollar_amount=details["amount"],
+        currency=details["currency"],
         description=details["description"],
         approve_url=approve_url,
         reject_url=reject_url,

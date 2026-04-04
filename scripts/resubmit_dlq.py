@@ -37,7 +37,7 @@ TOPIC        = os.environ.get("SERVICE_BUS_TOPIC_NAME",        "award-events")
 SUBSCRIPTION = os.environ.get("SERVICE_BUS_SUBSCRIPTION_NAME", "email-processor")
 
 
-async def resubmit(dry_run: bool) -> None:
+async def resubmit(dry_run: bool, purge: bool = False) -> None:
     credential = DefaultAzureCredential()
 
     async with ServiceBusClient(FQNS, credential) as client:
@@ -83,9 +83,15 @@ async def resubmit(dry_run: bool) -> None:
                 )
 
                 if dry_run:
-                    logger.info("[DRY RUN] Would resubmit — skipping send and complete.")
+                    logger.info("[DRY RUN] Would %s — skipping.", "purge" if purge else "resubmit")
                     # Abandon so the message stays in the DLQ
                     await dlq_receiver.abandon_message(dlq_msg)
+                    continue
+
+                if purge:
+                    # Complete without republishing — permanently discards the message.
+                    await dlq_receiver.complete_message(dlq_msg)
+                    logger.info("Purged DLQ message  id=%s", original_id)
                     continue
 
                 # Reconstruct the message preserving application_properties and content_type
@@ -105,21 +111,27 @@ async def resubmit(dry_run: bool) -> None:
 
     await credential.close()
     if not dry_run:
-        logger.info("Done — all DLQ messages resubmitted.")
+        logger.info("Done — all DLQ messages %s.", "purged" if purge else "resubmitted")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Resubmit Service Bus dead-letter messages.")
+    parser = argparse.ArgumentParser(description="Resubmit or purge Service Bus dead-letter messages.")
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="Peek at DLQ contents and log them without resubmitting or completing.",
+        help="Peek at DLQ contents and log them without resubmitting, purging, or completing.",
+    )
+    parser.add_argument(
+        "--purge", action="store_true",
+        help="Complete (permanently discard) DLQ messages without republishing them to the topic.",
     )
     args = parser.parse_args()
 
     if args.dry_run:
-        logger.info("DRY RUN — messages will be logged but not resubmitted.")
+        logger.info("DRY RUN — messages will be logged but not modified.")
+    if args.purge and not args.dry_run:
+        logger.warning("PURGE mode — DLQ messages will be permanently discarded without resubmitting.")
 
-    asyncio.run(resubmit(dry_run=args.dry_run))
+    asyncio.run(resubmit(dry_run=args.dry_run, purge=args.purge))
 
 
 if __name__ == "__main__":
