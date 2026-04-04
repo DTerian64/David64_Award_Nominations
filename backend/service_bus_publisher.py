@@ -46,8 +46,8 @@ async def publish_event(event_type: str, nomination_id: int) -> None:
     """
     Publish a nomination domain event to the Service Bus topic.
 
-    The message body is a JSON object:
-        {"event_type": "nomination.created", "nomination_id": 42}
+    The message body is UTF-8 encoded JSON bytes (AMQP data section):
+        b'{"event_type": "nomination.created", "nomination_id": 42}'
 
     The auxiliary worker reads this, claims idempotency via ProcessedEvents,
     fetches fresh data from SQL, and sends the appropriate email.
@@ -62,10 +62,13 @@ async def publish_event(event_type: str, nomination_id: int) -> None:
             "before calling publish_event()"
         )
 
+    # Encode to bytes so the SDK frames the body as an AMQP data section.
+    # Passing a str produces an AMQP value section, which the receiver cannot
+    # reliably reassemble via b"".join(msg.body) — leading to JSON parse errors.
     payload = json.dumps({
         "event_type": event_type,
         "nomination_id": nomination_id,
-    })
+    }).encode("utf-8")
 
     msg = ServiceBusMessage(
         payload,
