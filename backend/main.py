@@ -568,8 +568,10 @@ async def approve_nomination(
             f"NominationId: {approval.NominationId}"
         )
 
-        # Generate payroll extract file
-        await generate_payroll_extract(approval.NominationId)
+        # NOTE: payroll extract generation (generate_payroll_extract) is intentionally
+        # NOT called here. Payroll integration is a future phase — status will be
+        # advanced to 'Paid' by the payroll worker once payment is confirmed,
+        # not at approval time.
 
         return StatusResponse(
             Status="Approved",
@@ -802,8 +804,9 @@ async def handle_email_action(token: str = Query(..., description="Action token 
                     nomination_id, e
                 )
 
-            # Generate payroll extract
-            await generate_payroll_extract(nomination_id)
+            # NOTE: generate_payroll_extract intentionally omitted — payroll
+            # integration is a future phase; status advances to 'Paid' only
+            # once the payroll worker confirms payment.
 
             return get_action_confirmation_page(
                 action="approved",

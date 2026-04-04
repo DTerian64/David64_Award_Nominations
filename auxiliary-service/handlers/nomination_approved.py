@@ -46,12 +46,18 @@ def handle(payload: dict) -> None:
 
     status = details["status"]
 
-    if status not in ("Approved", "Rejected"):
-        # Could happen if Service Bus delivers the event before the API commits.
-        # Abandoning causes a retry — by then the DB should be consistent.
+    # 'Paid' is a downstream status that follows 'Approved' (the payment processor
+    # may advance the status before the auxiliary reads the DB). Treat it as
+    # approved for email purposes — the nominator still deserves a congratulations.
+    APPROVED_STATUSES = ("Approved", "Paid")
+    REJECTED_STATUSES = ("Rejected",)
+
+    if status not in (*APPROVED_STATUSES, *REJECTED_STATUSES):
+        # Truly unexpected status (e.g. 'Pending') — the event may have been
+        # published before the API committed the decision. Abandon for retry.
         raise ValueError(
             f"Nomination {nomination_id} has unexpected status '{status}' "
-            f"— expected Approved or Rejected. Will retry."
+            f"— expected one of: Approved, Paid, Rejected. Will retry."
         )
 
     logger.info(
@@ -64,14 +70,14 @@ def handle(payload: dict) -> None:
     )
 
     # ── 2. Send outcome email to nominator ────────────────────────────────────
-    if status == "Approved":
+    if status in APPROVED_STATUSES:
         body = email_client.render_nomination_approved(
             beneficiary_name=details["beneficiary_name"],
             dollar_amount=details["amount"],
             currency=details["currency"],
         )
         subject = f"✅ Nomination Approved — {details['beneficiary_name']}"
-    else:  # Rejected
+    else:  # Rejected (status in REJECTED_STATUSES)
         body = email_client.render_nomination_rejected(
             beneficiary_name=details["beneficiary_name"],
             dollar_amount=details["amount"],
