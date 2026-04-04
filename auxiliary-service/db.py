@@ -144,19 +144,47 @@ def claim_message(
     The result column is set to 'pending' initially and updated to
     'success' or 'error' by update_processed_event_result() after handling.
     """
+    logger.debug(
+        "claim_message called",
+        extra={
+            "message_id":    message_id,
+            "event_type":    event_type,
+            "nomination_id": nomination_id,
+            "processed_at":  processed_at.isoformat(),
+        },
+    )
     with _get_conn() as conn:
         cursor = conn.cursor()
         try:
+            logger.debug("Executing INSERT into dbo.ProcessedEvents")
             cursor.execute("""
                 INSERT INTO dbo.ProcessedEvents
                     (MessageId, EventType, NominationId, ProcessedAt, Result)
                 VALUES (?, ?, ?, ?, 'pending')
             """, (message_id, event_type, nomination_id, processed_at))
+            logger.debug("INSERT executed, rowcount=%d — committing", cursor.rowcount)
             conn.commit()
+            logger.info(
+                "ProcessedEvents row claimed (new message)",
+                extra={"message_id": message_id, "event_type": event_type},
+            )
             return False  # new message — proceed
-        except pyodbc.IntegrityError:
+        except pyodbc.IntegrityError as exc:
             # PK violation → already processed
+            logger.info(
+                "claim_message: IntegrityError — message already processed, skipping",
+                extra={"message_id": message_id, "error": str(exc)},
+            )
             return True
+        except Exception as exc:
+            # Any other DB error (e.g. table missing, column mismatch, connection drop).
+            # Log the full exception type so we can diagnose schema/config problems.
+            logger.exception(
+                "claim_message: unexpected %s — ProcessedEvents write failed",
+                type(exc).__name__,
+                extra={"message_id": message_id, "event_type": event_type},
+            )
+            raise
 
 
 def update_processed_event_result(
@@ -168,6 +196,10 @@ def update_processed_event_result(
     Update the Result (and optionally ErrorMessage) on an existing
     ProcessedEvents row after the handler completes.
     """
+    logger.debug(
+        "update_processed_event_result called",
+        extra={"message_id": message_id, "result": result},
+    )
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -176,6 +208,18 @@ def update_processed_event_result(
             WHERE  MessageId = ?
         """, (result, message_id))
         conn.commit()
+        if cursor.rowcount == 0:
+            logger.warning(
+                "update_processed_event_result: UPDATE matched 0 rows — "
+                "ProcessedEvents row missing for message_id=%s (claim_message may have failed silently)",
+                message_id,
+                extra={"message_id": message_id, "result": result},
+            )
+        else:
+            logger.debug(
+                "ProcessedEvents row updated",
+                extra={"message_id": message_id, "result": result, "rowcount": cursor.rowcount},
+            )
 
     if error:
         logger.error(

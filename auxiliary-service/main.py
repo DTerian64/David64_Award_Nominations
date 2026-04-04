@@ -37,13 +37,44 @@ from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
 from dispatcher import dispatch
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+# Custom formatter that appends any `extra` fields as key=value pairs.
+# Python's logging.basicConfig format string only renders built-in LogRecord
+# attributes — extra fields are attached to the record but never printed unless
+# a formatter explicitly reads them.  This formatter does that automatically,
+# so every logger.info(..., extra={...}) call throughout the codebase is visible
+# without modifying individual call sites.
+class _ExtraFormatter(logging.Formatter):
+    # Built-in LogRecord attributes — exclude these from the "extras" suffix.
+    _BUILTIN = frozenset({
+        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+        "created", "msecs", "relativeCreated", "thread", "threadName",
+        "processName", "process", "message", "asctime", "taskName",
+    })
+
+    def format(self, record: logging.LogRecord) -> str:
+        base = super().format(record)
+        extras = {
+            k: v for k, v in record.__dict__.items()
+            if k not in self._BUILTIN
+        }
+        if extras:
+            pairs = "  ".join(f"{k}={v!r}" for k, v in sorted(extras.items()))
+            return f"{base}  {pairs}"
+        return base
+
+
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(_ExtraFormatter(
+    fmt="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%SZ",
-    stream=sys.stdout,
-)
+))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger("auxiliary.main")
+
+# Temporarily enable DEBUG on the db layer so we can trace ProcessedEvents writes.
+# Remove or set back to INFO once the idempotency issue is diagnosed.
+logging.getLogger("auxiliary.db").setLevel(logging.DEBUG)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -122,7 +153,23 @@ def main() -> None:
                         continue
 
                     message_id = str(message.message_id)
-                    body_str   = "".join(str(chunk) for chunk in message.body)
+
+                    # Reassemble body — handle both AMQP encodings:
+                    #   data section  (bytes) → publisher used .encode("utf-8")
+                    #   value section (str)   → legacy messages published as plain str
+                    raw_body = message.body
+                    try:
+                        chunks = list(raw_body)
+                        if chunks and isinstance(chunks[0], (bytes, bytearray)):
+                            body_str = b"".join(chunks).decode("utf-8")
+                        else:
+                            body_str = "".join(str(c) for c in chunks)
+                    except Exception as body_exc:
+                        body_str = str(raw_body)
+                        logger.warning(
+                            "Could not reassemble message body cleanly — fell back to str()",
+                            extra={"message_id": message_id, "error": str(body_exc)},
+                        )
 
                     logger.info(
                         "Message received",
