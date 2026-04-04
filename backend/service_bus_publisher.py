@@ -6,11 +6,20 @@ Usage (from any async FastAPI endpoint):
     await publish_event("nomination.created", nomination_id)
 
 Environment variables required (set via Terraform as plain env vars):
-    SERVICE_BUS_FQNS         e.g. award-sb-sandbox.servicebus.windows.net
-    SERVICE_BUS_TOPIC_NAME   e.g. nomination-events
+    SERVICE_BUS_FQNS         e.g. sb-award-sandbox.servicebus.windows.net
+    SERVICE_BUS_TOPIC_NAME   e.g. award-events
+    MI_CLIENT_ID             Client ID of the user-assigned managed identity
+                             attached to this container. Passed explicitly to
+                             DefaultAzureCredential so IMDS knows which MI to
+                             use. Named MI_CLIENT_ID (not AZURE_CLIENT_ID) to
+                             distinguish it from CLIENT_ID (the app registration
+                             used for JWT audience validation).
+                             Not required for local dev — DefaultAzureCredential
+                             falls through to AzureCliCredential automatically.
 
-Authentication: DefaultAzureCredential.  In ACA the backend's managed identity
-must have "Azure Service Bus Data Sender" on the topic (or namespace).
+Authentication: DefaultAzureCredential with managed_identity_client_id set from
+MI_CLIENT_ID.  In ACA the backend MI must have "Azure Service Bus Data Sender"
+on the topic.
 """
 
 import json
@@ -24,8 +33,13 @@ from azure.servicebus import ServiceBusMessage
 
 logger = logging.getLogger(__name__)
 
-_FQNS = os.environ.get("SERVICE_BUS_FQNS", "")
+_FQNS  = os.environ.get("SERVICE_BUS_FQNS", "")
 _TOPIC = os.environ.get("SERVICE_BUS_TOPIC_NAME", "")
+
+# MI_CLIENT_ID is set by Terraform on ACA containers to disambiguate which
+# user-assigned managed identity IMDS should use.  In local dev this is absent
+# and DefaultAzureCredential falls through to AzureCliCredential instead.
+_MI_CLIENT_ID = os.environ.get("MI_CLIENT_ID") or None
 
 
 async def publish_event(event_type: str, nomination_id: int) -> None:
@@ -60,12 +74,11 @@ async def publish_event(event_type: str, nomination_id: int) -> None:
         application_properties={"event_type": event_type},
     )
 
-    client_id = os.getenv("CLIENT_ID")
-    credential = DefaultAzureCredential(
-        managed_identity_client_id=client_id if client_id else None,
-        logging_enable=True,
-    )
-    
+    # Pass managed_identity_client_id explicitly so IMDS resolves the correct
+    # user-assigned MI.  When None (local dev), DefaultAzureCredential skips
+    # ManagedIdentityCredential and falls through to AzureCliCredential.
+    credential = DefaultAzureCredential(managed_identity_client_id=_MI_CLIENT_ID)
+
     try:
         async with ServiceBusClient(_FQNS, credential) as client:
             async with client.get_topic_sender(_TOPIC) as sender:

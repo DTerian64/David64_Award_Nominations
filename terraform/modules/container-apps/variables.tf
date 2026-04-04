@@ -147,8 +147,18 @@ variable "aca_primary_identity_id" {
   type        = string
 }
 
+variable "aca_primary_identity_client_id" {
+  description = "Client ID (appId) of the User-Assigned Managed Identity for the primary Container App. Required by DefaultAzureCredential (AZURE_CLIENT_ID) when a user-assigned MI is attached — IMDS will not resolve user-assigned identities without an explicit client_id."
+  type        = string
+}
+
 variable "aca_secondary_identity_id" {
   description = "Resource ID of the User-Assigned Managed Identity for the secondary Container App"
+  type        = string
+}
+
+variable "aca_secondary_identity_client_id" {
+  description = "Client ID (appId) of the User-Assigned Managed Identity for the secondary Container App. Required by DefaultAzureCredential (AZURE_CLIENT_ID) when a user-assigned MI is attached — IMDS will not resolve user-assigned identities without an explicit client_id."
   type        = string
 }
 

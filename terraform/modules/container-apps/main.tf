@@ -143,6 +143,15 @@ resource "azurerm_container_app" "primary" {
         value = var.app_name_primary
       }
 
+      # MI_CLIENT_ID — the client ID of the user-assigned managed identity attached
+      # to this container. Passed explicitly to DefaultAzureCredential so IMDS knows
+      # which MI to use. Named MI_CLIENT_ID (not AZURE_CLIENT_ID) to distinguish it
+      # clearly from CLIENT_ID (the app registration used for JWT audience validation).
+      env {
+        name  = "MI_CLIENT_ID"
+        value = var.aca_primary_identity_client_id
+      }
+
     }
   }
 
@@ -221,6 +230,12 @@ resource "azurerm_container_app" "secondary" {
       env {
         name  = "OTEL_SERVICE_NAME"
         value = var.app_name_secondary
+      }
+
+      # MI_CLIENT_ID — see primary container comment above
+      env {
+        name  = "MI_CLIENT_ID"
+        value = var.aca_secondary_identity_client_id
       }
 
       dynamic "env" {

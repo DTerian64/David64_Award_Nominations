@@ -219,7 +219,9 @@ module "container_apps" {
   acr_admin_password                 = module.container_registry.admin_password
   key_vault_uri                      = module.key_vault.vault_uri
   aca_primary_identity_id            = azurerm_user_assigned_identity.aca_primary.id
+  aca_primary_identity_client_id     = azurerm_user_assigned_identity.aca_primary.client_id
   aca_secondary_identity_id          = azurerm_user_assigned_identity.aca_secondary.id
+  aca_secondary_identity_client_id   = azurerm_user_assigned_identity.aca_secondary.client_id
   # KV access policies and Service Bus RBAC must exist before Container Apps start.
   depends_on                      = [azurerm_resource_group.rg, module.key_vault,
                                      azurerm_key_vault_access_policy.aca_primary,
