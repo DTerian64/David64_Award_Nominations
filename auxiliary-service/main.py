@@ -104,8 +104,12 @@ _handler.setFormatter(_ExtraFormatter(
 ))
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
 
-# Attach the filter to the root logger so it applies to every module.
-logging.getLogger().addFilter(_MessageIdFilter())
+# Attach the filter to the handler (not the root logger) so it applies to
+# every module. Child loggers propagate by calling parent.callHandlers()
+# directly — which bypasses the parent logger's own .filter() check.
+# Filters on a Handler ARE run for every record the handler emits,
+# regardless of which child logger originated the record.
+_handler.addFilter(_MessageIdFilter())
 
 logger = logging.getLogger("auxiliary.main")
 
