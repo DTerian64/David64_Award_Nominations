@@ -113,10 +113,6 @@ _handler.addFilter(_MessageIdFilter())
 
 logger = logging.getLogger("auxiliary.main")
 
-# Temporarily enable DEBUG on the db layer to trace ProcessedEvents writes.
-# Remove once the idempotency behaviour is confirmed stable.
-logging.getLogger("auxiliary.db").setLevel(logging.DEBUG)
-
 from dotenv import load_dotenv
 load_dotenv()
 

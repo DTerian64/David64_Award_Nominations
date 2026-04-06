@@ -763,26 +763,38 @@ async def handle_email_action(token: str = Query(..., description="Action token 
     nomination_id = payload["nomination_id"]
     action = payload["action"]  # "approve" or "reject"
     expected_approver_id = payload["approver_id"]
-    
-    # 2️⃣ Verify nomination exists and user is the approver
-    actual_approver_id = sqlhelper.get_nomination_approver(nomination_id)
-    
-    if actual_approver_id is None:
+
+    try:
+        # 2️⃣ Verify nomination exists and user is the approver
+        # tenant_id is not available on this public endpoint; security is
+        # provided by the signed JWT.  get_nomination_approver handles the
+        # None case by omitting the tenant filter.
+        actual_approver_id = sqlhelper.get_nomination_approver(nomination_id)
+
+        if actual_approver_id is None:
+            return get_action_confirmation_page(
+                action="",
+                success=False,
+                message="Nomination not found. It may have already been processed or deleted."
+            )
+
+        if actual_approver_id != expected_approver_id:
+            return get_action_confirmation_page(
+                action="",
+                success=False,
+                message="You are not authorized to approve or reject this nomination."
+            )
+
+        # 3️⃣ Check if already processed
+        nomination_status = sqlhelper.get_nomination_status(nomination_id)
+    except Exception as e:
+        logger.error("❌ Error looking up nomination %d for email action: %s", nomination_id, e)
         return get_action_confirmation_page(
             action="",
             success=False,
-            message="Nomination not found. It may have already been processed or deleted."
+            message="An error occurred while looking up the nomination. Please try again or log in to the Award Nomination System."
         )
-    
-    if actual_approver_id != expected_approver_id:
-        return get_action_confirmation_page(
-            action="",
-            success=False,
-            message="You are not authorized to approve or reject this nomination."
-        )
-    
-    # 3️⃣ Check if already processed
-    nomination_status = sqlhelper.get_nomination_status(nomination_id)
+
     if nomination_status in ["Approved", "Rejected"]:
         return get_action_confirmation_page(
             action=nomination_status.lower(),

@@ -528,22 +528,41 @@ def get_pending_nominations_for_approver(approver_id: int, tenant_id: int) -> Li
         ).fetchall()
 
 
-def get_nomination_approver(nomination_id: int, tenant_id: int) -> Optional[int]:
+def get_nomination_approver(nomination_id: int, tenant_id: Optional[int] = None) -> Optional[int]:
     """
-    Get the approver ID for a nomination, verifying it belongs to the given tenant.
-    Returns: ApproverId, or None if not found / wrong tenant.
+    Get the approver ID for a nomination.
+
+    When tenant_id is provided (authenticated endpoints) the query adds a
+    tenant-scoping JOIN so a user from one tenant cannot probe another tenant's
+    nominations.
+
+    When tenant_id is omitted (email-action endpoint) the tenant filter is
+    skipped; security is provided instead by the signed, time-limited JWT that
+    must have been issued by this system.
+
+    Returns: ApproverId, or None if not found.
     """
     with get_db_context() as session:
-        row = session.execute(
-            text("""
-                SELECT n.ApproverId
-                FROM Nominations n
-                JOIN Users u ON n.NominatorId = u.UserId
-                WHERE n.NominationId = :nomination_id
-                  AND u.TenantId     = :tenant_id
-            """),
-            {"nomination_id": nomination_id, "tenant_id": tenant_id},
-        ).fetchone()
+        if tenant_id is not None:
+            row = session.execute(
+                text("""
+                    SELECT n.ApproverId
+                    FROM Nominations n
+                    JOIN Users u ON n.NominatorId = u.UserId
+                    WHERE n.NominationId = :nomination_id
+                      AND u.TenantId     = :tenant_id
+                """),
+                {"nomination_id": nomination_id, "tenant_id": tenant_id},
+            ).fetchone()
+        else:
+            row = session.execute(
+                text("""
+                    SELECT ApproverId
+                    FROM Nominations
+                    WHERE NominationId = :nomination_id
+                """),
+                {"nomination_id": nomination_id},
+            ).fetchone()
         return row[0] if row else None
 
 
