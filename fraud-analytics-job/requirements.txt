@@ -19,7 +19,8 @@ networkx>=3.2.0
 # The 'all-MiniLM-L6-v2' model (80 MB) is downloaded on first run and cached
 # in /root/.cache inside the container — ephemeral but acceptable for a job.
 # Pin torch to CPU-only to avoid the CUDA variant (~2.5 GB).
-torch>=2.2.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
 sentence-transformers>=2.6.0
 
 # ── Azure ─────────────────────────────────────────────────────────────────────
