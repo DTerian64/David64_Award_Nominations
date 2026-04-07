@@ -167,8 +167,6 @@ def upgrade() -> None:
             "ON dbo.GraphPatternFindings (RunId)"
         ))
 
-    conn.execute(sa.text("COMMIT"))
-
 
 # ── Downgrade ─────────────────────────────────────────────────────────────────
 

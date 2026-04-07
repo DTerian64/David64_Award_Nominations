@@ -159,3 +159,16 @@ variable "auxiliary_container_app_name" {
   description = "Auxiliary Container App name — must be unique within the CAE. Convention: award-auxiliary-{env}"
   type        = string
 }
+
+# ── Fraud Analytics Job ───────────────────────────────────────────────────────
+variable "fraud_analytics_job_name" {
+  description = "Container Apps Job name for the fraud analytics pipeline. Convention: award-fraud-analytics-{env}"
+  type        = string
+  default     = "award-fraud-analytics-sandbox"
+}
+
+variable "fraud_analytics_cron" {
+  description = "Cron expression for the weekly fraud analytics run. Default: Monday 02:00 UTC."
+  type        = string
+  default     = "0 2 * * 1"
+}

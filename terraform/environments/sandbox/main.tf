@@ -129,6 +129,17 @@ resource "azurerm_user_assigned_identity" "auxiliary_function" {
   depends_on          = [azurerm_resource_group.rg]
 }
 
+# Fraud Analytics Job identity — pre-created so the KV access policy can be
+# granted before the Container Apps Job is provisioned (same race-avoidance
+# pattern as the API and auxiliary identities above).
+resource "azurerm_user_assigned_identity" "fraud_analytics_job" {
+  name                = "id-award-fraud-analytics-${var.environment}"
+  resource_group_name = var.resource_group_name
+  location            = var.location_primary
+  tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg]
+}
+
 # ── 5. Key Vault ──────────────────────────────────────────────────────────────
 module "key_vault" {
   source = "../../modules/key-vault"
@@ -305,6 +316,17 @@ resource "azurerm_key_vault_access_policy" "auxiliary_function" {
   depends_on = [module.key_vault, azurerm_user_assigned_identity.auxiliary_function]
 }
 
+# KV access policy — Fraud Analytics Job
+resource "azurerm_key_vault_access_policy" "fraud_analytics_job" {
+  key_vault_id = module.key_vault.key_vault_id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_user_assigned_identity.fraud_analytics_job.principal_id
+
+  secret_permissions = ["Get", "List"]
+
+  depends_on = [module.key_vault, azurerm_user_assigned_identity.fraud_analytics_job]
+}
+
 # ── 9. Service Bus ────────────────────────────────────────────────────────────
 module "service_bus" {
   source = "../../modules/service-bus"
@@ -394,7 +416,66 @@ module "auxiliary" {
   tags = local.tags
 }
 
-# ── 11. Front Door ────────────────────────────────────────────────────────────
+# ── 11. Fraud Analytics Job ───────────────────────────────────────────────────
+# Scheduled Container Apps Job: weekly RF retrain + graph pattern detection.
+# Runs in the primary CAE alongside the auxiliary worker (same environment,
+# separate isolation — job has its own MI, image, and resource allocation).
+module "fraud_analytics_job" {
+  source = "../../modules/fraud-analytics-job"
+
+  resource_group_name          = var.resource_group_name
+  location                     = var.location_primary
+  job_name                     = var.fraud_analytics_job_name
+  environment                  = var.environment
+  container_app_environment_id = module.container_apps.cae_primary_id
+
+  # Identity — pre-authorized for KV above; must also be added as a SQL
+  # contained user by DBA: CREATE USER [id-award-fraud-analytics-sandbox]
+  # FROM EXTERNAL PROVIDER; ALTER ROLE db_datareader ADD MEMBER [...];
+  analytics_identity_id        = azurerm_user_assigned_identity.fraud_analytics_job.id
+  analytics_identity_client_id = azurerm_user_assigned_identity.fraud_analytics_job.client_id
+
+  # ACR — same registry as all other container apps
+  acr_login_server   = module.container_registry.login_server
+  acr_admin_username = module.container_registry.admin_username
+  acr_admin_password = module.container_registry.admin_password
+
+  # Key Vault — for KV-backed secret references
+  key_vault_uri = module.key_vault.vault_uri
+
+  # Storage — for .pkl model upload after training
+  storage_account_name = module.storage.storage_account_name
+  model_container_name = module.storage.ml_models_container_name
+
+  # Schedule — override default here if needed per environment
+  cron_expression = var.fraud_analytics_cron
+
+  # Non-secret env vars
+  environment_variables = [
+    { name = "GRAPH_FINDINGS_TABLE", value = "dbo.GraphPatternFindings" },
+    { name = "LOGGING_LEVEL",        value = var.logging_level },
+  ]
+
+  # Secrets from Key Vault — SQL + Storage only; no email or OpenAI needed
+  kv_secret_references = [
+    { env_name = "SQL_SERVER",       kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE",     kv_secret_name = "SQL-DATABASE" },
+    { env_name = "SQL_USER",         kv_secret_name = "SQL-USER" },
+    { env_name = "SQL_PASSWORD",     kv_secret_name = "SQL-PASSWORD" },
+    { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
+    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
+  ]
+
+  depends_on = [
+    azurerm_key_vault_access_policy.fraud_analytics_job,
+    module.container_apps,
+    module.storage,
+  ]
+
+  tags = local.tags
+}
+
+# ── 12. Front Door ────────────────────────────────────────────────────────────
 module "front_door" {
   source = "../../modules/front-door"
 
