@@ -94,7 +94,7 @@ def sync_graph_tables(conn: pyodbc.Connection) -> None:
             n.NominationId,
             n.Amount,
             n.Status,
-            CAST(n.CreatedAt AS DATE)
+            CAST(n.NominationDate AS DATE)
         FROM   dbo.Nominations n
         WHERE  EXISTS (SELECT 1 FROM dbo.NomGraph_Person WHERE UserId = n.NominatorId)
           AND  EXISTS (SELECT 1 FROM dbo.NomGraph_Person WHERE UserId = n.BeneficiaryId)
@@ -112,7 +112,7 @@ def _load_nominations(conn: pyodbc.Connection, tenant_id: int) -> list[dict]:
     cur.execute("""
         SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
                n.ApproverId,   n.Status,      n.Amount,
-               n.Description,  n.CreatedAt
+               n.Description,  n.NominationDate AS CreatedAt
         FROM   dbo.Nominations n
         WHERE  n.TenantId = ?
     """, tenant_id)

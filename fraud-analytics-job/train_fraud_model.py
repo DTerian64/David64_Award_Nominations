@@ -619,7 +619,8 @@ def create_visualizations(
 # MAIN — iterate over all tenants
 # ============================================================================
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point called by run_job.py (Stage 1)."""
     print("=" * 60)
     print("FRAUD DETECTION MODEL TRAINING  —  Multi-Tenant")
     print("=" * 60)
@@ -631,6 +632,7 @@ if __name__ == "__main__":
     print(f"\nFound {len(tenants)} tenant(s): {[t[0] for t in tenants]}")
 
     results = {}
+    failed = []
     for tenant_id, tenant_name in tenants:
         print(f"\n{'='*60}")
         print(f"  Tenant {tenant_id}: {tenant_name}")
@@ -658,6 +660,7 @@ if __name__ == "__main__":
         except Exception as exc:
             print(f"❌  Tenant {tenant_id} failed: {exc}")
             results[tenant_id] = f"FAILED — {exc}"
+            failed.append(tenant_id)
 
     print("\n" + "=" * 60)
     print("TRAINING SUMMARY")
@@ -665,8 +668,11 @@ if __name__ == "__main__":
     for tenant_id, status in results.items():
         print(f"  Tenant {tenant_id}: {status}")
 
-    print("\nNext steps:")
-    print("  1. Review Output/fraud_detection_analysis_tenant_N.png for each tenant.")
-    print("  2. Upload Output/fraud_detection_model_tenant_N.pkl to Azure Blob Storage")
-    print("     (ml-models container) so the backend picks it up on next restart.")
-    print("  3. Or call the /api/admin/refresh-fraud-model endpoint to hot-reload.")
+    if failed:
+        raise RuntimeError(
+            f"RF training failed for tenant(s): {failed} — see output above."
+        )
+
+
+if __name__ == "__main__":
+    main()
