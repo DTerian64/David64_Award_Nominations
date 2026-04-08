@@ -114,7 +114,8 @@ def _load_nominations(conn: pyodbc.Connection, tenant_id: int) -> list[dict]:
                n.ApproverId,   n.Status,      n.Amount,
                n.Description,  n.NominationDate AS CreatedAt
         FROM   dbo.Nominations n
-        WHERE  n.TenantId = ?
+        JOIN   dbo.Users u ON u.UserId = n.NominatorId
+        WHERE  u.TenantId = ?
     """, tenant_id)
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -136,7 +137,7 @@ def _load_users(conn: pyodbc.Connection, tenant_id: int) -> list[dict]:
 
 def _load_tenants(conn: pyodbc.Connection) -> list[int]:
     cur = conn.cursor()
-    cur.execute("SELECT DISTINCT TenantId FROM dbo.Nominations")
+    cur.execute("SELECT TenantId FROM dbo.Tenants ORDER BY TenantId")
     return [row[0] for row in cur.fetchall()]
 
 
