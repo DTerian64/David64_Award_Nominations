@@ -36,6 +36,57 @@ from pathlib import Path
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
 
+# ── Blob Storage upload helper ─────────────────────────────────────────────────
+
+def _upload_artefact(local_path: Path) -> None:
+    """
+    Upload a local file to Azure Blob Storage and keep it under the same
+    filename (no path prefix).  Uses the User-Assigned Managed Identity
+    injected via AZURE_CLIENT_ID; falls back to env-var key auth when
+    running locally with AZURE_STORAGE_KEY set.
+
+    Env vars (set by Terraform / Container Apps Job):
+      AZURE_STORAGE_ACCOUNT  — storage account name  (e.g. 'awardnomsa')
+      MODEL_CONTAINER        — blob container name    (e.g. 'ml-models')
+      AZURE_CLIENT_ID        — MI client ID for DefaultAzureCredential
+      AZURE_STORAGE_KEY      — (optional) key auth for local dev
+    """
+    account   = os.getenv("AZURE_STORAGE_ACCOUNT")
+    container = os.getenv("MODEL_CONTAINER", "ml-models")
+
+    if not account:
+        print(f"  ⚠  AZURE_STORAGE_ACCOUNT not set — skipping upload of {local_path.name}")
+        return
+
+    try:
+        from azure.storage.blob import BlobServiceClient
+        from azure.identity import DefaultAzureCredential
+
+        storage_key = os.getenv("AZURE_STORAGE_KEY")
+        if storage_key:
+            # Local dev: key auth
+            client = BlobServiceClient(
+                account_url=f"https://{account}.blob.core.windows.net",
+                credential=storage_key,
+            )
+        else:
+            # Container: Managed Identity (AZURE_CLIENT_ID picked up automatically)
+            client = BlobServiceClient(
+                account_url=f"https://{account}.blob.core.windows.net",
+                credential=DefaultAzureCredential(),
+            )
+
+        blob_client = client.get_blob_client(container=container, blob=local_path.name)
+        with open(local_path, "rb") as f:
+            blob_client.upload_blob(f, overwrite=True)
+
+        print(f"  ✓ Uploaded '{local_path.name}' → blob://{account}/{container}/{local_path.name}")
+
+    except Exception as exc:
+        # Non-fatal: model is still saved locally for the duration of the run.
+        # The backend will continue to use the previous version from Blob Storage.
+        print(f"  ✗ Blob upload failed for '{local_path.name}': {exc}")
+
 # Minimum labelled samples needed to train a meaningful model.
 # Below this threshold the tenant is skipped with a warning.
 MIN_TRAINING_SAMPLES = 50
@@ -532,6 +583,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
         pickle.dump(model_data, f)
 
     print(f"\n✓ Model saved to '{pkl_filename}'")
+    _upload_artefact(pkl_filename)
 
     # ── Score all historical nominations and persist to dbo.FraudScores ──────
     # This is the step that was missing: without it FraudScores stays empty,
@@ -612,6 +664,7 @@ def create_visualizations(
     png_filename = OUTPUT_DIR / f"fraud_detection_analysis_tenant_{tenant_id}.png"
     plt.savefig(png_filename, dpi=300, bbox_inches='tight')
     print(f"✓ Visualisation saved to '{png_filename}'")
+    _upload_artefact(png_filename)
     plt.close()
 
 

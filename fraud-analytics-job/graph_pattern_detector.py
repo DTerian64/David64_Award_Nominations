@@ -112,7 +112,7 @@ def _load_nominations(conn: pyodbc.Connection, tenant_id: int) -> list[dict]:
     cur.execute("""
         SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
                n.ApproverId,   n.Status,      n.Amount,
-               n.Description,  n.NominationDate AS CreatedAt
+               n.NominationDescription AS Description,  n.NominationDate AS CreatedAt
         FROM   dbo.Nominations n
         JOIN   dbo.Users u ON u.UserId = n.NominatorId
         WHERE  u.TenantId = ?
