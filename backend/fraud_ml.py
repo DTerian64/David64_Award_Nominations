@@ -265,7 +265,7 @@ class FraudDetector:
                     self.tenant_models[tid] = model_data
                     logger.info(
                         f"[Tenant {tid}] ✅ Model updated "
-                        f"(trained: {model_data['training_date']})"
+                        f"(updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')})"
                     )
                     updated_any = True
                 except Exception as exc:

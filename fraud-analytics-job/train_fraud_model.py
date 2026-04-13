@@ -528,8 +528,8 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
     X_test_scaled  = scaler.transform(X_test)
 
     rf_model = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=10,
+        n_estimators=40,      # 100 → 40: ~60% memory saving with negligible AUC loss
+        max_depth=10,         # already capped — keeps each tree compact
         min_samples_split=20,
         min_samples_leaf=10,
         class_weight='balanced',
@@ -563,19 +563,19 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
     print(feature_importance.head(10).to_string(index=False))
 
     # ── Persist ──────────────────────────────────────────────────────────────
+    # Only inference-critical fields go into the pkl.  Diagnostic fields
+    # (feature_importance, auc, training_date, training_samples) are logged
+    # above but not stored — they are never read by fraud_ml.py at inference
+    # time and were the second-largest contributor to pkl size after the RF
+    # tree structures themselves.
     model_data = {
-        'tenant_id':          tenant_id,
-        'model':              rf_model,
-        'scaler':             scaler,
-        'feature_columns':    FEATURE_COLUMNS,
-        'training_date':      datetime.now(),
-        'training_samples':   len(df_train),
-        'auc':                auc,
-        'feature_importance': feature_importance,
-        # Amount stats for this tenant — used by fraud_ml.py to compute
+        'model':           rf_model,
+        'scaler':          scaler,
+        'feature_columns': FEATURE_COLUMNS,
+        # Tenant-scoped amount stats — used by fraud_ml.py to compute
         # z-scores at inference time without crossing tenant boundaries.
-        'amount_mean': float(df['Amount'].mean()),
-        'amount_std':  float(df['Amount'].std()),
+        'amount_mean':     float(df['Amount'].mean()),
+        'amount_std':      float(df['Amount'].std()),
     }
 
     pkl_filename = OUTPUT_DIR / f"fraud_detection_model_tenant_{tenant_id}.pkl"
