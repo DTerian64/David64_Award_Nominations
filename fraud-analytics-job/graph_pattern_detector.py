@@ -199,12 +199,20 @@ def detect_rings(
     nominations: list[dict],
     tenant_id: int,
     run_id: str,
+    max_ring_length: int = 8,
+    max_findings: int = 200,
 ) -> list[dict]:
     """
-    Directed nomination rings of length ≥ 3 using networkx simple_cycles.
-    2-cycles (A→B, B→A) are intentionally skipped — these are caught by the
-    Random Forest's HasReciprocalNomination feature. We focus on ≥ 3-hop rings
-    that the RF cannot see.
+    Directed nomination rings of length 3–max_ring_length using networkx
+    simple_cycles with length_bound (networkx ≥ 3.2).
+
+    2-cycles (A→B, B→A) are intentionally skipped — caught by the RF's
+    HasReciprocalNomination feature already. Rings longer than max_ring_length
+    are excluded: beyond ~8 hops a ring is implausible as a coordinated scheme
+    and simple_cycles becomes exponentially expensive on dense graphs.
+
+    max_findings caps the result list to prevent the findings table being
+    flooded when synthetic/test data contains many seeded rings.
 
     Severity:
       3–4 nodes → Medium
@@ -221,8 +229,9 @@ def detect_rings(
 
     findings: list[dict] = []
 
-    # networkx simple_cycles can be slow for large graphs; 291 users is fine.
-    for cycle in nx.simple_cycles(G):
+    # length_bound keeps the DFS stack bounded and avoids combinatorial
+    # explosion on dense graphs. Requires networkx >= 3.2.
+    for cycle in nx.simple_cycles(G, length_bound=max_ring_length):
         if len(cycle) < 3:
             continue  # skip 2-cycles
 
@@ -246,6 +255,14 @@ def detect_rings(
             f"Directed nomination ring of length {size}: "
             f"{' → '.join(str(u) for u in cycle)} → {cycle[0]}",
         ))
+
+        if len(findings) >= max_findings:
+            logger.warning(
+                "  Rings: cap of %d reached — truncating. "
+                "Consider reviewing graph density.",
+                max_findings,
+            )
+            break
 
     logger.info("  Rings: %d detected", len(findings))
     return findings
