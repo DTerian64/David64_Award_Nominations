@@ -1060,6 +1060,39 @@ async def get_diversity_metrics(
 
 
 # ============================================================================
+# INTEGRITY — GRAPH PATTERN FINDINGS
+# ============================================================================
+
+@app.get("/api/admin/analytics/integrity/runs")
+async def get_integrity_runs(
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin"))
+):
+    """Return the list of weekly job runs available for the tenant."""
+    tenant_id = current_user["effective_user"]["TenantId"]
+    try:
+        return sqlhelper.get_integrity_runs(tenant_id)
+    except Exception as e:
+        logger.error(f"Error fetching integrity runs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/analytics/integrity/findings")
+async def get_integrity_findings(
+    run_id: str = Query(..., description="RunId UUID from the integrity runs list"),
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin"))
+):
+    """Return all graph pattern findings for a specific run."""
+    tenant_id = current_user["effective_user"]["TenantId"]
+    try:
+        return sqlhelper.get_integrity_findings(tenant_id, run_id)
+    except Exception as e:
+        logger.error(f"Error fetching integrity findings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # AI ANALYTICS — ASK ENDPOINT
 # ============================================================================
 

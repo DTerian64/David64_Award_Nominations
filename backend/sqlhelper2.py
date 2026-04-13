@@ -1190,6 +1190,72 @@ def get_diversity_metrics(tenant_id: int) -> dict:
 
 
 # ===========================================================================
+# INTEGRITY / GRAPH PATTERN FINDINGS
+# ===========================================================================
+
+def get_integrity_runs(tenant_id: int) -> list[dict]:
+    """
+    Return the list of distinct weekly job runs for a tenant,
+    ordered most-recent first.  Each entry is the first DetectedAt
+    timestamp for that RunId, used as the run label in the UI.
+    """
+    with get_db_context() as session:
+        rows = session.execute(text("""
+            SELECT   RunId,
+                     MIN(DetectedAt)  AS RunDate,
+                     COUNT(*)         AS TotalFindings
+            FROM     dbo.GraphPatternFindings
+            WHERE    TenantId = :tid
+            GROUP BY RunId
+            ORDER BY MIN(DetectedAt) DESC
+        """), {"tid": tenant_id}).fetchall()
+        return [
+            {
+                "runId":         row[0],
+                "runDate":       row[1].isoformat() if row[1] else None,
+                "totalFindings": row[2],
+            }
+            for row in rows
+        ]
+
+
+def get_integrity_findings(tenant_id: int, run_id: str) -> list[dict]:
+    """
+    Return all findings for a specific RunId, ordered by severity then type.
+    AffectedUsers and NominationIds are returned as raw JSON strings for the
+    frontend to parse.
+    """
+    with get_db_context() as session:
+        rows = session.execute(text("""
+            SELECT FindingId, PatternType, Severity,
+                   AffectedUsers, NominationIds, Detail, DetectedAt
+            FROM   dbo.GraphPatternFindings
+            WHERE  TenantId = :tid
+              AND  RunId    = :run_id
+            ORDER BY
+                CASE Severity
+                    WHEN 'Critical' THEN 1
+                    WHEN 'High'     THEN 2
+                    WHEN 'Medium'   THEN 3
+                    ELSE 4
+                END,
+                PatternType
+        """), {"tid": tenant_id, "run_id": run_id}).fetchall()
+        return [
+            {
+                "findingId":     row[0],
+                "patternType":   row[1],
+                "severity":      row[2],
+                "affectedUsers": row[3],   # JSON string — parsed by frontend
+                "nominationIds": row[4],   # JSON string — parsed by frontend
+                "detail":        row[5],
+                "detectedAt":    row[6].isoformat() if row[6] else None,
+            }
+            for row in rows
+        ]
+
+
+# ===========================================================================
 # RAW QUERY HELPERS
 # ===========================================================================
 
