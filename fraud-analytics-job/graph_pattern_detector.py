@@ -28,6 +28,7 @@ Environment variables (all injected by the Container Apps Job)
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import os
@@ -395,11 +396,23 @@ def detect_copy_paste(
     run_id: str,
     similarity_threshold: float = 0.92,
     min_cluster_size: int = 3,
+    chunk_size: int = 512,
 ) -> list[dict]:
     """
     Clusters of nominations whose description embeddings are mutually similar
     (cosine ≥ similarity_threshold). Uses sentence-transformers for embeddings
     and union-find for cluster formation.
+
+    Memory strategy: instead of materialising the full N×N similarity matrix
+    (which is ~500 MB at 11 K nominations), we process row-chunks of
+    `chunk_size` at a time.  Each chunk produces a (chunk_size × N) slice
+    that is discarded after the pairs above the threshold are recorded.
+    Peak extra memory per chunk: chunk_size × N × 4 bytes
+    = 512 × 11 196 × 4 ≈ 23 MB — manageable inside 4 Gi.
+
+    The sentence-transformers model (~500 MB resident) is explicitly deleted
+    and garbage-collected after encoding so the memory is freed before the
+    rest of the detection pipeline runs.
 
     Only clusters of ≥ min_cluster_size nominations are flagged.
     """
@@ -417,19 +430,27 @@ def detect_copy_paste(
         logger.warning("sentence-transformers not available — skipping CopyPaste")
         return []
 
-    model = SentenceTransformer("all-MiniLM-L6-v2")
     texts = [n["Description"] for n in eligible]
-
     logger.info("  Encoding %d descriptions …", len(texts))
-    embeddings = model.encode(texts, normalize_embeddings=True, batch_size=64,
-                               show_progress_bar=False)
+
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    embeddings = model.encode(
+        texts,
+        normalize_embeddings=True,
+        batch_size=64,
+        show_progress_bar=False,
+    )
     embeddings = np.array(embeddings, dtype=np.float32)
 
-    # Pairwise cosine similarity (dot product of L2-normalised vectors)
-    sim_matrix = embeddings @ embeddings.T
+    # Free the ~500 MB PyTorch model immediately after encoding
+    del model
+    gc.collect()
 
-    # Union-Find
-    parent = list(range(len(eligible)))
+    # ── Chunked union-find ────────────────────────────────────────────────────
+    # For each row-chunk, compute a (chunk × N) similarity slice and union
+    # pairs that exceed the threshold.  We never hold the full N×N matrix.
+    n = len(eligible)
+    parent = list(range(n))
 
     def find(x: int) -> int:
         while parent[x] != x:
@@ -440,29 +461,49 @@ def detect_copy_paste(
     def union(x: int, y: int) -> None:
         parent[find(x)] = find(y)
 
-    n = len(eligible)
-    for i in range(n):
-        for j in range(i + 1, n):
-            if sim_matrix[i, j] >= similarity_threshold:
-                union(i, j)
+    # Track per-pair similarity for avg_sim calculation later (only above-threshold pairs)
+    pair_sims: dict[tuple[int, int], float] = {}
 
-    # Group by cluster root
+    for start in range(0, n, chunk_size):
+        end = min(start + chunk_size, n)
+        chunk = embeddings[start:end]            # (chunk_size × 384)
+        sims  = chunk @ embeddings.T             # (chunk_size × N)
+
+        for local_i, global_i in enumerate(range(start, end)):
+            # Only check j > global_i to avoid double-processing
+            row = sims[local_i, global_i + 1:]
+            hits = np.where(row >= similarity_threshold)[0]
+            for offset in hits:
+                global_j = global_i + 1 + int(offset)
+                union(global_i, global_j)
+                pair_sims[(global_i, global_j)] = float(sims[local_i, global_j])
+
+        del sims  # release chunk slice immediately
+
+    del embeddings
+    gc.collect()
+
+    # ── Collect clusters ──────────────────────────────────────────────────────
     clusters: dict[int, list[int]] = defaultdict(list)
     for idx in range(n):
         clusters[find(idx)].append(idx)
 
     findings: list[dict] = []
-    for root, members in clusters.items():
+    for _root, members in clusters.items():
         if len(members) < min_cluster_size:
             continue
-        nom_ids   = [eligible[i]["NominationId"] for i in members]
-        user_ids  = list({eligible[i]["NominatorId"] for i in members})
-        avg_sim   = float(np.mean([
-            sim_matrix[members[i], members[j]]
-            for i in range(len(members))
-            for j in range(i + 1, len(members))
-        ]))
+        nom_ids  = [eligible[i]["NominationId"] for i in members]
+        user_ids = list({eligible[i]["NominatorId"] for i in members})
+
+        # avg_sim from recorded above-threshold pairs within this cluster
+        cluster_set = set(members)
+        cluster_pairs = [
+            v for (a, b), v in pair_sims.items()
+            if a in cluster_set and b in cluster_set
+        ]
+        avg_sim  = float(np.mean(cluster_pairs)) if cluster_pairs else similarity_threshold
         severity = "High" if avg_sim >= 0.97 else "Medium"
+
         findings.append(_finding(
             tenant_id, run_id, "CopyPaste", severity,
             sorted(user_ids), sorted(nom_ids),
@@ -602,6 +643,8 @@ def main() -> None:
 
     for tenant_id in tenants:
         logger.info("── Tenant %d ──────────────────────────────────────", tenant_id)
+
+        # Load this tenant's data
         nominations = _load_nominations(conn, tenant_id)
         users       = _load_users(conn, tenant_id)
 
@@ -620,9 +663,17 @@ def main() -> None:
         tenant_findings.extend(detect_transactional(nominations, tenant_id, run_id))
         tenant_findings.extend(detect_hidden_candidate(nominations, users, tenant_id, run_id))
 
+        # Persist before freeing — findings are small and safe to keep
         _save_findings(conn, tenant_findings, findings_table)
         total_findings += len(tenant_findings)
         logger.info("  Tenant %d total findings: %d", tenant_id, len(tenant_findings))
+
+        # Free all tenant-scoped data before loading the next tenant.
+        # nominations and users can be large (11 K+ rows); tenant data is
+        # never shared across tenants so there is no reason to keep it.
+        del nominations, users, tenant_findings
+        gc.collect()
+        logger.info("  Tenant %d memory freed.", tenant_id)
 
     conn.close()
     logger.info(
