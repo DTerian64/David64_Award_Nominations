@@ -472,7 +472,7 @@ def score_and_save_historical(
     )
 
 
-def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
+def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     """
     Train a Random Forest for one tenant and persist it to
     Output/fraud_detection_model_tenant_{tenant_id}.pkl.
@@ -597,7 +597,9 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
     df_with_scores = load_data(tenant_id)
     create_visualizations(df_with_scores, feature_importance, y_test, y_pred_proba, tenant_id)
 
-    return model_data
+    # Return model_data (for callers) plus lightweight diagnostics separately
+    # so main() can log them without reading back from the stripped pkl dict.
+    return model_data, {'auc': auc, 'training_samples': len(df_train)}
 
 
 # ============================================================================
@@ -702,12 +704,12 @@ def main() -> None:
                 results[tenant_id] = "SKIPPED (insufficient data)"
                 continue
 
-            model_data = train_model(df, tenant_id)
+            _, stats = train_model(df, tenant_id)
             results[tenant_id] = (
-                f"OK  ({model_data['training_samples']} samples, "
-                f"AUC={model_data['auc']:.4f})"
-                if model_data['auc'] else
-                f"OK  ({model_data['training_samples']} samples)"
+                f"OK  ({stats['training_samples']} samples, "
+                f"AUC={stats['auc']:.4f})"
+                if stats['auc'] else
+                f"OK  ({stats['training_samples']} samples)"
             )
 
         except Exception as exc:
