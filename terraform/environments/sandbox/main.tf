@@ -452,8 +452,9 @@ module "fraud_analytics_job" {
 
   # Non-secret env vars
   environment_variables = [
-    { name = "GRAPH_FINDINGS_TABLE", value = "dbo.GraphPatternFindings" },
-    { name = "LOGGING_LEVEL",        value = var.logging_level },
+    { name = "GRAPH_FINDINGS_TABLE",      value = "dbo.GraphPatternFindings" },
+    { name = "LOGGING_LEVEL",             value = var.logging_level },
+    { name = "DETECTION_WINDOW_DAYS",     value = tostring(var.fraud_analytics_detection_window_days) },
   ]
 
   # Secrets from Key Vault — SQL + Storage only; no email or OpenAI needed
