@@ -43,7 +43,7 @@ resource "azurerm_container_app_job" "fraud_analytics" {
   tags                         = var.tags
 
   # ── Trigger — weekly cron; job is also always manually startable ─────────
-  replica_timeout_in_seconds = 3600  # 1-hour ceiling; normal run < 10 min
+  replica_timeout_in_seconds = 7200  # 2-hour ceiling: up to 60 min image pull on cold node + ~10 min actual run
   replica_retry_limit        = 1     # fail fast — alert, don't silently retry
 
   schedule_trigger_config {
