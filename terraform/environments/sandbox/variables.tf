@@ -34,7 +34,7 @@ variable "model_capacity_tpm"   { type = number }
 variable "api_base_url"         { type = string }
 variable "logging_level" {
   type    = string
-  default = "DEBUG"
+  default = "INFO"
 }
 variable "blob_sas_expiry_hours" {
   type    = number

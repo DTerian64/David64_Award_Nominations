@@ -261,11 +261,28 @@ def _save_findings(
     if not findings:
         return
 
-    new_findings = [f for f in findings if f["FindingHash"] not in existing_hashes]
-    skipped      = len(findings) - len(new_findings)
+    # Two-pass dedup:
+    # 1. Filter against hashes already in the DB (loaded before detection ran)
+    # 2. Filter internal duplicates within this run's findings — two detectors
+    #    could theoretically produce identical content, and existing_hashes
+    #    wouldn't catch them since neither is in the DB yet.
+    seen_this_run: set[str] = set()
+    new_findings:  list[dict] = []
 
-    if skipped:
-        logger.info("  Dedup: %d finding(s) already exist — skipping.", skipped)
+    for f in findings:
+        h = f["FindingHash"]
+        if h in existing_hashes:
+            continue          # already in DB from a previous run
+        if h in seen_this_run:
+            continue          # duplicate within this run
+        seen_this_run.add(h)
+        new_findings.append(f)
+
+    skipped = len(findings) - len(new_findings)
+    logger.info(
+        "  Dedup: %d candidate(s), %d new, %d skipped.",
+        len(findings), len(new_findings), skipped,
+    )
     if not new_findings:
         logger.info("  No new findings to save.")
         return
