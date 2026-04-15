@@ -29,6 +29,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ── Pre-download sentence-transformers model at build time ────────────────────
+# all-MiniLM-L6-v2 (~90 MB) is baked into the image so the container never
+# hits HuggingFace at runtime.  Benefits:
+#   - No runtime network dependency on huggingface.co
+#   - No per-run download latency (was adding minutes on cold nodes)
+#   - No 404 noise from optional config files sentence-transformers probes
+#   - Fully air-gapped operation if needed in future
+# The model is cached to /root/.cache/huggingface/hub/ inside the image.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
 # ── Application code ──────────────────────────────────────────────────────────
 COPY . .
 
