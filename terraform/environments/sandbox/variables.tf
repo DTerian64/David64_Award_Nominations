@@ -182,7 +182,7 @@ variable "fraud_analytics_ring_max_cluster_size" {
     Example: set to 4 to see only tight 3–4 node rings.
   EOT
   type    = number
-  default = 0
+  default = 4
 }
 
 variable "fraud_analytics_detection_window_days" {
