@@ -455,6 +455,7 @@ module "fraud_analytics_job" {
     { name = "GRAPH_FINDINGS_TABLE",      value = "dbo.GraphPatternFindings" },
     { name = "LOGGING_LEVEL",             value = var.logging_level },
     { name = "DETECTION_WINDOW_DAYS",     value = tostring(var.fraud_analytics_detection_window_days) },
+    { name = "RING_MAX_CLUSTER_SIZE",     value = tostring(var.fraud_analytics_ring_max_cluster_size) },
   ]
 
   # Secrets from Key Vault — SQL + Storage only; no email or OpenAI needed

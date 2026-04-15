@@ -173,6 +173,18 @@ variable "fraud_analytics_cron" {
   default     = "0 2 * * 1"
 }
 
+variable "fraud_analytics_ring_max_cluster_size" {
+  description = <<-EOT
+    Maximum SCC size to report as a Ring finding.
+    SCCs larger than this value are suppressed — useful when synthetic or
+    seeded data produces artificially dense graphs with very large clusters.
+    Set to 0 for no upper limit (production default).
+    Example: set to 4 to see only tight 3–4 node rings.
+  EOT
+  type    = number
+  default = 0
+}
+
 variable "fraud_analytics_detection_window_days" {
   description = <<-EOT
     Rolling lookback window (in days) for graph pattern detection.

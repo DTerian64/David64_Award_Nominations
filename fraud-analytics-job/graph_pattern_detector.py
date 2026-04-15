@@ -319,29 +319,39 @@ def detect_rings(
     nominations: list[dict],
     tenant_id: int,
     run_id: str,
-    max_ring_length: int = 8,
+    max_cluster_size: int = 0,
 ) -> list[dict]:
     """
-    Directed nomination rings of length 3–max_ring_length using networkx
-    simple_cycles with length_bound (networkx ≥ 3.2).
+    Detects mutual nomination clusters using Strongly Connected Components
+    (SCCs) via Kosaraju's / Tarjan's algorithm (networkx
+    strongly_connected_components).
 
-    2-cycles (A→B, B→A) are intentionally skipped — caught by the RF's
-    HasReciprocalNomination feature already. Rings longer than max_ring_length
-    are excluded: beyond ~8 hops a ring is implausible as a coordinated scheme
-    and simple_cycles becomes exponentially expensive on dense graphs.
+    Why SCCs instead of simple_cycles():
+      simple_cycles() enumerates every distinct path through the graph.
+      On a dense graph (e.g. 291 users, 11 K nominations) this produces
+      100 000+ findings that are analytically redundant — an investigator
+      does not need to see every possible cycle, only WHICH USERS are
+      mutually nominating each other.
 
-    No findings cap is applied here. The search space is bounded by:
-      - length_bound=8 (DFS never recurses deeper than 8 hops)
-      - The 180-day detection window (reduces graph density)
-      - Idempotency in _save_findings (duplicates are never re-inserted)
-    A cap would create a permanent blind spot for findings beyond the limit,
-    since idempotency would prevent the missed findings from appearing in
-    subsequent runs once the cap is filled by already-saved findings.
+      An SCC is a maximal group of nodes where every node can reach every
+      other node through directed edges.  If users A, B, C form an SCC,
+      nomination cycles exist among all of them — reported as ONE finding.
 
-    Severity:
-      3–4 nodes → Medium
-      5–6 nodes → High
-      7+  nodes → Critical
+      strongly_connected_components() runs in O(V + E) — linear time,
+      no combinatorial explosion, constant memory regardless of graph density.
+
+    2-node SCCs (A→B, B→A reciprocals) are skipped — already caught by the
+    Random Forest's HasReciprocalNomination feature.
+
+    max_cluster_size: upper bound on SCC size to report. SCCs larger than
+      this are suppressed. Useful when synthetic/seeded data produces
+      artificially large clusters that obscure genuine small rings.
+      0 means no upper limit (production default).
+
+    Severity based on cluster size:
+      3–5 nodes  → Medium   (small, possibly coincidental)
+      6–10 nodes → High     (coordinated group)
+      11+ nodes  → Critical (large organised scheme)
     """
     G = nx.DiGraph()
     edge_nominations: dict[tuple, list[int]] = defaultdict(list)
@@ -351,36 +361,49 @@ def detect_rings(
         G.add_edge(src, dst)
         edge_nominations[(src, dst)].append(nom["NominationId"])
 
-    findings: list[dict] = []
+    findings:  list[dict] = []
+    suppressed: int       = 0
 
-    # length_bound keeps the DFS stack bounded and avoids combinatorial
-    # explosion on dense graphs. Requires networkx >= 3.2.
-    for cycle in nx.simple_cycles(G, length_bound=max_ring_length):
-        if len(cycle) < 3:
-            continue  # skip 2-cycles
+    for scc in nx.strongly_connected_components(G):
+        size = len(scc)
 
-        size = len(cycle)
-        if size <= 4:
+        if size < 3:
+            continue  # skip isolates and 2-node reciprocals
+
+        if max_cluster_size > 0 and size > max_cluster_size:
+            suppressed += 1
+            continue  # too large — likely synthetic noise or misconfigured data
+
+        members = sorted(scc)
+
+        if size <= 5:
             severity = "Medium"
-        elif size <= 6:
+        elif size <= 10:
             severity = "High"
         else:
             severity = "Critical"
 
+        # Collect all nomination IDs on edges within this SCC
         nom_ids: list[int] = []
-        for i in range(size):
-            src = cycle[i]
-            dst = cycle[(i + 1) % size]
-            nom_ids.extend(edge_nominations.get((src, dst), []))
+        for src in members:
+            for dst in members:
+                if src != dst:
+                    nom_ids.extend(edge_nominations.get((src, dst), []))
 
         findings.append(_finding(
             tenant_id, run_id, "Ring", severity,
-            sorted(cycle), sorted(set(nom_ids)),
-            f"Directed nomination ring of length {size}: "
-            f"{' → '.join(str(u) for u in cycle)} → {cycle[0]}",
+            members, sorted(set(nom_ids)),
+            f"Mutual nomination cluster of {size} users: "
+            f"{', '.join(str(u) for u in members)}",
         ))
 
-    logger.info("  Rings: %d detected", len(findings))
+    if suppressed:
+        logger.info(
+            "  Rings (SCCs): %d detected, %d suppressed (size > %d).",
+            len(findings), suppressed, max_cluster_size,
+        )
+    else:
+        logger.info("  Rings (SCCs): %d detected", len(findings))
     return findings
 
 
@@ -761,12 +784,17 @@ def main() -> None:
     )
     logger.info("graph_pattern_detector — starting")
 
-    findings_table  = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
-    window_days     = int(os.getenv("DETECTION_WINDOW_DAYS", "180"))
-    run_id          = str(uuid.uuid4())
+    findings_table    = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
+    window_days       = int(os.getenv("DETECTION_WINDOW_DAYS", "180"))
+    ring_max_cluster  = int(os.getenv("RING_MAX_CLUSTER_SIZE", "0"))
+    run_id            = str(uuid.uuid4())
     logger.info("RunId: %s", run_id)
     logger.info("Target table: %s", findings_table)
     logger.info("Detection window: %d days", window_days)
+    logger.info(
+        "Ring max cluster size: %s",
+        str(ring_max_cluster) if ring_max_cluster > 0 else "unlimited",
+    )
 
     conn = _get_connection()
 
@@ -804,7 +832,7 @@ def main() -> None:
 
         tenant_findings: list[dict] = []
 
-        tenant_findings.extend(detect_rings(nominations, tenant_id, run_id))
+        tenant_findings.extend(detect_rings(nominations, tenant_id, run_id, ring_max_cluster))
         tenant_findings.extend(detect_super_nominators(nominations, tenant_id, run_id))
         tenant_findings.extend(detect_deserts(ever_active_ids, users, tenant_id, run_id))
         tenant_findings.extend(detect_approver_affinity(nominations, tenant_id, run_id))
