@@ -1228,7 +1228,7 @@ def get_integrity_findings(tenant_id: int, run_id: str) -> list[dict]:
     with get_db_context() as session:
         rows = session.execute(text("""
             SELECT FindingId, PatternType, Severity,
-                   AffectedUsers, NominationIds, Detail, DetectedAt
+                   AffectedUsers, NominationIds, Detail, DetectedAt, TotalAmount
             FROM   dbo.GraphPatternFindings
             WHERE  TenantId = :tid
               AND  RunId    = :run_id
@@ -1250,6 +1250,7 @@ def get_integrity_findings(tenant_id: int, run_id: str) -> list[dict]:
                 "nominationIds": row[4],   # JSON string — parsed by frontend
                 "detail":        row[5],
                 "detectedAt":    row[6].isoformat() if row[6] else None,
+                "totalAmount":   row[7],
             }
             for row in rows
         ]

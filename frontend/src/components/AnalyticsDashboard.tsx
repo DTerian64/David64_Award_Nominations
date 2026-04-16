@@ -75,6 +75,7 @@ interface IntegrityFinding {
   nominationIds: string;   // JSON array string
   detail: string;
   detectedAt: string;
+  totalAmount?: number;
 }
 
 // Human-readable labels and icons per pattern type
@@ -684,10 +685,17 @@ export const AnalyticsDashboard: React.FC = () => {
                                 </span>
                               )}
                             </div>
-                            <ChevronDown
-                              size={16}
-                              className={`shrink-0 text-gray-400 transition-transform mt-0.5 ${isOpen ? 'rotate-180' : ''}`}
-                            />
+                            <div className="flex items-center gap-3 shrink-0">
+                              {finding.totalAmount != null && finding.totalAmount > 0 && (
+                                <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2.5 py-1 rounded-full">
+                                  ${finding.totalAmount.toLocaleString()}
+                                </span>
+                              )}
+                              <ChevronDown
+                                size={16}
+                                className={`text-gray-400 transition-transform mt-0.5 ${isOpen ? 'rotate-180' : ''}`}
+                              />
+                            </div>
                           </div>
                           <p className="mt-2 text-sm text-gray-700 line-clamp-2">{finding.detail}</p>
                         </button>
@@ -695,6 +703,16 @@ export const AnalyticsDashboard: React.FC = () => {
                         {/* Expanded detail */}
                         {isOpen && (
                           <div className="px-4 pb-4 space-y-3 border-t border-current border-opacity-20 pt-3">
+                            {finding.totalAmount != null && finding.totalAmount > 0 && (
+                              <div>
+                                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                                  Total Approved / Paid
+                                </p>
+                                <p className="text-sm font-bold text-gray-900">
+                                  ${finding.totalAmount.toLocaleString()}
+                                </p>
+                              </div>
+                            )}
                             {users.length > 0 && (
                               <div>
                                 <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">

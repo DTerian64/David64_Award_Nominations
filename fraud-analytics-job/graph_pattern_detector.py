@@ -114,7 +114,11 @@ def _load_nominations(
     window_days: int,
 ) -> list[dict]:
     """
-    Return nominations for a tenant within the rolling detection window.
+    Return Approved/Paid nominations for a tenant within the rolling detection window.
+
+    Only Status IN ('Approved', 'Paid') are loaded — these represent real
+    financial exposure.  Pending/Rejected nominations are excluded so rings,
+    super-nominators, and copy-paste clusters reflect committed spend.
 
     window_days controls how far back to look.  All seven detectors share
     this window; the ring / approver-affinity detectors need the longest
@@ -131,6 +135,7 @@ def _load_nominations(
         JOIN   dbo.Users u ON u.UserId = n.NominatorId
         WHERE  u.TenantId = ?
           AND  n.NominationDate >= DATEADD(DAY, -?, GETDATE())
+          AND  n.Status IN ('Approved', 'Paid')
     """, tenant_id, window_days)
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -211,6 +216,7 @@ def _finding(
     affected_users: list[int],   # must already be sorted
     nomination_ids: list[int],   # must already be sorted
     detail: str,
+    total_amount: int = 0,
 ) -> dict[str, Any]:
     return {
         "TenantId":      tenant_id,
@@ -222,6 +228,7 @@ def _finding(
         "DetectedAt":    datetime.now(timezone.utc),
         "RunId":         run_id,
         "FindingHash":   _fingerprint(tenant_id, pattern_type, affected_users, nomination_ids),
+        "TotalAmount":   total_amount,
     }
 
 
@@ -291,8 +298,9 @@ def _save_findings(
     sql = f"""
         INSERT INTO {table}
                (TenantId, PatternType, Severity,
-                AffectedUsers, NominationIds, Detail, DetectedAt, RunId, FindingHash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                AffectedUsers, NominationIds, Detail, DetectedAt, RunId, FindingHash,
+                TotalAmount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     rows = [
         (
@@ -305,6 +313,7 @@ def _save_findings(
             f["DetectedAt"],
             f["RunId"],
             f["FindingHash"],
+            f.get("TotalAmount", 0),
         )
         for f in new_findings
     ]
@@ -322,88 +331,106 @@ def detect_rings(
     max_cluster_size: int = 0,
 ) -> list[dict]:
     """
-    Detects mutual nomination clusters using Strongly Connected Components
-    (SCCs) via Kosaraju's / Tarjan's algorithm (networkx
-    strongly_connected_components).
+    Detects nomination rings using simple_cycles() with frozenset deduplication.
 
-    Why SCCs instead of simple_cycles():
-      simple_cycles() enumerates every distinct path through the graph.
-      On a dense graph (e.g. 291 users, 11 K nominations) this produces
-      100 000+ findings that are analytically redundant — an investigator
-      does not need to see every possible cycle, only WHICH USERS are
-      mutually nominating each other.
+    Algorithm
+    ---------
+    For each ring size from max_cluster_size down to 3:
+      1. Use simple_cycles(G, length_bound=size) to find all cycles up to
+         that length, filtered to exactly `size` nodes.
+      2. For each cycle, compute frozenset(cycle) as the dedup key.
+         This collapses all permutations of the same user group:
+           [A,B,C], [B,C,A], [C,A,B], [A,C,B] → frozenset({A,B,C})
+         Each unique user group is reported exactly once regardless of
+         how many directed paths exist through it.
+      3. Skip any frozenset already seen in a larger-size pass — prevents
+         the same users appearing in both a 4-node and a 3-node finding.
 
-      An SCC is a maximal group of nodes where every node can reach every
-      other node through directed edges.  If users A, B, C form an SCC,
-      nomination cycles exist among all of them — reported as ONE finding.
+    Why not SCC?
+      strongly_connected_components() on a dense graph (291 users, 11 K
+      nominations) produces one giant 282-node cluster that is analytically
+      useless.  simple_cycles() with length_bound + frozenset dedup finds
+      the genuine tight rings the seeder planted.
 
-      strongly_connected_components() runs in O(V + E) — linear time,
-      no combinatorial explosion, constant memory regardless of graph density.
+    max_cluster_size: largest ring size to report (default 0 = unlimited,
+      capped internally at 8 to prevent DFS explosion on dense graphs).
+      Set via RING_MAX_CLUSTER_SIZE env var.
 
-    2-node SCCs (A→B, B→A reciprocals) are skipped — already caught by the
-    Random Forest's HasReciprocalNomination feature.
-
-    max_cluster_size: upper bound on SCC size to report. SCCs larger than
-      this are suppressed. Useful when synthetic/seeded data produces
-      artificially large clusters that obscure genuine small rings.
-      0 means no upper limit (production default).
-
-    Severity based on cluster size:
-      3–5 nodes  → Medium   (small, possibly coincidental)
-      6–10 nodes → High     (coordinated group)
-      11+ nodes  → Critical (large organised scheme)
+    Severity — financial exposure (all nominations are already Approved/Paid):
+      TotalAmount ≥ 10 000 → Critical
+      TotalAmount ≥  5 000 → High
+      TotalAmount ≥  1 000 → Medium
+      TotalAmount  <  1 000 → Low
     """
+    # Hard cap: simple_cycles DFS is exponential beyond 8 hops regardless
+    # of what the operator configures.
+    HARD_CAP = 8
+    upper = min(max_cluster_size, HARD_CAP) if max_cluster_size > 0 else HARD_CAP
+
     G = nx.DiGraph()
-    edge_nominations: dict[tuple, list[int]] = defaultdict(list)
+    # Map edge → list of (NominationId, Amount) for TotalAmount computation
+    edge_nominations: dict[tuple, list[tuple[int, int]]] = defaultdict(list)
 
     for nom in nominations:
         src, dst = nom["NominatorId"], nom["BeneficiaryId"]
         G.add_edge(src, dst)
-        edge_nominations[(src, dst)].append(nom["NominationId"])
-
-    findings:  list[dict] = []
-    suppressed: int       = 0
-
-    for scc in nx.strongly_connected_components(G):
-        size = len(scc)
-
-        if size < 3:
-            continue  # skip isolates and 2-node reciprocals
-
-        if max_cluster_size > 0 and size > max_cluster_size:
-            suppressed += 1
-            continue  # too large — likely synthetic noise or misconfigured data
-
-        members = sorted(scc)
-
-        if size <= 5:
-            severity = "Medium"
-        elif size <= 10:
-            severity = "High"
-        else:
-            severity = "Critical"
-
-        # Collect all nomination IDs on edges within this SCC
-        nom_ids: list[int] = []
-        for src in members:
-            for dst in members:
-                if src != dst:
-                    nom_ids.extend(edge_nominations.get((src, dst), []))
-
-        findings.append(_finding(
-            tenant_id, run_id, "Ring", severity,
-            members, sorted(set(nom_ids)),
-            f"Mutual nomination cluster of {size} users: "
-            f"{', '.join(str(u) for u in members)}",
-        ))
-
-    if suppressed:
-        logger.info(
-            "  Rings (SCCs): %d detected, %d suppressed (size > %d).",
-            len(findings), suppressed, max_cluster_size,
+        edge_nominations[(src, dst)].append(
+            (nom["NominationId"], nom["Amount"] or 0)
         )
-    else:
-        logger.info("  Rings (SCCs): %d detected", len(findings))
+
+    findings:       list[dict]        = []
+    seen_user_sets: set[frozenset]    = set()
+
+    # Iterate largest → smallest so that if {A,B,C,D} is found first,
+    # the subset {A,B,C} is still reported — they are distinct rings.
+    # Users already in a seen frozenset are NOT suppressed for smaller
+    # rings; only the identical frozenset is deduplicated.
+    for size in range(upper, 2, -1):   # e.g. 4, 3
+        for cycle in nx.simple_cycles(G, length_bound=size):
+            if len(cycle) != size:
+                continue  # length_bound yields cycles UP TO size; skip shorter
+
+            key = frozenset(cycle)
+            if key in seen_user_sets:
+                continue  # same user group already reported at this or larger size
+            seen_user_sets.add(key)
+
+            members = sorted(key)
+
+            # Collect nomination IDs and amounts on edges that form this cycle
+            nom_ids:      list[int] = []
+            total_amount: int       = 0
+            for i in range(size):
+                src = cycle[i]
+                dst = cycle[(i + 1) % size]
+                for nom_id, amount in edge_nominations.get((src, dst), []):
+                    nom_ids.append(nom_id)
+                    total_amount += amount
+
+            # Severity based on financial exposure
+            # (all loaded nominations are Approved/Paid — amount is committed spend)
+            if total_amount >= 10_000:
+                severity = "Critical"
+            elif total_amount >= 5_000:
+                severity = "High"
+            elif total_amount >= 1_000:
+                severity = "Medium"
+            else:
+                severity = "Low"
+
+            findings.append(_finding(
+                tenant_id, run_id, "Ring", severity,
+                members, sorted(set(nom_ids)),
+                f"Nomination ring of {size} users: "
+                f"{' → '.join(str(u) for u in cycle)} → {cycle[0]} "
+                f"(total approved/paid: ${total_amount:,})",
+                total_amount=total_amount,
+            ))
+
+    logger.info(
+        "  Rings: %d detected (sizes 3–%d, frozenset dedup).",
+        len(findings), upper,
+    )
     return findings
 
 
@@ -419,9 +446,11 @@ def detect_super_nominators(
     Threshold: mean + 2σ AND at least 3× the median.
     Minimum absolute count: 5 nominations sent.
     """
-    out_degree: dict[int, list[int]] = defaultdict(list)
+    out_degree:  dict[int, list[int]] = defaultdict(list)
+    out_amounts: dict[int, int]       = defaultdict(int)
     for nom in nominations:
         out_degree[nom["NominatorId"]].append(nom["NominationId"])
+        out_amounts[nom["NominatorId"]] += nom["Amount"] or 0
 
     if len(out_degree) < 3:
         return []
@@ -437,12 +466,15 @@ def detect_super_nominators(
     for user_id, nom_ids in out_degree.items():
         cnt = len(nom_ids)
         if cnt >= threshold:
+            total_amount = out_amounts[user_id]
             severity = "High" if cnt >= threshold * 1.5 else "Medium"
             findings.append(_finding(
                 tenant_id, run_id, "SuperNominator", severity,
                 [user_id], nom_ids,
                 f"User {user_id} sent {cnt} nominations "
-                f"(tenant mean={mean:.1f}, threshold={threshold:.1f})",
+                f"(tenant mean={mean:.1f}, threshold={threshold:.1f}, "
+                f"total approved/paid: ${total_amount:,})",
+                total_amount=total_amount,
             ))
 
     logger.info("  SuperNominators: %d detected", len(findings))
@@ -513,9 +545,10 @@ def detect_approver_affinity(
         return []
     baseline = n_approved / total
 
-    pair_total:    dict[tuple, int] = defaultdict(int)
-    pair_approved: dict[tuple, int] = defaultdict(int)
+    pair_total:    dict[tuple, int]       = defaultdict(int)
+    pair_approved: dict[tuple, int]       = defaultdict(int)
     pair_noms:     dict[tuple, list[int]] = defaultdict(list)
+    pair_amounts:  dict[tuple, int]       = defaultdict(int)
 
     for nom in nominations:
         if nom["ApproverId"] is None:
@@ -523,6 +556,7 @@ def detect_approver_affinity(
         key = (nom["NominatorId"], nom["ApproverId"])
         pair_total[key]   += 1
         pair_noms[key].append(nom["NominationId"])
+        pair_amounts[key] += nom["Amount"] or 0
         if nom["Status"] in approved_statuses:
             pair_approved[key] += 1
 
@@ -533,13 +567,15 @@ def detect_approver_affinity(
         rate = pair_approved[key] / cnt
         if rate >= 2 * baseline and baseline > 0:
             nominator_id, approver_id = key
+            total_amount = pair_amounts[key]
             severity = "High" if rate >= 3 * baseline else "Medium"
             findings.append(_finding(
                 tenant_id, run_id, "ApproverAffinity", severity,
                 [nominator_id, approver_id], pair_noms[key],
                 f"Nominator {nominator_id} / Approver {approver_id}: "
                 f"approval rate {rate:.0%} vs tenant baseline {baseline:.0%} "
-                f"({cnt} nominations)",
+                f"({cnt} nominations, total approved/paid: ${total_amount:,})",
+                total_amount=total_amount,
             ))
 
     logger.info("  ApproverAffinity: %d detected", len(findings))
@@ -650,8 +686,9 @@ def detect_copy_paste(
     for _root, members in clusters.items():
         if len(members) < min_cluster_size:
             continue
-        nom_ids  = [eligible[i]["NominationId"] for i in members]
-        user_ids = list({eligible[i]["NominatorId"] for i in members})
+        nom_ids      = [eligible[i]["NominationId"] for i in members]
+        user_ids     = list({eligible[i]["NominatorId"] for i in members})
+        total_amount = sum(eligible[i]["Amount"] or 0 for i in members)
 
         # avg_sim from recorded above-threshold pairs within this cluster
         cluster_set = set(members)
@@ -666,7 +703,9 @@ def detect_copy_paste(
             tenant_id, run_id, "CopyPaste", severity,
             sorted(user_ids), sorted(nom_ids),
             f"Cluster of {len(members)} nominations with avg cosine "
-            f"similarity {avg_sim:.3f} (threshold {similarity_threshold})",
+            f"similarity {avg_sim:.3f} (threshold {similarity_threshold}, "
+            f"total approved/paid: ${total_amount:,})",
+            total_amount=total_amount,
         ))
 
     logger.info("  CopyPaste: %d clusters detected", len(findings))
@@ -707,13 +746,16 @@ def detect_transactional(
         desc = nom.get("Description") or ""
         hits = _TRANSACTIONAL_PATTERNS.findall(desc)
         if len(hits) >= min_hits:
+            total_amount = nom["Amount"] or 0
             severity = "High" if len(hits) >= 4 else "Medium"
             findings.append(_finding(
                 tenant_id, run_id, "TransactionalLanguage", severity,
                 [nom["NominatorId"], nom["BeneficiaryId"]],
                 [nom["NominationId"]],
                 f"Description contains {len(hits)} transactional phrase(s): "
-                f"{', '.join(repr(h) for h in hits[:5])}",
+                f"{', '.join(repr(h) for h in hits[:5])} "
+                f"(approved/paid: ${total_amount:,})",
+                total_amount=total_amount,
             ))
 
     logger.info("  TransactionalLanguage: %d detected", len(findings))
