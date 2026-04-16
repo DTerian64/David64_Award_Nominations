@@ -720,6 +720,9 @@ export const AnalyticsDashboard: React.FC = () => {
                               <span className="font-semibold text-gray-900 truncate">
                                 {meta?.label ?? finding.patternType}
                               </span>
+                              <span className="shrink-0 font-mono text-xs text-gray-400 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">
+                                #{finding.findingId}
+                              </span>
                               {meta && (
                                 <span className="hidden sm:block text-xs text-gray-500 truncate">
                                   {meta.description}
