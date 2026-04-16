@@ -116,6 +116,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const [integrityFindings, setIntegrityFindings] = useState<IntegrityFinding[]>([]);
   const [integrityLoading, setIntegrityLoading] = useState(false);
   const [expandedFinding, setExpandedFinding] = useState<number | null>(null);
+  const [activePatternFilters, setActivePatternFilters] = useState<Set<string>>(new Set());
   
   // Track which tabs have been loaded to avoid refetching
   const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(['ask']));
@@ -191,6 +192,7 @@ export const AnalyticsDashboard: React.FC = () => {
 
   const fetchIntegrityRuns = async () => {
     setIntegrityLoading(true);
+    setActivePatternFilters(new Set());
     try {
       const runs = await apiFetch<IntegrityRun[]>('/api/admin/analytics/integrity/runs');
       setIntegrityRuns(runs);
@@ -210,6 +212,8 @@ export const AnalyticsDashboard: React.FC = () => {
 
   const handleRunChange = async (runId: string) => {
     setSelectedRunId(runId);
+    setActivePatternFilters(new Set());
+    setExpandedFinding(null);
     setIntegrityLoading(true);
     try {
       const findings = await apiFetch<IntegrityFinding[]>(
@@ -636,28 +640,65 @@ export const AnalyticsDashboard: React.FC = () => {
                 );
               })()}
 
-              {/* Pattern type breakdown chips */}
+              {/* Pattern type filter chips */}
               {(() => {
                 const byType: Record<string, number> = {};
                 integrityFindings.forEach(f => { byType[f.patternType] = (byType[f.patternType] ?? 0) + 1; });
+                const hasFilters = activePatternFilters.size > 0;
                 return Object.keys(byType).length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(byType).map(([type, count]) => (
-                      <span key={type} className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
-                        {PATTERN_META[type]?.label ?? type}
-                        <span className="ml-1.5 bg-gray-300 text-gray-800 px-1.5 py-0.5 rounded-full text-xs">{count}</span>
-                      </span>
-                    ))}
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {Object.entries(byType).map(([type, count]) => {
+                      const active = activePatternFilters.has(type);
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => {
+                            setActivePatternFilters(prev => {
+                              const next = new Set(prev);
+                              if (next.has(type)) next.delete(type); else next.add(type);
+                              return next;
+                            });
+                            setExpandedFinding(null);
+                          }}
+                          className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
+                            active
+                              ? 'bg-gray-700 text-white'
+                              : hasFilters
+                                ? 'bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600'
+                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          }`}
+                        >
+                          {PATTERN_META[type]?.label ?? type}
+                          <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
+                            active ? 'bg-gray-500 text-white' : 'bg-gray-300 text-gray-700'
+                          }`}>{count}</span>
+                        </button>
+                      );
+                    })}
+                    {hasFilters && (
+                      <button
+                        onClick={() => { setActivePatternFilters(new Set()); setExpandedFinding(null); }}
+                        className="px-3 py-1 rounded-full text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2"
+                      >
+                        Clear
+                      </button>
+                    )}
                   </div>
                 ) : null;
               })()}
 
               {/* Findings list */}
-              {integrityFindings.length === 0 ? (
-                <div className="text-center py-10 text-gray-400">No findings for this run.</div>
-              ) : (
+              {(() => {
+                const visibleFindings = activePatternFilters.size === 0
+                  ? integrityFindings
+                  : integrityFindings.filter(f => activePatternFilters.has(f.patternType));
+                return visibleFindings.length === 0 ? (
+                  <div className="text-center py-10 text-gray-400">
+                    {integrityFindings.length === 0 ? 'No findings for this run.' : 'No findings match the selected filter.'}
+                  </div>
+                ) : (
                 <div className="space-y-3">
-                  {integrityFindings.map(finding => {
+                  {visibleFindings.map(finding => {
                     const styles = SEVERITY_STYLES[finding.severity] ?? SEVERITY_STYLES.Low;
                     const meta   = PATTERN_META[finding.patternType];
                     const users  = (() => { try { return JSON.parse(finding.affectedUsers ?? '[]') as number[]; } catch { return []; } })();
@@ -750,7 +791,8 @@ export const AnalyticsDashboard: React.FC = () => {
                     );
                   })}
                 </div>
-              )}
+                );
+              })()}
             </>
           )}
         </div>

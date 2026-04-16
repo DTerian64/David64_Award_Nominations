@@ -582,12 +582,106 @@ def detect_approver_affinity(
     return findings
 
 
+# ── Embedding cache helpers ───────────────────────────────────────────────────
+
+def _evict_stale_embeddings(conn: pyodbc.Connection, window_days: int) -> None:
+    """
+    Delete cached embeddings for nominations no longer within the active
+    detection window (or no longer Approved/Paid).
+
+    Called once per job run — before per-tenant processing — to keep the
+    NomGraph_NominationEmbedding table bounded to roughly
+    DETECTION_WINDOW_DAYS × approval_rate rows.
+    """
+    cur = conn.cursor()
+    cur.execute("""
+        DELETE e
+        FROM   dbo.NomGraph_NominationEmbedding e
+        WHERE  NOT EXISTS (
+            SELECT 1
+            FROM   dbo.Nominations n
+            WHERE  n.NominationId   = e.NominationId
+              AND  n.NominationDate >= DATEADD(DAY, -?, GETDATE())
+              AND  n.Status         IN ('Approved', 'Paid')
+        )
+    """, window_days)
+    deleted = cur.rowcount
+    conn.commit()
+    if deleted:
+        logger.info("Evicted %d stale embedding(s) from cache.", deleted)
+
+
+def _load_cached_embeddings(
+    conn: pyodbc.Connection,
+    nom_ids: list[int],
+) -> dict[int, np.ndarray]:
+    """
+    Return {NominationId: embedding_vector} for all IDs that already have a
+    cached row in NomGraph_NominationEmbedding.
+
+    Chunked into batches of 2 000 to stay within SQL Server's 2 100-parameter
+    limit per statement.
+    """
+    if not nom_ids:
+        return {}
+
+    result: dict[int, np.ndarray] = {}
+    cur = conn.cursor()
+    CHUNK = 2_000
+
+    for i in range(0, len(nom_ids), CHUNK):
+        batch = nom_ids[i : i + CHUNK]
+        placeholders = ",".join("?" * len(batch))
+        cur.execute(
+            f"SELECT NominationId, Embedding "
+            f"FROM   dbo.NomGraph_NominationEmbedding "
+            f"WHERE  NominationId IN ({placeholders})",
+            batch,
+        )
+        for row in cur.fetchall():
+            # pyodbc returns VARBINARY as memoryview; bytes() converts it
+            result[row[0]] = np.frombuffer(bytes(row[1]), dtype=np.float32).copy()
+
+    return result
+
+
+def _save_embeddings(
+    conn: pyodbc.Connection,
+    embeddings: dict[int, np.ndarray],
+) -> None:
+    """
+    Persist newly computed embedding vectors to the cache table.
+
+    Uses INSERT … WHERE NOT EXISTS so a re-run that encounters a race
+    condition (two job instances starting simultaneously) is safe.
+    Each vector is stored as raw float32 bytes via tobytes().
+    """
+    if not embeddings:
+        return
+
+    cur = conn.cursor()
+    rows = [
+        (nom_id, vec.astype(np.float32).tobytes(), nom_id)
+        for nom_id, vec in embeddings.items()
+    ]
+    cur.executemany("""
+        INSERT INTO dbo.NomGraph_NominationEmbedding (NominationId, Embedding, EmbeddedAt)
+        SELECT ?, CAST(? AS VARBINARY(MAX)), GETUTCDATE()
+        WHERE  NOT EXISTS (
+            SELECT 1 FROM dbo.NomGraph_NominationEmbedding WHERE NominationId = ?
+        )
+    """, rows)
+    conn.commit()
+    logger.info("  Cached %d new embedding(s).", len(embeddings))
+
+
 # ── Pattern 5: Copy-paste fraud ───────────────────────────────────────────────
 
 def detect_copy_paste(
     nominations: list[dict],
     tenant_id: int,
     run_id: str,
+    conn: pyodbc.Connection,
     similarity_threshold: float = 0.92,
     min_cluster_size: int = 3,
     chunk_size: int = 512,
@@ -597,16 +691,30 @@ def detect_copy_paste(
     (cosine ≥ similarity_threshold). Uses sentence-transformers for embeddings
     and union-find for cluster formation.
 
-    Memory strategy: instead of materialising the full N×N similarity matrix
-    (which is ~500 MB at 11 K nominations), we process row-chunks of
-    `chunk_size` at a time.  Each chunk produces a (chunk_size × N) slice
-    that is discarded after the pairs above the threshold are recorded.
+    Embedding cache
+    ---------------
+    Approved/Paid nomination text is immutable, so embeddings computed on a
+    previous run are valid forever.  On each run the detector:
+
+      1. Queries NomGraph_NominationEmbedding for all eligible NominationIds.
+      2. Encodes only the *delta* — nominations with no cached row.
+         At steady state this is typically one week's worth of new approvals,
+         reducing encoding work by ~96 % compared to a cold start.
+      3. Persists the new vectors to the cache for future runs.
+      4. Assembles the full embedding matrix from cached + new vectors.
+
+    Memory strategy
+    ---------------
+    Instead of materialising the full N×N similarity matrix (which is ~500 MB
+    at 11 K nominations), we process row-chunks of `chunk_size` at a time.
+    Each chunk produces a (chunk_size × N) slice that is discarded after the
+    pairs above the threshold are recorded.
     Peak extra memory per chunk: chunk_size × N × 4 bytes
     = 512 × 11 196 × 4 ≈ 23 MB — manageable inside 4 Gi.
 
-    The sentence-transformers model (~500 MB resident) is explicitly deleted
-    and garbage-collected after encoding so the memory is freed before the
-    rest of the detection pipeline runs.
+    The sentence-transformers model (~500 MB resident) is only loaded when
+    there are uncached nominations to encode, and is explicitly deleted and
+    garbage-collected immediately after encoding.
 
     Only clusters of ≥ min_cluster_size nominations are flagged.
     """
@@ -624,20 +732,53 @@ def detect_copy_paste(
         logger.warning("sentence-transformers not available — skipping CopyPaste")
         return []
 
-    texts = [n["Description"] for n in eligible]
-    logger.info("  Encoding %d descriptions …", len(texts))
-
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    embeddings = model.encode(
-        texts,
-        normalize_embeddings=True,
-        batch_size=64,
-        show_progress_bar=False,
+    # ── Step 1: load cached embeddings ───────────────────────────────────────
+    nom_ids = [n["NominationId"] for n in eligible]
+    cached  = _load_cached_embeddings(conn, nom_ids)
+    n_cached = len(cached)
+    n_total  = len(eligible)
+    logger.info(
+        "  Embedding cache: %d/%d hits (%.0f%% cached).",
+        n_cached, n_total,
+        100 * n_cached / n_total if n_total else 0,
     )
-    embeddings = np.array(embeddings, dtype=np.float32)
 
-    # Free the ~500 MB PyTorch model immediately after encoding
-    del model
+    # ── Step 2: encode only the delta ────────────────────────────────────────
+    to_embed = [n for n in eligible if n["NominationId"] not in cached]
+    new_embeddings: dict[int, np.ndarray] = {}
+
+    if to_embed:
+        texts = [n["Description"] for n in to_embed]
+        logger.info("  Encoding %d new description(s) …", len(texts))
+
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        vecs  = model.encode(
+            texts,
+            normalize_embeddings=True,
+            batch_size=64,
+            show_progress_bar=False,
+        )
+        vecs = np.array(vecs, dtype=np.float32)
+
+        # Free the ~500 MB PyTorch model immediately after encoding
+        del model
+        gc.collect()
+
+        for i, n in enumerate(to_embed):
+            new_embeddings[n["NominationId"]] = vecs[i]
+
+        # ── Step 3: persist new vectors to cache ─────────────────────────────
+        _save_embeddings(conn, new_embeddings)
+
+    # ── Step 4: assemble full embedding matrix in eligible order ─────────────
+    all_vecs = np.stack([
+        cached.get(n["NominationId"], new_embeddings[n["NominationId"]])
+        for n in eligible
+    ])  # shape: (len(eligible), 384)
+
+    # Rename to match the rest of the function
+    embeddings = all_vecs
+    del all_vecs, cached, new_embeddings
     gc.collect()
 
     # ── Chunked union-find ────────────────────────────────────────────────────
@@ -843,6 +984,10 @@ def main() -> None:
     # Refresh graph tables from live Nominations / Users
     sync_graph_tables(conn)
 
+    # Evict embeddings that have aged out of the detection window.
+    # Done once per run (before tenant loop) — window is tenant-agnostic.
+    _evict_stale_embeddings(conn, window_days)
+
     tenants = _load_tenants(conn)
     logger.info("Tenants to process: %s", tenants)
 
@@ -878,7 +1023,7 @@ def main() -> None:
         tenant_findings.extend(detect_super_nominators(nominations, tenant_id, run_id))
         tenant_findings.extend(detect_deserts(ever_active_ids, users, tenant_id, run_id))
         tenant_findings.extend(detect_approver_affinity(nominations, tenant_id, run_id))
-        tenant_findings.extend(detect_copy_paste(nominations, tenant_id, run_id))
+        tenant_findings.extend(detect_copy_paste(nominations, tenant_id, run_id, conn))
         tenant_findings.extend(detect_transactional(nominations, tenant_id, run_id))
         tenant_findings.extend(detect_hidden_candidate(nominations, users, tenant_id, run_id))
 
