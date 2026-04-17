@@ -203,7 +203,7 @@ async def _graph_get_integrity_findings(
     limit = max(1, min(limit, 200))
     try:
         conditions = ["TenantId = :tid"]
-        params: dict[str, Any] = {"tid": tenant_id, "limit": limit}
+        params: dict[str, Any] = {"tid": tenant_id}
         if pattern_type:
             conditions.append("PatternType = :pt");  params["pt"]      = pattern_type
         if severity:
@@ -217,7 +217,7 @@ async def _graph_get_integrity_findings(
         where = " AND ".join(conditions)
         with sqlhelper.get_db_context() as session:
             rows = session.execute(text(f"""
-                SELECT TOP :limit
+                SELECT TOP {limit}
                        FindingId, PatternType, Severity,
                        AffectedUsers, NominationIds, TotalAmount,
                        Detail, DetectedAt, RunId
