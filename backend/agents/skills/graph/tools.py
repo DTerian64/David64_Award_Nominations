@@ -211,8 +211,19 @@ async def _graph_get_integrity_findings(
         if finding_id is not None:
             conditions.append("FindingId = :fid");   params["fid"]     = finding_id
         if user_id is not None:
-            conditions.append("AffectedUsers LIKE :uid_pat")
-            params["uid_pat"] = f"%{user_id}%"
+            # AffectedUsers is a JSON array string e.g. "[14, 16, 23]".
+            # A bare LIKE '%16%' would falsely match 116, 160, 216 etc.
+            # Anchoring to JSON delimiters gives an exact integer match.
+            conditions.append(
+                "(AffectedUsers LIKE :uid_start"   # [16, ...
+                " OR AffectedUsers LIKE :uid_mid"  # ..., 16, ...
+                " OR AffectedUsers LIKE :uid_end"  # ..., 16]
+                " OR AffectedUsers = :uid_only)"   # [16]
+            )
+            params["uid_start"] = f"[{user_id},%"
+            params["uid_mid"]   = f"%, {user_id},%"
+            params["uid_end"]   = f"%, {user_id}]"
+            params["uid_only"]  = f"[{user_id}]"
 
         where = " AND ".join(conditions)
         with sqlhelper.get_db_context() as session:

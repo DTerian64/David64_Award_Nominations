@@ -30,6 +30,29 @@ are loaded into the graph — edges represent committed financial exposure.
 | Is User X involved in any findings?           | `graph_get_integrity_findings(user_id=X)`        |
 | Count / aggregate / date-filter nominations   | `query_database`                                 |
 
+## Critical routing rule — fraud findings vs nomination edges
+
+Questions that mention fraud, integrity findings, copy-paste, rings, or any
+PatternType **always** start with `graph_get_integrity_findings`, regardless
+of phrasing. The words "issued by", "sent by", "from", or "by User X" do
+**not** mean use `graph_get_nominations_sent` when the topic is fraud findings.
+
+| Misleading phrasing                                          | Correct tool                                         |
+|--------------------------------------------------------------|------------------------------------------------------|
+| "copy-paste nominations issued by User X"                    | `graph_get_integrity_findings(user_id=X, pattern_type="CopyPaste")` |
+| "fraud findings sent by / involving / attributed to User X" | `graph_get_integrity_findings(user_id=X)`            |
+| "what rings has User X been part of?"                        | `graph_get_integrity_findings(user_id=X, pattern_type="Ring")` |
+
+`AffectedUsers` in a finding lists **all implicated parties** — nominators,
+nominees, and approvers — not just the person who sent the nominations.
+A user can appear in a CopyPaste finding as a nominator whose descriptions
+matched others, OR as a nominee who received near-identical descriptions.
+`graph_get_integrity_findings(user_id=X)` captures both roles correctly.
+
+Only use `graph_get_nominations_sent` / `graph_get_nominations_received` when
+the question is purely about the **edge structure** of the graph (who nominated
+whom), not about whether those nominations were flagged as fraudulent.
+
 ## Workflow for name-based questions
 
 1. Call `graph_search_user(name_fragment)` to resolve the name to a UserId.
