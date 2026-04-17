@@ -18,9 +18,25 @@ Flow (determined by the LLM at runtime, not by Python):
     │    ├─ call export_to_excel(...)       → SAS URL     │
     │    ├─ call export_to_pdf(...)         → SAS URL     │
     │    ├─ call export_to_csv(...)         → SAS URL     │
+    │    ├─ call get_fraud_model_info()     → model meta  │
+    │    ├─ call graph_search_user(...)     → person node │
     │    └─ final text answer (no tool call)              │
     │                                                     │
     └─► AskResult  (returned to main.py)                  │
+
+Skill layout — each skill owns both its prompt context and its tools:
+
+    agents/skills/
+      base/         prompt.md            (no tools.py — prompt-only)
+      schema/       prompt.md + tools.py (query_database, get_analytics_overview)
+      exports/      prompt.md + tools.py (export_to_excel, export_to_pdf, export_to_csv)
+      fraud/        prompt.md + tools.py (get_fraud_model_info)
+      graph/        prompt.md + tools.py (7 graph traversal tools)
+
+_load_skills() dynamically imports each skill's tools.py (if present) via
+importlib, then concatenates SCHEMAS → self._tools and merges IMPLEMENTATIONS
+→ self._dispatch.  Adding a new skill requires only dropping files into its
+directory — ask_agent.py itself never needs to change.
 
 main.py contract (unchanged):
     from agents import AskAgent, AskResult
@@ -30,12 +46,13 @@ main.py contract (unchanged):
     return {"question": result.question, "answer": result.answer}
 """
 
+import importlib.util
 import json
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Any, Callable, cast
 from openai import AzureOpenAI
 from openai.types.chat import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
@@ -46,29 +63,103 @@ from openai.types.chat import (
     ChatCompletionToolParam,
 )
 
-from .tools import TOOLS, dispatch
-
 logger = logging.getLogger(__name__)
 
 # Max tool-call iterations per request — prevents runaway loops
 _MAX_ITERATIONS = 10
 
+# Skills directory — one subdirectory per skill
+_SKILLS_DIR = Path(__file__).parent / "skills"
+
+# Default skill set for the Ask agent (order matters — base always first)
+_DEFAULT_SKILLS = ["base", "schema", "exports", "fraud", "graph"]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# System prompt
+# Skill loader
 # ─────────────────────────────────────────────────────────────────────────────
-def _load_system_prompt() -> str:
-    prompt_path = Path(__file__).parent / "ask_agent_system_prompt.md"
-    if not prompt_path.exists():
-        raise FileNotFoundError(
-            f"ask_agent system prompt not found at: {prompt_path}\n"
-            "Place ask_agent_system_prompt.md alongside ask_agent.py"
-        )
-    content = prompt_path.read_text(encoding="utf-8")
-    logger.info("ask_agent: system prompt loaded (%d chars)", len(content))
-    return content
 
-_SYSTEM_PROMPT = _load_system_prompt()
+def _load_skills(
+    skill_names: list[str],
+) -> tuple[str, list[dict], dict[str, Callable]]:
+    """
+    Load skills from agents/skills/<name>/ directories.
+
+    Each skill directory may contain:
+      prompt.md  — natural-language instructions appended to the system prompt
+      tools.py   — optional; must export SCHEMAS (list[dict]) and
+                   IMPLEMENTATIONS (dict[str, async callable])
+
+    Returns:
+      prompt      — concatenated system prompt (all skills, separated by ---)
+      all_schemas — flat list of OpenAI tool schemas from every skill's tools.py
+      all_impls   — merged dict mapping tool name → async callable
+
+    Raises FileNotFoundError if a named skill directory or its prompt.md is
+    missing.  A missing tools.py is silently treated as "no tools" so
+    prompt-only skills (like base) work without a tools file.
+    """
+    prompt_sections: list[str] = []
+    all_schemas:     list[dict] = []
+    all_impls:       dict[str, Callable] = {}
+
+    for name in skill_names:
+        skill_dir = _SKILLS_DIR / name
+        if not skill_dir.is_dir():
+            available = [p.name for p in _SKILLS_DIR.iterdir() if p.is_dir()]
+            raise FileNotFoundError(
+                f"Skill '{name}' not found at: {skill_dir}\n"
+                f"Available skills: {available}"
+            )
+
+        # ── Prompt ────────────────────────────────────────────────────────────
+        prompt_path = skill_dir / "prompt.md"
+        if not prompt_path.exists():
+            raise FileNotFoundError(
+                f"Skill '{name}' is missing prompt.md at: {prompt_path}"
+            )
+        prompt_sections.append(prompt_path.read_text(encoding="utf-8").strip())
+
+        # ── Tools (optional) ──────────────────────────────────────────────────
+        tools_path = skill_dir / "tools.py"
+        if tools_path.exists():
+            spec   = importlib.util.spec_from_file_location(
+                f"agents.skills.{name}.tools", tools_path
+            )
+            module = importlib.util.module_from_spec(spec)          # type: ignore[arg-type]
+            spec.loader.exec_module(module)                         # type: ignore[union-attr]
+
+            schemas = getattr(module, "SCHEMAS", [])
+            impls   = getattr(module, "IMPLEMENTATIONS", {})
+
+            if not isinstance(schemas, list):
+                raise TypeError(f"Skill '{name}' tools.py: SCHEMAS must be a list, got {type(schemas)}")
+            if not isinstance(impls, dict):
+                raise TypeError(f"Skill '{name}' tools.py: IMPLEMENTATIONS must be a dict, got {type(impls)}")
+
+            # Detect duplicate tool names early
+            overlap = set(impls) & set(all_impls)
+            if overlap:
+                raise ValueError(
+                    f"Skill '{name}' tools.py defines tool(s) already registered "
+                    f"by a previous skill: {sorted(overlap)}"
+                )
+
+            all_schemas.extend(schemas)
+            all_impls.update(impls)
+            logger.debug(
+                "ask_agent: skill '%s' registered %d tool(s): %s",
+                name, len(impls), list(impls),
+            )
+        else:
+            logger.debug("ask_agent: skill '%s' has no tools.py (prompt-only)", name)
+
+    prompt = "\n\n---\n\n".join(prompt_sections)
+    logger.info(
+        "ask_agent: loaded %d skill(s) [%s] — %d tools, %d prompt chars",
+        len(skill_names), ", ".join(skill_names), len(all_impls), len(prompt),
+    )
+    return prompt, all_schemas, all_impls
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -105,11 +196,28 @@ class AskAgent:
 
     The LLM decides which tools to use — Python just executes them and
     feeds results back into the conversation until the model stops calling tools.
+
+    skills — list of skill names to load from agents/skills/<name>/ directories.
+             Each skill directory contains prompt.md (required) and optionally
+             tools.py (exporting SCHEMAS and IMPLEMENTATIONS).
+             Defaults to all skills (base, schema, exports, fraud, graph).
+             Pass a subset to create a focused agent with less context,
+             e.g. AskAgent(skills=["base", "schema", "graph"]) for a
+             graph-only agent that has no fraud or export instructions.
     """
 
-    def __init__(self, openai_client: AzureOpenAI | None = None):
+    def __init__(
+        self,
+        openai_client: AzureOpenAI | None = None,
+        skills: list[str] | None = None,
+    ):
         self._client     = openai_client
         self._deployment = os.getenv("AZURE_OPENAI_MODEL", "gpt-4.1")
+
+        prompt, schemas, impls = _load_skills(skills or _DEFAULT_SKILLS)
+        self._system_prompt = prompt
+        self._tools:    list[dict]            = schemas
+        self._dispatch: dict[str, Any]        = impls
 
     # ── public entry point ────────────────────────────────────────────────────
     async def ask(
@@ -151,8 +259,8 @@ class AskAgent:
                 response = client.chat.completions.create(
                     model       = self._deployment,
                     messages    = messages,
-                    tools       = TOOLS,
-                    tool_choice = "auto",
+                    tools       = self._tools or None,
+                    tool_choice = "auto" if self._tools else "none",
                     parallel_tool_calls  = False,
                     temperature = 0.7,
                     max_tokens  = 2000,
@@ -186,7 +294,7 @@ class AskAgent:
                     logger.info("AskAgent: tool_call → %s(%s)", tool_name,
                                 ", ".join(f"{k}=..." for k in tool_args))
 
-                    result_json = await dispatch(tool_name, tool_args, tenant_id)
+                    result_json = await self._dispatch_tool(tool_name, tool_args, tenant_id)
                     result_dict = json.loads(result_json)
 
                     tool_calls_log.append(ToolCall(
@@ -216,6 +324,40 @@ class AskAgent:
             return AskResult(question=question, answer="", error=str(e))
 
     # ── private helpers ───────────────────────────────────────────────────────
+
+    async def _dispatch_tool(
+        self,
+        tool_name: str,
+        tool_args: dict,
+        tenant_id: int,
+    ) -> str:
+        """
+        Look up tool_name in self._dispatch and call the implementation.
+
+        tenant_id is injected as a keyword argument when the implementation
+        accepts it (all skill tools accept tenant_id=0 by default).
+
+        Always returns a JSON string so the OpenAI conversation loop can
+        append it directly as a tool-role message.
+        """
+        impl = self._dispatch.get(tool_name)
+        if impl is None:
+            logger.error("AskAgent: unknown tool '%s' — no implementation found", tool_name)
+            return json.dumps({
+                "status":  "error",
+                "message": f"Unknown tool: {tool_name}",
+            })
+        try:
+            result = await impl(**tool_args, tenant_id=tenant_id)
+            return json.dumps(result, default=str)
+        except TypeError:
+            # impl doesn't accept tenant_id — call without it
+            result = await impl(**tool_args)
+            return json.dumps(result, default=str)
+        except Exception as err:
+            logger.error("AskAgent: tool '%s' raised: %s", tool_name, err, exc_info=True)
+            return json.dumps({"status": "error", "message": str(err)})
+
     def _get_client(self) -> AzureOpenAI:
         if self._client is None:
             # Use AzureOpenAI (not the plain OpenAI client) so the SDK constructs
@@ -273,7 +415,7 @@ class AskAgent:
         return [
             ChatCompletionSystemMessageParam(
                 role    = "system",
-                content = _SYSTEM_PROMPT + tenant_context + user_context,
+                content = self._system_prompt + tenant_context + user_context,
             ),
             ChatCompletionUserMessageParam(role="user", content=question),
         ]
