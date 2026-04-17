@@ -122,20 +122,15 @@ export const AnalyticsDashboard: React.FC = () => {
   // Track which tabs have been loaded to avoid refetching
   const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(['ask']));
   
-  // AI Q&A state
+  // AI chat state
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResponse, setAiResponse] = useState<{ 
-                                                question: string; 
-                                                answer: string; 
-                                                export?: {
-                                                  format: string;
-                                                  file_size: number;
-                                                  label: string;
-                                                  filename: string;
-                                                  download_url: string;
-                                                };
-                                              } | null>(null);
+  const [chatMessages, setChatMessages] = useState<Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    export?: { format: string; file_size: number; label: string; filename: string; download_url: string; };
+  }>>([]);
+  const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Don't fetch on mount - wait for tab selection
@@ -258,36 +253,55 @@ export const AnalyticsDashboard: React.FC = () => {
     }
   };
 
+  const MAX_HISTORY_TURNS = 10;
+
   const handleAskQuestion = async () => {
-    if (!aiQuestion.trim()) return;
-    
+    const question = aiQuestion.trim();
+    if (!question) return;
+
+    // Append user message immediately so the UI feels responsive
+    const userMsg = { role: 'user' as const, content: question };
+    setChatMessages(prev => [...prev, userMsg]);
+    setAiQuestion('');
+    setAiLoading(true);
+
+    // Scroll to bottom after user message renders
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+
     try {
-      setAiLoading(true);
       const token = await getAccessToken();
       const headers = new Headers({
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
       });
-      
       if (impersonatedUser && typeof impersonatedUser === 'string') {
         headers.set('X-Impersonate-User', impersonatedUser);
       }
 
+      // Build history from current messages (exclude the one we just added)
+      const history = chatMessages
+        .slice(-MAX_HISTORY_TURNS * 2)   // cap at last N pairs
+        .map(m => ({ role: m.role, content: m.content }));
+
       const res = await fetch(`${API_BASE_URL}/api/admin/analytics/ask`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ question: aiQuestion })
+        body: JSON.stringify({ question, history })
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      setAiResponse(data);
-      setAiQuestion('');
+      const assistantMsg = {
+        role: 'assistant' as const,
+        content: data.answer,
+        ...(data.export ? { export: data.export } : {}),
+      };
+      setChatMessages(prev => [...prev, assistantMsg]);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get AI response');
+      const errMsg = { role: 'assistant' as const, content: `Error: ${err instanceof Error ? err.message : 'Failed to get a response.'}` };
+      setChatMessages(prev => [...prev, errMsg]);
     } finally {
       setAiLoading(false);
     }
@@ -482,96 +496,118 @@ export const AnalyticsDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Ask Analytics Tab */}
+      {/* Ask Analytics Tab — full-height chat shell */}
       {selectedTab === 'ask' && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
-            <Send size={20} />
-            Ask Analytics AI
-          </h2>
-          
-          <div className="space-y-4">
-            {/* Question Input */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Ask a question about your analytics
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={aiQuestion}
-                  onChange={(e) => setAiQuestion(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAskQuestion()}
-                  placeholder="e.g., 'What department has the highest spending?' or 'Is our approval time improving?'"
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  disabled={aiLoading}
-                />
-                <button
-                  onClick={handleAskQuestion}
-                  disabled={aiLoading || !aiQuestion.trim()}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400 flex items-center gap-2"
-                >
-                  <Send size={18} />
-                  {aiLoading ? 'Thinking...' : 'Ask'}
-                </button>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">
-                Powered by Azure OpenAI. Ask about trends, comparisons, recommendations, and insights.
-              </p>
-            </div>
+        <div className="bg-white rounded-lg border border-gray-200 flex flex-col" style={{ height: 'calc(100vh - 160px)' }}>
 
-            {/* AI Response */}
-            {aiResponse && (
-              <div className="space-y-3 mt-6">
-                <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
-                  <p className="text-sm font-semibold text-blue-900 mb-2">Your question:</p>
-                  <p className="text-blue-800">{aiResponse.question}</p>
-                </div>
-                
-                <div className="bg-green-50 rounded-lg border border-green-200 p-4">
-                  <p className="text-sm font-semibold text-green-900 mb-2">AI Response:</p>
-                  <div className="text-green-800 text-sm leading-relaxed whitespace-pre-wrap">
-                    {aiResponse.answer}
-                  </div>                     
-                    {aiResponse.export && (                
-                      <a
-                        href={aiResponse.export.download_url}
-                        download={aiResponse.export.filename}
-                        className="inline-flex items-center gap-2 mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                      >
-                        {aiResponse.export.label}
-                      </a>
-                    )
-                  }
-                  </div>
-                </div>              
+          {/* ── Header ── */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <Send size={20} />
+              Ask Analytics AI
+            </h2>
+            {chatMessages.length > 0 && (
+              <button
+                onClick={() => setChatMessages([])}
+                className="text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2"
+              >
+                New conversation
+              </button>
             )}
-            {/* Sample Questions */}
-            {!aiResponse && (
-              <div className="mt-8 pt-6 border-t border-gray-200">
-                <p className="text-sm font-medium text-gray-700 mb-3">Example questions:</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          </div>
+
+          {/* ── Message history ── */}
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+
+            {/* Empty state */}
+            {chatMessages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <Send size={40} className="text-gray-200 mb-4" />
+                <p className="text-gray-500 font-medium mb-1">Ask anything about your nominations</p>
+                <p className="text-sm text-gray-400 mb-8">Trends, fraud patterns, graph relationships, exports — all in one conversation.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl">
                   {[
                     'Which departments have the highest award spending?',
-                    'How has our approval rate changed recently?',
-                    'What patterns do you see in our fraud alerts?',
+                    'Show me Critical integrity findings from the last run.',
+                    'Who are the top 5 nominators this year?',
                     'Are we achieving diversity in award distribution?'
                   ].map((example, i) => (
                     <button
                       key={i}
-                      onClick={() => {
-                        setAiQuestion(example);
-                      }}
-                      className="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm text-gray-700"
+                      onClick={() => setAiQuestion(example)}
+                      className="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm text-gray-600"
                     >
-                      <span className="text-gray-400 mr-2">→</span>
+                      <span className="text-gray-300 mr-2">→</span>
                       {example}
                     </button>
                   ))}
                 </div>
               </div>
             )}
+
+            {/* Message bubbles */}
+            {chatMessages.map((msg, i) => (
+              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-3xl rounded-2xl px-4 py-3 ${
+                  msg.role === 'user'
+                    ? 'bg-blue-600 text-white rounded-br-sm'
+                    : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                }`}>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                  {msg.export && (
+                    <a
+                      href={msg.export.download_url}
+                      download={msg.export.filename}
+                      className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 bg-white text-blue-600 text-xs font-medium rounded-lg hover:bg-blue-50 transition-colors border border-blue-200"
+                    >
+                      {msg.export.label}
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Typing indicator */}
+            {aiLoading && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3">
+                  <div className="flex gap-1 items-center h-4">
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Scroll anchor */}
+            <div ref={chatEndRef} />
           </div>
+
+          {/* ── Input bar ── */}
+          <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={aiQuestion}
+                onChange={(e) => setAiQuestion(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && !aiLoading && handleAskQuestion()}
+                placeholder="Ask a follow-up or a new question…"
+                className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                disabled={aiLoading}
+              />
+              <button
+                onClick={handleAskQuestion}
+                disabled={aiLoading || !aiQuestion.trim()}
+                className="px-5 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-300 flex items-center gap-2 text-sm"
+              >
+                <Send size={16} />
+                {aiLoading ? 'Thinking…' : 'Send'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">Powered by Azure OpenAI · Last {MAX_HISTORY_TURNS} turns kept in context</p>
+          </div>
+
         </div>
       )}
 

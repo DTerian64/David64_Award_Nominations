@@ -225,6 +225,7 @@ class AskAgent:
         question:     str,
         tenant_id:    int  = 0,
         current_user: dict | None = None,
+        history:      list[dict] | None = None,
     ) -> AskResult:
         """
         Run the full tool-calling agent loop for a question.
@@ -235,19 +236,27 @@ class AskAgent:
                         at minimum UserId, FirstName, LastName, Title.
                         Injected into the system prompt so the LLM can resolve
                         first-person references ("my nominations", "my fraud score").
+        history       — prior conversation turns as a list of
+                        {"role": "user"|"assistant", "content": str} dicts.
+                        Inserted between the system prompt and the new question
+                        so the model has context from earlier turns.
+                        Tool-call messages are NOT included — only the visible
+                        human/assistant pairs.  Callers should cap this at
+                        ~10 turns (20 messages) before sending.
         Never raises — errors are captured in AskResult.error.
         """
         logger.info(
-            "AskAgent.ask: %s (tenant_id=%d, user_id=%s)",
+            "AskAgent.ask: %s (tenant_id=%d, user_id=%s, history=%d turns)",
             question[:80],
             tenant_id,
             current_user.get("UserId") if current_user else "unknown",
+            len(history) if history else 0,
         )
 
         try:
             client   = self._get_client()
             messages: list[ChatCompletionMessageParam] = self._build_initial_messages(
-                question, tenant_id, current_user
+                question, tenant_id, current_user, history
             )
 
             tool_calls_log: list[ToolCall] = []
@@ -383,9 +392,17 @@ class AskAgent:
         question:     str,
         tenant_id:    int,
         current_user: dict | None = None,
+        history:      list[dict] | None = None,
     ) -> list[ChatCompletionMessageParam]:
-        """Construct the opening system + user messages, injecting tenant and current-user context."""
+        """
+        Construct the full message list for the LLM:
+          [system prompt + tenant/user context]
+          [prior user/assistant turns from history]
+          [new user question]
 
+        Only user and assistant roles are accepted from history — tool-call
+        messages are transient and are never round-tripped through the client.
+        """
         tenant_context = (
             f"\n\n## Tenant Context\n"
             f"You are operating on behalf of **TenantId = {tenant_id}**.\n"
@@ -412,13 +429,25 @@ class AskAgent:
         else:
             user_context = ""
 
-        return [
+        messages: list[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(
                 role    = "system",
                 content = self._system_prompt + tenant_context + user_context,
             ),
-            ChatCompletionUserMessageParam(role="user", content=question),
         ]
+
+        # Insert prior conversation turns (user/assistant only)
+        for turn in (history or []):
+            role = turn.get("role", "")
+            content = turn.get("content", "")
+            if role == "user":
+                messages.append(ChatCompletionUserMessageParam(role="user", content=content))
+            elif role == "assistant":
+                messages.append(cast(ChatCompletionMessageParam, {"role": "assistant", "content": content}))
+
+        # New question
+        messages.append(ChatCompletionUserMessageParam(role="user", content=question))
+        return messages
 
     def _build_result(
         self,

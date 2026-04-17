@@ -1098,10 +1098,17 @@ async def get_integrity_findings(
 
 from agents import AskAgent, AskResult
 
+class ConversationTurn(BaseModel):
+    role:    str   # "user" or "assistant"
+    content: str
+
 class AnalyticsQuestion(BaseModel):
     question: str
+    history:  list[ConversationTurn] = []   # prior turns, oldest first
 
 _ask_agent = AskAgent()   # shared, stateless
+
+_MAX_HISTORY_TURNS = 10   # keep last 10 user/assistant pairs (20 messages)
 
 @app.post("/api/admin/analytics/ask")
 async def ask_analytics_question(
@@ -1112,12 +1119,22 @@ async def ask_analytics_question(
     """Ask an AI-powered question about analytics data."""
     actual_user = current_user["actual_user"]
     tenant_id   = actual_user["TenantId"]
-    logger.info("ask endpoint: %s (tenant_id=%d)", req.question[:80], tenant_id)
+
+    # Prune history server-side as a safety net — clients should also cap it
+    history = [{"role": t.role, "content": t.content} for t in req.history]
+    if len(history) > _MAX_HISTORY_TURNS * 2:
+        history = history[-(  _MAX_HISTORY_TURNS * 2):]
+
+    logger.info(
+        "ask endpoint: %s (tenant_id=%d, history=%d turns)",
+        req.question[:80], tenant_id, len(history) // 2,
+    )
 
     result: AskResult = await _ask_agent.ask(
         req.question,
         tenant_id    = tenant_id,
         current_user = actual_user,
+        history      = history or None,
     )
 
     if result.error:
