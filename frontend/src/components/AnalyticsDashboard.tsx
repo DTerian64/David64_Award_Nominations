@@ -117,6 +117,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const [integrityLoading, setIntegrityLoading] = useState(false);
   const [expandedFinding, setExpandedFinding] = useState<number | null>(null);
   const [activePatternFilters, setActivePatternFilters] = useState<Set<string>>(new Set());
+  const [activeSeverityFilters, setActiveSeverityFilters] = useState<Set<string>>(new Set());
   
   // Track which tabs have been loaded to avoid refetching
   const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(['ask']));
@@ -193,6 +194,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const fetchIntegrityRuns = async () => {
     setIntegrityLoading(true);
     setActivePatternFilters(new Set());
+    setActiveSeverityFilters(new Set());
     try {
       const runs = await apiFetch<IntegrityRun[]>('/api/admin/analytics/integrity/runs');
       setIntegrityRuns(runs);
@@ -213,6 +215,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const handleRunChange = async (runId: string) => {
     setSelectedRunId(runId);
     setActivePatternFilters(new Set());
+    setActiveSeverityFilters(new Set());
     setExpandedFinding(null);
     setIntegrityLoading(true);
     try {
@@ -622,23 +625,61 @@ export const AnalyticsDashboard: React.FC = () => {
 
           {!integrityLoading && integrityRuns.length > 0 && (
             <>
-              {/* Severity summary cards */}
+              {/* Severity filter tiles */}
               {(() => {
                 const counts: Record<string, number> = { Critical: 0, High: 0, Medium: 0, Low: 0 };
                 integrityFindings.forEach(f => { counts[f.severity] = (counts[f.severity] ?? 0) + 1; });
+                const hasSevFilters = activeSeverityFilters.size > 0;
                 return (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    {(['Critical', 'High', 'Medium', 'Low'] as const).map(sev => (
-                      <div key={sev} className={`p-4 rounded-lg border-2 text-center ${SEVERITY_STYLES[sev].card}`}>
-                        <p className="text-2xl font-bold">{counts[sev]}</p>
-                        <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${SEVERITY_STYLES[sev].badge}`}>
-                          {sev}
-                        </span>
-                      </div>
-                    ))}
+                    {(['Critical', 'High', 'Medium', 'Low'] as const).map(sev => {
+                      const active = activeSeverityFilters.has(sev);
+                      return (
+                        <button
+                          key={sev}
+                          onClick={() => {
+                            setActiveSeverityFilters(prev => {
+                              const next = new Set(prev);
+                              if (next.has(sev)) next.delete(sev); else next.add(sev);
+                              return next;
+                            });
+                            setExpandedFinding(null);
+                          }}
+                          className={`p-4 rounded-lg border-2 text-center transition-all ${
+                            active
+                              ? `${SEVERITY_STYLES[sev].card} ring-2 ring-inset ring-gray-600`
+                              : hasSevFilters
+                                ? 'bg-gray-50 border-gray-200 opacity-40'
+                                : `${SEVERITY_STYLES[sev].card} hover:brightness-95`
+                          }`}
+                        >
+                          <p className="text-2xl font-bold">{counts[sev]}</p>
+                          <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
+                            active || !hasSevFilters ? SEVERITY_STYLES[sev].badge : 'bg-gray-200 text-gray-400'
+                          }`}>
+                            {sev}
+                          </span>
+                          {active && (
+                            <p className="text-xs text-gray-500 mt-1">✓ filtered</p>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 );
               })()}
+
+              {/* Severity clear button */}
+              {activeSeverityFilters.size > 0 && (
+                <div className="flex justify-end -mt-1">
+                  <button
+                    onClick={() => { setActiveSeverityFilters(new Set()); setExpandedFinding(null); }}
+                    className="text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2"
+                  >
+                    Clear severity filter
+                  </button>
+                </div>
+              )}
 
               {/* Pattern type filter chips */}
               {(() => {
@@ -689,12 +730,14 @@ export const AnalyticsDashboard: React.FC = () => {
 
               {/* Findings list */}
               {(() => {
-                const visibleFindings = activePatternFilters.size === 0
-                  ? integrityFindings
-                  : integrityFindings.filter(f => activePatternFilters.has(f.patternType));
+                const visibleFindings = integrityFindings.filter(f => {
+                  const patternOk  = activePatternFilters.size === 0  || activePatternFilters.has(f.patternType);
+                  const severityOk = activeSeverityFilters.size === 0 || activeSeverityFilters.has(f.severity);
+                  return patternOk && severityOk;
+                });
                 return visibleFindings.length === 0 ? (
                   <div className="text-center py-10 text-gray-400">
-                    {integrityFindings.length === 0 ? 'No findings for this run.' : 'No findings match the selected filter.'}
+                    {integrityFindings.length === 0 ? 'No findings for this run.' : 'No findings match the selected filters.'}
                   </div>
                 ) : (
                 <div className="space-y-3">
