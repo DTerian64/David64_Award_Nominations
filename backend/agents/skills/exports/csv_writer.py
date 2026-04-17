@@ -1,5 +1,5 @@
 """
-agents/exporters/csv_writer.py
+agents/skills/exports/csv_writer.py
 ───────────────────────────────
 Builds an in-memory CSV from data rows.
 Returns (bytes, filename) — no I/O, no blob, purely functional.

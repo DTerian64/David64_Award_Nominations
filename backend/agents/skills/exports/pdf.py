@@ -1,5 +1,5 @@
 """
-agents/exporters/pdf.py
+agents/skills/exports/pdf.py
 ────────────────────────
 Builds an in-memory PDF report from question, answer, and optional data rows.
 Returns (bytes, filename) — no I/O, no blob, purely functional.

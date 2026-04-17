@@ -6,6 +6,13 @@ Tools owned by the exports skill:
   • export_to_pdf
   • export_to_csv
 
+File layout (all co-located in agents/skills/exports/):
+  blob_storage.py  — Azure Blob upload + SAS URL generation
+  excel.py         — in-memory .xlsx builder (openpyxl / pandas)
+  pdf.py           — in-memory PDF builder (reportlab)
+  csv_writer.py    — in-memory CSV builder
+  tools.py         — OpenAI schemas, tool wrappers, _last_query_rows fallback
+
 Each tool falls back to the last rows fetched by query_database when the
 LLM forgets to pass rows explicitly.
 """
@@ -15,8 +22,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agents.exporters import export_excel, export_pdf, export_csv
-from agents.skills.schema.tools import _last_query_rows  # shared state
+from agents.skills.exports.blob_storage import upload_to_blob
+from agents.skills.exports.excel        import build_excel
+from agents.skills.exports.pdf          import build_pdf
+from agents.skills.exports.csv_writer   import build_csv
+from agents.skills.schema.tools         import _last_query_rows  # shared state
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +47,12 @@ async def _export_to_excel(
         )
         rows = _last_query_rows
     logger.info("tool:export_to_excel — %d rows", len(rows))
-    return await export_excel(question=question, answer=answer, rows=rows, filename=filename)
+    try:
+        data, fname = build_excel(question=question, answer=answer, rows=rows, filename=filename)
+        return await upload_to_blob(data, fname, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception as e:
+        logger.error("export_to_excel failed: %s", e, exc_info=True)
+        return {"status": "error", "message": str(e)}
 
 
 async def _export_to_pdf(
@@ -54,7 +69,12 @@ async def _export_to_pdf(
         )
         rows = _last_query_rows
     logger.info("tool:export_to_pdf — %d rows", len(rows) if rows else 0)
-    return await export_pdf(question=question, answer=answer, rows=rows, filename=filename)
+    try:
+        data, fname = build_pdf(question=question, answer=answer, rows=rows, filename=filename)
+        return await upload_to_blob(data, fname, content_type="application/pdf")
+    except Exception as e:
+        logger.error("export_to_pdf failed: %s", e, exc_info=True)
+        return {"status": "error", "message": str(e)}
 
 
 async def _export_to_csv(
@@ -69,7 +89,12 @@ async def _export_to_csv(
         )
         rows = _last_query_rows
     logger.info("tool:export_to_csv — %d rows", len(rows))
-    return await export_csv(rows=rows, filename=filename)
+    try:
+        data, fname = build_csv(rows=rows, filename=filename)
+        return await upload_to_blob(data, fname, content_type="text/csv")
+    except Exception as e:
+        logger.error("export_to_csv failed: %s", e, exc_info=True)
+        return {"status": "error", "message": str(e)}
 
 
 # ── OpenAI tool schemas ───────────────────────────────────────────────────────

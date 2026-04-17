@@ -1,5 +1,5 @@
 """
-agents/exporters/excel.py
+agents/skills/exports/excel.py
 ──────────────────────────
 Builds an in-memory Excel workbook from question, answer, and data rows.
 Returns (bytes, filename) — no I/O, no blob, purely functional.
