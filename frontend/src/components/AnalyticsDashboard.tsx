@@ -130,6 +130,11 @@ export const AnalyticsDashboard: React.FC = () => {
     content: string;
     export?: { format: string; file_size: number; label: string; filename: string; download_url: string; };
   }>>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<Array<{
+    conversationId: string; title: string; updatedAt: string;
+  }>>([]);
+  const [convLoading, setConvLoading] = useState(false);
   const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -255,17 +260,69 @@ export const AnalyticsDashboard: React.FC = () => {
 
   const MAX_HISTORY_TURNS = 10;
 
+  const fetchConversations = async () => {
+    setConvLoading(true);
+    try {
+      const data = await apiFetch<Array<{ conversationId: string; title: string; updatedAt: string; }>>(
+        '/api/admin/analytics/conversations'
+      );
+      setConversations(data);
+    } catch { /* silently ignore */ }
+    finally { setConvLoading(false); }
+  };
+
+  const loadConversation = async (conversationId: string) => {
+    try {
+      const messages = await apiFetch<Array<{ role: string; content: string; exportJson?: string; }>>(
+        `/api/admin/analytics/conversations/${conversationId}/messages`
+      );
+      setChatMessages(messages.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        ...(m.exportJson ? { export: JSON.parse(m.exportJson) } : {}),
+      })));
+      setActiveConversationId(conversationId);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    } catch { /* ignore */ }
+  };
+
+  const deleteConversation = async (conversationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const token = await getAccessToken();
+      const headers = new Headers({ 'Authorization': `Bearer ${token}` });
+      if (impersonatedUser && typeof impersonatedUser === 'string')
+        headers.set('X-Impersonate-User', impersonatedUser);
+      await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, { method: 'DELETE', headers });
+      setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
+      if (activeConversationId === conversationId) {
+        setActiveConversationId(null);
+        setChatMessages([]);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const startNewConversation = () => {
+    setActiveConversationId(null);
+    setChatMessages([]);
+    setAiQuestion('');
+  };
+
+  // Load conversation list when Ask tab is first opened
+  React.useEffect(() => {
+    if (selectedTab === 'ask' && conversations.length === 0) {
+      fetchConversations();
+    }
+  }, [selectedTab]);
+
   const handleAskQuestion = async () => {
     const question = aiQuestion.trim();
     if (!question) return;
 
-    // Append user message immediately so the UI feels responsive
-    const userMsg = { role: 'user' as const, content: question };
-    setChatMessages(prev => [...prev, userMsg]);
+    // Append user message immediately for responsive feel
+    setChatMessages(prev => [...prev, { role: 'user' as const, content: question }]);
     setAiQuestion('');
     setAiLoading(true);
-
-    // Scroll to bottom after user message renders
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
 
     try {
@@ -274,34 +331,35 @@ export const AnalyticsDashboard: React.FC = () => {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
       });
-      if (impersonatedUser && typeof impersonatedUser === 'string') {
+      if (impersonatedUser && typeof impersonatedUser === 'string')
         headers.set('X-Impersonate-User', impersonatedUser);
-      }
-
-      // Build history from current messages (exclude the one we just added)
-      const history = chatMessages
-        .slice(-MAX_HISTORY_TURNS * 2)   // cap at last N pairs
-        .map(m => ({ role: m.role, content: m.content }));
 
       const res = await fetch(`${API_BASE_URL}/api/admin/analytics/ask`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ question, history })
+        body: JSON.stringify({ question, conversation_id: activeConversationId })
       });
-
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      const assistantMsg = {
+
+      // First reply in a new conversation — update state and refresh sidebar
+      if (!activeConversationId) {
+        setActiveConversationId(data.conversation_id);
+        fetchConversations();
+      }
+
+      setChatMessages(prev => [...prev, {
         role: 'assistant' as const,
         content: data.answer,
         ...(data.export ? { export: data.export } : {}),
-      };
-      setChatMessages(prev => [...prev, assistantMsg]);
+      }]);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     } catch (err) {
-      const errMsg = { role: 'assistant' as const, content: `Error: ${err instanceof Error ? err.message : 'Failed to get a response.'}` };
-      setChatMessages(prev => [...prev, errMsg]);
+      setChatMessages(prev => [...prev, {
+        role: 'assistant' as const,
+        content: `Error: ${err instanceof Error ? err.message : 'Failed to get a response.'}`,
+      }]);
     } finally {
       setAiLoading(false);
     }
@@ -496,118 +554,156 @@ export const AnalyticsDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Ask Analytics Tab — full-height chat shell */}
+      {/* Ask Analytics Tab — sidebar + chat */}
       {selectedTab === 'ask' && (
-        <div className="bg-white rounded-lg border border-gray-200 flex flex-col" style={{ height: 'calc(100vh - 160px)' }}>
+        <div className="flex gap-0 rounded-lg border border-gray-200 overflow-hidden bg-white" style={{ height: 'calc(100vh - 160px)' }}>
 
-          {/* ── Header ── */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <Send size={20} />
-              Ask Analytics AI
-            </h2>
-            {chatMessages.length > 0 && (
+          {/* ── Conversation sidebar ── */}
+          <div className="w-64 shrink-0 border-r border-gray-100 flex flex-col bg-gray-50">
+            <div className="px-3 py-3 border-b border-gray-100">
               <button
-                onClick={() => setChatMessages([])}
-                className="text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2"
+                onClick={startNewConversation}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
               >
+                <Send size={14} />
                 New conversation
               </button>
-            )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto py-2">
+              {convLoading && (
+                <p className="text-xs text-gray-400 text-center py-4">Loading…</p>
+              )}
+              {!convLoading && conversations.length === 0 && (
+                <p className="text-xs text-gray-400 text-center py-6 px-3">No conversations yet</p>
+              )}
+              {conversations.map(conv => (
+                <div
+                  key={conv.conversationId}
+                  onClick={() => loadConversation(conv.conversationId)}
+                  className={`group flex items-start justify-between gap-1 px-3 py-2 mx-1 rounded-lg cursor-pointer transition-colors ${
+                    activeConversationId === conv.conversationId
+                      ? 'bg-blue-50 border border-blue-200'
+                      : 'hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-gray-800 truncate">{conv.title}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {new Date(conv.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => deleteConversation(conv.conversationId, e)}
+                    className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 transition-all shrink-0 mt-0.5"
+                    title="Delete conversation"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* ── Message history ── */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {/* ── Chat panel ── */}
+          <div className="flex-1 flex flex-col min-w-0">
 
-            {/* Empty state */}
-            {chatMessages.length === 0 && (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <Send size={40} className="text-gray-200 mb-4" />
-                <p className="text-gray-500 font-medium mb-1">Ask anything about your nominations</p>
-                <p className="text-sm text-gray-400 mb-8">Trends, fraud patterns, graph relationships, exports — all in one conversation.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl">
-                  {[
-                    'Which departments have the highest award spending?',
-                    'Show me Critical integrity findings from the last run.',
-                    'Who are the top 5 nominators this year?',
-                    'Are we achieving diversity in award distribution?'
-                  ].map((example, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setAiQuestion(example)}
-                      className="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm text-gray-600"
-                    >
-                      <span className="text-gray-300 mr-2">→</span>
-                      {example}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-100 shrink-0">
+              <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <Send size={16} />
+                {activeConversationId
+                  ? (conversations.find(c => c.conversationId === activeConversationId)?.title ?? 'Conversation')
+                  : 'Ask Analytics AI'}
+              </h2>
+            </div>
 
-            {/* Message bubbles */}
-            {chatMessages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-3xl rounded-2xl px-4 py-3 ${
-                  msg.role === 'user'
-                    ? 'bg-blue-600 text-white rounded-br-sm'
-                    : 'bg-gray-100 text-gray-800 rounded-bl-sm'
-                }`}>
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
-                  {msg.export && (
-                    <a
-                      href={msg.export.download_url}
-                      download={msg.export.filename}
-                      className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 bg-white text-blue-600 text-xs font-medium rounded-lg hover:bg-blue-50 transition-colors border border-blue-200"
-                    >
-                      {msg.export.label}
-                    </a>
-                  )}
-                </div>
-              </div>
-            ))}
-
-            {/* Typing indicator */}
-            {aiLoading && (
-              <div className="flex justify-start">
-                <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3">
-                  <div className="flex gap-1 items-center h-4">
-                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {chatMessages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center">
+                  <Send size={40} className="text-gray-200 mb-4" />
+                  <p className="text-gray-500 font-medium mb-1">Ask anything about your nominations</p>
+                  <p className="text-sm text-gray-400 mb-8">Trends, fraud patterns, graph relationships, exports — all in one conversation.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl">
+                    {[
+                      'Which departments have the highest award spending?',
+                      'Show me Critical integrity findings from the last run.',
+                      'Who are the top 5 nominators this year?',
+                      'Are we achieving diversity in award distribution?'
+                    ].map((example, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setAiQuestion(example)}
+                        className="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm text-gray-600"
+                      >
+                        <span className="text-gray-300 mr-2">→</span>
+                        {example}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Scroll anchor */}
-            <div ref={chatEndRef} />
-          </div>
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-3xl rounded-2xl px-4 py-3 ${
+                    msg.role === 'user'
+                      ? 'bg-blue-600 text-white rounded-br-sm'
+                      : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                  }`}>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                    {msg.export && (
+                      <a
+                        href={msg.export.download_url}
+                        download={msg.export.filename}
+                        className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 bg-white text-blue-600 text-xs font-medium rounded-lg hover:bg-blue-50 transition-colors border border-blue-200"
+                      >
+                        {msg.export.label}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
 
-          {/* ── Input bar ── */}
-          <div className="px-6 py-4 border-t border-gray-100 shrink-0">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={aiQuestion}
-                onChange={(e) => setAiQuestion(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && !aiLoading && handleAskQuestion()}
-                placeholder="Ask a follow-up or a new question…"
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                disabled={aiLoading}
-              />
-              <button
-                onClick={handleAskQuestion}
-                disabled={aiLoading || !aiQuestion.trim()}
-                className="px-5 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-300 flex items-center gap-2 text-sm"
-              >
-                <Send size={16} />
-                {aiLoading ? 'Thinking…' : 'Send'}
-              </button>
+              {aiLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3">
+                    <div className="flex gap-1 items-center h-4">
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
             </div>
-            <p className="text-xs text-gray-400 mt-2">Powered by Azure OpenAI · Last {MAX_HISTORY_TURNS} turns kept in context</p>
-          </div>
 
+            {/* Input bar */}
+            <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={aiQuestion}
+                  onChange={(e) => setAiQuestion(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !aiLoading && handleAskQuestion()}
+                  placeholder="Ask a follow-up or a new question…"
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  disabled={aiLoading}
+                />
+                <button
+                  onClick={handleAskQuestion}
+                  disabled={aiLoading || !aiQuestion.trim()}
+                  className="px-5 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-300 flex items-center gap-2 text-sm"
+                >
+                  <Send size={16} />
+                  {aiLoading ? 'Thinking…' : 'Send'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">Powered by Azure OpenAI · Conversations saved automatically</p>
+            </div>
+          </div>
         </div>
       )}
 

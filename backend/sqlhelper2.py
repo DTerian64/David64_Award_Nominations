@@ -1273,3 +1273,109 @@ def run_query_with_columns(sql: str) -> tuple[list, list[str]]:
         columns = list(result.keys())
         rows    = result.fetchall()
         return rows, columns
+
+
+# ===========================================================================
+# ASK CONVERSATIONS
+# ===========================================================================
+
+def create_conversation(
+    conversation_id: str,
+    user_id:         int,
+    tenant_id:       int,
+    title:           str,
+) -> None:
+    """Insert a new conversation row."""
+    with get_db_context() as session:
+        session.execute(text("""
+            INSERT INTO dbo.AskConversations
+                (ConversationId, UserId, TenantId, Title, CreatedAt, UpdatedAt)
+            VALUES
+                (:cid, :uid, :tid, :title, GETUTCDATE(), GETUTCDATE())
+        """), {"cid": conversation_id, "uid": user_id,
+               "tid": tenant_id,       "title": title[:200]})
+        session.commit()
+
+
+def append_message(
+    conversation_id: str,
+    role:            str,
+    content:         str,
+    export_json:     str | None = None,
+) -> None:
+    """Append a single message to a conversation and bump UpdatedAt."""
+    with get_db_context() as session:
+        session.execute(text("""
+            INSERT INTO dbo.AskMessages
+                (ConversationId, Role, Content, ExportJson, CreatedAt)
+            VALUES
+                (:cid, :role, :content, :export, GETUTCDATE())
+        """), {"cid": conversation_id, "role": role,
+               "content": content,     "export": export_json})
+        session.execute(text("""
+            UPDATE dbo.AskConversations
+            SET    UpdatedAt = GETUTCDATE()
+            WHERE  ConversationId = :cid
+        """), {"cid": conversation_id})
+        session.commit()
+
+
+def get_conversations(user_id: int, tenant_id: int, limit: int = 50) -> list[dict]:
+    """Return the most recent conversations for a user, newest first."""
+    with get_db_context() as session:
+        rows = session.execute(text(f"""
+            SELECT TOP {min(limit, 200)}
+                   ConversationId, Title, CreatedAt, UpdatedAt
+            FROM   dbo.AskConversations
+            WHERE  UserId = :uid AND TenantId = :tid
+            ORDER BY UpdatedAt DESC
+        """), {"uid": user_id, "tid": tenant_id}).fetchall()
+    return [
+        {
+            "conversationId": row[0],
+            "title":          row[1],
+            "createdAt":      row[2].isoformat() if row[2] else None,
+            "updatedAt":      row[3].isoformat() if row[3] else None,
+        }
+        for row in rows
+    ]
+
+
+def get_messages(conversation_id: str, tenant_id: int) -> list[dict]:
+    """
+    Return all messages for a conversation, oldest first.
+    Tenant check via JOIN prevents cross-tenant access.
+    """
+    with get_db_context() as session:
+        rows = session.execute(text("""
+            SELECT m.Role, m.Content, m.ExportJson, m.CreatedAt
+            FROM   dbo.AskMessages      m
+            JOIN   dbo.AskConversations c ON c.ConversationId = m.ConversationId
+            WHERE  m.ConversationId = :cid AND c.TenantId = :tid
+            ORDER BY m.MessageId
+        """), {"cid": conversation_id, "tid": tenant_id}).fetchall()
+    return [
+        {
+            "role":       row[0],
+            "content":    row[1],
+            "exportJson": row[2],
+            "createdAt":  row[3].isoformat() if row[3] else None,
+        }
+        for row in rows
+    ]
+
+
+def delete_conversation(conversation_id: str, user_id: int, tenant_id: int) -> bool:
+    """
+    Delete a conversation and all its messages (CASCADE).
+    Returns True if a row was deleted, False if not found / not owned.
+    """
+    with get_db_context() as session:
+        result = session.execute(text("""
+            DELETE FROM dbo.AskConversations
+            WHERE  ConversationId = :cid
+              AND  UserId   = :uid
+              AND  TenantId = :tid
+        """), {"cid": conversation_id, "uid": user_id, "tid": tenant_id})
+        session.commit()
+        return result.rowcount > 0

@@ -1096,19 +1096,71 @@ async def get_integrity_findings(
 # AI ANALYTICS — ASK ENDPOINT
 # ============================================================================
 
+import uuid, json as _json
 from agents import AskAgent, AskResult
-
-class ConversationTurn(BaseModel):
-    role:    str   # "user" or "assistant"
-    content: str
+import sqlhelper2 as _sqlhelper2
 
 class AnalyticsQuestion(BaseModel):
-    question: str
-    history:  list[ConversationTurn] = []   # prior turns, oldest first
+    question:        str
+    conversation_id: str | None = None   # None → start new conversation
 
 _ask_agent = AskAgent()   # shared, stateless
+_MAX_HISTORY_TURNS = 10   # loaded from DB; capped here as safety net
 
-_MAX_HISTORY_TURNS = 10   # keep last 10 user/assistant pairs (20 messages)
+
+# ── List conversations ────────────────────────────────────────────────────────
+
+@app.get("/api/admin/analytics/conversations")
+async def list_conversations(
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin")),
+):
+    """Return the current user's conversations, newest first."""
+    actual_user = current_user["actual_user"]
+    return _sqlhelper2.get_conversations(
+        user_id=actual_user["UserId"], tenant_id=actual_user["TenantId"]
+    )
+
+
+# ── Get messages for a conversation ──────────────────────────────────────────
+
+@app.get("/api/admin/analytics/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin")),
+):
+    """Return all messages for a conversation (tenant-scoped)."""
+    actual_user = current_user["actual_user"]
+    messages = _sqlhelper2.get_messages(
+        conversation_id=conversation_id, tenant_id=actual_user["TenantId"]
+    )
+    if not messages:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return messages
+
+
+# ── Delete a conversation ─────────────────────────────────────────────────────
+
+@app.delete("/api/admin/analytics/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin")),
+):
+    """Delete a conversation and all its messages."""
+    actual_user = current_user["actual_user"]
+    deleted = _sqlhelper2.delete_conversation(
+        conversation_id=conversation_id,
+        user_id=actual_user["UserId"],
+        tenant_id=actual_user["TenantId"],
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "deleted"}
+
+
+# ── Ask (create or continue a conversation) ───────────────────────────────────
 
 @app.post("/api/admin/analytics/ask")
 async def ask_analytics_question(
@@ -1116,20 +1168,36 @@ async def ask_analytics_question(
     current_user: User = Depends(get_current_user_with_impersonation),
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
-    """Ask an AI-powered question about analytics data."""
-    actual_user = current_user["actual_user"]
-    tenant_id   = actual_user["TenantId"]
+    """Ask a question, persisting history in SQL Server."""
+    actual_user     = current_user["actual_user"]
+    tenant_id       = actual_user["TenantId"]
+    user_id         = actual_user["UserId"]
+    conversation_id = req.conversation_id
 
-    # Prune history server-side as a safety net — clients should also cap it
-    history = [{"role": t.role, "content": t.content} for t in req.history]
-    if len(history) > _MAX_HISTORY_TURNS * 2:
-        history = history[-(  _MAX_HISTORY_TURNS * 2):]
+    # ── Load or create conversation ───────────────────────────────────────────
+    is_new = conversation_id is None
+    if is_new:
+        conversation_id = str(uuid.uuid4())
+        title = req.question[:80] + ("…" if len(req.question) > 80 else "")
+        _sqlhelper2.create_conversation(conversation_id, user_id, tenant_id, title)
+        history: list[dict] = []
+    else:
+        raw = _sqlhelper2.get_messages(conversation_id, tenant_id)
+        if not raw:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        # Keep last N turns; pass only role+content to the agent
+        history = [{"role": m["role"], "content": m["content"]} for m in raw]
+        history = history[-(_MAX_HISTORY_TURNS * 2):]
 
     logger.info(
-        "ask endpoint: %s (tenant_id=%d, history=%d turns)",
-        req.question[:80], tenant_id, len(history) // 2,
+        "ask endpoint: %s (tenant_id=%d, conv=%s, history=%d turns)",
+        req.question[:80], tenant_id, conversation_id, len(history) // 2,
     )
 
+    # ── Persist user message ──────────────────────────────────────────────────
+    _sqlhelper2.append_message(conversation_id, "user", req.question)
+
+    # ── Run agent ─────────────────────────────────────────────────────────────
     result: AskResult = await _ask_agent.ask(
         req.question,
         tenant_id    = tenant_id,
@@ -1138,23 +1206,15 @@ async def ask_analytics_question(
     )
 
     if result.error:
-        logger.error("ask endpoint: agent returned error: %s", result.error)
+        logger.error("ask endpoint: agent error: %s", result.error)
         raise HTTPException(status_code=500, detail=f"AI Service Error: {result.error}")
 
-    logger.info(
-        "ask endpoint: answered (sql=%s, rows=%d)",
-        bool(result.sql), result.rows_fetched,
-    )
-
-    response : dict[str, Any]= {
-        "question": result.question,
-        "answer":   result.answer,
-    }
-
+    # ── Build export metadata (if any) ────────────────────────────────────────
+    export_payload: dict | None = None
     if result.export_path:
         fmt = (result.export_format or "file").upper()
         filename = result.export_path.split("?")[0].split("/")[-1]
-        response["export"] = {
+        export_payload = {
             "format":       result.export_format,
             "file_size":    result.export_size,
             "label":        f"Download your {fmt} here",
@@ -1162,9 +1222,23 @@ async def ask_analytics_question(
             "download_url": result.export_path,
         }
 
-    logger.info("ask endpoint: export_path=%s, export_format=%s", result.export_path, result.export_format)
+    # ── Persist assistant message ─────────────────────────────────────────────
+    _sqlhelper2.append_message(
+        conversation_id, "assistant", result.answer,
+        export_json=_json.dumps(export_payload) if export_payload else None,
+    )
 
-    return response
+    logger.info(
+        "ask endpoint: answered (conv=%s, sql=%s, rows=%d)",
+        conversation_id, bool(result.sql), result.rows_fetched,
+    )
+
+    return {
+        "conversation_id": conversation_id,
+        "question":        result.question,
+        "answer":          result.answer,
+        **({"export": export_payload} if export_payload else {}),
+    }
 
 
 # ============================================================================
