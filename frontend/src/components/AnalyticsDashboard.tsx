@@ -259,8 +259,6 @@ export const AnalyticsDashboard: React.FC = () => {
     }
   };
 
-  const MAX_HISTORY_TURNS = 10;
-
   const fetchConversations = async () => {
     setConvLoading(true);
     try {
