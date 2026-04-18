@@ -1379,3 +1379,27 @@ def delete_conversation(conversation_id: str, user_id: int, tenant_id: int) -> b
         """), {"cid": conversation_id, "uid": user_id, "tid": tenant_id})
         session.commit()
         return result.rowcount > 0
+
+
+def rename_conversation(
+    conversation_id: str,
+    user_id: int,
+    tenant_id: int,
+    title: str,
+) -> bool:
+    """
+    Update the Title of a conversation.
+    Returns True if a row was updated, False if not found / not owned.
+    """
+    with get_db_context() as session:
+        result = session.execute(text("""
+            UPDATE dbo.AskConversations
+               SET Title     = :title,
+                   UpdatedAt = GETUTCDATE()
+             WHERE ConversationId = :cid
+               AND UserId   = :uid
+               AND TenantId = :tid
+        """), {"title": title[:200], "cid": conversation_id,
+               "uid": user_id, "tid": tenant_id})
+        session.commit()
+        return result.rowcount > 0

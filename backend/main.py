@@ -1160,6 +1160,34 @@ async def delete_conversation(
     return {"status": "deleted"}
 
 
+# ── Rename a conversation ─────────────────────────────────────────────────────
+
+class ConversationRename(BaseModel):
+    title: str
+
+@app.patch("/api/admin/analytics/conversations/{conversation_id}")
+async def rename_conversation(
+    conversation_id: str,
+    req: ConversationRename,
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin")),
+):
+    """Rename a conversation title."""
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Title cannot be empty")
+    actual_user = current_user["actual_user"]
+    updated = _sqlhelper2.rename_conversation(
+        conversation_id=conversation_id,
+        user_id=actual_user["UserId"],
+        tenant_id=actual_user["TenantId"],
+        title=title,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "renamed", "title": title}
+
+
 # ── Ask (create or continue a conversation) ───────────────────────────────────
 
 @app.post("/api/admin/analytics/ask")

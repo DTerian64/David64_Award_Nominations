@@ -136,6 +136,8 @@ export const AnalyticsDashboard: React.FC = () => {
     conversationId: string; title: string; updatedAt: string;
   }>>([]);
   const [convLoading, setConvLoading] = useState(false);
+  const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
   const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -301,6 +303,30 @@ export const AnalyticsDashboard: React.FC = () => {
         setChatMessages([]);
       }
     } catch { /* ignore */ }
+  };
+
+  const renameConversation = async (conversationId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    setEditingConvId(null);
+    if (!trimmed) return;
+    // Optimistic update
+    setConversations(prev => prev.map(c =>
+      c.conversationId === conversationId ? { ...c, title: trimmed } : c
+    ));
+    try {
+      const token = await getAccessToken();
+      const headers = new Headers({
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      });
+      if (impersonatedUser && typeof impersonatedUser === 'string')
+        headers.set('X-Impersonate-User', impersonatedUser);
+      await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ title: trimmed }),
+      });
+    } catch { /* optimistic update stays; user sees no error flash */ }
   };
 
   const startNewConversation = () => {
@@ -604,7 +630,7 @@ export const AnalyticsDashboard: React.FC = () => {
               {conversations.map(conv => (
                 <div
                   key={conv.conversationId}
-                  onClick={() => loadConversation(conv.conversationId)}
+                  onClick={() => editingConvId !== conv.conversationId && loadConversation(conv.conversationId)}
                   className={`group flex items-start justify-between gap-1 px-3 py-2 mx-1 rounded-lg cursor-pointer transition-colors ${
                     activeConversationId === conv.conversationId
                       ? 'bg-blue-50 border border-blue-200'
@@ -612,7 +638,32 @@ export const AnalyticsDashboard: React.FC = () => {
                   }`}
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-800 truncate">{conv.title}</p>
+                    {editingConvId === conv.conversationId ? (
+                      <input
+                        autoFocus
+                        value={editingTitle}
+                        onChange={e => setEditingTitle(e.target.value)}
+                        onBlur={() => renameConversation(conv.conversationId, editingTitle)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') renameConversation(conv.conversationId, editingTitle);
+                          if (e.key === 'Escape') setEditingConvId(null);
+                        }}
+                        onClick={e => e.stopPropagation()}
+                        className="w-full text-xs font-medium text-gray-800 bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <p
+                        className="text-xs font-medium text-gray-800 truncate"
+                        onDoubleClick={e => {
+                          e.stopPropagation();
+                          setEditingConvId(conv.conversationId);
+                          setEditingTitle(conv.title);
+                        }}
+                        title="Double-click to rename"
+                      >
+                        {conv.title}
+                      </p>
+                    )}
                     <p className="text-xs text-gray-400 mt-0.5">
                       {new Date(conv.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </p>
