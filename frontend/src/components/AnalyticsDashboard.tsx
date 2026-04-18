@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown } from 'lucide-react';
+import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import { getAccessToken } from '../services/api';
 
@@ -312,9 +312,11 @@ export const AnalyticsDashboard: React.FC = () => {
     setAiQuestion('');
   };
 
-  // Load conversation list when Ask tab is first opened
+  // Reload conversation list every time the Ask tab is opened.
+  // No length guard — if the first mount attempt failed (auth not yet ready),
+  // switching away and back will retry automatically.
   React.useEffect(() => {
-    if (selectedTab === 'ask' && conversations.length === 0) {
+    if (selectedTab === 'ask') {
       fetchConversations();
     }
   }, [selectedTab]);
@@ -322,6 +324,18 @@ export const AnalyticsDashboard: React.FC = () => {
   const handleAskQuestion = async () => {
     const question = aiQuestion.trim();
     if (!question) return;
+
+    // ── Generate / reuse conversation ID SYNCHRONOUSLY before any await ───────
+    // This is the only safe pattern: a local variable captured by this closure
+    // is immune to React re-renders and component remounts that would reset a ref.
+    let convId = activeConversationRef.current;
+    const isNewConversation = !convId;
+    if (isNewConversation) {
+      convId = crypto.randomUUID();
+      // Write ref immediately — next call sees it even if this await hasn't resolved yet
+      activeConversationRef.current = convId;
+      setActiveConversationId(convId);
+    }
 
     // Append user message immediately for responsive feel
     setChatMessages(prev => [...prev, { role: 'user' as const, content: question }]);
@@ -338,20 +352,18 @@ export const AnalyticsDashboard: React.FC = () => {
       if (impersonatedUser && typeof impersonatedUser === 'string')
         headers.set('X-Impersonate-User', impersonatedUser);
 
-      // Use ref — always the latest value, never stale in async closures
+      // convId is a stable local variable — always the correct ID, no closure issues
       const res = await fetch(`${API_BASE_URL}/api/admin/analytics/ask`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ question, conversation_id: activeConversationRef.current })
+        body: JSON.stringify({ question, conversation_id: convId })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
 
-      // First reply in a new conversation — update ref + state, refresh sidebar
-      if (!activeConversationRef.current) {
-        activeConversationRef.current = data.conversation_id;
-        setActiveConversationId(data.conversation_id);
+      // Refresh sidebar once after the first message in a new conversation
+      if (isNewConversation) {
         fetchConversations();
       }
 
@@ -566,13 +578,21 @@ export const AnalyticsDashboard: React.FC = () => {
 
           {/* ── Conversation sidebar ── */}
           <div className="w-64 shrink-0 border-r border-gray-100 flex flex-col bg-gray-50">
-            <div className="px-3 py-3 border-b border-gray-100">
+            <div className="px-3 py-3 border-b border-gray-100 flex gap-2">
               <button
                 onClick={startNewConversation}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
               >
                 <Send size={14} />
                 New conversation
+              </button>
+              <button
+                onClick={fetchConversations}
+                disabled={convLoading}
+                className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-40"
+                title="Refresh conversation list"
+              >
+                <RefreshCw size={14} className={convLoading ? 'animate-spin' : ''} />
               </button>
             </div>
 
@@ -630,24 +650,7 @@ export const AnalyticsDashboard: React.FC = () => {
                 <div className="flex flex-col items-center justify-center h-full text-center">
                   <Send size={40} className="text-gray-200 mb-4" />
                   <p className="text-gray-500 font-medium mb-1">Ask anything about your nominations</p>
-                  <p className="text-sm text-gray-400 mb-8">Trends, fraud patterns, graph relationships, exports — all in one conversation.</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl">
-                    {[
-                      'Which departments have the highest award spending?',
-                      'Show me Critical integrity findings from the last run.',
-                      'Who are the top 5 nominators this year?',
-                      'Are we achieving diversity in award distribution?'
-                    ].map((example, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setAiQuestion(example)}
-                        className="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm text-gray-600"
-                      >
-                        <span className="text-gray-300 mr-2">→</span>
-                        {example}
-                      </button>
-                    ))}
-                  </div>
+                  <p className="text-sm text-gray-400">Trends, fraud patterns, graph relationships, exports — all in one conversation.</p>
                 </div>
               )}
 

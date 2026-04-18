@@ -1174,17 +1174,24 @@ async def ask_analytics_question(
     user_id         = actual_user["UserId"]
     conversation_id = req.conversation_id
 
-    # ── Load or create conversation ───────────────────────────────────────────
-    is_new = conversation_id is None
-    if is_new:
+    # ── Load or create conversation (upsert pattern) ─────────────────────────
+    # The frontend now generates a UUID before any await and sends it on the
+    # very first request.  That UUID won't exist in the DB yet, so we create it
+    # here when raw is empty.  This eliminates the stale-closure race that
+    # caused multiple rows to appear — the ID is decided client-side, once,
+    # synchronously, before the fetch call.
+    if conversation_id is None:
         conversation_id = str(uuid.uuid4())
+
+    raw = _sqlhelper2.get_messages(conversation_id, tenant_id)
+    if not raw:
+        # New conversation — either the frontend sent a fresh UUID or the
+        # legacy path hit this code with conversation_id=None (now upped above).
         title = req.question[:80] + ("…" if len(req.question) > 80 else "")
         _sqlhelper2.create_conversation(conversation_id, user_id, tenant_id, title)
         history: list[dict] = []
     else:
-        raw = _sqlhelper2.get_messages(conversation_id, tenant_id)
-        if not raw:
-            raise HTTPException(status_code=404, detail="Conversation not found")
+        # Continuing an existing conversation
         # Keep last N turns; pass only role+content to the agent
         history = [{"role": m["role"], "content": m["content"]} for m in raw]
         history = history[-(_MAX_HISTORY_TURNS * 2):]
