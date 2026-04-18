@@ -131,6 +131,7 @@ export const AnalyticsDashboard: React.FC = () => {
     export?: { format: string; file_size: number; label: string; filename: string; download_url: string; };
   }>>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const activeConversationRef = React.useRef<string | null>(null); // always current, safe in async closures
   const [conversations, setConversations] = useState<Array<{
     conversationId: string; title: string; updatedAt: string;
   }>>([]);
@@ -281,6 +282,7 @@ export const AnalyticsDashboard: React.FC = () => {
         content: m.content,
         ...(m.exportJson ? { export: JSON.parse(m.exportJson) } : {}),
       })));
+      activeConversationRef.current = conversationId;
       setActiveConversationId(conversationId);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     } catch { /* ignore */ }
@@ -295,7 +297,8 @@ export const AnalyticsDashboard: React.FC = () => {
         headers.set('X-Impersonate-User', impersonatedUser);
       await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, { method: 'DELETE', headers });
       setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
-      if (activeConversationId === conversationId) {
+      if (activeConversationRef.current === conversationId) {
+        activeConversationRef.current = null;
         setActiveConversationId(null);
         setChatMessages([]);
       }
@@ -303,6 +306,7 @@ export const AnalyticsDashboard: React.FC = () => {
   };
 
   const startNewConversation = () => {
+    activeConversationRef.current = null;
     setActiveConversationId(null);
     setChatMessages([]);
     setAiQuestion('');
@@ -334,17 +338,19 @@ export const AnalyticsDashboard: React.FC = () => {
       if (impersonatedUser && typeof impersonatedUser === 'string')
         headers.set('X-Impersonate-User', impersonatedUser);
 
+      // Use ref — always the latest value, never stale in async closures
       const res = await fetch(`${API_BASE_URL}/api/admin/analytics/ask`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ question, conversation_id: activeConversationId })
+        body: JSON.stringify({ question, conversation_id: activeConversationRef.current })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
 
-      // First reply in a new conversation — update state and refresh sidebar
-      if (!activeConversationId) {
+      // First reply in a new conversation — update ref + state, refresh sidebar
+      if (!activeConversationRef.current) {
+        activeConversationRef.current = data.conversation_id;
         setActiveConversationId(data.conversation_id);
         fetchConversations();
       }
