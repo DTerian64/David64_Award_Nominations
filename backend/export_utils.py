@@ -11,6 +11,7 @@ build_finding_workbook(data: dict) -> io.BytesIO
 """
 
 import io
+import re
 from collections import defaultdict
 
 import openpyxl
@@ -50,12 +51,22 @@ _USER_PALETTE = [
 
 # ── Nomination ordering ───────────────────────────────────────────────────────
 
-def _order_nominations(pattern: str, nominations: list[dict]) -> list[dict]:
+def _parse_ring_start_user(detail: str) -> int | None:
+    """
+    Extract the first user ID from the ring detail string.
+    Expected format: "Nomination ring of N users: 3 → 45 → … → 3 (total…)"
+    Returns the integer ID, or None if parsing fails.
+    """
+    m = re.search(r":\s*(\d+)\s*→", detail or "")
+    return int(m.group(1)) if m else None
+
+
+def _order_nominations(pattern: str, nominations: list[dict], detail: str = "") -> list[dict]:
     """
     For Ring findings: group nominations by directed edge (nominator→beneficiary),
-    walk the unique edges in cycle order, and emit all nominations for each edge
-    together (sorted by date).  Multiple nominations between the same pair are
-    kept — they just appear consecutively.
+    walk the unique edges in cycle order starting from the first user named in
+    the Detail string, and emit all nominations for each edge together (sorted
+    by date).  Multiple nominations between the same pair are kept consecutively.
 
     For all other patterns: sort by nomination date.
     """
@@ -68,12 +79,16 @@ def _order_nominations(pattern: str, nominations: list[dict]) -> list[dict]:
     for group in edge_groups.values():
         group.sort(key=lambda x: x["nominationDate"])
 
-    unique_edges       = list(edge_groups.keys())
-    edge_by_nominator  = {edge[0]: edge for edge in unique_edges}
-    start_edge         = unique_edges[0]
-    ordered_edges      = [start_edge]
-    current_edge       = start_edge
+    unique_edges      = list(edge_groups.keys())
+    edge_by_nominator = {edge[0]: edge for edge in unique_edges}
 
+    # Anchor the walk at the first user mentioned in the detail text so the
+    # spreadsheet order matches the "A → B → C → … → A" description exactly.
+    anchor_uid = _parse_ring_start_user(detail)
+    start_edge = edge_by_nominator.get(anchor_uid, unique_edges[0])
+
+    ordered_edges = [start_edge]
+    current_edge  = start_edge
     for _ in range(len(unique_edges) - 1):
         nxt = edge_by_nominator.get(current_edge[1])
         if not nxt or nxt == start_edge:
@@ -106,7 +121,7 @@ def build_finding_workbook(data: dict) -> io.BytesIO:
     """
     finding_id  = data["finding_id"] if "finding_id" in data else data["findingId"]
     pattern     = data["patternType"]
-    nominations = _order_nominations(pattern, data["nominations"])
+    nominations = _order_nominations(pattern, data["nominations"], data.get("detail", ""))
 
     # ── Per-user color assignment ─────────────────────────────────────────────
     user_color_index: dict[int, int] = {}
