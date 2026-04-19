@@ -1297,6 +1297,7 @@ def get_finding_with_nominations(finding_id: int, tenant_id: int) -> dict | None
                     n.NominationId,
                     n.NominatorId,
                     n.BeneficiaryId,
+                    n.ApproverId,
                     ISNULL(un.FirstName, '') + ' ' + ISNULL(un.LastName, '')  AS NominatorName,
                     ISNULL(ub.FirstName, '') + ' ' + ISNULL(ub.LastName, '')  AS BeneficiaryName,
                     ISNULL(ua.FirstName, '') + ' ' + ISNULL(ua.LastName, '')  AS ApproverName,
@@ -1315,17 +1316,18 @@ def get_finding_with_nominations(finding_id: int, tenant_id: int) -> dict | None
 
             nominations = [
                 {
-                    "nominationId":   r[0],
-                    "nominatorId":    r[1],
-                    "beneficiaryId":  r[2],
-                    "nominatorName":  r[3].strip(),
-                    "beneficiaryName": r[4].strip(),
-                    "approverName":   r[5].strip(),
-                    "amount":         float(r[6]) if r[6] is not None else 0.0,
-                    "currency":       r[7] or "",
-                    "description":    r[8] or "",
-                    "status":         r[9] or "",
-                    "nominationDate": r[10].isoformat()[:10] if r[10] else "",
+                    "nominationId":    r[0],
+                    "nominatorId":     r[1],
+                    "beneficiaryId":   r[2],
+                    "approverId":      r[3],
+                    "nominatorName":   r[4].strip(),
+                    "beneficiaryName": r[5].strip(),
+                    "approverName":    r[6].strip(),
+                    "amount":          float(r[7]) if r[7] is not None else 0.0,
+                    "currency":        r[8] or "",
+                    "description":     r[9] or "",
+                    "status":          r[10] or "",
+                    "nominationDate":  r[11].isoformat()[:10] if r[11] else "",
                 }
                 for r in nom_rows
             ]

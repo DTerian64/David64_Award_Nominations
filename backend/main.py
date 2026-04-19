@@ -1094,6 +1094,9 @@ async def get_integrity_findings(
 
 # ── Export a single finding as Excel ─────────────────────────────────────────
 
+from fastapi.responses import StreamingResponse
+from export_utils import build_finding_workbook
+
 @app.get("/api/admin/analytics/integrity/findings/{finding_id}/export")
 async def export_integrity_finding(
     finding_id: int,
@@ -1101,148 +1104,19 @@ async def export_integrity_finding(
     _: None = Depends(require_role("AWard_Nomination_Admin")),
 ):
     """
-    Stream an Excel workbook containing the finding metadata and its
-    associated nominations ordered appropriately for the pattern type
-    (ring-cycle order for Ring findings, date order otherwise).
+    Stream an Excel workbook for a single integrity finding.
+    Ordering and formatting logic lives in export_utils.build_finding_workbook().
     """
-    from fastapi.responses import StreamingResponse
-    import io, json as _json
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
-
     actual_user = current_user["actual_user"]
-    tenant_id   = actual_user["TenantId"]
-
-    data = sqlhelper.get_finding_with_nominations(finding_id, tenant_id)
+    data = sqlhelper.get_finding_with_nominations(finding_id, actual_user["TenantId"])
     if data is None:
         raise HTTPException(status_code=404, detail="Finding not found")
 
-    # ── Pattern metadata (mirrors PATTERN_META on the frontend) ──────────────
-    PATTERN_DESC = {
-        "Ring":                "Directed cycle of mutual nominations",
-        "SuperNominator":      "Unusually high nomination volume",
-        "Desert":              "Entire team absent from all nominations",
-        "ApproverAffinity":    "Elevated approval rate for specific pair",
-        "CopyPaste":           "Near-identical nomination descriptions",
-        "TransactionalLanguage": "Personal-benefit phrasing in description",
-        "HiddenCandidate":     "Named in descriptions but never nominated",
-    }
-    PATTERN_LABEL = {
-        "Ring":                "Nomination Ring",
-        "SuperNominator":      "Super Nominator",
-        "Desert":              "Nomination Desert",
-        "ApproverAffinity":    "Approver Affinity",
-        "CopyPaste":           "Copy-Paste Fraud",
-        "TransactionalLanguage": "Transactional Language",
-        "HiddenCandidate":     "Hidden Candidate",
-    }
-
-    pattern      = data["patternType"]
-    nominations  = data["nominations"]
-
-    # ── Order nominations ─────────────────────────────────────────────────────
-    if pattern == "Ring" and nominations:
-        # Follow the directed cycle: each nomination's BeneficiaryId is the
-        # next NominatorId.  Fall back to original order if chain breaks.
-        by_nominator = {n["nominatorId"]: n for n in nominations}
-        start   = nominations[0]
-        ordered = [start]
-        current = start
-        for _ in range(len(nominations) - 1):
-            nxt = by_nominator.get(current["beneficiaryId"])
-            if not nxt or nxt["nominationId"] == start["nominationId"]:
-                break
-            ordered.append(nxt)
-            current = nxt
-        nominations = ordered if len(ordered) == len(nominations) else nominations
-    else:
-        nominations = sorted(nominations, key=lambda n: n["nominationDate"])
-
-    # ── Build workbook ────────────────────────────────────────────────────────
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = f"Finding {finding_id}"
-
-    HEADER_FILL  = PatternFill("solid", start_color="2F5496", end_color="2F5496")
-    META_FILL    = PatternFill("solid", start_color="DCE6F1", end_color="DCE6F1")
-    LABEL_FONT   = Font(name="Arial", bold=True, size=10)
-    VALUE_FONT   = Font(name="Arial", size=10)
-    HEADER_FONT  = Font(name="Arial", bold=True, size=10, color="FFFFFF")
-    THIN         = Side(style="thin", color="BFBFBF")
-    THIN_BORDER  = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-
-    def meta_row(row, label, value):
-        lc = ws.cell(row=row, column=1, value=label)
-        lc.font   = LABEL_FONT
-        lc.fill   = META_FILL
-        lc.border = THIN_BORDER
-        vc = ws.cell(row=row, column=2, value=value)
-        vc.font   = VALUE_FONT
-        vc.border = THIN_BORDER
-        # Merge value across remaining columns for a clean look
-        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=9)
-
-    meta_row(1, "Finding type:",        PATTERN_LABEL.get(pattern, pattern))
-    meta_row(2, "Finding #",            finding_id)
-    meta_row(3, "Finding Desc.:",       PATTERN_DESC.get(pattern, ""))
-    meta_row(4, "Finding explanation:", data["detail"])
-    meta_row(5, "Total approved/Paid:", data["totalAmount"])
-    ws.cell(row=5, column=2).number_format = '#,##0.00'
-
-    # ── Column headers ────────────────────────────────────────────────────────
-    headers = [
-        "Nomination Id", "Nominator", "Beneficiary", "Approver",
-        "Amount", "Currency", "Description", "Status", "Date",
-    ]
-    for col, h in enumerate(headers, start=1):
-        c = ws.cell(row=6, column=col, value=h)
-        c.font      = HEADER_FONT
-        c.fill      = HEADER_FILL
-        c.alignment = Alignment(horizontal="center")
-        c.border    = THIN_BORDER
-
-    # ── Nomination rows ───────────────────────────────────────────────────────
-    ALT_FILL = PatternFill("solid", start_color="EEF3FA", end_color="EEF3FA")
-    for i, nom in enumerate(nominations):
-        r    = i + 7
-        fill = ALT_FILL if i % 2 == 1 else None
-        vals = [
-            nom["nominationId"],
-            nom["nominatorName"],
-            nom["beneficiaryName"],
-            nom["approverName"],
-            nom["amount"],
-            nom["currency"],
-            nom["description"],
-            nom["status"],
-            nom["nominationDate"],
-        ]
-        for col, val in enumerate(vals, start=1):
-            c = ws.cell(row=r, column=col, value=val)
-            c.font   = VALUE_FONT
-            c.border = THIN_BORDER
-            if fill:
-                c.fill = fill
-        ws.cell(row=r, column=5).number_format = '#,##0.00'
-
-    # ── Column widths ─────────────────────────────────────────────────────────
-    widths = [14, 22, 22, 22, 12, 10, 50, 14, 13]
-    for col, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(col)].width = w
-
-    ws.freeze_panes = "A7"   # keep metadata + header visible while scrolling
-
-    # ── Stream ────────────────────────────────────────────────────────────────
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    filename = f"finding_{finding_id}_export.xlsx"
+    buf = build_finding_workbook(data)
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="finding_{finding_id}_export.xlsx"'},
     )
 
 
