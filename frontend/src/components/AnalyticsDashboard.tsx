@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw } from 'lucide-react';
+import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import { getAccessToken } from '../services/api';
 
@@ -230,6 +230,30 @@ export const AnalyticsDashboard: React.FC = () => {
       setError(err instanceof Error ? err.message : 'Failed to load findings');
     } finally {
       setIntegrityLoading(false);
+    }
+  };
+
+  const exportFinding = async (findingId: number, e: React.MouseEvent) => {
+    e.stopPropagation();  // don't toggle the accordion
+    try {
+      const token = await getAccessToken();
+      const headers = new Headers({ 'Authorization': `Bearer ${token}` });
+      if (impersonatedUser && typeof impersonatedUser === 'string')
+        headers.set('X-Impersonate-User', impersonatedUser);
+      const res = await fetch(
+        `${API_BASE_URL}/api/admin/analytics/integrity/findings/${findingId}/export`,
+        { headers }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `finding_${findingId}_export.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -972,6 +996,16 @@ export const AnalyticsDashboard: React.FC = () => {
                                 size={16}
                                 className={`text-gray-400 transition-transform mt-0.5 ${isOpen ? 'rotate-180' : ''}`}
                               />
+                              {/* Export button — sits inside the accordion button but
+                                  stopPropagation prevents the toggle from firing */}
+                              <span
+                                role="button"
+                                title="Export to Excel"
+                                onClick={(e) => exportFinding(finding.findingId, e)}
+                                className="p-1 rounded hover:bg-white/60 text-gray-400 hover:text-green-700 transition-colors"
+                              >
+                                <Download size={15} />
+                              </span>
                             </div>
                           </div>
                           <p className="mt-2 text-sm text-gray-700 line-clamp-2">{finding.detail}</p>

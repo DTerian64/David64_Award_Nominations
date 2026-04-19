@@ -1257,6 +1257,91 @@ def get_integrity_findings(tenant_id: int, run_id: str) -> list[dict]:
 
 
 # ===========================================================================
+# FINDING EXPORT
+# ===========================================================================
+
+def get_finding_with_nominations(finding_id: int, tenant_id: int) -> dict | None:
+    """
+    Return a finding row plus all its associated nominations (with resolved
+    user names) for Excel export.
+
+    Returns None if the finding does not exist or belongs to a different tenant.
+    The 'nominations' list is in raw DB order — callers are responsible for
+    applying pattern-specific ordering (e.g. ring-cycle ordering).
+    """
+    with get_db_context() as session:
+        # ── Finding metadata ──────────────────────────────────────────────
+        finding_row = session.execute(text("""
+            SELECT FindingId, PatternType, Severity,
+                   AffectedUsers, NominationIds, Detail, DetectedAt, TotalAmount
+            FROM   dbo.GraphPatternFindings
+            WHERE  FindingId = :fid
+              AND  TenantId  = :tid
+        """), {"fid": finding_id, "tid": tenant_id}).fetchone()
+
+        if not finding_row:
+            return None
+
+        import json as _json
+        nomination_ids: list[int] = _json.loads(finding_row[4] or "[]")
+        if not nomination_ids:
+            nominations = []
+        else:
+            # Build a parameterised IN clause — SQL Server safe approach
+            placeholders = ", ".join(f":nid_{i}" for i in range(len(nomination_ids)))
+            params = {"tid": tenant_id}
+            params.update({f"nid_{i}": v for i, v in enumerate(nomination_ids)})
+
+            nom_rows = session.execute(text(f"""
+                SELECT
+                    n.NominationId,
+                    n.NominatorId,
+                    n.BeneficiaryId,
+                    ISNULL(un.FirstName, '') + ' ' + ISNULL(un.LastName, '')  AS NominatorName,
+                    ISNULL(ub.FirstName, '') + ' ' + ISNULL(ub.LastName, '')  AS BeneficiaryName,
+                    ISNULL(ua.FirstName, '') + ' ' + ISNULL(ua.LastName, '')  AS ApproverName,
+                    n.Amount,
+                    n.Currency,
+                    n.Description,
+                    n.Status,
+                    n.NominationDate
+                FROM   dbo.Nominations  n
+                JOIN   dbo.Users        un ON un.UserId = n.NominatorId
+                JOIN   dbo.Users        ub ON ub.UserId = n.BeneficiaryId
+                LEFT JOIN dbo.Users     ua ON ua.UserId = n.ApproverId
+                WHERE  n.NominationId IN ({placeholders})
+                  AND  n.TenantId = :tid
+            """), params).fetchall()
+
+            nominations = [
+                {
+                    "nominationId":   r[0],
+                    "nominatorId":    r[1],
+                    "beneficiaryId":  r[2],
+                    "nominatorName":  r[3].strip(),
+                    "beneficiaryName": r[4].strip(),
+                    "approverName":   r[5].strip(),
+                    "amount":         float(r[6]) if r[6] is not None else 0.0,
+                    "currency":       r[7] or "",
+                    "description":    r[8] or "",
+                    "status":         r[9] or "",
+                    "nominationDate": r[10].isoformat()[:10] if r[10] else "",
+                }
+                for r in nom_rows
+            ]
+
+    return {
+        "findingId":   finding_row[0],
+        "patternType": finding_row[1],
+        "severity":    finding_row[2],
+        "detail":      finding_row[5] or "",
+        "detectedAt":  finding_row[6].isoformat() if finding_row[6] else "",
+        "totalAmount": float(finding_row[7]) if finding_row[7] is not None else 0.0,
+        "nominations": nominations,
+    }
+
+
+# ===========================================================================
 # RAW QUERY HELPERS
 # ===========================================================================
 
