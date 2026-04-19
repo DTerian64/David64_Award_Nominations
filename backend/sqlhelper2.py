@@ -1302,7 +1302,7 @@ def get_finding_with_nominations(finding_id: int, tenant_id: int) -> dict | None
                     ISNULL(ua.FirstName, '') + ' ' + ISNULL(ua.LastName, '')  AS ApproverName,
                     n.Amount,
                     n.Currency,
-                    n.Description,
+                    n.NominationDescription,
                     n.Status,
                     n.NominationDate
                 FROM   dbo.Nominations  n
@@ -1310,7 +1310,7 @@ def get_finding_with_nominations(finding_id: int, tenant_id: int) -> dict | None
                 JOIN   dbo.Users        ub ON ub.UserId = n.BeneficiaryId
                 LEFT JOIN dbo.Users     ua ON ua.UserId = n.ApproverId
                 WHERE  n.NominationId IN ({placeholders})
-                  AND  n.TenantId = :tid
+                  AND  un.TenantId = :tid
             """), params).fetchall()
 
             nominations = [
