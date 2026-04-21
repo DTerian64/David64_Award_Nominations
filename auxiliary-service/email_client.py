@@ -171,6 +171,34 @@ def render_nomination_approved(beneficiary_name: str, dollar_amount: float, curr
     """
 
 
+def render_payment_confirmed(
+    beneficiary_name: str,
+    dollar_amount: float,
+    currency: str,
+    payment_ref: str,
+) -> str:
+    """Nominator notification — payment for their approved nomination has been processed."""
+    formatted_amount = _fmt(dollar_amount, currency)
+    return f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #2980b9;">💳 Payment Processed</h2>
+        <p>The monetary award for your approved nomination has been paid:</p>
+        <ul>
+            <li><strong>Nominee:</strong> {beneficiary_name}</li>
+            <li><strong>Amount:</strong> {formatted_amount}</li>
+            <li><strong>Payment Reference:</strong> {payment_ref}</li>
+        </ul>
+        <p>The payment has been submitted to payroll and will appear on the next pay run.</p>
+        <hr style="margin: 20px 0;">
+        <p style="color: #7f8c8d; font-size: 12px;">
+            This is an automated message from the Award Nomination System.
+        </p>
+    </body>
+    </html>
+    """
+
+
 def render_nomination_rejected(beneficiary_name: str, dollar_amount: float, currency: str) -> str:
     """Nominator notification — their nomination was rejected."""
     formatted_amount = _fmt(dollar_amount, currency)

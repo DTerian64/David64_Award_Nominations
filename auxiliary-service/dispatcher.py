@@ -32,14 +32,19 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import db
-from handlers import nomination_created, nomination_approved
+from handlers import nomination_created, nomination_approved, payout_submit, payout_accepted
 
 logger = logging.getLogger("auxiliary.dispatcher")
 
 # ── Handler registry ──────────────────────────────────────────────────────────
-HANDLERS: dict[str, Callable[[dict], None]] = {
+# Each value is either a single callable or a list of callables executed in
+# order.  All handlers in a list are called; if one raises, execution stops
+# and the message is abandoned for retry.
+HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
     "nomination.created":  nomination_created.handle,
-    "nomination.approved": nomination_approved.handle,
+    # nomination.approved triggers both the outcome email AND the payout submission.
+    "nomination.approved": [nomination_approved.handle, payout_submit.handle],
+    "payout.accepted":     payout_accepted.handle,
 }
 
 
@@ -64,9 +69,15 @@ def dispatch(message_id: str, payload: dict) -> str:
     if not event_type:
         raise ValueError(f"Missing 'event_type' in payload: {payload}")
 
-    handler = HANDLERS.get(event_type)
-    if handler is None:
+    handler_entry = HANDLERS.get(event_type)
+    if handler_entry is None:
         raise ValueError(f"No handler registered for event_type='{event_type}'")
+
+    # Normalise to a list so single-handler and multi-handler events are
+    # treated identically below.
+    handlers: list[Callable[[dict], None]] = (
+        handler_entry if isinstance(handler_entry, list) else [handler_entry]
+    )
 
     # ── Idempotency check ─────────────────────────────────────────────────────
     # Try to claim the message. If already claimed → skip.
@@ -87,11 +98,13 @@ def dispatch(message_id: str, payload: dict) -> str:
     # ── Handle ────────────────────────────────────────────────────────────────
     logger.info(
         "Dispatching event",
-        extra={"event_type": event_type, "nomination_id": nomination_id}
+        extra={"event_type": event_type, "nomination_id": nomination_id,
+               "handler_count": len(handlers)}
     )
 
     try:
-        handler(payload)
+        for fn in handlers:
+            fn(payload)
         db.update_processed_event_result(message_id, "success")
         return "success"
     except Exception as exc:

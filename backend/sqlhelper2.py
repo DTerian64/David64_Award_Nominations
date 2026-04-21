@@ -721,6 +721,66 @@ def mark_nomination_as_paid(nomination_id: int) -> bool:
         return result.rowcount > 0
 
 
+def mark_nomination_payment_submitted(nomination_id: int, payment_ref: str) -> bool:
+    """
+    Record that a payout has been submitted to Workday (or Workday_Proxy).
+    Sets Status = 'PaymentSubmitted', stores the paymentRef returned by the
+    POST /payouts call, and records the submission timestamp.
+    Returns True if a row was updated.
+    """
+    with get_db_context() as session:
+        result = session.execute(
+            text("""
+                UPDATE Nominations
+                SET Status             = 'PaymentSubmitted',
+                    PaymentRef         = :payment_ref,
+                    PaymentSubmittedAt = GETUTCDATE()
+                WHERE NominationId = :nomination_id
+            """),
+            {"nomination_id": nomination_id, "payment_ref": payment_ref},
+        )
+        session.commit()
+        return result.rowcount > 0
+
+
+def mark_nomination_paid_by_ref(payment_ref: str) -> Optional[int]:
+    """
+    Mark a nomination as Paid using the paymentRef as the lookup key.
+    Called by the webhook bridge when Workday_Proxy POSTs PayoutAccepted.
+    Returns the NominationId that was updated, or None if not found.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                UPDATE Nominations
+                SET PayedDate = GETUTCDATE(), Status = 'Paid'
+                OUTPUT INSERTED.NominationId
+                WHERE PaymentRef = :payment_ref
+                  AND Status     = 'PaymentSubmitted'
+            """),
+            {"payment_ref": payment_ref},
+        ).fetchone()
+        session.commit()
+        return row[0] if row else None
+
+
+def get_nomination_id_by_payment_ref(payment_ref: str) -> Optional[int]:
+    """
+    Look up a NominationId by its PaymentRef.
+    Used to resolve the nomination before publishing the PayoutAccepted event.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT NominationId
+                FROM   Nominations
+                WHERE  PaymentRef = :payment_ref
+            """),
+            {"payment_ref": payment_ref},
+        ).fetchone()
+        return row[0] if row else None
+
+
 # ===========================================================================
 # IMPERSONATION & AUDIT LOG QUERIES
 # ===========================================================================

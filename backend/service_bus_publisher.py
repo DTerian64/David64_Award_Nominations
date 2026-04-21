@@ -42,15 +42,25 @@ _TOPIC = os.environ.get("SERVICE_BUS_TOPIC_NAME", "")
 _MI_CLIENT_ID = os.environ.get("MI_CLIENT_ID") or None
 
 
-async def publish_event(event_type: str, nomination_id: int) -> None:
+async def publish_event(
+    event_type: str,
+    nomination_id: int,
+    extra: dict | None = None,
+) -> None:
     """
     Publish a nomination domain event to the Service Bus topic.
 
     The message body is UTF-8 encoded JSON bytes (AMQP data section):
-        b'{"event_type": "nomination.created", "nomination_id": 42}'
+        b'{"event_type": "nomination.approved", "nomination_id": 42}'
+
+    Optional ``extra`` fields are merged into the payload for events that
+    carry additional data, e.g.:
+        publish_event("payout.accepted", 42, {"payment_ref": "WD-2026-00123"})
+        → b'{"event_type": "payout.accepted", "nomination_id": 42,
+             "payment_ref": "WD-2026-00123"}'
 
     The auxiliary worker reads this, claims idempotency via ProcessedEvents,
-    fetches fresh data from SQL, and sends the appropriate email.
+    and dispatches to the appropriate handler.
 
     Raises:
         RuntimeError: if SERVICE_BUS_FQNS or SERVICE_BUS_TOPIC_NAME are not set.
@@ -65,10 +75,10 @@ async def publish_event(event_type: str, nomination_id: int) -> None:
     # Encode to bytes so the SDK frames the body as an AMQP data section.
     # Passing a str produces an AMQP value section, which the receiver cannot
     # reliably reassemble via b"".join(msg.body) — leading to JSON parse errors.
-    payload = json.dumps({
-        "event_type": event_type,
-        "nomination_id": nomination_id,
-    }).encode("utf-8")
+    body: dict = {"event_type": event_type, "nomination_id": nomination_id}
+    if extra:
+        body.update(extra)
+    payload = json.dumps(body).encode("utf-8")
 
     msg = ServiceBusMessage(
         payload,

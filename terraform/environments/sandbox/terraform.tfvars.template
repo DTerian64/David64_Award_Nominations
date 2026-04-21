@@ -65,6 +65,13 @@ service_bus_namespace_name = "sb-award-sandbox"
 # ── Auxiliary Container App ───────────────────────────────────────────────────
 auxiliary_container_app_name = "award-auxiliary-sandbox"
 
+# ── Payout Orchestrator ───────────────────────────────────────────────────────
+payout_orchestrator_name                 = "award-payout-orchestrator-sandbox"
+payout_orchestrator_storage_account_name = "stpayorchestrsbx"  # 3-24 chars, lowercase alphanumeric
+
+# ── Workday Proxy ─────────────────────────────────────────────────────────────
+workday_proxy_name = "workday-proxy-sandbox"
+
 # ── Log Analytics ─────────────────────────────────────────────────────────────
 workspace_name_primary   = "workspace-award-primary-sandbox"
 workspace_name_secondary = "workspace-award-secondary-sandbox"

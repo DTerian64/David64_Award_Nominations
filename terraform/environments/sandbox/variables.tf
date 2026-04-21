@@ -199,3 +199,10 @@ variable "fraud_analytics_detection_window_days" {
   type        = number
   default     = 180
 }
+
+# ── Workday Proxy ─────────────────────────────────────────────────────────────
+variable "workday_webhook_secret" {
+  description = "Shared secret sent as X-Api-Key by Workday_Proxy when calling the Award API webhook. Must match WORKDAY_WEBHOOK_SECRET on the Workday_Proxy container. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}

@@ -74,6 +74,7 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
                 nominator.UserId          AS NominatorId,
                 nominator.FirstName + ' ' + nominator.LastName AS NominatorName,
                 nominator.userEmail       AS NominatorEmail,
+                beneficiary.UserId        AS BeneficiaryId,
                 beneficiary.FirstName + ' ' + beneficiary.LastName AS BeneficiaryName,
                 beneficiary.userEmail     AS BeneficiaryEmail,
                 approver.FirstName + ' ' + approver.LastName AS ApproverName,
@@ -99,10 +100,11 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
         "nominator_id":      int(row[6]),
         "nominator_name":    row[7],
         "nominator_email":   row[8],
-        "beneficiary_name":  row[9],
-        "beneficiary_email": row[10],
-        "approver_name":     row[11],
-        "approver_email":    row[12],
+        "beneficiary_id":    int(row[9]),   # needed by payout_submit handler
+        "beneficiary_name":  row[10],
+        "beneficiary_email": row[11],
+        "approver_name":     row[12],
+        "approver_email":    row[13],
     }
 
 

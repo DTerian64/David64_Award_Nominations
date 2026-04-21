@@ -165,6 +165,10 @@ module "key_vault" {
     SQL-SERVER                            = module.sql.server_fqdn
     SQL-DATABASE                          = module.sql.database_name
     APPINSIGHTS-CONNECTION-STRING-BACKEND = module.application_insights.backend_connection_string
+    # Shared secret — Award API validates this on inbound webhook calls from
+    # Workday_Proxy (sandbox) or real Workday (prod). X-Api-Key header.
+    # Same value must be in Workday_proxy/terraform/.../terraform.tfvars → workday_webhook_secret.
+    WORKDAY-WEBHOOK-SECRET                = var.workday_webhook_secret
   })
 }
 
@@ -276,6 +280,8 @@ module "container_apps" {
     { env_name = "AZURE_OPENAI_KEY",                         kv_secret_name = "AZURE-OPENAI-KEY" },
     { env_name = "AZURE_OPENAI_ENDPOINT",                    kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING",    kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
+    # Validates inbound webhook calls from Workday_Proxy (sandbox) or real Workday (prod).
+    { env_name = "WORKDAY_WEBHOOK_SECRET",                   kv_secret_name = "WORKDAY-WEBHOOK-SECRET" },
   ]
 
   tags = local.tags
@@ -345,6 +351,7 @@ module "service_bus" {
   }
 
   receiver_principal_ids = {
+    # auxiliary-function consumes all event types: email, payout, exports, etc.
     "auxiliary-function" = azurerm_user_assigned_identity.auxiliary_function.principal_id
   }
 
@@ -477,7 +484,7 @@ module "fraud_analytics_job" {
   tags = local.tags
 }
 
-# ── 12. Front Door ────────────────────────────────────────────────────────────
+# ── 13. Front Door ────────────────────────────────────────────────────────────
 module "front_door" {
   source = "../../modules/front-door"
 
