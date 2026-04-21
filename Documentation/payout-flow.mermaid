@@ -1,0 +1,29 @@
+sequenceDiagram
+    actor Approver
+    participant API as Award API<br/>(FastAPI)
+    participant SB as Service Bus<br/>award-events topic
+    participant AUX as Auxiliary App<br/>(event dispatcher)
+    participant WP as Workday Proxy<br/>(ACA)
+
+    Approver->>API: Approve nomination
+    API->>SB: publish AwardApproved<br/>{ nominationId, employeeId, amount }
+    API-->>Approver: 200 OK · status = Approved
+
+    SB-->>AUX: AwardApproved event<br/>(payout-orchestrator subscription)
+
+    AUX->>WP: POST /payouts<br/>{ nominationId, employeeId, amount }
+    WP-->>AUX: 202 Accepted<br/>{ paymentRef: "WD-2026-00123" }
+
+    AUX->>API: PATCH /nominations/{id}<br/>{ status: PaymentSubmitted,<br/>  paymentRef: "WD-2026-00123" }
+    API-->>AUX: 200 OK
+
+    Note over WP: simulated processing delay<br/>(real Workday: payroll cycle)
+
+    WP->>API: POST /api/webhooks/workday/payment-confirmed<br/>{ paymentRef: "WD-2026-00123", status: accepted }
+    API-->>WP: 200 OK
+    API->>SB: publish PayoutAccepted<br/>{ nominationId, paymentRef: "WD-2026-00123" }
+
+    SB-->>AUX: PayoutAccepted event<br/>(payout-orchestrator subscription)
+
+    AUX->>API: PATCH /nominations/{id}<br/>{ status: Paid }
+    API-->>AUX: 200 OK

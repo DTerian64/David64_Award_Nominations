@@ -15,19 +15,16 @@ resource "azurerm_static_web_app" "frontend" {
   sku_size            = "Free"
 
   app_settings = {
-    VITE_API_URL       = var.vite_api_url
-    VITE_API_CLIENT_ID = var.vite_api_client_id
-    VITE_API_SCOPE     = var.vite_api_scope
-    VITE_CLIENT_ID     = var.vite_client_id
-    VITE_TENANT_ID     = var.vite_tenant_id
+    VITE_API_URL                       = var.vite_api_url
+    VITE_API_CLIENT_ID                 = var.vite_api_client_id
+    VITE_API_SCOPE                     = var.vite_api_scope
+    VITE_CLIENT_ID                     = var.vite_client_id
+    VITE_APPINSIGHTS_CONNECTION_STRING = var.vite_appinsights_connection_string
+    AI_CLOUD_ROLE                      = var.app_name
   }
 
   tags = var.tags
 }
 
-resource "azurerm_static_web_app_custom_domain" "domain" {
-  count             = var.custom_domain != "" ? 1 : 0
-  static_web_app_id = azurerm_static_web_app.frontend.id
-  domain_name       = var.custom_domain
-  validation_type   = "cname-delegation"
-}
+# Custom domain is managed in the environment's main.tf (not here) so it can
+# explicitly depend on the DNS CNAME record being created first.

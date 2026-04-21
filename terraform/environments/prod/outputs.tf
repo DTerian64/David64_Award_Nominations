@@ -35,14 +35,14 @@ output "swa_deployment_token" {
   sensitive   = true
 }
 
-output "aca_east_principal_id" {
-  description = "East ACA managed identity — add to key_vault aca_principal_ids after first apply"
-  value       = module.container_apps.east_principal_id
+output "aca_primary_principal_id" {
+  description = "Primary User-Assigned Managed Identity principal ID (for reference)"
+  value       = azurerm_user_assigned_identity.aca_primary.principal_id
 }
 
-output "aca_west_principal_id" {
-  description = "West ACA managed identity — add to key_vault aca_principal_ids after first apply"
-  value       = module.container_apps.west_principal_id
+output "aca_secondary_principal_id" {
+  description = "Secondary User-Assigned Managed Identity principal ID (for reference)"
+  value       = azurerm_user_assigned_identity.aca_secondary.principal_id
 }
 
 output "post_deploy_checklist" {
@@ -51,18 +51,14 @@ output "post_deploy_checklist" {
 
   ✅ Terraform apply complete. Complete these steps:
 
-  1. Add KV secrets:
-     terraform output key_vault_uri
-     az keyvault secret set --vault-name <name> --name "DB-PASSWORD"      --value "..."
-     az keyvault secret set --vault-name <name> --name "OPENAI-API-KEY"   --value "..."
-     az keyvault secret set --vault-name <name> --name "SENDGRID-API-KEY" --value "..."
+  1. KV secrets are auto-wired from module outputs (storage key, OpenAI key/endpoint,
+     SQL server/database). Remaining secrets (SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD,
+     etc.) must be present in terraform.tfvars secrets map before apply.
 
-  2. Update KV access policy with ACA managed identities:
-     terraform output aca_east_principal_id
-     terraform output aca_west_principal_id
-     Then add both to aca_principal_ids in terraform.tfvars and re-apply
+  2. KV access policies are fully automated via User-Assigned Managed Identities —
+     no manual two-pass apply required. Both MIs are created before Container Apps.
 
-  3. Approve AFD Private Link connections:
+  3. Approve AFD Private Link connections (if using Premium tier):
      Portal → cae-award-eastus-prod → Networking → Private endpoint connections → Approve
      Portal → cae-award-westus-prod → Networking → Private endpoint connections → Approve
 

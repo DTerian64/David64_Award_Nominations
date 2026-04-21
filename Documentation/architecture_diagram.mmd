@@ -1,81 +1,104 @@
 graph TB
-    subgraph "User Access"
-        User[👤 End Users<br/>Employees & Managers]
+
+    %% ── Public Internet ───────────────────────────────────────────────────────
+    subgraph PUB["🌐 Public Internet"]
+        TENANTS["👥 Tenant Users<br/>acme-awards.terian-services.com<br/>sandbox-awards.terian-services.com<br/>dev-awards.terian-services.com"]
+        GH["⚙️ GitHub Actions<br/>CI/CD Pipelines"]
     end
 
-    subgraph "Azure Static Web Apps"
-        SWA[award-nomination-frontend<br/>React SPA<br/>Deployed via GitHub Actions]
+    %% ── Azure Edge — the only public-facing ingress ───────────────────────────
+    subgraph EDGE["☁️ Azure Edge Network — PUBLIC INGRESS ONLY"]
+        DNS_Z["🌐 Azure DNS Zone<br/>terian-services.com<br/>Per-tenant CNAME records<br/>Managed by Terraform"]
+        SWA["📄 Azure Static Web Apps<br/>React SPA<br/>Per-tenant custom domains<br/>GitHub Actions deploy"]
+        AFD["🔀 Azure Front Door Standard<br/>◀ SOLE PUBLIC API INGRESS ▶<br/>WAF · SSL/TLS Termination<br/>50/50 weighted · Auto-failover"]
     end
 
-    subgraph "Azure Front Door"
-        AFD[Award-Nomination-ADF<br/>Global Load Balancer<br/>SSL/TLS Termination<br/>WAF Protection]
+    %% ── Azure Backbone — everything private from here ─────────────────────────
+    subgraph PRIV["🔒 Azure Backbone — Private Network (no public inbound)"]
+
+        subgraph VNETS["VNet-Peered Pair  ·  East US 10.2.0.0/16  ↔  West US 10.3.0.0/16"]
+            ACA_E["🐳 award-api-eastus<br/>FastAPI · Python 3.11<br/>VNet-Injected into subnet-aca-primary<br/>User-Assigned Managed Identity<br/>Key Vault secret refs at runtime"]
+            ACA_W["🐳 award-api-westus<br/>FastAPI · Python 3.11<br/>VNet-Injected into subnet-aca-secondary<br/>User-Assigned Managed Identity<br/>Key Vault secret refs at runtime"]
+        end
+
+        subgraph PAAS["Azure PaaS — Private Endpoint Access Only  (subnet-privatelinks)"]
+            SQL[("🗄️ Azure SQL Database<br/>AwardNominations<br/>Serverless Gen5 · TLS 1.2<br/>Tables: Users · Nominations<br/>FraudScores · AuditLog")]
+            KV["🔑 Azure Key Vault<br/>SQL · Storage · OpenAI secrets<br/>RBAC auth · Soft-delete 90 d<br/>Secrets from Terraform outputs"]
+            BLOB["📦 Azure Blob Storage<br/>ml-models container<br/>extracts container<br/>award-nomination-metrics"]
+            ACR["🐋 Azure Container Registry<br/>award-nomination-api<br/>Git-SHA + latest tags<br/>Private pull by ACAs"]
+            OAI["🤖 Azure OpenAI<br/>GPT-4o deployment<br/>AI Analytics Agent<br/>Natural language queries"]
+        end
+
+        subgraph OBS["📊 Observability"]
+            LA_E["Log Analytics<br/>East US workspace"]
+            LA_W["Log Analytics<br/>West US workspace"]
+            GRF["📈 Azure Managed Grafana<br/>Monitoring Reader on both<br/>Log Analytics workspaces"]
+        end
+
     end
 
-    subgraph "East US Region"
-        ACA_East[award-api-eastus<br/>Azure Container Apps<br/>FastAPI Backend<br/>Python 3.11]
+    %% ── Identity & External Services ─────────────────────────────────────────
+    subgraph EXT["🔐 Identity & External Services"]
+        AAD["Microsoft Entra ID<br/>OAuth2 / OIDC · JWT validation<br/>Per-tenant AAD config<br/>App Roles · Terraform azuread"]
+        EMAIL["✉️ Email Service<br/>Gmail SMTP / SendGrid<br/>Manager approval notifications<br/>Secure single-use action tokens"]
     end
 
-    subgraph "West US Region"
-        ACA_West[award-api-westus<br/>Azure Container Apps<br/>FastAPI Backend<br/>Python 3.11]
-    end
+    %% ── Flows ─────────────────────────────────────────────────────────────────
 
-    subgraph "Azure SQL Database"
-        SQL[(AwardNominations<br/>david64-sql<br/>SQL Server 12.0<br/>• Users Table<br/>• Nominations Table<br/>• FraudScores Table<br/>• Impersonation_AuditLog)]
-    end
+    %% Tenant users → DNS → SWA / AFD
+    TENANTS -->|"HTTPS – per-tenant subdomain"| DNS_Z
+    DNS_Z -->|"CNAME → SWA"| SWA
+    DNS_Z -->|"CNAME → AFD endpoint"| AFD
 
-    subgraph "Azure Blob Storage"
-        Blob[awardnominationmodels<br/>ML Models Container<br/>fraud_detection_model.pkl]
-    end
+    %% CI/CD
+    GH -->|"Deploy React SPA"| SWA
+    GH -->|"Build & Push Docker image"| ACR
+    GH -->|"az containerapp update"| ACA_E
+    GH -->|"az containerapp update"| ACA_W
 
-    subgraph "Azure Container Registry"
-        ACR[acrawardnomination.azurecr.io<br/>Docker Images<br/>award-nomination-api:latest]
-    end
+    %% AFD → Container Apps  (ONLY path from internet to private backend)
+    AFD -->|"Primary   /api/*"| ACA_E
+    AFD -->|"Failover  /api/*"| ACA_W
 
-    subgraph "Azure AD / Entra ID"
-        AAD[Microsoft Entra ID<br/>OAuth 2.0 / OIDC<br/>Role: AWard_Nomination_Admin]
-    end
+    %% Container Apps → PaaS via Private Endpoints only
+    ACA_E -->|"🔒 Private Endpoint"| SQL
+    ACA_W -->|"🔒 Private Endpoint"| SQL
+    ACA_E -->|"🔒 Private Endpoint"| KV
+    ACA_W -->|"🔒 Private Endpoint"| KV
+    ACA_E -->|"🔒 Private Endpoint"| BLOB
+    ACA_W -->|"🔒 Private Endpoint"| BLOB
+    ACA_E -->|"🔒 Private Endpoint"| ACR
+    ACA_W -->|"🔒 Private Endpoint"| ACR
+    ACA_E -->|"🔒 Private Endpoint"| OAI
+    ACA_W -->|"🔒 Private Endpoint"| OAI
 
-    subgraph "CI/CD Pipeline"
-        GH[GitHub Actions<br/>• Frontend: SWA Deploy<br/>• Backend: Docker Build & Push<br/>• Auto Deploy to ACAs]
-    end
+    %% Observability
+    ACA_E -->|"Container logs"| LA_E
+    ACA_W -->|"Container logs"| LA_W
+    LA_E --> GRF
+    LA_W --> GRF
 
-    subgraph "External Services"
-        SendGrid[SendGrid API<br/>Email Notifications]
-    end
+    %% External identity & email
+    ACA_E -->|"Validate JWT"| AAD
+    ACA_W -->|"Validate JWT"| AAD
+    ACA_E -->|"Send approval email"| EMAIL
+    ACA_W -->|"Send approval email"| EMAIL
 
-    User -->|HTTPS| SWA
-    SWA -->|REST API Calls| AFD
-    AFD -->|Route /api/*<br/>Health Probes| ACA_East
-    AFD -->|Route /api/*<br/>Failover| ACA_West
-    
-    ACA_East -->|Read/Write| SQL
-    ACA_West -->|Read/Write| SQL
-    
-    ACA_East -->|Download Model<br/>Managed Identity| Blob
-    ACA_West -->|Download Model<br/>Managed Identity| Blob
-    
-    ACA_East -->|Authenticate Users<br/>Validate Tokens| AAD
-    ACA_West -->|Authenticate Users<br/>Validate Tokens| AAD
-    
-    ACA_East -->|Send Emails| SendGrid
-    ACA_West -->|Send Emails| SendGrid
-    
-    GH -->|Deploy Frontend| SWA
-    GH -->|Build & Push Images| ACR
-    GH -->|Update Container Apps| ACA_East
-    GH -->|Update Container Apps| ACA_West
-    
-    ACR -->|Pull Images| ACA_East
-    ACR -->|Pull Images| ACA_West
-
-    style User fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
-    style SWA fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    style AFD fill:#e8f5e9,stroke:#388e3c,stroke-width:3px
-    style ACA_East fill:#fce4ec,stroke:#c2185b,stroke-width:2px
-    style ACA_West fill:#fce4ec,stroke:#c2185b,stroke-width:2px
-    style SQL fill:#e1f5fe,stroke:#0277bd,stroke-width:3px
-    style Blob fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    style AAD fill:#fff9c4,stroke:#f57f17,stroke-width:2px
-    style GH fill:#ede7f6,stroke:#512da8,stroke-width:2px
-    style SendGrid fill:#e0f2f1,stroke:#00695c,stroke-width:2px
-    style ACR fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    %% ── Styles ────────────────────────────────────────────────────────────────
+    style TENANTS fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style GH       fill:#ede7f6,stroke:#512da8,stroke-width:2px
+    style DNS_Z    fill:#e8eaf6,stroke:#283593,stroke-width:2px
+    style SWA      fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style AFD      fill:#e8f5e9,stroke:#1b5e20,stroke-width:4px
+    style ACA_E    fill:#fce4ec,stroke:#b71c1c,stroke-width:2px
+    style ACA_W    fill:#fce4ec,stroke:#b71c1c,stroke-width:2px
+    style SQL      fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    style KV       fill:#fff8e1,stroke:#e65100,stroke-width:2px
+    style BLOB     fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
+    style ACR      fill:#fbe9e7,stroke:#bf360c,stroke-width:2px
+    style OAI      fill:#e8eaf6,stroke:#283593,stroke-width:2px
+    style LA_E     fill:#e0f2f1,stroke:#004d40,stroke-width:2px
+    style LA_W     fill:#e0f2f1,stroke:#004d40,stroke-width:2px
+    style GRF      fill:#e0f2f1,stroke:#004d40,stroke-width:2px
+    style AAD      fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style EMAIL    fill:#f1f8e9,stroke:#33691e,stroke-width:2px

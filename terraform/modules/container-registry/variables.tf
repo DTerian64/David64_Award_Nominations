@@ -6,9 +6,8 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region — must match existing ACR region (westus2)"
+  description = "Azure region — must be passed explicitly; no default to avoid silent region mismatch"
   type        = string
-  default     = "westus2"
 }
 
 variable "acr_name" {
@@ -55,8 +54,3 @@ variable "tags" {
   default     = {}
 }
 
-variable "location_east" {
-  description = "East US region — used for private endpoint (must match subnet region)"
-  type        = string
-  default     = "eastus"
-}

@@ -6,9 +6,8 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region — OpenAI model availability varies by region"
+  description = "Azure region — OpenAI model availability varies by region. Must be passed explicitly; no default to avoid silent region mismatch."
   type        = string
-  default     = "eastus"
 }
 
 variable "openai_name" {
@@ -60,6 +59,12 @@ variable "allowed_ips" {
 variable "private_endpoint_subnet_id" {
   description = "Subnet ID for the private endpoint (subnet-privatelinks)"
   type        = string
+}
+
+variable "private_endpoint_location" {
+  description = "Azure region for the private endpoint NIC — must match the subnet's VNet region. Defaults to var.location; override when OpenAI is in a different region than the private-links subnet (cross-region private link)."
+  type        = string
+  default     = ""
 }
 
 variable "private_dns_zone_id" {

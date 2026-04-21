@@ -1,0 +1,63 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Root .gitignore — applies to the entire repository
+# Subfolder .gitignores (terraform/, frontend/, analytics/) add their own rules
+# on top of these — they do NOT override anything here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.template
+
+# ── OS generated ──────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ── Editors ───────────────────────────────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.suo
+*.swp
+*.swo
+*~
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Test / coverage ───────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ── ML model artefacts ────────────────────────────────────────────────────────
+# Trained models and generated charts are build outputs, not source.
+# They are uploaded to Azure Blob Storage after training — not committed.
+**/Output/
+analytics/**/*.pkl
+analytics/**/*.png

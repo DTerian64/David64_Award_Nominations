@@ -1,0 +1,34 @@
+# fraud-analytics-job/requirements.txt
+# ─────────────────────────────────────────────────────────────────────────────
+# Combined dependencies for:
+#   analytics/Fraud_Detection/train_fraud_model.py  (Random Forest pipeline)
+#   scripts/graph_pattern_detector.py               (Graph + NLP pipeline)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Data / ML ─────────────────────────────────────────────────────────────────
+pandas>=2.1.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+matplotlib>=3.8.0
+
+# ── Graph analytics ───────────────────────────────────────────────────────────
+networkx>=3.2.0
+
+# ── NLP — copy-paste / transactional language detection ──────────────────────
+# sentence-transformers pulls torch; ~700 MB added to image.
+# The 'all-MiniLM-L6-v2' model (80 MB) is downloaded on first run and cached
+# in /root/.cache inside the container — ephemeral but acceptable for a job.
+# Pin torch to CPU-only to avoid the CUDA variant (~2.5 GB).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+sentence-transformers>=2.6.0
+
+# ── Azure ─────────────────────────────────────────────────────────────────────
+azure-storage-blob>=12.19.0
+azure-identity>=1.15.0
+
+# ── Database ──────────────────────────────────────────────────────────────────
+pyodbc>=5.0.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0

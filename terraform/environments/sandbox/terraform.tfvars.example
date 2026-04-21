@@ -1,0 +1,74 @@
+# environments/sandbox/terraform.tfvars
+# DO NOT COMMIT — gitignored
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource_group_name = "rg_award_nomination_sandbox"
+environment         = "sandbox"
+
+my_ips = [
+  "YOUR_HOME_IP",
+  "YOUR_OFFICE_IP",
+]
+
+# SQL
+sql_server_name    = "david64-sql-sandbox"
+sql_admin_login    = "YOUR_SQL_ADMIN_LOGIN"
+sql_admin_password = "YOUR_SQL_ADMIN_PASSWORD"
+
+# ACR
+acr_name = "acrawardnominationsandbox"
+
+# Storage
+storage_account_name = "awardnominationsandbox"
+
+# Key Vault
+key_vault_name = "kv-awardnominations-sandbox"
+
+# OpenAI
+openai_name         = "award-nomination-openai-sandbox"
+openai_api_version  = "2024-02-01"
+model_capacity_tpm  = 10
+
+# Log Analytics
+workspace_name_primary   = "workspace-award-primary-sandbox"
+workspace_name_secondary = "workspace-award-secondary-sandbox"
+
+# Container Apps
+cae_name_primary   = "cae-award-primary-sandbox"
+cae_name_secondary = "cae-award-secondary-sandbox"
+app_name_primary   = "award-api-primary-sandbox"
+app_name_secondary = "award-api-secondary-sandbox"
+min_replicas       = 0
+max_replicas       = 1
+
+# Static ACA config
+location_primary                = "westus2"
+location_secondary              = "westus"
+model_blob_name                 = "fraud_detection_model.pkl"
+api_base_url                    = "https://award-nomination-api-sandbox.azurefd.net"
+logging_level                   = "DEBUG"
+blob_sas_expiry_hours           = 24
+email_action_token_expiry_hours = 24
+
+# Front Door
+afd_profile_name  = "Award-Nomination-ADF-sandbox"
+afd_endpoint_name = "award-nomination-api-sandbox"
+
+# Static Web App
+swa_name = "award-nomination-frontend-sandbox"
+
+# Grafana
+grafana_name = "awardnomination-grafana-sandbox"
+
+# ── Key Vault secrets ─────────────────────────────────────────────────────────
+secrets = {
+  SQL-USER                  = "YOUR_SQL_ADMIN_LOGIN"
+  SQL-PASSWORD              = "YOUR_SQL_ADMIN_PASSWORD"
+  AZURE-STORAGE-KEY         = "YOUR_STORAGE_KEY"
+  AZURE-OPENAI-KEY          = "YOUR_OPENAI_KEY"
+  GMAIL-APP-PASSWORD        = "YOUR_GMAIL_APP_PASSWORD"
+  GMAIL-USER                = "YOUR_GMAIL_ADDRESS"
+  FROM-EMAIL                = "YOUR_FROM_EMAIL"
+  FROM-NAME                 = "Award Nominations"
+  EMAIL-ACTION-SECRET-KEY   = "YOUR_EMAIL_SECRET_KEY"
+}

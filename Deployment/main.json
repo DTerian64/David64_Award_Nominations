@@ -1,0 +1,1430 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.36.177.2456",
+      "templateHash": "6164798541812126638"
+    }
+  },
+  "parameters": {
+    "locationEast": {
+      "type": "string",
+      "defaultValue": "eastus"
+    },
+    "locationWest": {
+      "type": "string",
+      "defaultValue": "westus2"
+    },
+    "sqlAdminPassword": {
+      "type": "securestring"
+    },
+    "sqlAdminLogin": {
+      "type": "string",
+      "defaultValue": "dterian"
+    },
+    "domains_terian_services_com_email": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_nameFirst": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_nameLast": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_phone": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_email_1": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_nameFirst_1": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_nameLast_1": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_phone_1": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_email_2": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_nameFirst_2": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_nameLast_2": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_phone_2": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_email_3": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_nameFirst_3": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_nameLast_3": {
+      "type": "securestring"
+    },
+    "domains_terian_services_com_phone_3": {
+      "type": "securestring"
+    },
+    "acrName": {
+      "type": "string",
+      "defaultValue": "acrawardnomination"
+    },
+    "kvName": {
+      "type": "string",
+      "defaultValue": "kv-awardnominations"
+    },
+    "sqlServerName": {
+      "type": "string",
+      "defaultValue": "david64-sql"
+    },
+    "storageName": {
+      "type": "string",
+      "defaultValue": "awardnominationmodels"
+    },
+    "dnsZoneName": {
+      "type": "string",
+      "defaultValue": "terian-services.com"
+    },
+    "staticSiteName": {
+      "type": "string",
+      "defaultValue": "award-nomination-frontend"
+    },
+    "frontDoorName": {
+      "type": "string",
+      "defaultValue": "Award-Nomination-ADF"
+    },
+    "frontDoorEndpoint": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "emailActionSecretKey": {
+      "type": "securestring"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "monitoring",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "locationEast": {
+            "value": "[parameters('locationEast')]"
+          },
+          "locationWest": {
+            "value": "[parameters('locationWest')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.36.177.2456",
+              "templateHash": "2440129034692179204"
+            }
+          },
+          "parameters": {
+            "locationEast": {
+              "type": "string"
+            },
+            "locationWest": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2025-02-01",
+              "name": "workspace-rgawardnomination57mY",
+              "location": "[parameters('locationWest')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30,
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2025-02-01",
+              "name": "workspace-rgawardnomination6aem",
+              "location": "[parameters('locationEast')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30,
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.OperationalInsights/workspaces/savedSearches",
+              "apiVersion": "2025-02-01",
+              "name": "[format('{0}/{1}', 'workspace-rgawardnomination6aem', '1b0c9162-364a-493e-96a4-038973c200de_getawardapilogs')]",
+              "properties": {
+                "category": "function",
+                "displayName": "GetAwardAPILogs",
+                "version": 2,
+                "functionAlias": "GetAwardAPILogs",
+                "query": "// Save this as a function named \"GetAwardAPILogs\"\r\n.create function GetAwardAPILogs(hoursAgo:int) {\r\n    ContainerAppConsoleLogs_CL\r\n    | where TimeGenerated > ago(hoursAgo * 1h)\r\n    | where ContainerAppName_s in (\"award-api-eastus\", \"award-api-westus\")\r\n    | extend LogData = parse_json(Log_s)\r\n    | where isnotempty(LogData.level)\r\n    | extend \r\n        PacificTime = datetime_utc_to_local(TimeGenerated, 'US/Pacific'),\r\n        LogLevel = tostring(LogData.level),\r\n        Logger = tostring(LogData.logger),\r\n        Message = tostring(LogData.message),\r\n        NominationId = toint(LogData.nomination_id),\r\n        UserId = toint(LogData.user_id)\r\n    | project PacificTime, LogLevel, Logger, Message, NominationId, UserId, Region = ContainerAppName_s\r\n}"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', 'workspace-rgawardnomination6aem')]"
+              ]
+            },
+            {
+              "type": "Microsoft.OperationalInsights/workspaces/savedSearches",
+              "apiVersion": "2025-02-01",
+              "name": "[format('{0}/{1}', 'workspace-rgawardnomination6aem', 'dc87abb7-5e8a-4354-8020-a6ff546e905a_getawardnominationlogs')]",
+              "properties": {
+                "category": "AwardNomination",
+                "displayName": "GetAwardNominationLogs",
+                "version": 2,
+                "functionAlias": "GetAwardNominationLogs",
+                "query": "create-or-alter function GetAwardNominationLogs(ModuleParam:string, LogLevelParam:string, HoursAgo:int) {\r\n    ContainerAppConsoleLogs_CL\r\n    | where TimeGenerated > ago(HoursAgo * 1h)\r\n    | where ContainerAppName_s in (\"award-api-eastus\", \"award-api-westus\")\r\n    | extend LogData = parse_json(Log_s)\r\n    | extend \r\n        PacificTime = datetime_utc_to_local(TimeGenerated, 'US/Pacific'),\r\n        Message = tostring(LogData.message),\r\n        Module = tostring(LogData.logger),\r\n        LogLevel = tostring(LogData.level),\r\n        Exception = tostring(LogData.exception),\r\n        NominationId = toint(LogData.nomination_id),\r\n        UserId = toint(LogData.user_id)\r\n    | where Module == ModuleParam and LogLevel == LogLevelParam\r\n    | project PacificTime, LogLevel, Message, Module, Exception, NominationId, UserId, Region = ContainerAppName_s\r\n    | order by PacificTime desc\r\n}"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', 'workspace-rgawardnomination6aem')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "laWestId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.OperationalInsights/workspaces', 'workspace-rgawardnomination57mY')]"
+            },
+            "laEastId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.OperationalInsights/workspaces', 'workspace-rgawardnomination6aem')]"
+            },
+            "laWestCustomerId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', 'workspace-rgawardnomination57mY'), '2025-02-01').customerId]"
+            },
+            "laEastCustomerId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', 'workspace-rgawardnomination6aem'), '2025-02-01').customerId]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "networking",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "dnsZoneName": {
+            "value": "[parameters('dnsZoneName')]"
+          },
+          "domainName": {
+            "value": "[parameters('dnsZoneName')]"
+          },
+          "email": {
+            "value": "[parameters('domains_terian_services_com_email')]"
+          },
+          "nameFirst": {
+            "value": "[parameters('domains_terian_services_com_nameFirst')]"
+          },
+          "nameLast": {
+            "value": "[parameters('domains_terian_services_com_nameLast')]"
+          },
+          "phone": {
+            "value": "[parameters('domains_terian_services_com_phone')]"
+          },
+          "email_1": {
+            "value": "[parameters('domains_terian_services_com_email_1')]"
+          },
+          "nameFirst_1": {
+            "value": "[parameters('domains_terian_services_com_nameFirst_1')]"
+          },
+          "nameLast_1": {
+            "value": "[parameters('domains_terian_services_com_nameLast_1')]"
+          },
+          "phone_1": {
+            "value": "[parameters('domains_terian_services_com_phone_1')]"
+          },
+          "email_2": {
+            "value": "[parameters('domains_terian_services_com_email_2')]"
+          },
+          "nameFirst_2": {
+            "value": "[parameters('domains_terian_services_com_nameFirst_2')]"
+          },
+          "nameLast_2": {
+            "value": "[parameters('domains_terian_services_com_nameLast_2')]"
+          },
+          "phone_2": {
+            "value": "[parameters('domains_terian_services_com_phone_2')]"
+          },
+          "email_3": {
+            "value": "[parameters('domains_terian_services_com_email_3')]"
+          },
+          "nameFirst_3": {
+            "value": "[parameters('domains_terian_services_com_nameFirst_3')]"
+          },
+          "nameLast_3": {
+            "value": "[parameters('domains_terian_services_com_nameLast_3')]"
+          },
+          "phone_3": {
+            "value": "[parameters('domains_terian_services_com_phone_3')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.36.177.2456",
+              "templateHash": "1615478740179000710"
+            }
+          },
+          "parameters": {
+            "dnsZoneName": {
+              "type": "string"
+            },
+            "domainName": {
+              "type": "string"
+            },
+            "email": {
+              "type": "securestring"
+            },
+            "nameFirst": {
+              "type": "securestring"
+            },
+            "nameLast": {
+              "type": "securestring"
+            },
+            "phone": {
+              "type": "securestring"
+            },
+            "email_1": {
+              "type": "securestring"
+            },
+            "nameFirst_1": {
+              "type": "securestring"
+            },
+            "nameLast_1": {
+              "type": "securestring"
+            },
+            "phone_1": {
+              "type": "securestring"
+            },
+            "email_2": {
+              "type": "securestring"
+            },
+            "nameFirst_2": {
+              "type": "securestring"
+            },
+            "nameLast_2": {
+              "type": "securestring"
+            },
+            "phone_2": {
+              "type": "securestring"
+            },
+            "email_3": {
+              "type": "securestring"
+            },
+            "nameFirst_3": {
+              "type": "securestring"
+            },
+            "nameLast_3": {
+              "type": "securestring"
+            },
+            "phone_3": {
+              "type": "securestring"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/dnsZones",
+              "apiVersion": "2023-07-01-preview",
+              "name": "[parameters('dnsZoneName')]",
+              "location": "global",
+              "properties": {
+                "zoneType": "Public"
+              }
+            },
+            {
+              "type": "Microsoft.Network/dnsZones/NS",
+              "apiVersion": "2023-07-01-preview",
+              "name": "[format('{0}/{1}', parameters('dnsZoneName'), '@')]",
+              "properties": {
+                "TTL": 172800,
+                "NSRecords": [
+                  {
+                    "nsdname": "ns1-04.azure-dns.com."
+                  },
+                  {
+                    "nsdname": "ns2-04.azure-dns.net."
+                  },
+                  {
+                    "nsdname": "ns3-04.azure-dns.org."
+                  },
+                  {
+                    "nsdname": "ns4-04.azure-dns.info."
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/dnsZones', parameters('dnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/dnsZones/SOA",
+              "apiVersion": "2023-07-01-preview",
+              "name": "[format('{0}/{1}', parameters('dnsZoneName'), '@')]",
+              "properties": {
+                "TTL": 3600,
+                "SOARecord": {
+                  "email": "azuredns-hostmaster.microsoft.com",
+                  "expireTime": 2419200,
+                  "host": "ns1-04.azure-dns.com.",
+                  "minimumTTL": 300,
+                  "refreshTime": 3600,
+                  "retryTime": 300,
+                  "serialNumber": 1
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/dnsZones', parameters('dnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/dnsZones/TXT",
+              "apiVersion": "2023-07-01-preview",
+              "name": "[format('{0}/{1}', parameters('dnsZoneName'), '@')]",
+              "properties": {
+                "TTL": 12960000,
+                "TXTRecords": [
+                  {
+                    "value": [
+                      "MS=ms68100231"
+                    ]
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/dnsZones', parameters('dnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/dnsZones/CNAME",
+              "apiVersion": "2023-07-01-preview",
+              "name": "[format('{0}/{1}', parameters('dnsZoneName'), 'awards')]",
+              "properties": {
+                "TTL": 3600,
+                "CNAMERecord": {
+                  "cname": "award-nomination-frontend.azurestaticapps.net"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/dnsZones', parameters('dnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.DomainRegistration/domains",
+              "apiVersion": "2024-11-01",
+              "name": "[parameters('domainName')]",
+              "location": "global",
+              "properties": {
+                "privacy": true,
+                "autoRenew": false,
+                "dnsType": "AzureDns",
+                "dnsZoneId": "[resourceId('Microsoft.Network/dnsZones', parameters('dnsZoneName'))]",
+                "contactAdmin": {
+                  "email": "[parameters('email')]",
+                  "nameFirst": "[parameters('nameFirst')]",
+                  "nameLast": "[parameters('nameLast')]",
+                  "phone": "[parameters('phone')]"
+                },
+                "contactBilling": {
+                  "email": "[parameters('email_1')]",
+                  "nameFirst": "[parameters('nameFirst_1')]",
+                  "nameLast": "[parameters('nameLast_1')]",
+                  "phone": "[parameters('phone_1')]"
+                },
+                "contactRegistrant": {
+                  "email": "[parameters('email_2')]",
+                  "nameFirst": "[parameters('nameFirst_2')]",
+                  "nameLast": "[parameters('nameLast_2')]",
+                  "phone": "[parameters('phone_2')]"
+                },
+                "contactTech": {
+                  "email": "[parameters('email_3')]",
+                  "nameFirst": "[parameters('nameFirst_3')]",
+                  "nameLast": "[parameters('nameLast_3')]",
+                  "phone": "[parameters('phone_3')]"
+                },
+                "consent": {}
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/dnsZones', parameters('dnsZoneName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "dnsZoneId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/dnsZones', parameters('dnsZoneName'))]"
+            },
+            "nameServers": {
+              "type": "array",
+              "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('dnsZoneName')), '2023-07-01-preview').nameServers]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "secrets",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "kvName": {
+            "value": "[parameters('kvName')]"
+          },
+          "location": {
+            "value": "[parameters('locationEast')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.36.177.2456",
+              "templateHash": "17482185602801345735"
+            }
+          },
+          "parameters": {
+            "kvName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2024-12-01-preview",
+              "name": "[parameters('kvName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "sku": {
+                  "family": "A",
+                  "name": "standard"
+                },
+                "tenantId": "[subscription().tenantId]",
+                "enableRbacAuthorization": true,
+                "enabledForDeployment": false,
+                "enabledForTemplateDeployment": false,
+                "enableSoftDelete": true,
+                "softDeleteRetentionInDays": 90,
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.KeyVault/vaults/secrets",
+              "apiVersion": "2024-12-01-preview",
+              "name": "[format('{0}/{1}', parameters('kvName'), 'AZURE-STORAGE-KEY')]",
+              "properties": {
+                "contentType": "access key",
+                "attributes": {
+                  "enabled": true
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults', parameters('kvName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "kvId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.KeyVault/vaults', parameters('kvName'))]"
+            },
+            "kvUri": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('kvName')), '2024-12-01-preview').vaultUri]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "data",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('locationWest')]"
+          },
+          "sqlServerName": {
+            "value": "[parameters('sqlServerName')]"
+          },
+          "sqlAdminLogin": {
+            "value": "[parameters('sqlAdminLogin')]"
+          },
+          "sqlAdminPassword": {
+            "value": "[parameters('sqlAdminPassword')]"
+          },
+          "storageName": {
+            "value": "[parameters('storageName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.36.177.2456",
+              "templateHash": "13022050603976711796"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "sqlServerName": {
+              "type": "string"
+            },
+            "sqlAdminLogin": {
+              "type": "string"
+            },
+            "sqlAdminPassword": {
+              "type": "securestring"
+            },
+            "storageName": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Sql/servers",
+              "apiVersion": "2024-05-01-preview",
+              "name": "[parameters('sqlServerName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "administratorLogin": "[parameters('sqlAdminLogin')]",
+                "administratorLoginPassword": "[parameters('sqlAdminPassword')]",
+                "version": "12.0",
+                "minimalTlsVersion": "1.2",
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.Sql/servers/databases",
+              "apiVersion": "2024-05-01-preview",
+              "name": "[format('{0}/{1}', parameters('sqlServerName'), 'AwardNominations')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "GP_S_Gen5",
+                "tier": "GeneralPurpose",
+                "capacity": 2
+              },
+              "properties": {
+                "collation": "SQL_Latin1_General_CP1_CI_AS",
+                "maxSizeBytes": 34359738368,
+                "autoPauseDelay": 60,
+                "minCapacity": "[json('0.5')]",
+                "useFreeLimit": true
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2025-01-01",
+              "name": "[parameters('storageName')]",
+              "location": "eastus",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "allowBlobPublicAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "allowCrossTenantReplication": false
+              }
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2025-01-01",
+              "name": "[format('{0}/{1}', parameters('storageName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2025-01-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageName'), 'default', 'ml-models')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2025-01-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageName'), 'default', 'award-nomination-metrics')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageName'), 'default')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "sqlServerId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]"
+            },
+            "storageId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'secrets')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "containerRuntime",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "locationEast": {
+            "value": "[parameters('locationEast')]"
+          },
+          "locationWest": {
+            "value": "[parameters('locationWest')]"
+          },
+          "acrName": {
+            "value": "[parameters('acrName')]"
+          },
+          "kvName": {
+            "value": "[parameters('kvName')]"
+          },
+          "laEastCustomerId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2022-09-01').outputs.laEastCustomerId.value]"
+          },
+          "laWestCustomerId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2022-09-01').outputs.laWestCustomerId.value]"
+          },
+          "laEastResourceId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2022-09-01').outputs.laEastId.value]"
+          },
+          "laWestResourceId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2022-09-01').outputs.laWestId.value]"
+          },
+          "frontDoorEndpoint": {
+            "value": "[parameters('frontDoorEndpoint')]"
+          },
+          "emailActionSecretKey": {
+            "value": "[parameters('emailActionSecretKey')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.36.177.2456",
+              "templateHash": "1978418972464688761"
+            }
+          },
+          "parameters": {
+            "locationEast": {
+              "type": "string"
+            },
+            "locationWest": {
+              "type": "string"
+            },
+            "acrName": {
+              "type": "string"
+            },
+            "kvName": {
+              "type": "string"
+            },
+            "laEastCustomerId": {
+              "type": "string"
+            },
+            "laWestCustomerId": {
+              "type": "string"
+            },
+            "laEastResourceId": {
+              "type": "string"
+            },
+            "laWestResourceId": {
+              "type": "string"
+            },
+            "frontDoorEndpoint": {
+              "type": "string"
+            },
+            "emailActionSecretKey": {
+              "type": "securestring"
+            }
+          },
+          "variables": {
+            "plainSecrets": [
+              {
+                "name": "gmail-app-password",
+                "value": ""
+              },
+              {
+                "name": "sql-database",
+                "value": ""
+              },
+              {
+                "name": "sql-password",
+                "value": ""
+              },
+              {
+                "name": "sql-server",
+                "value": ""
+              },
+              {
+                "name": "sql-user",
+                "value": ""
+              },
+              {
+                "name": "acrawardnominationazurecrio-acrawardnomination",
+                "value": ""
+              }
+            ],
+            "kvSecrets": [
+              {
+                "name": "azure-storage-key",
+                "keyVaultUrl": "[format('https://{0}.vault.azure.net/secrets/AZURE-STORAGE-KEY', parameters('kvName'))]",
+                "identity": "system"
+              }
+            ],
+            "commonSecrets": "[concat(variables('plainSecrets'), variables('kvSecrets'))]",
+            "commonEnvVars": [
+              {
+                "name": "SQL_SERVER",
+                "secretRef": "sql-server"
+              },
+              {
+                "name": "SQL_DATABASE",
+                "secretRef": "sql-database"
+              },
+              {
+                "name": "SQL_USER",
+                "secretRef": "sql-user"
+              },
+              {
+                "name": "SQL_PASSWORD",
+                "secretRef": "sql-password"
+              },
+              {
+                "name": "AZURE_STORAGE_ACCOUNT",
+                "value": "awardnominationmodels"
+              },
+              {
+                "name": "MODEL_CONTAINER",
+                "value": "ml-models"
+              },
+              {
+                "name": "MODEL_BLOB_NAME",
+                "value": "fraud_detection_model.pkl"
+              },
+              {
+                "name": "ENVIRONMENT",
+                "value": "production"
+              },
+              {
+                "name": "AZURE_STORAGE_KEY",
+                "secretRef": "azure-storage-key"
+              },
+              {
+                "name": "GMAIL_APP_PASSWORD",
+                "secretRef": "gmail-app-password"
+              },
+              {
+                "name": "GMAIL_USER",
+                "value": "david.terian@gmail.com"
+              },
+              {
+                "name": "FROM_EMAIL",
+                "value": "noreply@terian-services.com"
+              },
+              {
+                "name": "FROM_NAME",
+                "value": "Award Nomination System"
+              },
+              {
+                "name": "API_BASE_URL",
+                "value": "[format('https://{0}', parameters('frontDoorEndpoint'))]"
+              },
+              {
+                "name": "EMAIL_ACTION_SECRET_KEY",
+                "value": "[parameters('emailActionSecretKey')]"
+              },
+              {
+                "name": "EMAIL_ACTION_TOKEN_EXPIRY_HOURS",
+                "value": "72"
+              }
+            ],
+            "commonProbes": [
+              {
+                "type": "Liveness",
+                "failureThreshold": 3,
+                "periodSeconds": 10,
+                "successThreshold": 1,
+                "tcpSocket": {
+                  "port": 8000
+                },
+                "timeoutSeconds": 5
+              },
+              {
+                "type": "Readiness",
+                "failureThreshold": 48,
+                "periodSeconds": 5,
+                "successThreshold": 1,
+                "tcpSocket": {
+                  "port": 8000
+                },
+                "timeoutSeconds": 5
+              },
+              {
+                "type": "Startup",
+                "failureThreshold": 240,
+                "initialDelaySeconds": 1,
+                "periodSeconds": 1,
+                "successThreshold": 1,
+                "tcpSocket": {
+                  "port": 8000
+                },
+                "timeoutSeconds": 3
+              }
+            ]
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2025-05-01-preview",
+              "name": "[parameters('acrName')]",
+              "location": "[parameters('locationWest')]",
+              "sku": {
+                "name": "Basic"
+              },
+              "properties": {
+                "adminUserEnabled": true,
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2025-02-02-preview",
+              "name": "cae-award-eastus",
+              "location": "[parameters('locationEast')]",
+              "properties": {
+                "appLogsConfiguration": {
+                  "destination": "log-analytics",
+                  "logAnalyticsConfiguration": {
+                    "customerId": "[parameters('laEastCustomerId')]",
+                    "sharedKey": "[listKeys(parameters('laEastResourceId'), '2025-02-01').primarySharedKey]"
+                  }
+                },
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2025-02-02-preview",
+              "name": "cae-award-westus",
+              "location": "[parameters('locationWest')]",
+              "properties": {
+                "appLogsConfiguration": {
+                  "destination": "log-analytics",
+                  "logAnalyticsConfiguration": {
+                    "customerId": "[parameters('laWestCustomerId')]",
+                    "sharedKey": "[listKeys(parameters('laWestResourceId'), '2025-02-01').primarySharedKey]"
+                  }
+                },
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2025-02-02-preview",
+              "name": "award-api-eastus",
+              "location": "[parameters('locationEast')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', 'cae-award-eastus')]",
+                "workloadProfileName": "Consumption",
+                "configuration": {
+                  "activeRevisionsMode": "Single",
+                  "maxInactiveRevisions": 100,
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 8000,
+                    "exposedPort": 0,
+                    "transport": "Auto",
+                    "traffic": [
+                      {
+                        "weight": 100,
+                        "latestRevision": true
+                      }
+                    ],
+                    "allowInsecure": false
+                  },
+                  "registries": [
+                    {
+                      "server": "[format('{0}.azurecr.io', parameters('acrName'))]",
+                      "username": "[parameters('acrName')]",
+                      "passwordSecretRef": "acrawardnominationazurecrio-acrawardnomination"
+                    }
+                  ],
+                  "secrets": "[variables('commonSecrets')]",
+                  "identitySettings": []
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "award-api-eastus",
+                      "image": "[format('{0}.azurecr.io/award-nomination-api:latest', parameters('acrName'))]",
+                      "resources": {
+                        "cpu": "0.5",
+                        "memory": "1Gi"
+                      },
+                      "env": "[concat(variables('commonEnvVars'), createArray(createObject('name', 'REGION', 'value', 'eastus'), createObject('name', 'CONTAINER_APP_NAME', 'value', 'award-api-eastus')))]",
+                      "probes": "[variables('commonProbes')]"
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 3,
+                    "cooldownPeriod": 300,
+                    "pollingInterval": 30
+                  },
+                  "volumes": []
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', 'cae-award-eastus')]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2025-02-02-preview",
+              "name": "award-api-westus",
+              "location": "[parameters('locationWest')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', 'cae-award-westus')]",
+                "workloadProfileName": "Consumption",
+                "configuration": {
+                  "activeRevisionsMode": "Single",
+                  "maxInactiveRevisions": 100,
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 8000,
+                    "exposedPort": 0,
+                    "transport": "Auto",
+                    "traffic": [
+                      {
+                        "weight": 100,
+                        "latestRevision": true
+                      }
+                    ],
+                    "allowInsecure": false
+                  },
+                  "registries": [
+                    {
+                      "server": "[format('{0}.azurecr.io', parameters('acrName'))]",
+                      "username": "[parameters('acrName')]",
+                      "passwordSecretRef": "acrawardnominationazurecrio-acrawardnomination"
+                    }
+                  ],
+                  "secrets": "[variables('commonSecrets')]",
+                  "identitySettings": []
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "award-api-westus",
+                      "image": "[format('{0}.azurecr.io/award-nomination-api:latest', parameters('acrName'))]",
+                      "resources": {
+                        "cpu": "0.5",
+                        "memory": "1Gi"
+                      },
+                      "env": "[concat(variables('commonEnvVars'), createArray(createObject('name', 'REGION', 'value', 'westus'), createObject('name', 'CONTAINER_APP_NAME', 'value', 'award-api-westus')))]",
+                      "probes": "[variables('commonProbes')]"
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 3,
+                    "cooldownPeriod": 300,
+                    "pollingInterval": 30
+                  },
+                  "volumes": []
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', 'cae-award-westus')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "acrLoginServer": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), '2025-05-01-preview').loginServer]"
+            },
+            "apiEastFqdn": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.App/containerApps', 'award-api-eastus'), '2025-02-02-preview').configuration.ingress.fqdn]"
+            },
+            "apiWestFqdn": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.App/containerApps', 'award-api-westus'), '2025-02-02-preview').configuration.ingress.fqdn]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'data')]",
+        "[resourceId('Microsoft.Resources/deployments', 'monitoring')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "frontend",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('locationWest')]"
+          },
+          "staticSiteName": {
+            "value": "[parameters('staticSiteName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.36.177.2456",
+              "templateHash": "15708984340709709672"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "defaultValue": "westus2"
+            },
+            "staticSiteName": {
+              "type": "string",
+              "defaultValue": "award-nomination-frontend"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/staticSites",
+              "apiVersion": "2024-11-01",
+              "name": "[parameters('staticSiteName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Free",
+                "tier": "Free"
+              },
+              "properties": {
+                "repositoryUrl": "https://github.com/DTerian64/David64_Award_Nominations",
+                "branch": "main",
+                "stagingEnvironmentPolicy": "Enabled",
+                "allowConfigFileUpdates": true,
+                "provider": "GitHub",
+                "enterpriseGradeCdnStatus": "Disabled"
+              }
+            },
+            {
+              "type": "Microsoft.Web/staticSites/customDomains",
+              "apiVersion": "2024-11-01",
+              "name": "[format('{0}/{1}', parameters('staticSiteName'), 'awards.terian-services.com')]",
+              "properties": {},
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/staticSites', parameters('staticSiteName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/staticSites/basicAuth",
+              "apiVersion": "2024-11-01",
+              "name": "[format('{0}/{1}', parameters('staticSiteName'), 'default')]",
+              "properties": {
+                "applicableEnvironmentsMode": "SpecifiedEnvironments"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/staticSites', parameters('staticSiteName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "defaultHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/staticSites', parameters('staticSiteName')), '2024-11-01').defaultHostname]"
+            },
+            "customDomainName": {
+              "type": "string",
+              "value": "awards.terian-services.com"
+            },
+            "staticSiteId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Web/staticSites', parameters('staticSiteName'))]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "frontDoor",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "frontDoorName": {
+            "value": "[parameters('frontDoorName')]"
+          },
+          "originEastHostname": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'containerRuntime'), '2022-09-01').outputs.apiEastFqdn.value]"
+          },
+          "originWestHostname": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'containerRuntime'), '2022-09-01').outputs.apiWestFqdn.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.36.177.2456",
+              "templateHash": "11937550670836597624"
+            }
+          },
+          "parameters": {
+            "frontDoorName": {
+              "type": "string",
+              "defaultValue": "Award-Nomination-ADF"
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "global"
+            },
+            "originEastHostname": {
+              "type": "string"
+            },
+            "originWestHostname": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Cdn/profiles",
+              "apiVersion": "2025-04-15",
+              "name": "[parameters('frontDoorName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_AzureFrontDoor"
+              },
+              "kind": "frontdoor",
+              "properties": {
+                "originResponseTimeoutSeconds": 30
+              }
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/originGroups",
+              "apiVersion": "2025-04-15",
+              "name": "[format('{0}/{1}', parameters('frontDoorName'), 'og-award-api')]",
+              "properties": {
+                "loadBalancingSettings": {
+                  "sampleSize": 4,
+                  "successfulSamplesRequired": 3
+                },
+                "healthProbeSettings": {
+                  "probePath": "/",
+                  "probeRequestType": "HEAD",
+                  "probeProtocol": "Https",
+                  "probeIntervalInSeconds": 100
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles', parameters('frontDoorName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/originGroups/origins",
+              "apiVersion": "2025-04-15",
+              "name": "[format('{0}/{1}/{2}', parameters('frontDoorName'), 'og-award-api', 'eastus')]",
+              "properties": {
+                "hostName": "[parameters('originEastHostname')]",
+                "httpPort": 80,
+                "httpsPort": 443,
+                "originHostHeader": "[parameters('originEastHostname')]",
+                "priority": 1,
+                "weight": 50,
+                "enabledState": "Enabled",
+                "enforceCertificateNameCheck": true
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', parameters('frontDoorName'), 'og-award-api')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/originGroups/origins",
+              "apiVersion": "2025-04-15",
+              "name": "[format('{0}/{1}/{2}', parameters('frontDoorName'), 'og-award-api', 'westus')]",
+              "properties": {
+                "hostName": "[parameters('originWestHostname')]",
+                "httpPort": 80,
+                "httpsPort": 443,
+                "originHostHeader": "[parameters('originWestHostname')]",
+                "priority": 1,
+                "weight": 50,
+                "enabledState": "Enabled",
+                "enforceCertificateNameCheck": true
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', parameters('frontDoorName'), 'og-award-api')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/afdEndpoints",
+              "apiVersion": "2025-04-15",
+              "name": "[format('{0}/{1}', parameters('frontDoorName'), 'award-nomination-api')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "isHttpAllowed": false,
+                "isHttpsAllowed": true,
+                "autoPurgeContentOnEndpointCreate": true
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles', parameters('frontDoorName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/afdEndpoints/routes",
+              "apiVersion": "2025-04-15",
+              "name": "[format('{0}/{1}/{2}', parameters('frontDoorName'), 'award-nomination-api', 'rt-award-api')]",
+              "properties": {
+                "originGroup": {
+                  "id": "[resourceId('Microsoft.Cdn/profiles/originGroups', parameters('frontDoorName'), 'og-award-api')]"
+                },
+                "supportedProtocols": [
+                  "Https"
+                ],
+                "patternsToMatch": [
+                  "/*"
+                ],
+                "forwardingProtocol": "MatchRequest",
+                "linkToDefaultDomain": "Enabled",
+                "httpsRedirect": "Enabled",
+                "enabledState": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', parameters('frontDoorName'), 'award-nomination-api')]",
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', parameters('frontDoorName'), 'og-award-api')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "endpoint": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Cdn/profiles/afdEndpoints', parameters('frontDoorName'), 'award-nomination-api'), '2025-04-15').hostName]"
+            },
+            "profileId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Cdn/profiles', parameters('frontDoorName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'containerRuntime')]",
+        "[resourceId('Microsoft.Resources/deployments', 'frontend')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "frontDoorEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'frontDoor'), '2022-09-01').outputs.endpoint.value]"
+    },
+    "staticSiteDefaultHost": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'frontend'), '2022-09-01').outputs.defaultHostName.value]"
+    },
+    "apiEastFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'containerRuntime'), '2022-09-01').outputs.apiEastFqdn.value]"
+    },
+    "apiWestFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'containerRuntime'), '2022-09-01').outputs.apiWestFqdn.value]"
+    }
+  }
+}

@@ -1,0 +1,112 @@
+# environments/sandbox/terraform.tfvars.template
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMITTED — safe to commit, contains no secrets
+#
+# Usage:
+#   Fresh start: Copy this file to terraform.tfvars and fill in YOUR_* values
+#   Reset after destroy: Run .\pre-terraform.ps1 which copies this automatically
+#
+# Values marked YOUR_*            must be filled in manually before running terraform
+# Values marked POPULATED_BY_SCRIPT are written automatically by ps1 scripts
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource_group_name = "rg_award_nomination_sandbox"
+environment         = "sandbox"
+
+# ── Your IPs — add your home/office public IPs ────────────────────────────────
+my_ips = [
+  "76.157.73.162",
+]
+
+# ── SQL ───────────────────────────────────────────────────────────────────────
+sql_server_name    = "david64-sql-sandbox"
+sql_database_name  = "AwardNominationsSandbox"
+sql_admin_login    = "YOUR_SQL_ADMIN_LOGIN"
+sql_admin_password = "YOUR_SQL_ADMIN_PASSWORD"
+
+# ── Resource names ────────────────────────────────────────────────────────────
+acr_name             = "acrawardnomssandbox"
+storage_account_name = "awardnomssandbox"
+key_vault_name       = "kv-awardnominations-sandbox"
+
+# ── OpenAI ────────────────────────────────────────────────────────────────────
+openai_name        = "award-nomination-openai-sandbox"
+openai_api_version = "2024-02-01"
+model_capacity_tpm = 10
+
+# ── Container Apps ────────────────────────────────────────────────────────────
+cae_name_primary   = "cae-award-primary-sandbox"
+cae_name_secondary = "cae-award-secondary-sandbox"
+app_name_primary   = "award-api-primary-sandbox"
+app_name_secondary = "award-api-secondary-sandbox"
+min_replicas       = 1
+max_replicas       = 3
+
+# ── App config ────────────────────────────────────────────────────────────────
+location_primary                = "eastus2"
+location_secondary              = "westus2"
+model_blob_name                 = "fraud_detection_model.pkl"
+logging_level                   = "DEBUG"
+blob_sas_expiry_hours           = 24
+email_action_token_expiry_hours = 24
+
+# ── Front Door ────────────────────────────────────────────────────────────────
+afd_profile_name  = "Award-Nomination-ADF-sandbox"
+afd_endpoint_name = "award-nomination-api-sandbox"
+
+# ── Static Web App ────────────────────────────────────────────────────────────
+swa_name                = "award-nomination-frontend-sandbox"
+swa_custom_domain       = "sandbox-awards.terian-services.com"  # leave empty "" to skip
+dns_zone_resource_group = "rg_platform"                         # RG holding terian-services.com DNS zone
+
+# ── Service Bus ───────────────────────────────────────────────────────────────
+service_bus_namespace_name = "sb-award-sandbox"
+
+# ── Auxiliary Container App ───────────────────────────────────────────────────
+auxiliary_container_app_name = "award-auxiliary-sandbox"
+
+# ── Payout Orchestrator ───────────────────────────────────────────────────────
+payout_orchestrator_name                 = "award-payout-orchestrator-sandbox"
+payout_orchestrator_storage_account_name = "stpayorchestrsbx"  # 3-24 chars, lowercase alphanumeric
+
+# ── Workday Proxy ─────────────────────────────────────────────────────────────
+workday_proxy_name = "workday-proxy-sandbox"
+
+# ── Log Analytics ─────────────────────────────────────────────────────────────
+workspace_name_primary   = "workspace-award-primary-sandbox"
+workspace_name_secondary = "workspace-award-secondary-sandbox"
+
+# ── Admin RBAC ────────────────────────────────────────────────────────────────
+# Users to receive the AWard_Nomination_Admin app role.
+# Home-tenant users and B2B guests: add object IDs here.
+#   Find object IDs via: Azure AD → Users → <user> → Object ID
+# External-tenant users (not B2B guests): assign via their own tenant's portal
+#   Enterprise Applications → Award Nomination - sandbox → Users and groups
+admin_user_object_ids = [
+  "YOUR_HOME_TENANT_ADMIN_OBJECT_ID",
+  # "YOUR_SECOND_ADMIN_OBJECT_ID",
+]
+
+# ── Pass 2 values — POPULATED_BY_SCRIPT (mid-terraform.ps1) ──────────────────
+# api_base_url is the AFD endpoint hostname — only known after Pass 1 apply.
+# mid-terraform.ps1 reads it from `terraform output app_url` and writes it here.
+api_base_url         = "POPULATED_BY_SCRIPT"
+swa_redirect_urls    = []
+cors_allowed_origins = ""
+
+# ── Secrets — fill in manually before terraform apply ────────────────────────
+# Email action token signing key — generate once per environment, never rotate
+# without also invalidating outstanding email links.
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+email_action_secret_key = "YOUR_EMAIL_ACTION_SECRET_KEY"
+
+# AZURE-STORAGE-KEY, AZURE-OPENAI-KEY, AZURE-OPENAI-ENDPOINT, SQL-SERVER,
+# and SQL-DATABASE are auto-wired from module outputs.
+secrets = {
+  SQL-USER           = "YOUR_SQL_ADMIN_LOGIN"
+  SQL-PASSWORD       = "YOUR_SQL_ADMIN_PASSWORD"
+  GMAIL-APP-PASSWORD = "YOUR_GMAIL_APP_PASSWORD"
+  GMAIL-USER         = "YOUR_GMAIL_ADDRESS"
+  FROM-EMAIL         = "YOUR_FROM_EMAIL"
+  FROM-NAME          = "Award Nominations"
+}

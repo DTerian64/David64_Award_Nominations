@@ -1,0 +1,17 @@
+services:
+  nominations-agent:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env                          # picks up your Azure credentials automatically
+    environment:
+      LOG_LEVEL: INFO                 # change to DEBUG for full prompt/response logging
+      LOG_FILE: ""                    # disable file logging inside container (use docker logs instead)
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

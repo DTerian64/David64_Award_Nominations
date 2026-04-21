@@ -17,13 +17,13 @@ variable "grafana_name" {
   default     = "awardnomination-grafana"
 }
 
-variable "log_analytics_workspace_east_id" {
-  description = "East Log Analytics workspace resource ID — Grafana data source"
+variable "log_analytics_workspace_primary_id" {
+  description = "Primary Log Analytics workspace resource ID — Grafana data source"
   type        = string
 }
 
-variable "log_analytics_workspace_west_id" {
-  description = "West Log Analytics workspace resource ID — Grafana data source"
+variable "log_analytics_workspace_secondary_id" {
+  description = "Secondary Log Analytics workspace resource ID — Grafana data source"
   type        = string
 }
 

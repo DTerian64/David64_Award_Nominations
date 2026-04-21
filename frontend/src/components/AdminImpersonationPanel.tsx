@@ -7,7 +7,7 @@ interface User {
   userPrincipalName: string;
   FirstName: string;
   LastName: string;
-  Title: string;
+  Title: string; 
 }
 
 interface AdminImpersonationPanelProps {

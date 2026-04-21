@@ -30,7 +30,7 @@ variable "openai_name"          { type = string }
 variable "openai_api_version"   { type = string }
 variable "model_capacity_tpm"   { type = number }
 
-# Log Analyticsvariable "model_blob_name"      { type = string }
+# App config
 variable "api_base_url"         { type = string }
 variable "logging_level" {
   type    = string
@@ -52,40 +52,60 @@ variable "afd_endpoint_name"    { type = string }
 # Static Web App
 variable "swa_name"             { type = string }
 
+variable "swa_custom_domain" {
+  description = "Optional custom domain for the SWA (e.g. dev-awards.terian-services.com). Leave empty to skip."
+  type        = string
+  default     = ""
+}
+
+variable "dns_zone_resource_group" {
+  description = "Resource group containing the terian-services.com Azure DNS zone."
+  type        = string
+  default     = "rg_platform"
+}
+
 # Azure AD — SWA redirect URIs added after first apply
 variable "swa_redirect_urls" {
   type    = list(string)
   default = []
 }
 
-# Grafana
-variable "workspace_name_east" {
-  description = "Log Analytics workspace name — East US"
-  type        = string
+# Azure AD — admin role assignments
+variable "admin_user_object_ids" {
+  description = "Object IDs of home-tenant or B2B-guest users to receive AWard_Nomination_Admin"
+  type        = list(string)
+  default     = []
 }
 
-variable "workspace_name_west" {
-  description = "Log Analytics workspace name — West US"
-  type        = string
-}
-
-variable "api_client_id" {
-  description = "Client ID of the manually created API app registration in Entra"
+variable "admin_app_role_id" {
+  description = "Override the generated app role UUID — only needed when importing an existing role into state."
   type        = string
   default     = ""
 }
 
-variable "frontend_client_id" {
-  description = "Client ID of the manually created Frontend app registration in Entra"
+# CORS — populated by mid-terraform.ps1 after first apply
+variable "cors_allowed_origins" {
+  description = "Comma-separated CORS allowed origins injected into container app env vars"
   type        = string
   default     = ""
+}
+
+# Log Analytics
+variable "workspace_name_primary" {
+  description = "Log Analytics workspace name — Primary region"
+  type        = string
+}
+
+variable "workspace_name_secondary" {
+  description = "Log Analytics workspace name — Secondary region"
+  type        = string
 }
 
 # Container Apps
-variable "cae_name_east"  { type = string }
-variable "cae_name_west"  { type = string }
-variable "app_name_east"  { type = string }
-variable "app_name_west"  { type = string }
+variable "cae_name_primary"   { type = string }
+variable "cae_name_secondary" { type = string }
+variable "app_name_primary"   { type = string }
+variable "app_name_secondary" { type = string }
 variable "min_replicas" {
   type    = number
   default = 0
@@ -96,9 +116,14 @@ variable "max_replicas" {
 }
 
 # Location
-variable "location_east" {
+variable "location_primary" {
   type    = string
-  default = "eastus"
+  default = "westus2"
+}
+
+variable "location_secondary" {
+  type    = string
+  default = "westus"
 }
 
 # Secrets
@@ -107,17 +132,19 @@ variable "secrets" {
   sensitive = true
 }
 
-# Pass 2 — ACA principal IDs for Key Vault access policies
-variable "aca_east_principal_id" {
-  type    = string
-  default = ""
-}
-variable "aca_west_principal_id" {
-  type    = string
-  default = ""
-}
-
 variable "model_blob_name" {
   type    = string
   default = "fraud_detection_model.pkl"
+}
+
+# ── Service Bus ───────────────────────────────────────────────────────────────
+variable "service_bus_namespace_name" {
+  description = "Service Bus namespace name — globally unique. Convention: sb-award-{env}"
+  type        = string
+}
+
+# ── Auxiliary Container App ───────────────────────────────────────────────────
+variable "auxiliary_container_app_name" {
+  description = "Auxiliary Container App name — must be unique within the CAE. Convention: award-auxiliary-{env}"
+  type        = string
 }

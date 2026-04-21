@@ -116,7 +116,6 @@ terraform output acr_login_server
 # Public URLs
 terraform output app_url
 terraform output frontend_url
-terraform output grafana_url
 ```
 
 ### Step 7 — Update terraform.tfvars
@@ -247,7 +246,6 @@ After all steps are complete, verify:
 [ ] Portal → rg_award_nomination_dev shows all resources
 [ ] terraform output app_url returns 200 (may show placeholder until Step 14)
 [ ] terraform output frontend_url loads the React app
-[ ] terraform output grafana_url loads Grafana dashboard
 [ ] GitHub Actions → dev branch workflow completes successfully
 [ ] Container Apps show the application image (not the placeholder)
 [ ] Key Vault shows all secrets populated
@@ -281,6 +279,7 @@ terraform output -raw swa_deployment_token
 # Check current state
 terraform show
 
+
 # Destroy dev environment (careful!)
 terraform destroy
 
@@ -304,8 +303,7 @@ terraform plan
 | Front Door | Standard | ~$35 |
 | Static Web App | Free | $0 |
 | Log Analytics | PerGB2018 | ~$2 |
-| Grafana | Standard | ~$20 |
 | Networking | VNets + Private Endpoints | ~$15 |
-| **Total** | | **~$88/month** |
+| **Total** | | **~$68/month** |
 
 > Front Door is the largest cost driver. If dev is only used occasionally, consider destroying and re-creating with `terraform destroy` / `terraform apply` to save costs.

@@ -1,0 +1,23 @@
+name: Sync docs to Azure DevOps wiki
+
+on:
+  push:
+    branches: [sandbox]
+    paths:
+      - 'Documentation/**'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    environment: sandbox
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to Azure Repos
+        env:
+          ADO_PAT: ${{ secrets.ADO_PAT }}
+        run: |
+          git remote add devops "https://x:${ADO_PAT}@dev.azure.com/Terian-Services/Award_Nomination/_git/Award_Nomination"
+          git push devops sandbox

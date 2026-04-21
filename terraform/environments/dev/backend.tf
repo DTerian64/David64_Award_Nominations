@@ -12,11 +12,15 @@ terraform {
       source  = "hashicorp/azuread"
       version = "~> 2.47"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 
   backend "azurerm" {
-    resource_group_name  = "rg_award_nomination"
-    storage_account_name = "awardnominationmodels"
+    resource_group_name  = "rg_platform"
+    storage_account_name = "awardnomplatform"
     container_name       = "tfstate"
     key                  = "dev.tfstate"
   }

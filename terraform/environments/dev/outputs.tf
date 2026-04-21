@@ -26,14 +26,19 @@ output "swa_deployment_token" {
   sensitive   = true
 }
 
-output "aca_east_principal_id" {
-  description = "East ACA managed identity — add to aca_principal_ids after first apply"
-  value       = module.container_apps.east_principal_id
+output "vite_client_id" {
+  description = "Frontend SPA client ID → VITE_CLIENT_ID GitHub env var"
+  value       = module.app_registrations.frontend_client_id
 }
 
-output "aca_west_principal_id" {
-  description = "West ACA managed identity — add to aca_principal_ids after first apply"
-  value       = module.container_apps.west_principal_id
+output "vite_api_scope" {
+  description = "API scope URI → VITE_API_SCOPE GitHub env var"
+  value       = module.app_registrations.api_scope
+}
+
+output "vite_api_client_id" {
+  description = "API app client ID → VITE_API_CLIENT_ID GitHub env var"
+  value       = module.app_registrations.api_client_id
 }
 
 output "post_deploy_checklist" {
@@ -42,19 +47,20 @@ output "post_deploy_checklist" {
 
   Dev environment deployed. Complete these steps:
 
-  1. Add KV secrets:
-     az keyvault secret set --vault-name kv-awardnominations-dev --name "DB-PASSWORD"      --value "..."
-     az keyvault secret set --vault-name kv-awardnominations-dev --name "OPENAI-API-KEY"   --value "..."
-     az keyvault secret set --vault-name kv-awardnominations-dev --name "SENDGRID-API-KEY" --value "..."
+  1. KV secrets are auto-wired from module outputs (storage key, OpenAI key/endpoint,
+     SQL server/database). Remaining secrets (SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD,
+     etc.) must be present in terraform.tfvars secrets map before apply.
 
-  2. Update KV aca_principal_ids and re-apply:
-     terraform output aca_east_principal_id
-     terraform output aca_west_principal_id
+  2. KV access policies are fully automated via User-Assigned Managed Identities —
+     no manual two-pass apply required. Both MIs are created before Container Apps.
 
-  3. Approve AFD Private Link in portal for both CAEs
+  3. Run mid-terraform.ps1 (Pass 2 prep):
+     Patches swa_redirect_urls + cors_allowed_origins in terraform.tfvars and sets
+     AZURE_STATIC_WEB_APPS_API_TOKEN secret in the GitHub 'development' environment.
+     AZURE_STATIC_WEB_APPS_API_TOKEN secret and VITE_* variables in the GitHub
+     'development' environment (build-time, passed via workflow env: block).
 
-  4. Update GitHub secret SWA_TOKEN_DEV:
-     terraform output -raw swa_deployment_token
+  4. Run Pass 2: terraform plan / apply, then .\post-terraform.ps1
 
   5. Create dev branch and trigger first deploy:
      git checkout -b dev

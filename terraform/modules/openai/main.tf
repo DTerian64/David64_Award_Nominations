@@ -13,7 +13,19 @@
 # If deploying to a new subscription, request quota for gpt-4.1
 # GlobalStandard in East US before running terraform apply.
 # Portal: Azure OpenAI → Quotas → Request increase
+#
+# Cross-region private endpoint:
+# When openai_location differs from location_primary (the subnet's region),
+# private_endpoint_location must be set to match the subnet's region.
+# The endpoint NIC lives in the subnet's region; the connection target (OpenAI)
+# can be in any region — Azure routes traffic over its backbone.
 # ─────────────────────────────────────────────────────────────────────────────
+
+locals {
+  # Private endpoint must be co-located with its subnet, not necessarily with
+  # the OpenAI account. Fall back to var.location when not overridden (same-region case).
+  pe_location = var.private_endpoint_location != "" ? var.private_endpoint_location : var.location
+}
 
 resource "azurerm_cognitive_account" "openai" {
   name                = var.openai_name
@@ -53,7 +65,7 @@ resource "azurerm_cognitive_deployment" "gpt4" {
 # ── Private endpoint ──────────────────────────────────────────────────────────
 resource "azurerm_private_endpoint" "openai" {
   name                = "pe-${var.openai_name}"
-  location            = var.location
+  location            = local.pe_location   # subnet's region, not necessarily OpenAI's region
   resource_group_name = var.resource_group_name
   subnet_id           = var.private_endpoint_subnet_id
   tags                = var.tags

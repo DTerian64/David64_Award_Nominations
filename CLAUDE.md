@@ -1,0 +1,1 @@
+This folder contains award Nomination app with React front end, FastAPI backend and some analytics.

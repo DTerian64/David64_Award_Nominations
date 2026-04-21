@@ -5,25 +5,23 @@ variable "resource_group_name" {
   type        = string
 }
 
-variable "location_east" {
-  description = "East US region for the East workspace"
-  type        = string
-  default     = "eastus"
-}
-
-variable "location_west" {
-  description = "West US region for the West workspace"
-  type        = string
-  default     = "westus"
-}
-
-variable "workspace_name_east" {
-  description = "Log Analytics workspace name for East US CAE"
+variable "location_primary" {
+  description = "Primary region — passed from environment, no default"
   type        = string
 }
 
-variable "workspace_name_west" {
-  description = "Log Analytics workspace name for West US CAE"
+variable "location_secondary" {
+  description = "Secondary region — passed from environment, no default"
+  type        = string
+}
+
+variable "workspace_name_primary" {
+  description = "Log Analytics workspace name for primary CAE"
+  type        = string
+}
+
+variable "workspace_name_secondary" {
+  description = "Log Analytics workspace name for secondary CAE"
   type        = string
 }
 

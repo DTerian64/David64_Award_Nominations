@@ -35,15 +35,16 @@ openai_api_version = "2024-02-01"
 model_capacity_tpm = 10
 
 # ── Container Apps ────────────────────────────────────────────────────────────
-cae_name_east = "cae-award-eastus-dev"
-cae_name_west = "cae-award-westus-dev"
-app_name_east = "award-api-eastus-dev"
-app_name_west = "award-api-westus-dev"
+cae_name_primary   = "cae-award-primary-dev"
+cae_name_secondary = "cae-award-secondary-dev"
+app_name_primary   = "award-api-primary-dev"
+app_name_secondary = "award-api-secondary-dev"
 min_replicas  = 0
 max_replicas  = 1
 
 # ── App config ────────────────────────────────────────────────────────────────
-location_east                   = "eastus"
+location_primary                = "westus2"
+location_secondary              = "westus"
 model_blob_name                 = "fraud_detection_model.pkl"
 api_base_url                    = "https://award-nomination-api-dev.azurefd.net"
 logging_level                   = "DEBUG"
@@ -55,20 +56,28 @@ afd_profile_name  = "Award-Nomination-ADF-dev"
 afd_endpoint_name = "award-nomination-api-dev"
 
 # ── Static Web App ────────────────────────────────────────────────────────────
-swa_name = "award-nomination-frontend-dev"
+swa_name               = "award-nomination-frontend-dev"
+swa_custom_domain      = "dev-awards.terian-services.com"  # leave empty "" to skip
+dns_zone_resource_group = "rg_platform"             # RG holding terian-services.com DNS zone
 
 # ── Log Analytics ─────────────────────────────────────────────────────────────
-workspace_name_east = "workspace-award-eastus-dev"
-workspace_name_west = "workspace-award-westus-dev"
+workspace_name_primary   = "workspace-award-primary-dev"
+workspace_name_secondary = "workspace-award-secondary-dev"
 
-# ── Azure AD app registrations — POPULATED_BY_SCRIPT (pre-terraform.ps1) ─────
-api_client_id      = ""
-frontend_client_id = ""
+# ── Admin RBAC ────────────────────────────────────────────────────────────────
+# Users to receive the AWard_Nomination_Admin app role.
+# Home-tenant users and B2B guests: add object IDs here.
+#   Find object IDs via: Azure AD → Users → <user> → Object ID
+# External-tenant users (not B2B guests): assign via their own tenant's portal
+#   Enterprise Applications → Award Nomination - dev → Users and groups
+admin_user_object_ids = [
+  "YOUR_HOME_TENANT_ADMIN_OBJECT_ID",
+  # "YOUR_SECOND_ADMIN_OBJECT_ID",
+]
 
 # ── Pass 2 values — POPULATED_BY_SCRIPT (mid-terraform.ps1) ──────────────────
-aca_east_principal_id = ""
-aca_west_principal_id = ""
-swa_redirect_urls     = []
+swa_redirect_urls    = []
+cors_allowed_origins = ""
 
 # ── Key Vault secrets — fill in manually before terraform apply ───────────────
 # AZURE-STORAGE-KEY and AZURE-OPENAI-KEY are auto-wired from module outputs

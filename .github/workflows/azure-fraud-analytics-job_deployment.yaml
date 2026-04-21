@@ -1,0 +1,117 @@
+name: Deploy Fraud Analytics Job to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main     # → production    (rg_award_nomination)
+      - sandbox  # → sandbox       (rg_award_nomination_sandbox)
+      - dev      # → development   (rg_award_nomination_dev)
+    paths:
+      - 'fraud-analytics-job/**'
+  workflow_dispatch:      # Always triggerable manually from the Actions tab
+
+env:
+  IMAGE_NAME: award-fraud-analytics
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    # Selects the GitHub Environment, which determines which vars.* / secrets.*
+    # are injected. Same environment mapping as all other ACA workflows.
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'sandbox' && 'sandbox' || 'development' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Login to Azure Container Registry
+      run: |
+        az acr login --name ${{ vars.ACR_NAME }}
+
+    # ------------------------------------------------------------------
+    # Build & push
+    # Build context is analytics/fraud-analytics-job/ — fully self-contained.
+    # All scripts (train_fraud_model.py, graph_pattern_detector.py, run_job.py)
+    # live in that directory alongside the Dockerfile and requirements.txt.
+    # Tagging convention mirrors all other images:
+    #   Prod:    latest  + latest-<sha>
+    #   Sandbox: sandbox + sandbox-<sha>
+    #   Dev:     dev     + dev-<sha>
+    # ------------------------------------------------------------------
+    - name: Build Docker image
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        cd fraud-analytics-job
+        docker build \
+          -t ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          -t ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          -t ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG} \
+          .
+
+    - name: Push to Azure Container Registry
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    # ------------------------------------------------------------------
+    # Secrets — ACR password for image pull.
+    # KV-backed secrets (SQL, Storage, AppInsights) are already wired by
+    # Terraform as ACA Job secret references and need no action here.
+    # ------------------------------------------------------------------
+    - name: Set Container App Job secrets
+      run: |
+        ACR_PASSWORD=$(az acr credential show \
+          --name ${{ vars.ACR_NAME }} \
+          --query "passwords[0].value" -o tsv)
+
+        az containerapp job secret set \
+          --name ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --secrets \
+            "acr-password=${ACR_PASSWORD}"
+
+    # ------------------------------------------------------------------
+    # Deploy — update the job to the new SHA-tagged image.
+    # Terraform's lifecycle.ignore_changes on image means subsequent
+    # terraform apply calls will never revert this to the placeholder.
+    # ------------------------------------------------------------------
+    - name: Update Container App Job image
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        az containerapp job update \
+          --name ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --image ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    # ------------------------------------------------------------------
+    # Optional: trigger an immediate execution to validate the new image.
+    # Remove this step if you prefer the first run to happen on schedule.
+    # ------------------------------------------------------------------
+    - name: Trigger validation run
+      run: |
+        az containerapp job start \
+          --name ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }}
+        echo "Validation run started — check Azure portal or:"
+        echo "  az containerapp job execution list --name ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }} --resource-group ${{ vars.RESOURCE_GROUP }}"
+
+    - name: Deployment summary
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        echo "### Fraud Analytics Job Deployed! :rocket:"                                                    >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                               >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ vars.ENVIRONMENT }}"                                                      >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}"                                                            >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"                     >> $GITHUB_STEP_SUMMARY
+        echo "**Job:** ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }}"                                       >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}"                                                                 >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                               >> $GITHUB_STEP_SUMMARY
+        echo "**Schedule:** Monday 02:00 UTC (override via \`fraud_analytics_cron\` Terraform variable)"    >> $GITHUB_STEP_SUMMARY
+        echo "**On-demand:** \`az containerapp job start --name ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }} --resource-group ${{ vars.RESOURCE_GROUP }}\`" >> $GITHUB_STEP_SUMMARY

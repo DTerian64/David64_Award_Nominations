@@ -17,46 +17,16 @@ variable "afd_endpoint_name" {
   default     = "award-nomination-api"
 }
 
-variable "location_east" {
-  description = "East US region"
-  type        = string
-  default     = "eastus"
-}
-
-variable "location_west" {
-  description = "West US region"
-  type        = string
-  default     = "westus"
-}
-
 # ── From container-apps module outputs ────────────────────────────────────────
-variable "cae_east_id" {
-  description = "East CAE resource ID — used for Private Link origin"
+# Origins point directly to each Container App's public FQDN.
+# e.g. award-api-primary-sandbox.ambitiousflower-6294c285.westus2.azurecontainerapps.io
+variable "container_app_primary_fqdn" {
+  description = "Primary location Container App public FQDN — used as AFD origin hostname"
   type        = string
 }
 
-variable "cae_west_id" {
-  description = "West CAE resource ID — used for Private Link origin"
-  type        = string
-}
-
-variable "cae_east_static_ip" {
-  description = "East CAE internal load balancer IP"
-  type        = string
-}
-
-variable "cae_west_static_ip" {
-  description = "West CAE internal load balancer IP"
-  type        = string
-}
-
-variable "cae_east_default_domain" {
-  description = "East CAE default domain"
-  type        = string
-}
-
-variable "cae_west_default_domain" {
-  description = "West CAE default domain"
+variable "container_app_secondary_fqdn" {
+  description = "Secondary location Container App public FQDN — used as AFD origin hostname"
   type        = string
 }
 

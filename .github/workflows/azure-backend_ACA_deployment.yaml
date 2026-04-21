@@ -3,129 +3,137 @@ name: Deploy Backend to Azure Container Apps
 on:
   push:
     branches:
-      - main  # Trigger on push to main branch
+      - main     # → production    (rg_award_nomination)
+      - sandbox  # → sandbox       (rg_award_nomination_sandbox)
+      - dev      # → development   (rg_award_nomination_dev)
     paths:
-      - 'backend/**'  # Only trigger if backend files change
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
-  workflow_dispatch:  # Allow manual trigger from GitHub UI
+      - 'backend/**'
+  workflow_dispatch:
 
+# IMAGE_NAME is identical in both environments so it lives here at workflow level.
+# All other infra variables live in the GitHub Environment (vars.*) and
+# all sensitive values live in the GitHub Environment secrets (secrets.*).
 env:
-  ACR_NAME: acrawardnomination
-  ACR_LOGIN_SERVER: acrawardnomination.azurecr.io
   IMAGE_NAME: award-nomination-api
-  RESOURCE_GROUP: rg_award_nomination
-  CONTAINER_APP_EASTUS: award-api-eastus
-  CONTAINER_APP_WESTUS: award-api-westus
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    
+
+    # Selects the GitHub Environment.
+    # GitHub injects vars.* and secrets.* from that environment automatically.
+    # main    → production  |  sandbox → sandbox  |  dev → development
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'sandbox' && 'sandbox' || 'development' }}
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Login to Azure
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
-    
+
     - name: Login to Azure Container Registry
       run: |
-        az acr login --name ${{ env.ACR_NAME }}
-    
+        az acr login --name ${{ vars.ACR_NAME }}
+
+    # ------------------------------------------------------------------
+    # Build & push
+    # Prod tags:     latest   and  latest-<sha>
+    # Sandbox tags:  sandbox  and  sandbox-<sha>
+    # Dev tags:      dev      and  dev-<sha>
+    # IMAGE_TAG var is set per GitHub Environment (production/sandbox/development)
+    # ------------------------------------------------------------------
     - name: Build Docker image
       run: |
         cd backend
-        docker build -t ${{ env.IMAGE_NAME }}:latest .
-        docker tag ${{ env.IMAGE_NAME }}:latest ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
-        docker tag ${{ env.IMAGE_NAME }}:latest ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-    
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker build -t ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} .
+        docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
     - name: Push to Azure Container Registry
       run: |
-        docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
-        docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-    
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    # ------------------------------------------------------------------
+    # Secrets — resolved from the GitHub Environment automatically.
+    # ------------------------------------------------------------------
     - name: Set Container App Secrets
       run: |
-        # Get ACR admin password to inject as registry secret
-        ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+        ACR_PASSWORD=$(az acr credential show \
+          --name ${{ vars.ACR_NAME }} \
+          --query "passwords[0].value" -o tsv)
 
-        for APP in ${{ env.CONTAINER_APP_EASTUS }} ${{ env.CONTAINER_APP_WESTUS }}; do
+        for APP in ${{ vars.CONTAINER_APP_EASTUS }} ${{ vars.CONTAINER_APP_WESTUS }}; do
           az containerapp secret set \
             --name $APP \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
             --secrets \
               "gmail-app-password=${{ secrets.GMAIL_APP_PASSWORD }}" \
               "sql-database=${{ secrets.SQL_DATABASE }}" \
               "sql-password=${{ secrets.SQL_PASSWORD }}" \
               "sql-server=${{ secrets.SQL_SERVER }}" \
               "sql-user=${{ secrets.SQL_USER }}" \
-              "acrawardnominationazurecrio-acrawardnomination=$ACR_PASSWORD"
+              "${{ vars.ACR_SECRET_NAME }}=${ACR_PASSWORD}"
         done
 
-    - name: Set Container App Secrets
+    - name: Set environment variables on Container Apps
       run: |
-        # Get ACR admin password to inject as registry secret
-        ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
-
-        for APP in ${{ env.CONTAINER_APP_EASTUS }} ${{ env.CONTAINER_APP_WESTUS }}; do
-          az containerapp secret set \
-            --name $APP \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --secrets \
-              "gmail-app-password=${{ secrets.GMAIL_APP_PASSWORD }}" \
-              "sql-database=${{ secrets.SQL_DATABASE }}" \
-              "sql-password=${{ secrets.SQL_PASSWORD }}" \
-              "sql-server=${{ secrets.SQL_SERVER }}" \
-              "sql-user=${{ secrets.SQL_USER }}" \
-              "acrawardnominationazurecrio-acrawardnomination=$ACR_PASSWORD"
-        done
-
-    - name: Update API_BASE_URL env var
-      run: |
-        # Fetch the real Front Door endpoint if it already exists (empty string on first deploy)
-        FRONTDOOR_ENDPOINT=$(az afd endpoint show \
-          --profile-name Award-Nomination-ADF \
-          --endpoint-name award-nomination-api \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
+        FRONTDOOR_HOSTNAME=$(az afd endpoint show \
+          --profile-name ${{ vars.FRONTDOOR_PROFILE }} \
+          --endpoint-name ${{ vars.FRONTDOOR_ENDPOINT }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
           --query "hostName" -o tsv 2>/dev/null || echo "")
 
-        for APP in ${{ env.CONTAINER_APP_EASTUS }} ${{ env.CONTAINER_APP_WESTUS }}; do
+        for APP in ${{ vars.CONTAINER_APP_EASTUS }} ${{ vars.CONTAINER_APP_WESTUS }}; do
           az containerapp update \
             --name $APP \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
             --set-env-vars \
-              "API_BASE_URL=https://${FRONTDOOR_ENDPOINT}" \
-              "EMAIL_ACTION_SECRET_KEY=${{ secrets.EMAIL_ACTION_SECRET_KEY }}"
+              "API_BASE_URL=https://${FRONTDOOR_HOSTNAME}" \
+              "EMAIL_ACTION_SECRET_KEY=${{ secrets.EMAIL_ACTION_SECRET_KEY }}" \
+              "ENVIRONMENT=${{ vars.ENVIRONMENT }}"
         done
 
+    # ------------------------------------------------------------------
+    # Deploy
+    # ------------------------------------------------------------------
     - name: Deploy to East US Container App
       run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
         az containerapp update \
-          --name ${{ env.CONTAINER_APP_EASTUS }} \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-    
+          --name ${{ vars.CONTAINER_APP_EASTUS }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --image ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
     - name: Deploy to West US Container App
       run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
         az containerapp update \
-          --name ${{ env.CONTAINER_APP_WESTUS }} \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-    
+          --name ${{ vars.CONTAINER_APP_WESTUS }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --image ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
     - name: Deployment Summary
       run: |
-        FRONTDOOR_ENDPOINT=$(az afd endpoint show \
-          --profile-name Award-Nomination-ADF \
-          --endpoint-name award-nomination-api \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        FRONTDOOR_HOSTNAME=$(az afd endpoint show \
+          --profile-name ${{ vars.FRONTDOOR_PROFILE }} \
+          --endpoint-name ${{ vars.FRONTDOOR_ENDPOINT }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
           --query "hostName" -o tsv 2>/dev/null || echo "not yet deployed")
 
-        echo "### Deployment Successful! :rocket:" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Image:** ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Deployed to:** East US & West US" >> $GITHUB_STEP_SUMMARY
-        echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Front Door:** https://${FRONTDOOR_ENDPOINT}" >> $GITHUB_STEP_SUMMARY
+        echo "### Deployment Successful! :rocket:"                                              >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                 >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ vars.ENVIRONMENT }}"                                        >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}"                                              >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"        >> $GITHUB_STEP_SUMMARY
+        echo "**Deployed to:** East US & West US"                                              >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}"                                                   >> $GITHUB_STEP_SUMMARY
+        echo "**Front Door:** https://${FRONTDOOR_HOSTNAME}"                                   >> $GITHUB_STEP_SUMMARY

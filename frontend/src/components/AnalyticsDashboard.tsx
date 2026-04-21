@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send } from 'lucide-react';
+import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import { getAccessToken } from '../services/api';
 
@@ -61,6 +61,41 @@ interface DiversityMetrics {
   topRecipientPercent: number;
 }
 
+interface IntegrityRun {
+  runId: string;
+  runDate: string;
+  totalFindings: number;
+}
+
+interface IntegrityFinding {
+  findingId: number;
+  patternType: string;
+  severity: string;
+  affectedUsers: string;   // JSON array string
+  nominationIds: string;   // JSON array string
+  detail: string;
+  detectedAt: string;
+  totalAmount?: number;
+}
+
+// Human-readable labels and icons per pattern type
+const PATTERN_META: Record<string, { label: string; description: string }> = {
+  Ring:                { label: 'Nomination Ring',        description: 'Directed cycle of mutual nominations' },
+  SuperNominator:      { label: 'Super Nominator',        description: 'Unusually high nomination volume' },
+  Desert:              { label: 'Nomination Desert',      description: 'Entire team absent from all nominations' },
+  ApproverAffinity:    { label: 'Approver Affinity',      description: 'Elevated approval rate for specific pair' },
+  CopyPaste:           { label: 'Copy-Paste Fraud',       description: 'Near-identical nomination descriptions' },
+  TransactionalLanguage: { label: 'Transactional Language', description: 'Personal-benefit phrasing in description' },
+  HiddenCandidate:     { label: 'Hidden Candidate',       description: 'Named in descriptions but never nominated' },
+};
+
+const SEVERITY_STYLES: Record<string, { card: string; badge: string }> = {
+  Critical: { card: 'bg-red-50 border-red-300',    badge: 'bg-red-200 text-red-800' },
+  High:     { card: 'bg-orange-50 border-orange-300', badge: 'bg-orange-200 text-orange-800' },
+  Medium:   { card: 'bg-yellow-50 border-yellow-300', badge: 'bg-yellow-200 text-yellow-800' },
+  Low:      { card: 'bg-blue-50 border-blue-300',   badge: 'bg-blue-200 text-blue-800' },
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export const AnalyticsDashboard: React.FC = () => {
@@ -75,25 +110,35 @@ export const AnalyticsDashboard: React.FC = () => {
   const [diversityMetrics, setDiversityMetrics] = useState<DiversityMetrics | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask'>('ask');
+  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask' | 'integrity'>('ask');
+  const [integrityRuns, setIntegrityRuns] = useState<IntegrityRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [integrityFindings, setIntegrityFindings] = useState<IntegrityFinding[]>([]);
+  const [integrityLoading, setIntegrityLoading] = useState(false);
+  const [expandedFinding, setExpandedFinding] = useState<number | null>(null);
+  const [activePatternFilters, setActivePatternFilters] = useState<Set<string>>(new Set());
+  const [activeSeverityFilters, setActiveSeverityFilters] = useState<Set<string>>(new Set());
   
   // Track which tabs have been loaded to avoid refetching
   const [loadedTabs, setLoadedTabs] = useState<Set<string>>(new Set(['ask']));
   
-  // AI Q&A state
+  // AI chat state
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResponse, setAiResponse] = useState<{ 
-                                                question: string; 
-                                                answer: string; 
-                                                export?: {
-                                                  format: string;
-                                                  file_size: number;
-                                                  label: string;
-                                                  filename: string;
-                                                  download_url: string;
-                                                };
-                                              } | null>(null);
+  const [chatMessages, setChatMessages] = useState<Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    export?: { format: string; file_size: number; label: string; filename: string; download_url: string; };
+  }>>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const activeConversationRef = React.useRef<string | null>(null); // always current, safe in async closures
+  const [conversations, setConversations] = useState<Array<{
+    conversationId: string; title: string; updatedAt: string;
+  }>>([]);
+  const [convLoading, setConvLoading] = useState(false);
+  const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Don't fetch on mount - wait for tab selection
@@ -149,10 +194,82 @@ export const AnalyticsDashboard: React.FC = () => {
     }
   };
 
+  const fetchIntegrityRuns = async () => {
+    setIntegrityLoading(true);
+    setActivePatternFilters(new Set());
+    setActiveSeverityFilters(new Set());
+    try {
+      const runs = await apiFetch<IntegrityRun[]>('/api/admin/analytics/integrity/runs');
+      setIntegrityRuns(runs);
+      if (runs.length > 0) {
+        setSelectedRunId(runs[0].runId);
+        const findings = await apiFetch<IntegrityFinding[]>(
+          `/api/admin/analytics/integrity/findings?run_id=${runs[0].runId}`
+        );
+        setIntegrityFindings(findings);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load integrity data');
+    } finally {
+      setIntegrityLoading(false);
+    }
+  };
+
+  const handleRunChange = async (runId: string) => {
+    setSelectedRunId(runId);
+    setActivePatternFilters(new Set());
+    setActiveSeverityFilters(new Set());
+    setExpandedFinding(null);
+    setIntegrityLoading(true);
+    try {
+      const findings = await apiFetch<IntegrityFinding[]>(
+        `/api/admin/analytics/integrity/findings?run_id=${runId}`
+      );
+      setIntegrityFindings(findings);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load findings');
+    } finally {
+      setIntegrityLoading(false);
+    }
+  };
+
+  const exportFinding = async (findingId: number, e: React.MouseEvent) => {
+    e.stopPropagation();  // don't toggle the accordion
+    try {
+      const token = await getAccessToken();
+      const headers = new Headers({ 'Authorization': `Bearer ${token}` });
+      if (impersonatedUser && typeof impersonatedUser === 'string')
+        headers.set('X-Impersonate-User', impersonatedUser);
+      const res = await fetch(
+        `${API_BASE_URL}/api/admin/analytics/integrity/findings/${findingId}/export`,
+        { headers }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `finding_${findingId}_export.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
   // Handle tab selection with lazy loading
   const handleTabChange = async (tabId: string) => {
     setSelectedTab(tabId as any);
     
+    // Integrity tab has its own fetch path
+    if (tabId === 'integrity') {
+      if (!loadedTabs.has('integrity')) {
+        await fetchIntegrityRuns();
+        setLoadedTabs(prev => new Set([...prev, 'integrity']));
+      }
+      return;
+    }
+
     // If this tab hasn't been loaded yet, fetch its data
     if (!loadedTabs.has(tabId) && tabId !== 'ask') {
       try {
@@ -168,36 +285,147 @@ export const AnalyticsDashboard: React.FC = () => {
     }
   };
 
-  const handleAskQuestion = async () => {
-    if (!aiQuestion.trim()) return;
-    
+  const fetchConversations = async () => {
+    setConvLoading(true);
     try {
-      setAiLoading(true);
+      const data = await apiFetch<Array<{ conversationId: string; title: string; updatedAt: string; }>>(
+        '/api/admin/analytics/conversations'
+      );
+      setConversations(data);
+    } catch { /* silently ignore */ }
+    finally { setConvLoading(false); }
+  };
+
+  const loadConversation = async (conversationId: string) => {
+    try {
+      const messages = await apiFetch<Array<{ role: string; content: string; exportJson?: string; }>>(
+        `/api/admin/analytics/conversations/${conversationId}/messages`
+      );
+      setChatMessages(messages.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        ...(m.exportJson ? { export: JSON.parse(m.exportJson) } : {}),
+      })));
+      activeConversationRef.current = conversationId;
+      setActiveConversationId(conversationId);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    } catch { /* ignore */ }
+  };
+
+  const deleteConversation = async (conversationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const token = await getAccessToken();
+      const headers = new Headers({ 'Authorization': `Bearer ${token}` });
+      if (impersonatedUser && typeof impersonatedUser === 'string')
+        headers.set('X-Impersonate-User', impersonatedUser);
+      await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, { method: 'DELETE', headers });
+      setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
+      if (activeConversationRef.current === conversationId) {
+        activeConversationRef.current = null;
+        setActiveConversationId(null);
+        setChatMessages([]);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const renameConversation = async (conversationId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    setEditingConvId(null);
+    if (!trimmed) return;
+    // Optimistic update
+    setConversations(prev => prev.map(c =>
+      c.conversationId === conversationId ? { ...c, title: trimmed } : c
+    ));
+    try {
+      const token = await getAccessToken();
+      const headers = new Headers({
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      });
+      if (impersonatedUser && typeof impersonatedUser === 'string')
+        headers.set('X-Impersonate-User', impersonatedUser);
+      await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ title: trimmed }),
+      });
+    } catch { /* optimistic update stays; user sees no error flash */ }
+  };
+
+  const startNewConversation = () => {
+    activeConversationRef.current = null;
+    setActiveConversationId(null);
+    setChatMessages([]);
+    setAiQuestion('');
+  };
+
+  // Reload conversation list every time the Ask tab is opened.
+  // No length guard — if the first mount attempt failed (auth not yet ready),
+  // switching away and back will retry automatically.
+  React.useEffect(() => {
+    if (selectedTab === 'ask') {
+      fetchConversations();
+    }
+  }, [selectedTab]);
+
+  const handleAskQuestion = async () => {
+    const question = aiQuestion.trim();
+    if (!question) return;
+
+    // ── Generate / reuse conversation ID SYNCHRONOUSLY before any await ───────
+    // This is the only safe pattern: a local variable captured by this closure
+    // is immune to React re-renders and component remounts that would reset a ref.
+    let convId = activeConversationRef.current;
+    const isNewConversation = !convId;
+    if (isNewConversation) {
+      convId = crypto.randomUUID();
+      // Write ref immediately — next call sees it even if this await hasn't resolved yet
+      activeConversationRef.current = convId;
+      setActiveConversationId(convId);
+    }
+
+    // Append user message immediately for responsive feel
+    setChatMessages(prev => [...prev, { role: 'user' as const, content: question }]);
+    setAiQuestion('');
+    setAiLoading(true);
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+
+    try {
       const token = await getAccessToken();
       const headers = new Headers({
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
       });
-      
-      if (impersonatedUser && typeof impersonatedUser === 'string') {
+      if (impersonatedUser && typeof impersonatedUser === 'string')
         headers.set('X-Impersonate-User', impersonatedUser);
-      }
 
+      // convId is a stable local variable — always the correct ID, no closure issues
       const res = await fetch(`${API_BASE_URL}/api/admin/analytics/ask`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ question: aiQuestion })
+        body: JSON.stringify({ question, conversation_id: convId })
       });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      setAiResponse(data);
-      setAiQuestion('');
+
+      // Refresh sidebar once after the first message in a new conversation
+      if (isNewConversation) {
+        fetchConversations();
+      }
+
+      setChatMessages(prev => [...prev, {
+        role: 'assistant' as const,
+        content: data.answer,
+        ...(data.export ? { export: data.export } : {}),
+      }]);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get AI response');
+      setChatMessages(prev => [...prev, {
+        role: 'assistant' as const,
+        content: `Error: ${err instanceof Error ? err.message : 'Failed to get a response.'}`,
+      }]);
     } finally {
       setAiLoading(false);
     }
@@ -223,7 +451,8 @@ export const AnalyticsDashboard: React.FC = () => {
           { id: 'overview', label: 'Overview', icon: BarChart3 },
           { id: 'spending', label: 'Spending Trends', icon: TrendingUp },
           { id: 'fraud', label: 'Fraud Alerts', icon: AlertTriangle },
-          { id: 'diversity', label: 'Diversity Metrics', icon: Users }
+          { id: 'diversity', label: 'Diversity Metrics', icon: Users },
+          { id: 'integrity', label: 'Integrity', icon: ShieldAlert }
         ].map(tab => {
           const TabIcon = tab.icon;
           const isActive = selectedTab === (tab.id as any);
@@ -391,96 +620,451 @@ export const AnalyticsDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Ask Analytics Tab */}
+      {/* Ask Analytics Tab — sidebar + chat */}
       {selectedTab === 'ask' && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
-            <Send size={20} />
-            Ask Analytics AI
-          </h2>
-          
-          <div className="space-y-4">
-            {/* Question Input */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Ask a question about your analytics
-              </label>
+        <div className="flex gap-0 rounded-lg border border-gray-200 overflow-hidden bg-white" style={{ height: 'calc(100vh - 160px)' }}>
+
+          {/* ── Conversation sidebar ── */}
+          <div className="w-64 shrink-0 border-r border-gray-100 flex flex-col bg-gray-50">
+            <div className="px-3 py-3 border-b border-gray-100 flex gap-2">
+              <button
+                onClick={startNewConversation}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                <Send size={14} />
+                New conversation
+              </button>
+              <button
+                onClick={fetchConversations}
+                disabled={convLoading}
+                className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-40"
+                title="Refresh conversation list"
+              >
+                <RefreshCw size={14} className={convLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto py-2">
+              {convLoading && (
+                <p className="text-xs text-gray-400 text-center py-4">Loading…</p>
+              )}
+              {!convLoading && conversations.length === 0 && (
+                <p className="text-xs text-gray-400 text-center py-6 px-3">No conversations yet</p>
+              )}
+              {conversations.map(conv => (
+                <div
+                  key={conv.conversationId}
+                  onClick={() => editingConvId !== conv.conversationId && loadConversation(conv.conversationId)}
+                  className={`group flex items-start justify-between gap-1 px-3 py-2 mx-1 rounded-lg cursor-pointer transition-colors ${
+                    activeConversationId === conv.conversationId
+                      ? 'bg-blue-50 border border-blue-200'
+                      : 'hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    {editingConvId === conv.conversationId ? (
+                      <input
+                        autoFocus
+                        value={editingTitle}
+                        onChange={e => setEditingTitle(e.target.value)}
+                        onBlur={() => renameConversation(conv.conversationId, editingTitle)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') renameConversation(conv.conversationId, editingTitle);
+                          if (e.key === 'Escape') setEditingConvId(null);
+                        }}
+                        onClick={e => e.stopPropagation()}
+                        className="w-full text-xs font-medium text-gray-800 bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <p
+                        className="text-xs font-medium text-gray-800 truncate"
+                        onDoubleClick={e => {
+                          e.stopPropagation();
+                          setEditingConvId(conv.conversationId);
+                          setEditingTitle(conv.title);
+                        }}
+                        title="Double-click to rename"
+                      >
+                        {conv.title}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {new Date(conv.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => deleteConversation(conv.conversationId, e)}
+                    className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 transition-all shrink-0 mt-0.5"
+                    title="Delete conversation"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Chat panel ── */}
+          <div className="flex-1 flex flex-col min-w-0">
+
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-100 shrink-0">
+              <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <Send size={16} />
+                {activeConversationId
+                  ? (conversations.find(c => c.conversationId === activeConversationId)?.title ?? 'Conversation')
+                  : 'Ask Analytics AI'}
+              </h2>
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {chatMessages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center">
+                  <Send size={40} className="text-gray-200 mb-4" />
+                  <p className="text-gray-500 font-medium mb-1">Ask anything about your nominations</p>
+                  <p className="text-sm text-gray-400">Trends, fraud patterns, graph relationships, exports — all in one conversation.</p>
+                </div>
+              )}
+
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-3xl rounded-2xl px-4 py-3 ${
+                    msg.role === 'user'
+                      ? 'bg-blue-600 text-white rounded-br-sm'
+                      : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                  }`}>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                    {msg.export && (
+                      <a
+                        href={msg.export.download_url}
+                        download={msg.export.filename}
+                        className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 bg-white text-blue-600 text-xs font-medium rounded-lg hover:bg-blue-50 transition-colors border border-blue-200"
+                      >
+                        {msg.export.label}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {aiLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3">
+                    <div className="flex gap-1 items-center h-4">
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input bar */}
+            <div className="px-6 py-4 border-t border-gray-100 shrink-0">
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={aiQuestion}
                   onChange={(e) => setAiQuestion(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAskQuestion()}
-                  placeholder="e.g., 'What department has the highest spending?' or 'Is our approval time improving?'"
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  onKeyPress={(e) => e.key === 'Enter' && !aiLoading && handleAskQuestion()}
+                  placeholder="Ask a follow-up or a new question…"
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                   disabled={aiLoading}
                 />
                 <button
                   onClick={handleAskQuestion}
                   disabled={aiLoading || !aiQuestion.trim()}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400 flex items-center gap-2"
+                  className="px-5 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-300 flex items-center gap-2 text-sm"
                 >
-                  <Send size={18} />
-                  {aiLoading ? 'Thinking...' : 'Ask'}
+                  <Send size={16} />
+                  {aiLoading ? 'Thinking…' : 'Send'}
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
-                Powered by Azure OpenAI. Ask about trends, comparisons, recommendations, and insights.
-              </p>
+              <p className="text-xs text-gray-400 mt-2">Powered by Azure OpenAI · Conversations saved automatically</p>
             </div>
+          </div>
+        </div>
+      )}
 
-            {/* AI Response */}
-            {aiResponse && (
-              <div className="space-y-3 mt-6">
-                <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
-                  <p className="text-sm font-semibold text-blue-900 mb-2">Your question:</p>
-                  <p className="text-blue-800">{aiResponse.question}</p>
-                </div>
-                
-                <div className="bg-green-50 rounded-lg border border-green-200 p-4">
-                  <p className="text-sm font-semibold text-green-900 mb-2">AI Response:</p>
-                  <div className="text-green-800 text-sm leading-relaxed whitespace-pre-wrap">
-                    {aiResponse.answer}
-                  </div>                     
-                    {aiResponse.export && (                
-                      <a
-                        href={aiResponse.export.download_url}
-                        download={aiResponse.export.filename}
-                        className="inline-flex items-center gap-2 mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                      >
-                        {aiResponse.export.label}
-                      </a>
-                    )
-                  }
-                  </div>
-                </div>              
-            )}
-            {/* Sample Questions */}
-            {!aiResponse && (
-              <div className="mt-8 pt-6 border-t border-gray-200">
-                <p className="text-sm font-medium text-gray-700 mb-3">Example questions:</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {[
-                    'Which departments have the highest award spending?',
-                    'How has our approval rate changed recently?',
-                    'What patterns do you see in our fraud alerts?',
-                    'Are we achieving diversity in award distribution?'
-                  ].map((example, i) => (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        setAiQuestion(example);
-                      }}
-                      className="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm text-gray-700"
-                    >
-                      <span className="text-gray-400 mr-2">→</span>
-                      {example}
-                    </button>
+      {/* ── Integrity Tab ──────────────────────────────────────────── */}
+      {selectedTab === 'integrity' && (
+        <div className="space-y-6">
+
+          {/* Header row: title + run selector */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Graph Pattern Findings</h3>
+              <p className="text-sm text-gray-500">Behavioural fraud patterns detected by the weekly analytics job</p>
+            </div>
+            {integrityRuns.length > 0 && (
+              <div className="relative">
+                <select
+                  value={selectedRunId ?? ''}
+                  onChange={e => handleRunChange(e.target.value)}
+                  className="appearance-none pl-3 pr-10 py-2 border border-gray-300 rounded-lg text-sm bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {integrityRuns.map(run => (
+                    <option key={run.runId} value={run.runId}>
+                      {new Date(run.runDate).toLocaleDateString('en-US', {
+                        month: 'short', day: 'numeric', year: 'numeric'
+                      })} — {run.totalFindings} finding{run.totalFindings !== 1 ? 's' : ''}
+                    </option>
                   ))}
-                </div>
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
               </div>
             )}
           </div>
+
+          {/* Loading / empty states */}
+          {integrityLoading && (
+            <div className="flex items-center justify-center py-16 text-gray-400">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-3" />
+              Loading findings…
+            </div>
+          )}
+
+          {!integrityLoading && integrityRuns.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <ShieldAlert size={48} className="text-gray-300 mb-4" />
+              <p className="text-gray-500 font-medium">No runs yet</p>
+              <p className="text-sm text-gray-400 mt-1">
+                Findings will appear here after the fraud analytics job runs for the first time.
+              </p>
+            </div>
+          )}
+
+          {!integrityLoading && integrityRuns.length > 0 && (
+            <>
+              {/* Severity filter tiles */}
+              {(() => {
+                const counts: Record<string, number> = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+                integrityFindings.forEach(f => { counts[f.severity] = (counts[f.severity] ?? 0) + 1; });
+                const hasSevFilters = activeSeverityFilters.size > 0;
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {(['Critical', 'High', 'Medium', 'Low'] as const).map(sev => {
+                      const active = activeSeverityFilters.has(sev);
+                      return (
+                        <button
+                          key={sev}
+                          onClick={() => {
+                            setActiveSeverityFilters(prev => {
+                              const next = new Set(prev);
+                              if (next.has(sev)) next.delete(sev); else next.add(sev);
+                              return next;
+                            });
+                            setExpandedFinding(null);
+                          }}
+                          className={`p-4 rounded-lg border-2 text-center transition-all ${
+                            active
+                              ? `${SEVERITY_STYLES[sev].card} ring-2 ring-inset ring-gray-600`
+                              : hasSevFilters
+                                ? 'bg-gray-50 border-gray-200 opacity-40'
+                                : `${SEVERITY_STYLES[sev].card} hover:brightness-95`
+                          }`}
+                        >
+                          <p className="text-2xl font-bold">{counts[sev]}</p>
+                          <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
+                            active || !hasSevFilters ? SEVERITY_STYLES[sev].badge : 'bg-gray-200 text-gray-400'
+                          }`}>
+                            {sev}
+                          </span>
+                          {active && (
+                            <p className="text-xs text-gray-500 mt-1">✓ filtered</p>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* Severity clear button */}
+              {activeSeverityFilters.size > 0 && (
+                <div className="flex justify-end -mt-1">
+                  <button
+                    onClick={() => { setActiveSeverityFilters(new Set()); setExpandedFinding(null); }}
+                    className="text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2"
+                  >
+                    Clear severity filter
+                  </button>
+                </div>
+              )}
+
+              {/* Pattern type filter chips */}
+              {(() => {
+                const byType: Record<string, number> = {};
+                integrityFindings.forEach(f => { byType[f.patternType] = (byType[f.patternType] ?? 0) + 1; });
+                const hasFilters = activePatternFilters.size > 0;
+                return Object.keys(byType).length > 0 ? (
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {Object.entries(byType).map(([type, count]) => {
+                      const active = activePatternFilters.has(type);
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => {
+                            setActivePatternFilters(prev => {
+                              const next = new Set(prev);
+                              if (next.has(type)) next.delete(type); else next.add(type);
+                              return next;
+                            });
+                            setExpandedFinding(null);
+                          }}
+                          className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
+                            active
+                              ? 'bg-gray-700 text-white'
+                              : hasFilters
+                                ? 'bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600'
+                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          }`}
+                        >
+                          {PATTERN_META[type]?.label ?? type}
+                          <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
+                            active ? 'bg-gray-500 text-white' : 'bg-gray-300 text-gray-700'
+                          }`}>{count}</span>
+                        </button>
+                      );
+                    })}
+                    {hasFilters && (
+                      <button
+                        onClick={() => { setActivePatternFilters(new Set()); setExpandedFinding(null); }}
+                        className="px-3 py-1 rounded-full text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Findings list */}
+              {(() => {
+                const visibleFindings = integrityFindings.filter(f => {
+                  const patternOk  = activePatternFilters.size === 0  || activePatternFilters.has(f.patternType);
+                  const severityOk = activeSeverityFilters.size === 0 || activeSeverityFilters.has(f.severity);
+                  return patternOk && severityOk;
+                });
+                return visibleFindings.length === 0 ? (
+                  <div className="text-center py-10 text-gray-400">
+                    {integrityFindings.length === 0 ? 'No findings for this run.' : 'No findings match the selected filters.'}
+                  </div>
+                ) : (
+                <div className="space-y-3">
+                  {visibleFindings.map(finding => {
+                    const styles = SEVERITY_STYLES[finding.severity] ?? SEVERITY_STYLES.Low;
+                    const meta   = PATTERN_META[finding.patternType];
+                    const users  = (() => { try { return JSON.parse(finding.affectedUsers ?? '[]') as number[]; } catch { return []; } })();
+                    const nomIds = (() => { try { return JSON.parse(finding.nominationIds ?? '[]') as number[]; } catch { return []; } })();
+                    const isOpen = expandedFinding === finding.findingId;
+
+                    return (
+                      <div key={finding.findingId} className={`rounded-lg border-2 ${styles.card}`}>
+                        {/* Finding header — always visible */}
+                        <button
+                          className="w-full text-left p-4"
+                          onClick={() => setExpandedFinding(isOpen ? null : finding.findingId)}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <span className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold ${styles.badge}`}>
+                                {finding.severity}
+                              </span>
+                              <span className="font-semibold text-gray-900 truncate">
+                                {meta?.label ?? finding.patternType}
+                              </span>
+                              <span className="shrink-0 font-mono text-xs text-gray-400 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">
+                                #{finding.findingId}
+                              </span>
+                              {meta && (
+                                <span className="hidden sm:block text-xs text-gray-500 truncate">
+                                  {meta.description}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              {finding.totalAmount != null && finding.totalAmount > 0 && (
+                                <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2.5 py-1 rounded-full">
+                                  ${finding.totalAmount.toLocaleString()}
+                                </span>
+                              )}
+                              <ChevronDown
+                                size={16}
+                                className={`text-gray-400 transition-transform mt-0.5 ${isOpen ? 'rotate-180' : ''}`}
+                              />
+                              {/* Export button — sits inside the accordion button but
+                                  stopPropagation prevents the toggle from firing */}
+                              <span
+                                role="button"
+                                title="Export to Excel"
+                                onClick={(e) => exportFinding(finding.findingId, e)}
+                                className="p-1 rounded hover:bg-white/60 text-gray-400 hover:text-green-700 transition-colors"
+                              >
+                                <Download size={15} />
+                              </span>
+                            </div>
+                          </div>
+                          <p className="mt-2 text-sm text-gray-700 line-clamp-2">{finding.detail}</p>
+                        </button>
+
+                        {/* Expanded detail */}
+                        {isOpen && (
+                          <div className="px-4 pb-4 space-y-3 border-t border-current border-opacity-20 pt-3">
+                            {finding.totalAmount != null && finding.totalAmount > 0 && (
+                              <div>
+                                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                                  Total Approved / Paid
+                                </p>
+                                <p className="text-sm font-bold text-gray-900">
+                                  ${finding.totalAmount.toLocaleString()}
+                                </p>
+                              </div>
+                            )}
+                            {users.length > 0 && (
+                              <div>
+                                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                                  Affected Users
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {users.map(uid => (
+                                    <span key={uid} className="px-2 py-0.5 bg-white rounded border border-gray-300 text-xs font-mono text-gray-700">
+                                      #{uid}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {nomIds.length > 0 && (
+                              <div>
+                                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                                  Nominations
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {nomIds.map(nid => (
+                                    <span key={nid} className="px-2 py-0.5 bg-white rounded border border-gray-300 text-xs font-mono text-gray-700">
+                                      #{nid}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <p className="text-xs text-gray-400">
+                              Detected {new Date(finding.detectedAt).toLocaleString()}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                );
+              })()}
+            </>
+          )}
         </div>
       )}
     </div>

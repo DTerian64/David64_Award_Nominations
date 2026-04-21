@@ -31,7 +31,7 @@ resource "azurerm_container_registry" "acr" {
 # ── Private endpoint ──────────────────────────────────────────────────────────
 resource "azurerm_private_endpoint" "acr" {
   name                = "pe-${var.acr_name}"
-  location            = var.location_east
+  location            = var.location
   resource_group_name = var.resource_group_name
   subnet_id           = var.private_endpoint_subnet_id
   tags                = var.tags

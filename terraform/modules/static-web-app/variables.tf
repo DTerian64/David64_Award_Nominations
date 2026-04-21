@@ -6,9 +6,8 @@ variable "resource_group_name" {
 }
 
 variable "location" {
-  description = "Azure region"
+  description = "Azure region — must be passed explicitly; no default to avoid silent region mismatch"
   type        = string
-  default     = "westus2"
 }
 
 variable "app_name" {
@@ -42,15 +41,10 @@ variable "vite_client_id" {
   type        = string
 }
 
-variable "vite_tenant_id" {
-  description = "Azure AD tenant ID — VITE_TENANT_ID"
+variable "vite_appinsights_connection_string" {
+  description = "Application Insights connection string — injected as VITE_APPINSIGHTS_CONNECTION_STRING at Vite build time"
   type        = string
-}
-
-variable "custom_domain" {
-  description = "Optional custom domain. Leave empty to skip."
-  type        = string
-  default     = ""
+  sensitive   = true
 }
 
 variable "tags" {

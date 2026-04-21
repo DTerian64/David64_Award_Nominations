@@ -31,21 +31,25 @@ variable "openai_api_version"   { type = string }
 variable "model_capacity_tpm"   { type = number }
 
 # Log Analytics
-variable "workspace_name_east"  { type = string }
-variable "workspace_name_west"  { type = string }
+variable "workspace_name_primary"   { type = string }
+variable "workspace_name_secondary" { type = string }
 
 # Container Apps
-variable "cae_name_east"        { type = string }
-variable "cae_name_west"        { type = string }
-variable "app_name_east"        { type = string }
-variable "app_name_west"        { type = string }
-variable "min_replicas"         { type = number }
-variable "max_replicas"         { type = number }
+variable "cae_name_primary"    { type = string }
+variable "cae_name_secondary"  { type = string }
+variable "app_name_primary"    { type = string }
+variable "app_name_secondary"  { type = string }
+variable "min_replicas"        { type = number }
+variable "max_replicas"        { type = number }
 
 # Static ACA config
-variable "location_east" {
+variable "location_primary" {
   type    = string
   default = "eastus"
+}
+variable "location_secondary" {
+  type    = string
+  default = "westus"
 }
 variable "model_blob_name"      { type = string }
 variable "api_base_url"         { type = string }
@@ -77,4 +81,16 @@ variable "grafana_name"         { type = string }
 variable "secrets" {
   type      = map(string)
   sensitive = true
+}
+
+# ── Service Bus ───────────────────────────────────────────────────────────────
+variable "service_bus_namespace_name" {
+  description = "Service Bus namespace name — globally unique. Convention: sb-award-prod"
+  type        = string
+}
+
+# ── Auxiliary Container App ───────────────────────────────────────────────────
+variable "auxiliary_container_app_name" {
+  description = "Auxiliary Container App name — must be unique within the CAE. Convention: award-auxiliary-prod"
+  type        = string
 }

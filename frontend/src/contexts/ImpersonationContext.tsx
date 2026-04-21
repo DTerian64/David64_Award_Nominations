@@ -2,12 +2,14 @@ import React, { createContext, useContext, useState, useEffect} from 'react';
 import type { ReactNode } from 'react';
 
 import { useMsal } from '@azure/msal-react';
+import { msalInstance } from '../msalInstance';
+import { apiTokenRequest } from '../authConfig';
 
 interface ImpersonationContextType {
   impersonatedUser: ImpersonatedUser | null;
   isImpersonating: boolean;
   isAdmin: boolean;
-  startImpersonation: (user: ImpersonatedUser) => void;
+  startImpersonation: (user: ImpersonatedUser) => void; 
   stopImpersonation: () => void;
   getEffectiveUser: () => string; // Returns UPN of current or impersonated user
 }
@@ -38,13 +40,51 @@ export const ImpersonationProvider: React.FC<ImpersonationProviderProps> = ({ ch
   const [impersonatedUser, setImpersonatedUser] = useState<ImpersonatedUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Check if current user is admin based on Azure AD roles
+  // Check admin role by acquiring an access token and decoding its `roles` claim.
+  // Reading from idTokenClaims is unreliable: the ID token may be stale (freshly
+  // assigned roles won't appear until a new ID token is issued), and the useMsal()
+  // `accounts` array can be empty on first render even when the user IS signed in.
+  // The access token is what the backend actually validates, so it's the ground truth.
   useEffect(() => {
-    if (accounts.length > 0) {
-      const roles = accounts[0]?.idTokenClaims?.roles as string[] | undefined;
-      setIsAdmin(roles?.includes('AWard_Nomination_Admin') || roles?.includes('Administrator') || false);
-    }
-  }, [accounts]);
+    const checkAdminRole = async () => {
+      try {
+        // Use msalInstance directly (same path as getAccessToken in api.ts) to
+        // avoid depending on the useMsal() accounts array which may be empty.
+        const allAccounts = msalInstance.getAllAccounts();
+        if (allAccounts.length === 0) {
+          setIsAdmin(false);
+          return;
+        }
+
+        const response = await msalInstance.acquireTokenSilent({
+          ...apiTokenRequest,
+          account: allAccounts[0],
+        });
+
+        // JWT is three base64url segments separated by '.'.  The middle one is the payload.
+        const payloadB64 = response.accessToken.split('.')[1];
+        const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
+        const roles = payload.roles as string[] | undefined;
+        setIsAdmin(
+          roles?.includes('AWard_Nomination_Admin') ||
+          roles?.includes('Administrator') ||
+          false
+        );
+      } catch (err) {
+        console.warn('ImpersonationContext: could not acquire access token to check roles, falling back to idTokenClaims:', err);
+        // Fallback: read from the MSAL account's cached ID token claims
+        const allAccounts = msalInstance.getAllAccounts();
+        if (allAccounts.length > 0) {
+          const roles = allAccounts[0]?.idTokenClaims?.roles as string[] | undefined;
+          setIsAdmin(roles?.includes('AWard_Nomination_Admin') || roles?.includes('Administrator') || false);
+        } else {
+          setIsAdmin(false);
+        }
+      }
+    };
+
+    checkAdminRole();
+  }, [accounts]); // re-run whenever useMsal() detects an account change (e.g. after sign-in)
 
   // Persist impersonation state in sessionStorage
   useEffect(() => {
