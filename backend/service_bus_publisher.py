@@ -43,18 +43,21 @@ _MI_CLIENT_ID = os.environ.get("MI_CLIENT_ID") or None
 
 
 async def publish_event(
-    event_type: str,
-    nomination_id: int,
-    extra: dict | None = None,
+    event_type:    str,
+    nomination_id: int | None = None,
+    extra:         dict | None = None,
 ) -> None:
     """
-    Publish a nomination domain event to the Service Bus topic.
+    Publish a domain event to the Service Bus topic.
 
     The message body is UTF-8 encoded JSON bytes (AMQP data section):
         b'{"event_type": "nomination.approved", "nomination_id": 42}'
 
-    Optional ``extra`` fields are merged into the payload for events that
-    carry additional data, e.g.:
+    nomination_id is optional — pass None for events not tied to a specific
+    nomination (e.g. notification.requested published by the analytics agent):
+        publish_event("notification.requested", extra={"to": "...", "body": "..."})
+
+    Optional ``extra`` fields are merged into the payload:
         publish_event("payout.accepted", 42, {"payment_ref": "WD-2026-00123"})
         → b'{"event_type": "payout.accepted", "nomination_id": 42,
              "payment_ref": "WD-2026-00123"}'
@@ -75,7 +78,9 @@ async def publish_event(
     # Encode to bytes so the SDK frames the body as an AMQP data section.
     # Passing a str produces an AMQP value section, which the receiver cannot
     # reliably reassemble via b"".join(msg.body) — leading to JSON parse errors.
-    body: dict = {"event_type": event_type, "nomination_id": nomination_id}
+    body: dict = {"event_type": event_type}
+    if nomination_id is not None:
+        body["nomination_id"] = nomination_id
     if extra:
         body.update(extra)
     payload = json.dumps(body).encode("utf-8")

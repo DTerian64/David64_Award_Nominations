@@ -72,7 +72,7 @@ _MAX_ITERATIONS = 10
 _SKILLS_DIR = Path(__file__).parent / "skills"
 
 # Default skill set for the Ask agent (order matters — base always first)
-_DEFAULT_SKILLS = ["base", "schema", "exports", "fraud", "graph"]
+_DEFAULT_SKILLS = ["base", "schema", "exports", "fraud", "graph", "notifications"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

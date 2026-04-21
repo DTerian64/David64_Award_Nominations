@@ -50,6 +50,42 @@ def send_email(to_email: str, subject: str, body: str) -> None:
     logger.info("Email sent", extra={"to": to_email, "subject": subject})
 
 
+def send_plain(to_email: str, subject: str, body: str, from_override: str | None = None) -> None:
+    """
+    Send a plain-text email via Gmail SMTP.
+
+    Used by the notification.requested handler to deliver agent-composed
+    messages that are not based on an HTML template.
+
+    from_override — optional sender address from the event payload.
+                    Defaults to _FROM_EMAIL (system config) if not provided
+                    or if the value does not match the authenticated account.
+                    Note: Gmail ignores From overrides that differ from the
+                    authenticated sender, so this is informational only.
+
+    Raises:
+        smtplib.SMTPException: on SMTP-level failure
+        RuntimeError: if GMAIL_APP_PASSWORD is not configured
+    """
+    if not _GMAIL_APP_PWD:
+        raise RuntimeError("GMAIL_APP_PASSWORD is not configured")
+
+    from_display = from_override or _FROM_EMAIL
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = subject
+    message["From"]    = f"{_FROM_NAME} <{from_display}>"
+    message["To"]      = to_email
+    message.attach(MIMEText(body, "plain"))
+
+    with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
+        server.starttls()
+        server.login(_GMAIL_USER, _GMAIL_APP_PWD)
+        server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
+
+    logger.info("Plain email sent", extra={"to": to_email, "subject": subject})
+
+
 # ── Currency formatting ───────────────────────────────────────────────────────
 # Map ISO 4217 codes to their conventional symbols. Unknown codes fall back to
 # the ISO code itself as a prefix (e.g. "CHF 1,000.00") — unambiguous and safe.
