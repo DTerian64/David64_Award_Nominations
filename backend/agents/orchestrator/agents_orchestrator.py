@@ -183,8 +183,8 @@ class AgentsOrchestrator:
         self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
         # Sub-agents with focused skill sets — each sees only the tools it needs.
-        self._fraud_analyst      = AskAgent(skills=["base", "schema", "fraud", "graph"])
-        self._export_agent       = AskAgent(skills=["base", "schema", "exports"])
+        self._fraud_analyst      = AskAgent(skills=["base", "schema", "fraud", "graph", "integrity"])
+        self._export_agent       = AskAgent(skills=["base", "schema", "exports", "integrity"])
         self._notification_agent = AskAgent(skills=["base", "notifications"])
 
         logger.info(
