@@ -41,7 +41,6 @@ opentelemetry-instrumentation-fastapi==0.59b0
 
 # AI/LLM
 openai>=1.3.0,<2.0.0
-anthropic>=0.40.0,<1.0.0   # FraudOrchestrator planning layer
 # aiosmtplib removed — send_email now publishes to Service Bus (auxiliary handles SMTP)
 
 # CORS (starlette is included with fastapi, but pinning for clarity)
