@@ -1442,16 +1442,15 @@ async def investigate_analytics_question(
     _: None = Depends(require_role("AWard_Nomination_Admin"))
 ):
     """
-    Deep multi-agent investigation using AgentsOrchestrator (Anthropic Claude).
+    Deep multi-agent investigation using AgentsOrchestrator (Azure OpenAI GPT-4.1).
 
     Orchestrates three specialised sub-agents:
       • Fraud Analyst  — SQL queries, fraud scores, graph traversal
-      • Export Agent   — builds Excel/CSV files from analyst findings
+      • Export Agent   — builds Excel/CSV/PDF files from analyst findings
       • Notification   — sends emails or stubs calendar events
 
-    History is NOT passed to the orchestrator — each investigation is a fresh
-    single-turn deep-dive.  Results are persisted to the conversation so they
-    appear in the sidebar like any other message.
+    Conversation history is passed so the orchestrator can follow up on prior
+    answers without asking the user to repeat themselves.
     """
     actual_user     = current_user["actual_user"]
     tenant_id       = actual_user["TenantId"]
@@ -1465,19 +1464,24 @@ async def investigate_analytics_question(
     if not raw:
         title = req.question[:80] + ("…" if len(req.question) > 80 else "")
         _sqlhelper2.create_conversation(conversation_id, user_id, tenant_id, title)
+        history: list[dict] = []
+    else:
+        history = [{"role": m["role"], "content": m["content"]} for m in raw]
+        history = history[-(_MAX_HISTORY_TURNS * 2):]
 
     logger.info(
-        "investigate endpoint: '%s' (tenant_id=%d, conv=%s)",
-        req.question[:80], tenant_id, conversation_id,
+        "investigate endpoint: '%s' (tenant_id=%d, conv=%s, history=%d turns)",
+        req.question[:80], tenant_id, conversation_id, len(history) // 2,
     )
 
     # Persist user message
     _sqlhelper2.append_message(conversation_id, "user", req.question)
 
-    # Run the orchestrator — no history passed (each investigation is self-contained)
+    # Run the orchestrator with conversation history so follow-up questions work
     result: OrchestratorResult = await _agents_orchestrator.investigate(
         req.question,
         tenant_id=tenant_id,
+        history=history or None,
     )
 
     if result.error and not result.answer:

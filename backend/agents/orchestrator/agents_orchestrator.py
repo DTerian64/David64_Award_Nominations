@@ -198,6 +198,7 @@ class AgentsOrchestrator:
         self,
         question:  str,
         tenant_id: int = 0,
+        history:   list[dict] | None = None,
     ) -> OrchestratorResult:
         """
         Run a coordinated fraud investigation.
@@ -206,14 +207,18 @@ class AgentsOrchestrator:
         agent, or the notification agent — and in what order.  It loops until
         it produces a final answer (no tool calls) or hits _MAX_ITERATIONS.
 
+        history — prior user/assistant turns from the same conversation,
+                  passed so follow-up questions work without repeating context.
+                  Same format as AskAgent: [{"role": "user"|"assistant", "content": str}, ...]
+
         Never raises — errors are captured in OrchestratorResult.error.
         """
         logger.info(
-            "AgentsOrchestrator.investigate: '%s' (tenant_id=%d)",
-            question[:80], tenant_id,
+            "AgentsOrchestrator.investigate: '%s' (tenant_id=%d, history=%d turns)",
+            question[:80], tenant_id, len(history) // 2 if history else 0,
         )
         try:
-            return await self._run_loop(question, tenant_id)
+            return await self._run_loop(question, tenant_id, history)
         except Exception as exc:
             logger.error("AgentsOrchestrator.investigate failed: %s", exc, exc_info=True)
             return OrchestratorResult(
@@ -224,7 +229,12 @@ class AgentsOrchestrator:
 
     # ── Internal loop ─────────────────────────────────────────────────────────
 
-    async def _run_loop(self, question: str, tenant_id: int) -> OrchestratorResult:
+    async def _run_loop(
+        self,
+        question:  str,
+        tenant_id: int,
+        history:   list[dict] | None = None,
+    ) -> OrchestratorResult:
         result = OrchestratorResult(question=question, answer="")
         client = self._get_client()
 
@@ -235,10 +245,20 @@ class AgentsOrchestrator:
             "Include this in every question you pass to sub-agents."
         )
 
+        # Build message list: system → prior history → new question.
+        # History gives the orchestrator context from the conversation so it
+        # doesn't ask the user to repeat names/IDs it already knows.
         messages: list[ChatCompletionMessageParam] = [
             ChatCompletionSystemMessageParam(role="system", content=system),
-            {"role": "user", "content": question},
         ]
+
+        for turn in (history or []):
+            role    = turn.get("role", "")
+            content = turn.get("content", "")
+            if role in ("user", "assistant"):
+                messages.append(cast(ChatCompletionMessageParam, {"role": role, "content": content}))
+
+        messages.append({"role": "user", "content": question})
 
         for iteration in range(self._MAX_ITERATIONS):
             result.iterations = iteration + 1
