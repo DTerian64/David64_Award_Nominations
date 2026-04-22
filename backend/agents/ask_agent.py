@@ -468,12 +468,15 @@ class AskAgent:
         for tc in tool_calls_log:
             if tc.name == "query_database" and tc.result.get("status") == "success":
                 result.sql          = tc.result.get("sql")
-                result.rows_fetched = tc.result.get("row_count", 0)            
+                result.rows_fetched = tc.result.get("row_count", 0)
 
-            if tc.name in ("export_to_excel", "export_to_pdf", "export_to_csv"):
+            if tc.name in ("export_to_excel", "export_to_pdf", "export_to_csv", "export_finding_to_excel"):
                 if tc.result.get("status") == "success":
-                    result.export_format = tc.name.replace("export_to_", "")
-                    result.export_path   = tc.result.get("download_url")
-                    result.export_size   = tc.result.get("file_size_bytes", 0)
+                    result.export_format = (
+                        "excel" if tc.name == "export_finding_to_excel"
+                        else tc.name.replace("export_to_", "")
+                    )
+                    result.export_path = tc.result.get("download_url")
+                    result.export_size = tc.result.get("file_size_bytes", 0)
 
         return result
