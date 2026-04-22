@@ -139,6 +139,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const chatEndRef = React.useRef<HTMLDivElement>(null);
+  const questionInputRef = React.useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // Don't fetch on mount - wait for tab selection
@@ -387,6 +388,8 @@ export const AnalyticsDashboard: React.FC = () => {
 
     // Append user message immediately for responsive feel
     setChatMessages(prev => [...prev, { role: 'user' as const, content: question }]);
+    setAiQuestion('');
+    questionInputRef.current?.focus();
     setAiLoading(true);
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
 
@@ -765,6 +768,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <div className="px-6 py-4 border-t border-gray-100 shrink-0">
               <div className="flex gap-2">
                 <input
+                  ref={questionInputRef}
                   type="text"
                   value={aiQuestion}
                   onChange={(e) => setAiQuestion(e.target.value)}
