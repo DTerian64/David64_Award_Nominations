@@ -387,7 +387,6 @@ export const AnalyticsDashboard: React.FC = () => {
 
     // Append user message immediately for responsive feel
     setChatMessages(prev => [...prev, { role: 'user' as const, content: question }]);
-    setAiQuestion('');
     setAiLoading(true);
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
 
