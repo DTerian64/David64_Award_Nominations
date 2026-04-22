@@ -333,6 +333,10 @@ class AgentsOrchestrator:
                 sub_question, tenant_id=tenant_id
             )
             result.analyst = sub
+            # Propagate export URL if the analyst produced a file (e.g. export_finding_to_excel)
+            if sub.export_path and not result.export_url:
+                result.export_url = sub.export_path
+                result.export     = sub
             logger.info(
                 "AgentsOrchestrator: ← fraud_analyst returned %d rows", sub.rows_fetched
             )
@@ -340,6 +344,7 @@ class AgentsOrchestrator:
                 f"Analyst answer: {sub.answer}\n"
                 f"Rows fetched: {sub.rows_fetched}\n"
                 f"SQL used: {sub.sql or 'n/a'}\n"
+                f"Export URL: {sub.export_path or 'none'}\n"
                 f"Error: {sub.error or 'none'}"
             )
 
