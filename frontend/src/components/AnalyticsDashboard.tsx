@@ -139,9 +139,17 @@ export const AnalyticsDashboard: React.FC = () => {
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const chatEndRef = React.useRef<HTMLDivElement>(null);
-  const questionInputRef = React.useRef<HTMLInputElement>(null);
+  const questionInputRef = React.useRef<HTMLTextAreaElement>(null);
   // Investigate mode — one-shot: resets to false after each submission
   const [useOrchestrator, setUseOrchestrator] = React.useState(false);
+
+  // Auto-resize the textarea whenever the question text changes
+  React.useEffect(() => {
+    const el = questionInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';          // shrink first so scrollHeight is accurate
+    el.style.height = `${el.scrollHeight}px`;
+  }, [aiQuestion]);
 
   useEffect(() => {
     // Don't fetch on mount - wait for tab selection
@@ -400,7 +408,11 @@ export const AnalyticsDashboard: React.FC = () => {
     // Append user message immediately for responsive feel
     setChatMessages(prev => [...prev, { role: 'user' as const, content: question }]);
     setAiQuestion('');
-    questionInputRef.current?.focus();
+    // Reset textarea height back to one line after clearing
+    if (questionInputRef.current) {
+      questionInputRef.current.style.height = 'auto';
+      questionInputRef.current.focus();
+    }
     setAiLoading(true);
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
 
@@ -783,15 +795,21 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {/* Input bar */}
             <div className="px-6 py-4 border-t border-gray-100 shrink-0">
-              <div className="flex gap-2">
-                <input
+              <div className="flex gap-2 items-end">
+                <textarea
                   ref={questionInputRef}
-                  type="text"
                   value={aiQuestion}
                   onChange={(e) => setAiQuestion(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && !aiLoading && handleAskQuestion()}
-                  placeholder="Ask a follow-up or a new question…"
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (!aiLoading) handleAskQuestion();
+                    }
+                  }}
+                  placeholder="Ask a follow-up or a new question… (Shift+Enter for new line)"
+                  rows={1}
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm resize-none overflow-hidden leading-relaxed"
+                  style={{ maxHeight: '160px', overflowY: 'auto' }}
                   disabled={aiLoading}
                 />
                 <button
