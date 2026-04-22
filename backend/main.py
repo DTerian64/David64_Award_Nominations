@@ -1253,13 +1253,15 @@ async def export_integrity_finding(
 
 import uuid, json as _json
 from agents import AskAgent, AskResult
+from agents.orchestrator import AgentsOrchestrator, OrchestratorResult
 import sqlhelper2 as _sqlhelper2
 
 class AnalyticsQuestion(BaseModel):
     question:        str
     conversation_id: str | None = None   # None → start new conversation
 
-_ask_agent = AskAgent()   # shared, stateless
+_ask_agent           = AskAgent()              # shared, stateless
+_agents_orchestrator = AgentsOrchestrator()    # multi-agent orchestrator
 _MAX_HISTORY_TURNS = 10   # loaded from DB; capped here as safety net
 
 
@@ -1421,6 +1423,90 @@ async def ask_analytics_question(
     logger.info(
         "ask endpoint: answered (conv=%s, sql=%s, rows=%d)",
         conversation_id, bool(result.sql), result.rows_fetched,
+    )
+
+    return {
+        "conversation_id": conversation_id,
+        "question":        result.question,
+        "answer":          result.answer,
+        **({"export": export_payload} if export_payload else {}),
+    }
+
+
+# ── Investigate (multi-agent orchestrator) ────────────────────────────────────
+
+@app.post("/api/admin/analytics/investigate")
+async def investigate_analytics_question(
+    req: AnalyticsQuestion,
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin"))
+):
+    """
+    Deep multi-agent investigation using AgentsOrchestrator (Anthropic Claude).
+
+    Orchestrates three specialised sub-agents:
+      • Fraud Analyst  — SQL queries, fraud scores, graph traversal
+      • Export Agent   — builds Excel/CSV files from analyst findings
+      • Notification   — sends emails or stubs calendar events
+
+    History is NOT passed to the orchestrator — each investigation is a fresh
+    single-turn deep-dive.  Results are persisted to the conversation so they
+    appear in the sidebar like any other message.
+    """
+    actual_user     = current_user["actual_user"]
+    tenant_id       = actual_user["TenantId"]
+    user_id         = actual_user["UserId"]
+    conversation_id = req.conversation_id
+
+    if conversation_id is None:
+        conversation_id = str(uuid.uuid4())
+
+    raw = _sqlhelper2.get_messages(conversation_id, tenant_id)
+    if not raw:
+        title = req.question[:80] + ("…" if len(req.question) > 80 else "")
+        _sqlhelper2.create_conversation(conversation_id, user_id, tenant_id, title)
+
+    logger.info(
+        "investigate endpoint: '%s' (tenant_id=%d, conv=%s)",
+        req.question[:80], tenant_id, conversation_id,
+    )
+
+    # Persist user message
+    _sqlhelper2.append_message(conversation_id, "user", req.question)
+
+    # Run the orchestrator — no history passed (each investigation is self-contained)
+    result: OrchestratorResult = await _agents_orchestrator.investigate(
+        req.question,
+        tenant_id=tenant_id,
+    )
+
+    if result.error and not result.answer:
+        logger.error("investigate endpoint: orchestrator error: %s", result.error)
+        raise HTTPException(status_code=500, detail=f"Investigation Error: {result.error}")
+
+    # Build export metadata if the export sub-agent produced a file
+    export_payload: dict | None = None
+    if result.export_url:
+        exp = result.export
+        fmt = (exp.export_format or "file").upper() if exp else "FILE"
+        filename = result.export_url.split("?")[0].split("/")[-1]
+        export_payload = {
+            "format":       exp.export_format if exp else "file",
+            "file_size":    exp.export_size   if exp else 0,
+            "label":        f"Download your {fmt} here",
+            "filename":     filename,
+            "download_url": result.export_url,
+        }
+
+    # Persist orchestrator answer
+    _sqlhelper2.append_message(
+        conversation_id, "assistant", result.answer,
+        export_json=_json.dumps(export_payload) if export_payload else None,
+    )
+
+    logger.info(
+        "investigate endpoint: complete (conv=%s, iterations=%d, export=%s)",
+        conversation_id, result.iterations, bool(export_payload),
     )
 
     return {
