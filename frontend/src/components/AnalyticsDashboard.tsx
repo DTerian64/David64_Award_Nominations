@@ -348,12 +348,17 @@ export const AnalyticsDashboard: React.FC = () => {
       });
       if (impersonatedUser && typeof impersonatedUser === 'string')
         headers.set('X-Impersonate-User', impersonatedUser);
-      await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, {
         method: 'PATCH',
         headers,
         body: JSON.stringify({ title: trimmed }),
       });
-    } catch { /* optimistic update stays; user sees no error flash */ }
+      if (!res.ok) {
+        console.error(`Rename failed: HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.error('Rename conversation error:', err);
+    }
   };
 
   const startNewConversation = () => {
