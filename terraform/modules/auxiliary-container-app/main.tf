@@ -163,14 +163,17 @@ resource "azurerm_container_app" "auxiliary" {
     # ACA's embedded KEDA picks up the single user-assigned MI without explicit
     # auth configuration.
     #
-    # ACA metadata differences vs. standard KEDA-on-Kubernetes:
-    #   ✗  fullyQualifiedNamespace — not supported in ACA's KEDA build
-    #   ✗  clientId               — not supported in ACA's KEDA build
-    #   ✓  namespace              — just the namespace name (no .servicebus.windows.net)
+    # ACA metadata for the azure-servicebus KEDA scaler.
+    # Authentication uses the container app's user-assigned managed identity
+    # (workload identity) — no connection string required.
     #
-    # messageCount: target messages per replica. A single replica is activated
-    # when pending messages >= this value. At zero messages, KEDA scales to
-    # zero (when min_replicas = 0).
+    # clientId is REQUIRED when using a user-assigned managed identity so
+    # ACA's embedded KEDA knows which identity to use. Without it KEDA falls
+    # back to no authentication and raises "no connection setting given".
+    #
+    # namespace: short name only (no .servicebus.windows.net).
+    # messageCount: target messages per replica. One replica is activated when
+    # pending messages >= this value; scales to zero at zero messages.
     custom_scale_rule {
       name             = "servicebus-scaler"
       custom_rule_type = "azure-servicebus"
@@ -180,6 +183,8 @@ resource "azurerm_container_app" "auxiliary" {
         topicName        = var.service_bus_topic_name
         subscriptionName = var.service_bus_subscription_name
         messageCount     = tostring(var.keda_message_count)
+        # Required for user-assigned managed identity workload auth
+        clientId         = var.auxiliary_identity_client_id
       }
     }
   }
