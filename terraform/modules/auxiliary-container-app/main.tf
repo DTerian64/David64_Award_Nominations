@@ -159,32 +159,23 @@ resource "azurerm_container_app" "auxiliary" {
 
     # ── KEDA — Azure Service Bus scaler ──────────────────────────────────────
     # Scales the worker based on the number of active messages in the subscription.
-    # Authentication uses the Container App's managed identity automatically —
-    # ACA's embedded KEDA picks up the single user-assigned MI without explicit
-    # auth configuration.
     #
-    # ACA metadata for the azure-servicebus KEDA scaler.
-    # Authentication uses the container app's user-assigned managed identity
-    # (workload identity) — no connection string required.
+    # Authentication: ACA wires the container app's user-assigned managed identity
+    # automatically from the identity block — no clientId, no connection string,
+    # and no fullyQualifiedNamespace are needed or accepted by the ACA API.
+    # Valid metadata keys are exactly: namespace, topicName, subscriptionName,
+    # messageCount (and optionally activationMessageCount).
     #
-    # clientId is REQUIRED when using a user-assigned managed identity so
-    # ACA's embedded KEDA knows which identity to use. Without it KEDA falls
-    # back to no authentication and raises "no connection setting given".
-    #
-    # namespace: short name only (no .servicebus.windows.net).
     # messageCount: target messages per replica. One replica is activated when
     # pending messages >= this value; scales to zero at zero messages.
     custom_scale_rule {
       name             = "servicebus-scaler"
       custom_rule_type = "azure-servicebus"
       metadata = {
-        # Extract namespace name from FQNS: "sb-award-sandbox.servicebus.windows.net" → "sb-award-sandbox"
-        namespace        = split(".", var.service_bus_fqns)[0]
+        namespace        = split(".", var.service_bus_fqns)[0]   # short name only: "sb-award-sandbox"
         topicName        = var.service_bus_topic_name
         subscriptionName = var.service_bus_subscription_name
         messageCount     = tostring(var.keda_message_count)
-        # Required for user-assigned managed identity workload auth
-        clientId         = var.auxiliary_identity_client_id
       }
     }
   }
