@@ -42,7 +42,7 @@ variable "blob_sas_expiry_hours" {
 }
 variable "email_action_token_expiry_hours" {
   type    = number
-  default = 24
+  default = 72
 }
 variable "email_action_secret_key" {
   description = "Secret key used to sign and verify email action tokens"

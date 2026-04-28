@@ -48,6 +48,12 @@ logger = logging.getLogger(__name__)
 # ── Database helpers ──────────────────────────────────────────────────────────
 
 def _get_connection() -> pyodbc.Connection:
+    """Connect to Azure SQL.
+
+    The DB is guaranteed to be awake by the time this is called — run_job.py
+    runs wake_database() before any stage starts. Timeout is 60 s as a safety
+    net for transient hiccups after the initial resume.
+    """
     server   = os.environ["SQL_SERVER"]
     database = os.environ["SQL_DATABASE"]
     user     = os.environ["SQL_USER"]
@@ -60,7 +66,7 @@ def _get_connection() -> pyodbc.Connection:
         f"PWD={password};"
         "Encrypt=yes;"
         "TrustServerCertificate=no;"
-        "Connection Timeout=30;"
+        "Connection Timeout=60;"
     )
     return pyodbc.connect(conn_str)
 
@@ -771,8 +777,13 @@ def detect_copy_paste(
         _save_embeddings(conn, new_embeddings)
 
     # ── Step 4: assemble full embedding matrix in eligible order ─────────────
+    # NOTE: do NOT use cached.get(key, new_embeddings[key]) here.
+    # dict.get() eagerly evaluates its default argument, so new_embeddings[key]
+    # is always executed — raising KeyError when new_embeddings is empty
+    # (i.e. 100% cache hit).  Use a conditional expression instead.
     all_vecs = np.stack([
-        cached.get(n["NominationId"], new_embeddings[n["NominationId"]])
+        cached[n["NominationId"]] if n["NominationId"] in cached
+        else new_embeddings[n["NominationId"]]
         for n in eligible
     ])  # shape: (len(eligible), 384)
 

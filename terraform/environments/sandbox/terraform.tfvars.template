@@ -48,7 +48,7 @@ location_secondary              = "westus2"
 model_blob_name                 = "fraud_detection_model.pkl"
 logging_level                   = "DEBUG"
 blob_sas_expiry_hours           = 24
-email_action_token_expiry_hours = 24
+email_action_token_expiry_hours = 72
 
 # ── Front Door ────────────────────────────────────────────────────────────────
 afd_profile_name  = "Award-Nomination-ADF-sandbox"

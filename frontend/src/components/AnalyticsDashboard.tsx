@@ -139,6 +139,17 @@ export const AnalyticsDashboard: React.FC = () => {
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const chatEndRef = React.useRef<HTMLDivElement>(null);
+  const questionInputRef = React.useRef<HTMLTextAreaElement>(null);
+  // Investigate mode — one-shot: resets to false after each submission
+  const [useOrchestrator, setUseOrchestrator] = React.useState(false);
+
+  // Auto-resize the textarea whenever the question text changes
+  React.useEffect(() => {
+    const el = questionInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';          // shrink first so scrollHeight is accurate
+    el.style.height = `${el.scrollHeight}px`;
+  }, [aiQuestion]);
 
   useEffect(() => {
     // Don't fetch on mount - wait for tab selection
@@ -345,12 +356,17 @@ export const AnalyticsDashboard: React.FC = () => {
       });
       if (impersonatedUser && typeof impersonatedUser === 'string')
         headers.set('X-Impersonate-User', impersonatedUser);
-      await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/analytics/conversations/${conversationId}`, {
         method: 'PATCH',
         headers,
         body: JSON.stringify({ title: trimmed }),
       });
-    } catch { /* optimistic update stays; user sees no error flash */ }
+      if (!res.ok) {
+        console.error(`Rename failed: HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.error('Rename conversation error:', err);
+    }
   };
 
   const startNewConversation = () => {
@@ -373,6 +389,10 @@ export const AnalyticsDashboard: React.FC = () => {
     const question = aiQuestion.trim();
     if (!question) return;
 
+    // Capture orchestrator mode synchronously — it resets in finally so the
+    // button stays highlighted during the (potentially long) investigation.
+    const isInvestigating = useOrchestrator;
+
     // ── Generate / reuse conversation ID SYNCHRONOUSLY before any await ───────
     // This is the only safe pattern: a local variable captured by this closure
     // is immune to React re-renders and component remounts that would reset a ref.
@@ -388,6 +408,11 @@ export const AnalyticsDashboard: React.FC = () => {
     // Append user message immediately for responsive feel
     setChatMessages(prev => [...prev, { role: 'user' as const, content: question }]);
     setAiQuestion('');
+    // Reset textarea height back to one line after clearing
+    if (questionInputRef.current) {
+      questionInputRef.current.style.height = 'auto';
+      questionInputRef.current.focus();
+    }
     setAiLoading(true);
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
 
@@ -400,8 +425,12 @@ export const AnalyticsDashboard: React.FC = () => {
       if (impersonatedUser && typeof impersonatedUser === 'string')
         headers.set('X-Impersonate-User', impersonatedUser);
 
-      // convId is a stable local variable — always the correct ID, no closure issues
-      const res = await fetch(`${API_BASE_URL}/api/admin/analytics/ask`, {
+      // Pick endpoint: orchestrator for deep investigation, standard agent otherwise
+      const endpoint = isInvestigating
+        ? '/api/admin/analytics/investigate'
+        : '/api/admin/analytics/ask';
+
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ question, conversation_id: convId })
@@ -428,6 +457,8 @@ export const AnalyticsDashboard: React.FC = () => {
       }]);
     } finally {
       setAiLoading(false);
+      // One-shot: reset investigate mode after each submission
+      if (isInvestigating) setUseOrchestrator(false);
     }
   };
 
@@ -764,26 +795,51 @@ export const AnalyticsDashboard: React.FC = () => {
 
             {/* Input bar */}
             <div className="px-6 py-4 border-t border-gray-100 shrink-0">
-              <div className="flex gap-2">
-                <input
-                  type="text"
+              <div className="flex gap-2 items-end">
+                <textarea
+                  ref={questionInputRef}
                   value={aiQuestion}
                   onChange={(e) => setAiQuestion(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && !aiLoading && handleAskQuestion()}
-                  placeholder="Ask a follow-up or a new question…"
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (!aiLoading) handleAskQuestion();
+                    }
+                  }}
+                  placeholder="Ask a follow-up or a new question… (Shift+Enter for new line)"
+                  rows={1}
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm resize-none overflow-hidden leading-relaxed"
+                  style={{ maxHeight: '160px', overflowY: 'auto' }}
                   disabled={aiLoading}
                 />
                 <button
                   onClick={handleAskQuestion}
                   disabled={aiLoading || !aiQuestion.trim()}
-                  className="px-5 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-300 flex items-center gap-2 text-sm"
+                  className={`px-5 py-3 text-white rounded-xl font-medium transition-colors disabled:bg-gray-300 flex items-center gap-2 text-sm ${
+                    useOrchestrator ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
                 >
                   <Send size={16} />
-                  {aiLoading ? 'Thinking…' : 'Send'}
+                  {aiLoading ? (useOrchestrator ? 'Investigating…' : 'Thinking…') : 'Send'}
                 </button>
               </div>
-              <p className="text-xs text-gray-400 mt-2">Powered by Azure OpenAI · Conversations saved automatically</p>
+              {/* Footer row: Investigate toggle + hint */}
+              <div className="flex items-center justify-between mt-2">
+                <button
+                  onClick={() => setUseOrchestrator(prev => !prev)}
+                  disabled={aiLoading}
+                  title="Run a deep multi-agent investigation (one-shot — resets after submit)"
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 ${
+                    useOrchestrator
+                      ? 'bg-purple-100 text-purple-700 border border-purple-300 hover:bg-purple-200'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 border border-transparent'
+                  }`}
+                >
+                  <ShieldAlert size={13} />
+                  {useOrchestrator ? 'Investigate: ON' : 'Investigate'}
+                </button>
+                <p className="text-xs text-gray-400">Conversations saved automatically</p>
+              </div>
             </div>
           </div>
         </div>

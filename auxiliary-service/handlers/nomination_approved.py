@@ -4,7 +4,7 @@ Handler: nomination.approved
 Triggered when an approver approves or rejects a nomination (either via the
 email action button or the web UI).
 
-Responsibility
+Responsibility 
 --------------
 1. Read nomination details from the DB — including the current Status, which
    is the authoritative source of the approval decision.

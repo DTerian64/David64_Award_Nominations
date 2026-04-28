@@ -159,24 +159,20 @@ resource "azurerm_container_app" "auxiliary" {
 
     # ── KEDA — Azure Service Bus scaler ──────────────────────────────────────
     # Scales the worker based on the number of active messages in the subscription.
-    # Authentication uses the Container App's managed identity automatically —
-    # ACA's embedded KEDA picks up the single user-assigned MI without explicit
-    # auth configuration.
     #
-    # ACA metadata differences vs. standard KEDA-on-Kubernetes:
-    #   ✗  fullyQualifiedNamespace — not supported in ACA's KEDA build
-    #   ✗  clientId               — not supported in ACA's KEDA build
-    #   ✓  namespace              — just the namespace name (no .servicebus.windows.net)
+    # Authentication: ACA wires the container app's user-assigned managed identity
+    # automatically from the identity block — no clientId, no connection string,
+    # and no fullyQualifiedNamespace are needed or accepted by the ACA API.
+    # Valid metadata keys are exactly: namespace, topicName, subscriptionName,
+    # messageCount (and optionally activationMessageCount).
     #
-    # messageCount: target messages per replica. A single replica is activated
-    # when pending messages >= this value. At zero messages, KEDA scales to
-    # zero (when min_replicas = 0).
+    # messageCount: target messages per replica. One replica is activated when
+    # pending messages >= this value; scales to zero at zero messages.
     custom_scale_rule {
       name             = "servicebus-scaler"
       custom_rule_type = "azure-servicebus"
       metadata = {
-        # Extract namespace name from FQNS: "sb-award-sandbox.servicebus.windows.net" → "sb-award-sandbox"
-        namespace        = split(".", var.service_bus_fqns)[0]
+        namespace        = split(".", var.service_bus_fqns)[0]   # short name only: "sb-award-sandbox"
         topicName        = var.service_bus_topic_name
         subscriptionName = var.service_bus_subscription_name
         messageCount     = tostring(var.keda_message_count)

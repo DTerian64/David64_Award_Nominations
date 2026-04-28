@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import db
-from handlers import nomination_created, nomination_approved, payout_submit, payout_accepted
+from handlers import nomination_created, nomination_approved, payout_submit, payout_accepted, notification_requested
 
 logger = logging.getLogger("auxiliary.dispatcher")
 
@@ -41,10 +41,13 @@ logger = logging.getLogger("auxiliary.dispatcher")
 # order.  All handlers in a list are called; if one raises, execution stops
 # and the message is abandoned for retry.
 HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
-    "nomination.created":  nomination_created.handle,
+    "nomination.created":      nomination_created.handle,
     # nomination.approved triggers both the outcome email AND the payout submission.
-    "nomination.approved": [nomination_approved.handle, payout_submit.handle],
-    "payout.accepted":     payout_accepted.handle,
+    "nomination.approved":     [nomination_approved.handle, payout_submit.handle],
+    "payout.accepted":         payout_accepted.handle,
+    # Free-form email delivery requested by the Ask Analytics agent (or any backend service).
+    # Payload carries From / To / Subject / Body directly — no DB lookup needed.
+    "notification.requested":  notification_requested.handle,
 }
 
 
