@@ -6,8 +6,17 @@ ContainerAppSystemLogs_CL
 | take 50
 
 ContainerAppConsoleLogs_CL
-| where ContainerGroupName_s startswith "award-fraud-analytics-sandbox"
-| where TimeGenerated > ago(30m)
+| where ContainerGroupName_s startswith 'award-fraud-analytics-sandbox-'
+| where TimeGenerated > ago(45m)
 | extend PacificTime = datetime_utc_to_local(TimeGenerated, 'US/Pacific')
 | project PacificTime, Log_s
+| order by PacificTime asc
+
+
+ContainerAppConsoleLogs_CL
+| where ContainerGroupName_s startswith 'award-fraud-analytics-sandbox-'
+| where TimeGenerated > ago(45m)
+| extend PacificTime = datetime_utc_to_local(TimeGenerated, 'US/Pacific')
+| project PacificTime, Log_s
+| where PacificTime > datetime('4/27/2026, 5:34:33.964 PM')
 | order by PacificTime asc

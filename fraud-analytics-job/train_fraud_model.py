@@ -109,7 +109,7 @@ def get_db_connection():
         f"PWD={os.getenv('SQL_PASSWORD')};"
         f"Encrypt=yes;"
         f"TrustServerCertificate=no;"
-        f"Connection Timeout=30;"
+        f"Connection Timeout=60;"
     )
     return pyodbc.connect(connection_string)
 
