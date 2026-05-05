@@ -21,7 +21,7 @@ locals {
 # ── API app registration ──────────────────────────────────────────────────────
 resource "azuread_application" "api" {
   display_name     = "Award Nomination - ${var.environment}"
-  sign_in_audience = "AzureADMultipleOrgs"
+  sign_in_audience = "AzureADandPersonalMicrosoftAccount"
   owners           = [data.azuread_client_config.current.object_id]
   # identifier_uris is managed by azuread_application_identifier_uri below.
   # ignore_changes prevents azuread_application from clearing the URI when it
@@ -79,7 +79,7 @@ resource "azuread_application_identifier_uri" "api" {
 # ── SPA app registration ──────────────────────────────────────────────────────
 resource "azuread_application" "frontend" {
   display_name     = "Award Nomination Frontend - ${var.environment}"
-  sign_in_audience = "AzureADMultipleOrgs"
+  sign_in_audience = "AzureADandPersonalMicrosoftAccount"
   owners           = [data.azuread_client_config.current.object_id]
 
   api {
@@ -94,8 +94,11 @@ resource "azuread_application" "frontend" {
   }
 
   # Microsoft Graph — User.Read
+  # Resource ID must be the Microsoft Graph API (00000003-...), not the legacy
+  # Azure AD Graph API (00000000-...000002). The legacy API does not support
+  # AzureADandPersonalMicrosoftAccount sign-in audience.
   required_resource_access {
-    resource_app_id = "00000000-0000-0000-0000-000000000002"
+    resource_app_id = "00000003-0000-0000-c000-000000000000"
 
     resource_access {
       id   = "e1fe6dd8-ba31-4d61-89e7-88639da4683d" # User.Read

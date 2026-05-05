@@ -57,10 +57,10 @@ variable "afd_endpoint_name"    { type = string }
 # Static Web App
 variable "swa_name"             { type = string }
 
-variable "swa_custom_domain" {
-  description = "Optional custom domain for the SWA (e.g. dev-awards.terian-services.com). Leave empty to skip."
-  type        = string
-  default     = ""
+variable "swa_custom_domains" {
+  description = "Custom domains to bind to the SWA. Each entry creates a DNS CNAME record and an SWA domain binding. Free SKU supports 2; Standard SKU supports 5."
+  type        = list(string)
+  default     = []
 }
 
 variable "dns_zone_resource_group" {

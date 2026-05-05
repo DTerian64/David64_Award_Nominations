@@ -3,16 +3,21 @@
 # Azure Static Web App
 #
 # Creates:
-#   - Static Web App (Free SKU)
+#   - Static Web App (Standard SKU — required for 3+ custom domains)
 #   - App settings for React/Vite frontend (Azure AD auth + API URL)
+#
+# SKU note:
+#   Free tier supports 2 custom domains max.
+#   Standard tier ($9/month) supports 5 custom domains and is required now
+#   that sandbox-awards, acme-awards, and demo-awards are all active.
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "azurerm_static_web_app" "frontend" {
   name                = var.app_name
   resource_group_name = var.resource_group_name
   location            = var.location
-  sku_tier            = "Free"
-  sku_size            = "Free"
+  sku_tier            = "Standard"
+  sku_size            = "Standard"
 
   app_settings = {
     VITE_API_URL                       = var.vite_api_url
