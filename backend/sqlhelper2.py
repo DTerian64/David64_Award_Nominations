@@ -1592,6 +1592,62 @@ def upn_exists_in_tenant(upn: str, tenant_id: int) -> bool:
         return row is not None
 
 
+def log_demo_registration(
+    first_name: str,
+    last_name:  str,
+    email:      str,
+    is_admin:   bool,
+    aad_object_id: Optional[str],
+    request_ip: Optional[str],
+) -> None:
+    """Insert an audit row into dbo.DemoRegistrationRequests."""
+    with _session() as session:
+        session.execute(
+            text("""
+                INSERT INTO dbo.DemoRegistrationRequests
+                    (FirstName, LastName, Email, IsAdmin, AadObjectId, RequestIp)
+                VALUES (:first, :last, :email, :is_admin, :oid, :ip)
+            """),
+            {
+                "first":    first_name,
+                "last":     last_name,
+                "email":    email,
+                "is_admin": 1 if is_admin else 0,
+                "oid":      aad_object_id,
+                "ip":       request_ip,
+            },
+        )
+        session.commit()
+
+
+def count_demo_registrations_by_email(email: str, since_minutes: int = 60) -> int:
+    """Return how many invitations have been sent to this email in the last N minutes."""
+    with _session() as session:
+        row = session.execute(
+            text("""
+                SELECT COUNT(*) FROM dbo.DemoRegistrationRequests
+                WHERE Email = :email
+                  AND RequestedAt >= DATEADD(MINUTE, :neg_mins, GETUTCDATE())
+            """),
+            {"email": email, "neg_mins": -since_minutes},
+        ).fetchone()
+        return row[0] if row else 0
+
+
+def count_demo_registrations_by_ip(ip: str, since_minutes: int = 60) -> int:
+    """Return how many invitations have been sent from this IP in the last N minutes."""
+    with _session() as session:
+        row = session.execute(
+            text("""
+                SELECT COUNT(*) FROM dbo.DemoRegistrationRequests
+                WHERE RequestIp = :ip
+                  AND RequestedAt >= DATEADD(MINUTE, :neg_mins, GETUTCDATE())
+            """),
+            {"ip": ip, "neg_mins": -since_minutes},
+        ).fetchone()
+        return row[0] if row else 0
+
+
 def create_demo_user(
     first_name: str,
     last_name: str,

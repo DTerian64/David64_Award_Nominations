@@ -3,37 +3,28 @@ demo_router.py
 ==============
 Public self-registration endpoint for demo-awards.terian-services.com.
 
-POST /api/demo/join
--------------------
+POST /api/demo/request
+----------------------
 No authentication required.
 
-Request body:
-    first_name  str   (1–50 chars)
-    last_name   str   (1–50 chars)
-    email       str   (valid email, stored as userEmail)
-    is_admin    bool  (if true, assigns AWard_Nomination_Admin role)
+Flow:
+  1. Visitor submits First Name, Last Name, Email, Is Admin?
+  2. Backend calls Graph POST /invitations — Microsoft sends the B2B invite email
+  3. If Is Admin: assigns AWard_Nomination_Admin role to the new guest object
+  4. Creates a dbo.Users row (UPN = email) so auth.py can resolve them on first sign-in
+  5. Logs the request to dbo.DemoRegistrationRequests for audit / rate-limit
 
-Response:
-    {
-        "upn":           str,   # the new @demo.terian-services.com account
-        "temp_password": str,   # one-time password — shown once, not stored
-        "aad_tenant_id": str,   # Demo tenant GUID (for MSAL authority override)
-        "user_id":       int,   # internal dbo.Users UserId
-    }
+Rate limits (DB-backed, survive process restarts):
+  • Max 3 invitations per IP per hour
+  • Max 1 invitation per email per hour  (same email → "already invited" response)
 
-Errors:
-    422 — validation failure
-    429 — rate limit exceeded (max 5 registrations per IP per hour)
-    503 — Graph API unavailable / demo tenant not configured
-
-Rate limiting is in-memory and resets on process restart.  For production
-scale, replace with a Redis-backed counter.
+The invite redirect URL is hardcoded to /demo/welcome so the visitor lands on
+our branded welcome page after accepting the Microsoft invitation.
 """
 
 import logging
+import os
 import re
-from collections import defaultdict
-from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, validator
@@ -46,49 +37,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/demo", tags=["Demo"])
 
 # ---------------------------------------------------------------------------
-# Rate limiting  (in-memory, per-IP)
+# Config
 # ---------------------------------------------------------------------------
 
-_RATE_LIMIT_MAX  = 5          # registrations per window
-_RATE_LIMIT_MINS = 60         # window length in minutes
-_rate_log: dict[str, list[datetime]] = defaultdict(list)
+_DEMO_ORIGIN = os.getenv("DEMO_ORIGIN", "https://demo-awards.terian-services.com")
+_INVITE_REDIRECT_URL = f"{_DEMO_ORIGIN}/demo/welcome"
 
-
-def _check_rate_limit(ip: str) -> None:
-    """Raise 429 if the IP has exceeded the registration rate limit."""
-    now    = datetime.utcnow()
-    cutoff = now - timedelta(minutes=_RATE_LIMIT_MINS)
-
-    # Prune old timestamps
-    _rate_log[ip] = [t for t in _rate_log[ip] if t > cutoff]
-
-    if len(_rate_log[ip]) >= _RATE_LIMIT_MAX:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=(
-                f"Too many registrations from this IP. "
-                f"Maximum {_RATE_LIMIT_MAX} per hour."
-            ),
-        )
-
-    _rate_log[ip].append(now)
-
-
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
+_RATE_LIMIT_PER_IP    = 3   # max invitations from one IP per hour
+_RATE_LIMIT_PER_EMAIL = 1   # max invitations to one email per hour
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
 
-class DemoJoinRequest(BaseModel):
+class DemoRequestBody(BaseModel):
     first_name: str
     last_name:  str
     email:      str
     is_admin:   bool = False
 
     @validator("first_name", "last_name")
-    def _name_not_empty(cls, v: str) -> str:
+    def _name_valid(cls, v: str) -> str:
         v = v.strip()
         if not v:
             raise ValueError("Name cannot be empty")
@@ -97,7 +68,7 @@ class DemoJoinRequest(BaseModel):
         return v
 
     @validator("email")
-    def _valid_email(cls, v: str) -> str:
+    def _email_valid(cls, v: str) -> str:
         v = v.strip().lower()
         if not _EMAIL_RE.match(v):
             raise ValueError("Invalid email address")
@@ -106,11 +77,8 @@ class DemoJoinRequest(BaseModel):
         return v
 
 
-class DemoJoinResponse(BaseModel):
-    upn:           str
-    temp_password: str
-    aad_tenant_id: str
-    user_id:       int
+class DemoRequestResponse(BaseModel):
+    message: str
 
 
 # ---------------------------------------------------------------------------
@@ -118,19 +86,32 @@ class DemoJoinResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/join",
-    response_model=DemoJoinResponse,
-    summary="Self-register a demo user",
+    "/request",
+    response_model=DemoRequestResponse,
+    summary="Request demo access",
     description=(
-        "Creates an AAD account in the Demo tenant, adds the user to dbo.Users, "
-        "and (if is_admin=true) assigns the AWard_Nomination_Admin role. "
-        "No authentication required. Rate-limited to 5 registrations per IP per hour."
+        "Sends a Microsoft B2B invitation to the provided email address. "
+        "No authentication required. Rate-limited by IP and email."
     ),
 )
-async def demo_join(body: DemoJoinRequest, request: Request) -> DemoJoinResponse:
-    # ── Rate limit ────────────────────────────────────────────────────────────
-    client_ip = request.client.host if request.client else "unknown"
-    _check_rate_limit(client_ip)
+async def demo_request(body: DemoRequestBody, request: Request) -> DemoRequestResponse:
+
+    client_ip = (request.client.host if request.client else "unknown")[:64]
+
+    # ── Rate limit by IP ──────────────────────────────────────────────────────
+    if sqlhelper.count_demo_registrations_by_ip(client_ip) >= _RATE_LIMIT_PER_IP:
+        # Return same generic message — don't reveal the limit type
+        logger.warning("Demo request rate-limited by IP: %s", client_ip)
+        return DemoRequestResponse(
+            message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
+        )
+
+    # ── Rate limit by email (return same message to prevent enumeration) ──────
+    if sqlhelper.count_demo_registrations_by_email(body.email) >= _RATE_LIMIT_PER_EMAIL:
+        logger.info("Demo request duplicate email suppressed: %s", body.email)
+        return DemoRequestResponse(
+            message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
+        )
 
     # ── Resolve demo tenant ───────────────────────────────────────────────────
     tenant_id = sqlhelper.get_demo_tenant_id()
@@ -141,71 +122,69 @@ async def demo_join(body: DemoJoinRequest, request: Request) -> DemoJoinResponse
             detail="Demo environment is not configured. Please contact the administrator.",
         )
 
-    aad_tenant_id = sqlhelper.get_demo_aad_tenant_id()
-    if not aad_tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Demo AAD tenant ID not found.",
-        )
-
-    # ── Create AAD account ────────────────────────────────────────────────────
+    # ── Send B2B invitation via Graph API ─────────────────────────────────────
     try:
-        aad_result = graph_admin.create_aad_user(body.first_name, body.last_name)
-    except RuntimeError as e:
-        logger.error("AAD user creation failed: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Could not create demo account: {e}",
-        )
-
-    upn          = aad_result["upn"]
-    oid          = aad_result["oid"]
-    temp_password = aad_result["temp_password"]
-
-    # ── Assign admin role (if requested) ──────────────────────────────────────
-    if body.is_admin:
-        try:
-            graph_admin.assign_admin_role(oid)
-        except RuntimeError as e:
-            # Non-fatal for DB step — log and continue; admin role can be
-            # assigned manually via assign_admin_role.py if Graph API is flaky.
-            logger.error("Admin role assignment failed for oid=%s: %s", oid, e)
-
-    # ── Create dbo.Users row ──────────────────────────────────────────────────
-    # Check for duplicate (shouldn't happen since graph_admin generates unique UPNs,
-    # but guard against retry/race conditions)
-    if sqlhelper.upn_exists_in_tenant(upn, tenant_id):
-        # UPN already in DB — look up the existing user and return it
-        # (the caller can still trigger MSAL login with the same UPN)
-        logger.warning("UPN %s already in dbo.Users for tenant %d — skipping insert.", upn, tenant_id)
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"A user with this name already exists ({upn}). Please try a different name.",
-        )
-
-    try:
-        user_id = sqlhelper.create_demo_user(
+        invite_result = graph_admin.invite_external_user(
             first_name=body.first_name,
             last_name=body.last_name,
             email=body.email,
-            upn=upn,
-            tenant_id=tenant_id,
+            invite_redirect_url=_INVITE_REDIRECT_URL,
+        )
+    except RuntimeError as e:
+        logger.error("B2B invitation failed for %s: %s", body.email, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not send invitation. Please try again later.",
+        )
+
+    oid = invite_result["oid"]
+    upn = invite_result["upn"]   # = body.email for B2B guests
+
+    # ── Assign admin role (if requested) ──────────────────────────────────────
+    if body.is_admin and oid:
+        try:
+            graph_admin.assign_admin_role(oid)
+        except RuntimeError as e:
+            # Non-fatal — the user can still sign in; admin role can be
+            # granted manually if Graph is temporarily unavailable.
+            logger.error("Admin role assignment failed for oid=%s: %s", oid, e)
+
+    # ── Create dbo.Users row ──────────────────────────────────────────────────
+    # Store email as UPN — this is what auth.py reads from the JWT
+    # preferred_username claim for B2B guest tokens.
+    if not sqlhelper.upn_exists_in_tenant(upn, tenant_id):
+        try:
+            sqlhelper.create_demo_user(
+                first_name=body.first_name,
+                last_name=body.last_name,
+                email=body.email,
+                upn=upn,
+                tenant_id=tenant_id,
+            )
+        except Exception as e:
+            logger.error("DB insert failed for %s: %s", upn, e)
+            # Non-fatal at this stage — invitation is already sent.
+            # The user's first sign-in will fail with 404; they can
+            # contact us to re-try the registration.
+
+    # ── Audit log ─────────────────────────────────────────────────────────────
+    try:
+        sqlhelper.log_demo_registration(
+            first_name=body.first_name,
+            last_name=body.last_name,
+            email=body.email,
+            is_admin=body.is_admin,
+            aad_object_id=oid or None,
+            request_ip=client_ip,
         )
     except Exception as e:
-        logger.error("DB insert failed for %s: %s", upn, e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="User account was created in Azure AD but could not be saved to the database.",
-        )
+        logger.warning("Failed to log demo registration: %s", e)
 
     logger.info(
-        "Demo self-registration complete: upn=%s user_id=%d is_admin=%s ip=%s",
-        upn, user_id, body.is_admin, client_ip,
+        "Demo invitation sent: email=%s is_admin=%s oid=%s ip=%s",
+        body.email, body.is_admin, oid, client_ip,
     )
 
-    return DemoJoinResponse(
-        upn=upn,
-        temp_password=temp_password,
-        aad_tenant_id=aad_tenant_id,
-        user_id=user_id,
+    return DemoRequestResponse(
+        message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
     )

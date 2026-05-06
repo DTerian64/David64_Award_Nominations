@@ -7,7 +7,9 @@ import {
 } from '@azure/msal-react';
 import { useTranslation } from 'react-i18next';
 import { SignInButton } from './components/SignInButton';
-import { DemoJoinPanel, IS_DEMO_SITE } from './components/DemoJoinPanel';
+import { IS_DEMO_SITE } from './components/DemoJoinPanel';
+import { DemoRequestPage } from './components/DemoRequestPage';
+import { DemoWelcomePage } from './components/DemoWelcomePage';
 import { SignOutButton } from './components/SignOutButton';
 import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
 import { ImpersonationBanner } from './components/ImpersonationBanner';
@@ -90,10 +92,17 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, impersonated
 }
 
 const AwardNominationApp: React.FC = () => {
+  // Hooks must always be called first — before any conditional return
   const { accounts } = useMsal();
   const { getEffectiveUser, isImpersonating, isAdmin } = useImpersonation();
   const { formatCurrency, minAmount, maxAmount } = useTenantConfig();
   const { t, i18n } = useTranslation();
+
+  const pathname = window.location.pathname;
+
+  // Demo sub-pages — full-page layouts, rendered outside normal auth flow
+  if (pathname === '/demo/request') return <DemoRequestPage />;
+  if (pathname === '/demo/welcome') return <DemoWelcomePage />;
 
   // Format date according to the active locale
   const formatDate = (dateStr: string) =>
@@ -284,20 +293,19 @@ const AwardNominationApp: React.FC = () => {
 
               {IS_DEMO_SITE ? (
                 <>
-                  <p className="text-sm font-semibold text-gray-700 mb-4">Please Sign In</p>
-                  <DemoJoinPanel />
-
-                  {/* Separator */}
-                  <div className="relative my-6">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-gray-300" />
-                    </div>
-                    <div className="relative flex justify-center text-sm">
-                      <span className="px-3 bg-white text-gray-500">Already have an account?</span>
-                    </div>
-                  </div>
-
+                  <p className="text-center text-gray-600 mb-6">
+                    Sign in with your Microsoft account to explore the demo environment.
+                  </p>
                   <SignInButton />
+                  <div className="mt-5 text-center">
+                    <a
+                      href="/demo/request"
+                      className="text-sm font-medium hover:underline"
+                      style={{ color: 'var(--color-primary, #4f46e5)' }}
+                    >
+                      New to the demo? Request access →
+                    </a>
+                  </div>
                 </>
               ) : (
                 <>

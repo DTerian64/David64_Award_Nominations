@@ -1,24 +1,24 @@
 """
 graph_admin.py
 ==============
-Reusable Graph API helpers for the Demo tenant:
-  • create_aad_user()       – creates an enabled @demo.terian-services.com account
+Graph API helpers for the Demo tenant:
+  • invite_external_user()  – sends a B2B invitation via POST /invitations
   • assign_admin_role()     – assigns AWard_Nomination_Admin on the Award Nomination app
 
-Environment variables (same as seed_demo.py):
+Microsoft sends the invitation email automatically (sendInvitationMessage=True),
+so no separate email infrastructure is required.
+
+Environment variables:
   DEMO_AAD_TENANT_ID       – Demo tenant GUID
   DEMO_GRAPH_CLIENT_ID     – Award Nomination Seeder app client ID
   DEMO_GRAPH_CLIENT_SECRET – Seeder client secret
 
-The service-principal and role IDs are fetched once and cached in memory for
-the lifetime of the process (they never change once provisioned).
+The service-principal and role IDs are fetched once and cached in memory.
 """
 
 import os
-import re
-import secrets
-import string
 import logging
+import time
 from typing import Optional
 
 import msal
@@ -27,20 +27,19 @@ import requests
 logger = logging.getLogger(__name__)
 
 GRAPH        = "https://graph.microsoft.com/v1.0"
-UPN_SUFFIX   = "@demo.terian-services.com"
 SP_NAME_HINT = "Award Nomination - sandbox"
 ROLE_VALUE   = "AWard_Nomination_Admin"
 
 # ---------------------------------------------------------------------------
-# Lazy-loaded cache — set once on first call
+# Module-level cache
 # ---------------------------------------------------------------------------
-_token_cache: dict = {}          # {"token": str, "expires_at": float}
-_sp_id:    Optional[str] = None  # service principal object ID
-_role_id:  Optional[str] = None  # AWard_Nomination_Admin app role ID
+_token_cache: dict = {}
+_sp_id:    Optional[str] = None
+_role_id:  Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
-# Config helpers
+# Config
 # ---------------------------------------------------------------------------
 
 def _env() -> tuple[str, str, str]:
@@ -50,16 +49,13 @@ def _env() -> tuple[str, str, str]:
     if not (tid and cid and secret):
         raise RuntimeError(
             "DEMO_AAD_TENANT_ID / DEMO_GRAPH_CLIENT_ID / DEMO_GRAPH_CLIENT_SECRET "
-            "must be set in the environment to use the demo self-registration endpoint."
+            "must be set to use the demo self-registration endpoint."
         )
     return tid, cid, secret
 
 
 def _get_token() -> str:
-    """Return a valid Graph access token, refreshing if expired."""
-    import time
     global _token_cache
-
     now = time.time()
     if _token_cache.get("token") and _token_cache.get("expires_at", 0) > now + 60:
         return _token_cache["token"]
@@ -95,8 +91,8 @@ def _post(path: str, body: dict) -> requests.Response:
     return requests.post(
         f"{GRAPH}/{path.lstrip('/')}",
         headers={
-            "Authorization":  f"Bearer {_get_token()}",
-            "Content-Type":   "application/json",
+            "Authorization": f"Bearer {_get_token()}",
+            "Content-Type":  "application/json",
         },
         json=body,
         timeout=30,
@@ -108,31 +104,24 @@ def _post(path: str, body: dict) -> requests.Response:
 # ---------------------------------------------------------------------------
 
 def _get_sp_and_role() -> tuple[str, str]:
-    """
-    Return (service_principal_id, app_role_id) for AWard_Nomination_Admin.
-    Fetched once and cached for the process lifetime.
-    """
     global _sp_id, _role_id
     if _sp_id and _role_id:
         return _sp_id, _role_id
 
-    # $search requires ConsistencyLevel: eventual
     r = requests.get(
         f"{GRAPH}/servicePrincipals",
         headers={
-            "Authorization":  f"Bearer {_get_token()}",
+            "Authorization":    f"Bearer {_get_token()}",
             "ConsistencyLevel": "eventual",
         },
         params={
-            "$search":  f'"displayName:{SP_NAME_HINT}"',
-            "$select":  "id,displayName,appRoles",
+            "$search": f'"displayName:{SP_NAME_HINT}"',
+            "$select": "id,displayName,appRoles",
         },
         timeout=20,
     )
     if r.status_code != 200:
-        raise RuntimeError(
-            f"Service principal search failed: {r.status_code} {r.text}"
-        )
+        raise RuntimeError(f"Service principal search failed: {r.status_code} {r.text}")
 
     sps = r.json().get("value", [])
     if not sps:
@@ -141,7 +130,7 @@ def _get_sp_and_role() -> tuple[str, str]:
             "Ensure the app has been consented to in the Demo tenant."
         )
 
-    sp = sps[0]
+    sp     = sps[0]
     _sp_id = sp["id"]
 
     role = next(
@@ -151,8 +140,7 @@ def _get_sp_and_role() -> tuple[str, str]:
     if not role:
         available = [ar.get("value") for ar in sp.get("appRoles", [])]
         raise RuntimeError(
-            f"App role '{ROLE_VALUE}' not found on service principal. "
-            f"Available roles: {available}"
+            f"App role '{ROLE_VALUE}' not found. Available: {available}"
         )
 
     _role_id = role["id"]
@@ -161,121 +149,75 @@ def _get_sp_and_role() -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Password generation
-# ---------------------------------------------------------------------------
-
-def _random_password(length: int = 16) -> str:
-    upper   = string.ascii_uppercase
-    lower   = string.ascii_lowercase
-    digits  = string.digits
-    special = "!@#$%&*"
-    all_chars = upper + lower + digits + special
-
-    while True:
-        pwd = "".join(secrets.choice(all_chars) for _ in range(length))
-        if (
-            any(c in upper   for c in pwd)
-            and any(c in lower   for c in pwd)
-            and any(c in digits  for c in pwd)
-            and any(c in special for c in pwd)
-        ):
-            return pwd
-
-
-# ---------------------------------------------------------------------------
-# UPN helpers
-# ---------------------------------------------------------------------------
-
-def _normalise_name_part(s: str) -> str:
-    """Lowercase, strip accents roughly, keep only [a-z0-9]."""
-    s = s.lower().strip()
-    s = re.sub(r"[^a-z0-9]", "", s)
-    return s or "user"
-
-
-def _upn_exists(upn: str) -> bool:
-    r = _gh(f"users/{upn}", {"$select": "id"})
-    return r.status_code == 200
-
-
-def _generate_upn(first_name: str, last_name: str) -> str:
-    """Return a unique @demo.terian-services.com UPN."""
-    base = f"{_normalise_name_part(first_name)}.{_normalise_name_part(last_name)}"
-    candidate = f"{base}{UPN_SUFFIX}"
-    if not _upn_exists(candidate):
-        return candidate
-    for n in range(2, 100):
-        candidate = f"{base}{n}{UPN_SUFFIX}"
-        if not _upn_exists(candidate):
-            return candidate
-    raise RuntimeError("Could not generate a unique UPN after 100 attempts.")
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def create_aad_user(first_name: str, last_name: str) -> dict:
+def invite_external_user(
+    first_name: str,
+    last_name:  str,
+    email:      str,
+    invite_redirect_url: str,
+) -> dict:
     """
-    Create an enabled AAD account in the Demo tenant.
+    Send a B2B invitation to an external email address.
+
+    Microsoft sends the invitation email on our behalf with the standard
+    "You've been invited" branding.  The email is trusted by spam filters
+    because it originates from Microsoft, not our own SMTP server.
 
     Returns:
         {
-            "oid":           str,   # Azure AD object ID
-            "upn":           str,   # userPrincipalName
-            "temp_password": str,   # one-time password shown to the user
+            "oid": str,   # guest object ID in the Demo tenant
+            "upn": str,   # the email address (used as UPN in dbo.Users)
         }
     """
-    upn  = _generate_upn(first_name, last_name)
-    pwd  = _random_password()
-    nick = upn.split("@")[0].replace(".", "")
-
     body = {
-        "accountEnabled":    True,
-        "displayName":       f"{first_name} {last_name}",
-        "givenName":         first_name,
-        "surname":           last_name,
-        "mailNickname":      nick,
-        "userPrincipalName": upn,
-        "usageLocation":     "US",
-        "passwordProfile": {
-            "forceChangePasswordNextSignIn": False,
-            "password":                      pwd,
+        "invitedUserEmailAddress": email,
+        "invitedUserDisplayName":  f"{first_name} {last_name}",
+        "inviteRedirectUrl":       invite_redirect_url,
+        "sendInvitationMessage":   True,
+        "invitedUserMessageInfo": {
+            "customizedMessageBody": (
+                f"Hi {first_name},\n\n"
+                "You've been invited to explore the Award Nominations demo — a live "
+                "SaaS platform for employee recognition and monetary award management.\n\n"
+                "Click 'Accept invitation' below to get instant access. "
+                "No setup required — you'll be guided through the next steps automatically."
+            ),
         },
     }
 
-    r = _post("users", body)
+    r = _post("invitations", body)
     if r.status_code not in (200, 201):
-        raise RuntimeError(
-            f"AAD user creation failed: {r.status_code} {r.text}"
-        )
+        raise RuntimeError(f"B2B invitation failed: {r.status_code} {r.text}")
 
-    oid = r.json()["id"]
-    logger.info("Created AAD user: %s (oid=%s)", upn, oid)
-    return {"oid": oid, "upn": upn, "temp_password": pwd}
+    data = r.json()
+    oid  = data.get("invitedUser", {}).get("id", "")
+
+    logger.info("B2B invitation sent to %s (guest oid=%s)", email, oid)
+    return {"oid": oid, "upn": email}
 
 
 def assign_admin_role(user_oid: str) -> None:
     """
-    Assign the AWard_Nomination_Admin app role to the given user object ID.
+    Assign AWard_Nomination_Admin to the given guest object ID.
     Idempotent — silently succeeds if already assigned.
     """
     sp_id, role_id = _get_sp_and_role()
 
-    body = {
-        "principalId": user_oid,
-        "resourceId":  sp_id,
-        "appRoleId":   role_id,
-    }
-    r = _post(f"users/{user_oid}/appRoleAssignments", body)
+    r = _post(
+        f"users/{user_oid}/appRoleAssignments",
+        {
+            "principalId": user_oid,
+            "resourceId":  sp_id,
+            "appRoleId":   role_id,
+        },
+    )
 
     if r.status_code in (200, 201):
-        logger.info(
-            "Assigned %s to user oid=%s (assignment id=%s)",
-            ROLE_VALUE, user_oid, r.json().get("id"),
-        )
+        logger.info("Assigned %s to oid=%s (assignment=%s)",
+                    ROLE_VALUE, user_oid, r.json().get("id"))
     elif r.status_code == 400 and "Permission" in r.text:
-        # Already assigned — treat as success
         logger.info("Role already assigned to oid=%s — no-op.", user_oid)
     else:
         raise RuntimeError(
