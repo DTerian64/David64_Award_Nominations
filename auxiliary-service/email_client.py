@@ -235,6 +235,147 @@ def render_payment_confirmed(
     """
 
 
+def render_demo_access_invite(first_name: str, redeem_url: str) -> str:
+    """Branded demo access invitation email sent to the self-registration requestor."""
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    </head>
+    <body style="margin:0;padding:0;background-color:#f3f4f6;font-family:Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="background-color:#f3f4f6;padding:40px 0;">
+        <tr><td align="center">
+          <table width="580" cellpadding="0" cellspacing="0"
+                 style="background:#ffffff;border-radius:12px;overflow:hidden;
+                        box-shadow:0 2px 8px rgba(0,0,0,.08);max-width:580px;">
+
+            <!-- Header -->
+            <tr>
+              <td style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);
+                         padding:36px 40px;text-align:center;">
+                <div style="font-size:48px;margin-bottom:12px;">🏆</div>
+                <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;
+                           letter-spacing:-0.3px;">
+                  Award Nominations
+                </h1>
+                <p style="margin:6px 0 0;color:#c7d2fe;font-size:14px;">
+                  Demo Environment
+                </p>
+              </td>
+            </tr>
+
+            <!-- Body -->
+            <tr>
+              <td style="padding:36px 40px;">
+                <p style="margin:0 0 16px;font-size:16px;color:#111827;font-weight:600;">
+                  Hi {first_name},
+                </p>
+                <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.7;">
+                  Your demo access request has been approved! You're about to explore
+                  a <strong>live SaaS platform</strong> for employee recognition and
+                  monetary award management.
+                </p>
+                <p style="margin:0 0 28px;font-size:15px;color:#374151;line-height:1.7;">
+                  Click the button below to activate your account. You'll be guided
+                  through sign-in automatically — no password setup required.
+                </p>
+
+                <!-- CTA -->
+                <table cellpadding="0" cellspacing="0" style="margin:0 auto 36px;">
+                  <tr>
+                    <td style="background:#4f46e5;border-radius:8px;
+                               box-shadow:0 4px 12px rgba(79,70,229,.35);">
+                      <a href="{redeem_url}"
+                         style="display:inline-block;padding:16px 40px;
+                                color:#ffffff;font-size:16px;font-weight:700;
+                                text-decoration:none;letter-spacing:0.2px;">
+                        Activate My Demo Access &rarr;
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Feature tiles -->
+                <table cellpadding="0" cellspacing="0" width="100%"
+                       style="border:1px solid #e5e7eb;border-radius:10px;
+                              overflow:hidden;margin-bottom:28px;">
+                  <tr>
+                    <td style="background:#f5f3ff;padding:18px 24px;
+                               border-bottom:1px solid #e5e7eb;">
+                      <p style="margin:0;font-size:13px;font-weight:700;
+                                color:#6d28d9;text-transform:uppercase;
+                                letter-spacing:0.5px;">
+                        What's included in your demo
+                      </p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:6px 0;">
+                      <table cellpadding="0" cellspacing="0" width="100%">
+                        <tr>
+                          <td style="padding:10px 24px;font-size:14px;color:#374151;">
+                            <span style="color:#4f46e5;font-weight:700;margin-right:10px;">✓</span>
+                            Submit and approve award nominations
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:10px 24px;font-size:14px;color:#374151;
+                                     background:#fafafa;">
+                            <span style="color:#4f46e5;font-weight:700;margin-right:10px;">✓</span>
+                            Real-time analytics and spending trends
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:10px 24px;font-size:14px;color:#374151;">
+                            <span style="color:#4f46e5;font-weight:700;margin-right:10px;">✓</span>
+                            AI-powered fraud detection engine
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:10px 24px;font-size:14px;color:#374151;
+                                     background:#fafafa;">
+                            <span style="color:#4f46e5;font-weight:700;margin-right:10px;">✓</span>
+                            Impersonate any demo user to explore different roles
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Expiry note -->
+                <div style="background:#fffbeb;border-left:4px solid #f59e0b;
+                            border-radius:4px;padding:14px 18px;">
+                  <p style="margin:0;font-size:13px;color:#92400e;">
+                    <strong>⏰ Note:</strong> This invitation link expires in 30 days.
+                    If you didn't request demo access, you can safely ignore this email.
+                  </p>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Footer -->
+            <tr>
+              <td style="padding:20px 40px;border-top:1px solid #e5e7eb;
+                         text-align:center;background:#f9fafb;">
+                <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;">
+                  This is an automated message from the Award Nominations demo environment.<br>
+                  Please do not reply to this email.
+                </p>
+              </td>
+            </tr>
+
+          </table>
+        </td></tr>
+      </table>
+    </body>
+    </html>
+    """
+
+
 def render_nomination_rejected(beneficiary_name: str, dollar_amount: float, currency: str) -> str:
     """Nominator notification — their nomination was rejected."""
     formatted_amount = _fmt(dollar_amount, currency)

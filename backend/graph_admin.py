@@ -159,43 +159,36 @@ def invite_external_user(
     invite_redirect_url: str,
 ) -> dict:
     """
-    Send a B2B invitation to an external email address.
+    Create a B2B invitation for an external email address.
 
-    Microsoft sends the invitation email on our behalf with the standard
-    "You've been invited" branding.  The email is trusted by spam filters
-    because it originates from Microsoft, not our own SMTP server.
+    sendInvitationMessage is False — we send our own branded email from
+    our SMTP server (email_utils.send_email) so the message arrives from
+    a trusted domain rather than Microsoft's unverified onmicrosoft.com tenant.
 
     Returns:
         {
-            "oid": str,   # guest object ID in the Demo tenant
-            "upn": str,   # the email address (used as UPN in dbo.Users)
+            "oid":        str,  # guest object ID in the Demo tenant
+            "upn":        str,  # the email address (used as UPN in dbo.Users)
+            "redeem_url": str,  # the URL the visitor must visit to accept
         }
     """
     body = {
         "invitedUserEmailAddress": email,
         "invitedUserDisplayName":  f"{first_name} {last_name}",
         "inviteRedirectUrl":       invite_redirect_url,
-        "sendInvitationMessage":   True,
-        "invitedUserMessageInfo": {
-            "customizedMessageBody": (
-                f"Hi {first_name},\n\n"
-                "You've been invited to explore the Award Nominations demo — a live "
-                "SaaS platform for employee recognition and monetary award management.\n\n"
-                "Click 'Accept invitation' below to get instant access. "
-                "No setup required — you'll be guided through the next steps automatically."
-            ),
-        },
+        "sendInvitationMessage":   False,   # we send our own branded email
     }
 
     r = _post("invitations", body)
     if r.status_code not in (200, 201):
         raise RuntimeError(f"B2B invitation failed: {r.status_code} {r.text}")
 
-    data = r.json()
-    oid  = data.get("invitedUser", {}).get("id", "")
+    data       = r.json()
+    oid        = data.get("invitedUser", {}).get("id", "")
+    redeem_url = data.get("inviteRedeemUrl", "")
 
-    logger.info("B2B invitation sent to %s (guest oid=%s)", email, oid)
-    return {"oid": oid, "upn": email}
+    logger.info("B2B invitation created for %s (guest oid=%s)", email, oid)
+    return {"oid": oid, "upn": email, "redeem_url": redeem_url}
 
 
 def assign_admin_role(user_oid: str) -> None:

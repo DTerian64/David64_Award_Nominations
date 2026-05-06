@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import db
-from handlers import nomination_created, nomination_approved, payout_submit, payout_accepted, notification_requested
+from handlers import nomination_created, nomination_approved, payout_submit, payout_accepted, notification_requested, access_requested
 
 logger = logging.getLogger("auxiliary.dispatcher")
 
@@ -48,6 +48,8 @@ HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
     # Free-form email delivery requested by the Ask Analytics agent (or any backend service).
     # Payload carries From / To / Subject / Body directly — no DB lookup needed.
     "notification.requested":  notification_requested.handle,
+    # Branded HTML invitation email sent to a demo self-registration requestor.
+    "notification.access_requested": access_requested.handle,
 }
 
 

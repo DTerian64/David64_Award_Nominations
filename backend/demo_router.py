@@ -9,10 +9,11 @@ No authentication required.
 
 Flow:
   1. Visitor submits First Name, Last Name, Email, Is Admin?
-  2. Backend calls Graph POST /invitations — Microsoft sends the B2B invite email
-  3. If Is Admin: assigns AWard_Nomination_Admin role to the new guest object
-  4. Creates a dbo.Users row (UPN = email) so auth.py can resolve them on first sign-in
-  5. Logs the request to dbo.DemoRegistrationRequests for audit / rate-limit
+  2. Backend calls Graph POST /invitations (sendInvitationMessage=False)
+  3. Backend sends its own branded invitation email via SMTP (email_utils)
+  4. If Is Admin: assigns AWard_Nomination_Admin role to the new guest object
+  5. Creates a dbo.Users row (UPN = email) so auth.py can resolve them on first sign-in
+  6. Logs the request to dbo.DemoRegistrationRequests for audit / rate-limit
 
 Rate limits (DB-backed, survive process restarts):
   • Max 3 invitations per IP per hour
@@ -31,6 +32,7 @@ from pydantic import BaseModel, validator
 
 import sqlhelper2 as sqlhelper
 import graph_admin
+from service_bus_publisher import publish_event
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +152,25 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
             detail="Could not send invitation. Please try again later.",
         )
 
-    oid = invite_result["oid"]
-    upn = invite_result["upn"]   # = body.email for B2B guests
+    oid        = invite_result["oid"]
+    upn        = invite_result["upn"]        # = body.email for B2B guests
+    redeem_url = invite_result["redeem_url"]
+
+    # ── Queue branded invitation email via Service Bus → auxiliary worker ────
+    try:
+        await publish_event(
+            "notification.access_requested",
+            extra={
+                "to":         body.email,
+                "first_name": body.first_name,
+                "redeem_url": redeem_url,
+            },
+        )
+        logger.info("Demo access invitation queued for %s", body.email)
+    except Exception as e:
+        # Non-fatal — the B2B guest account is created; the visitor can be
+        # re-invited manually if the Service Bus publish fails.
+        logger.error("Failed to queue demo access invitation for %s: %s", body.email, e)
 
     # ── Assign admin role (if requested) ──────────────────────────────────────
     if body.is_admin and oid:
