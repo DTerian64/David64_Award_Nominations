@@ -7,7 +7,7 @@ import {
 } from '@azure/msal-react';
 import { useTranslation } from 'react-i18next';
 import { SignInButton } from './components/SignInButton';
-import { DemoJoinPanel } from './components/DemoJoinPanel';
+import { DemoJoinPanel, IS_DEMO_SITE } from './components/DemoJoinPanel';
 import { SignOutButton } from './components/SignOutButton';
 import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
 import { ImpersonationBanner } from './components/ImpersonationBanner';
@@ -274,16 +274,39 @@ const AwardNominationApp: React.FC = () => {
       <UnauthenticatedTemplate>
         <div className="min-h-screen flex items-center justify-center p-4">
           <div className="max-w-md w-full">
-            <div className="bg-white p-8 rounded-lg shadow-lg text-center">
-              <Award className="w-16 h-16 mx-auto mb-4" style={{ color: 'var(--color-primary)' }} />
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                {t('app.title')}
-              </h1>
-              <p className="text-gray-600 mb-6">
-                {t('app.subtitle')}
-              </p>
-              <SignInButton />
-              <DemoJoinPanel />
+            <div className="bg-white p-8 rounded-lg shadow-lg">
+              <div className="text-center mb-6">
+                <Award className="w-16 h-16 mx-auto mb-4" style={{ color: 'var(--color-primary)' }} />
+                <h1 className="text-3xl font-bold text-gray-900 mb-1">
+                  {t('app.title')}
+                </h1>
+              </div>
+
+              {IS_DEMO_SITE ? (
+                <>
+                  <p className="text-sm font-semibold text-gray-700 mb-4">Please Sign In</p>
+                  <DemoJoinPanel />
+
+                  {/* Separator */}
+                  <div className="relative my-6">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-gray-300" />
+                    </div>
+                    <div className="relative flex justify-center text-sm">
+                      <span className="px-3 bg-white text-gray-500">Already have an account?</span>
+                    </div>
+                  </div>
+
+                  <SignInButton />
+                </>
+              ) : (
+                <>
+                  <p className="text-center text-gray-600 mb-6">{t('app.subtitle')}</p>
+                  <div className="text-center">
+                    <SignInButton />
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -19,7 +19,7 @@ import { useMsal } from '@azure/msal-react';
 import { loginRequest } from '../authConfig';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const IS_DEMO_SITE = window.location.hostname === 'demo-awards.terian-services.com';
+export const IS_DEMO_SITE = window.location.hostname === 'demo-awards.terian-services.com';
 
 interface JoinResult {
   upn:           string;
@@ -175,16 +175,7 @@ export const DemoJoinPanel: React.FC = () => {
       )}
 
       {/* Join panel */}
-      <div className="mt-6 border-t border-gray-200 pt-6">
-        <div className="text-center mb-4">
-          <p className="text-sm font-semibold text-gray-700">
-            Explore Award Nominations — No IT setup required
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            Create a free demo account in seconds
-          </p>
-        </div>
-
+      <div>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="flex gap-2">
             <input
