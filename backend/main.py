@@ -41,6 +41,7 @@ import fraud_ml
 from token_utils import verify_action_token
 from email_utils import get_action_confirmation_page
 from service_bus_publisher import publish_event
+from demo_router import router as demo_router
 
 # ============================================================================
 # CONFIGURATION
@@ -109,6 +110,9 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600,
 )
+
+# ── Demo self-registration router (public, no auth) ─────────────────────────
+app.include_router(demo_router)
 
 # ============================================================================
 # OBSERVABILITY — Azure Monitor / Application Insights

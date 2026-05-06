@@ -7,6 +7,7 @@ import {
 } from '@azure/msal-react';
 import { useTranslation } from 'react-i18next';
 import { SignInButton } from './components/SignInButton';
+import { DemoJoinPanel } from './components/DemoJoinPanel';
 import { SignOutButton } from './components/SignOutButton';
 import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
 import { ImpersonationBanner } from './components/ImpersonationBanner';
@@ -282,6 +283,7 @@ const AwardNominationApp: React.FC = () => {
                 {t('app.subtitle')}
               </p>
               <SignInButton />
+              <DemoJoinPanel />
             </div>
           </div>
         </div>

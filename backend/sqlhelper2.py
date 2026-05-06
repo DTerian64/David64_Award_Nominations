@@ -1550,3 +1550,77 @@ def rename_conversation(
                "uid": user_id, "tid": tenant_id})
         session.commit()
         return result.rowcount > 0
+
+
+# ===========================================================================
+# DEMO SELF-REGISTRATION HELPERS
+# ===========================================================================
+
+DEMO_TENANT_NAME = "Terian Services Demo"
+
+
+def get_demo_tenant_id() -> Optional[int]:
+    """Return the internal TenantId for the Demo tenant, or None if not found."""
+    with _session() as session:
+        row = session.execute(
+            text("SELECT TenantId FROM dbo.Tenants WHERE TenantName = :name"),
+            {"name": DEMO_TENANT_NAME},
+        ).fetchone()
+        return row[0] if row else None
+
+
+def get_demo_aad_tenant_id() -> Optional[str]:
+    """Return the Azure AD tenant GUID for the Demo tenant."""
+    with _session() as session:
+        row = session.execute(
+            text("SELECT AzureAdTenantId FROM dbo.Tenants WHERE TenantName = :name"),
+            {"name": DEMO_TENANT_NAME},
+        ).fetchone()
+        return row[0] if row else None
+
+
+def upn_exists_in_tenant(upn: str, tenant_id: int) -> bool:
+    """Return True if a user with this UPN already exists in the given tenant."""
+    with _session() as session:
+        row = session.execute(
+            text(
+                "SELECT 1 FROM dbo.Users "
+                "WHERE userPrincipalName = :upn AND TenantId = :tid"
+            ),
+            {"upn": upn, "tid": tenant_id},
+        ).fetchone()
+        return row is not None
+
+
+def create_demo_user(
+    first_name: str,
+    last_name: str,
+    email: str,
+    upn: str,
+    tenant_id: int,
+) -> int:
+    """
+    Insert a self-registered demo user into dbo.Users.
+
+    Returns the new UserId.
+    The user has no manager (NULL) and Title = 'Demo User'.
+    """
+    with _session() as session:
+        result = session.execute(
+            text("""
+                INSERT INTO dbo.Users
+                    (userPrincipalName, userEmail, FirstName, LastName, Title, ManagerId, TenantId)
+                OUTPUT INSERTED.UserId
+                VALUES (:upn, :email, :first, :last, 'Demo User', NULL, :tid)
+            """),
+            {
+                "upn":   upn,
+                "email": email,
+                "first": first_name,
+                "last":  last_name,
+                "tid":   tenant_id,
+            },
+        )
+        row = result.fetchone()
+        session.commit()
+        return row[0]
