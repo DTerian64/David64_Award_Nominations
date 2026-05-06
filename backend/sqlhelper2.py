@@ -1561,7 +1561,7 @@ DEMO_TENANT_NAME = "Terian Services Demo"
 
 def get_demo_tenant_id() -> Optional[int]:
     """Return the internal TenantId for the Demo tenant, or None if not found."""
-    with _session() as session:
+    with get_db_context() as session:
         row = session.execute(
             text("SELECT TenantId FROM dbo.Tenants WHERE TenantName = :name"),
             {"name": DEMO_TENANT_NAME},
@@ -1571,7 +1571,7 @@ def get_demo_tenant_id() -> Optional[int]:
 
 def get_demo_aad_tenant_id() -> Optional[str]:
     """Return the Azure AD tenant GUID for the Demo tenant."""
-    with _session() as session:
+    with get_db_context() as session:
         row = session.execute(
             text("SELECT AzureAdTenantId FROM dbo.Tenants WHERE TenantName = :name"),
             {"name": DEMO_TENANT_NAME},
@@ -1581,7 +1581,7 @@ def get_demo_aad_tenant_id() -> Optional[str]:
 
 def upn_exists_in_tenant(upn: str, tenant_id: int) -> bool:
     """Return True if a user with this UPN already exists in the given tenant."""
-    with _session() as session:
+    with get_db_context() as session:
         row = session.execute(
             text(
                 "SELECT 1 FROM dbo.Users "
@@ -1601,7 +1601,7 @@ def log_demo_registration(
     request_ip: Optional[str],
 ) -> None:
     """Insert an audit row into dbo.DemoRegistrationRequests."""
-    with _session() as session:
+    with get_db_context() as session:
         session.execute(
             text("""
                 INSERT INTO dbo.DemoRegistrationRequests
@@ -1622,7 +1622,7 @@ def log_demo_registration(
 
 def count_demo_registrations_by_email(email: str, since_minutes: int = 60) -> int:
     """Return how many invitations have been sent to this email in the last N minutes."""
-    with _session() as session:
+    with get_db_context() as session:
         row = session.execute(
             text("""
                 SELECT COUNT(*) FROM dbo.DemoRegistrationRequests
@@ -1636,7 +1636,7 @@ def count_demo_registrations_by_email(email: str, since_minutes: int = 60) -> in
 
 def count_demo_registrations_by_ip(ip: str, since_minutes: int = 60) -> int:
     """Return how many invitations have been sent from this IP in the last N minutes."""
-    with _session() as session:
+    with get_db_context() as session:
         row = session.execute(
             text("""
                 SELECT COUNT(*) FROM dbo.DemoRegistrationRequests
@@ -1661,7 +1661,7 @@ def create_demo_user(
     Returns the new UserId.
     The user has no manager (NULL) and Title = 'Demo User'.
     """
-    with _session() as session:
+    with get_db_context() as session:
         result = session.execute(
             text("""
                 INSERT INTO dbo.Users

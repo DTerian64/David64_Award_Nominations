@@ -95,6 +95,19 @@ class DemoRequestResponse(BaseModel):
     ),
 )
 async def demo_request(body: DemoRequestBody, request: Request) -> DemoRequestResponse:
+    try:
+        return await _demo_request_inner(body, request)
+    except HTTPException:
+        raise  # pass through clean HTTP errors unchanged
+    except Exception as exc:
+        logger.exception("Unhandled error in POST /api/demo/request: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {type(exc).__name__}: {exc}",
+        )
+
+
+async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRequestResponse:
 
     client_ip = (request.client.host if request.client else "unknown")[:64]
 

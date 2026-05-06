@@ -6,7 +6,7 @@
 
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(24h)
-| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| where ContainerAppName_s in (award-api-primary-sandbox", "award-api-secondary-sandbox)
 | extend LogData = parse_json(Log_s)
 | where tostring(LogData.level) == "ERROR"
 | extend 
@@ -18,3 +18,12 @@ ContainerAppConsoleLogs_CL
     UserId = toint(LogData.user_id)
 | project PacificTime, Message, Module, Exception, NominationId, UserId, Region = ContainerAppName_s
 | order by PacificTime desc
+
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(40m)
+| where ContainerAppName_s in ("award-api-primary-sandbox", "award-api-secondary-sandbox")
+|where not(Log_s has_any ("DEBUG","INFO"))
+| extend 
+    PacificTime = datetime_utc_to_local(TimeGenerated, 'US/Pacific')   
+| project PacificTime, Log_s
+| order by PacificTime asc
