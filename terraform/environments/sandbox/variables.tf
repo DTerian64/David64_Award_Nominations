@@ -206,3 +206,23 @@ variable "workday_webhook_secret" {
   type        = string
   sensitive   = true
 }
+
+# ── Demo tenant — self-registration (graph_admin.py / demo_router.py) ─────────
+variable "demo_aad_tenant_id" {
+  description = "Azure AD tenant GUID for the Demo Terian Services tenant (DEMO_AAD_TENANT_ID). Non-sensitive — it appears in token tid claims."
+  type        = string
+  default     = ""
+}
+
+variable "demo_graph_client_id" {
+  description = "Client ID of the Award Nomination Seeder app registration in the Demo tenant (DEMO_GRAPH_CLIENT_ID). Non-sensitive."
+  type        = string
+  default     = ""
+}
+
+variable "demo_graph_client_secret" {
+  description = "Client secret for the Award Nomination Seeder app in the Demo tenant (DEMO_GRAPH_CLIENT_SECRET). Stored in Key Vault as DEMO-GRAPH-CLIENT-SECRET."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

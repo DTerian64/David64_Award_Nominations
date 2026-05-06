@@ -264,6 +264,9 @@ module "container_apps" {
     # Service Bus — neither FQNS nor topic name is sensitive; MI credential grants access.
     { name = "SERVICE_BUS_FQNS",                value = module.service_bus.namespace_fqns },
     { name = "SERVICE_BUS_TOPIC_NAME",          value = module.service_bus.topic_name },
+    # Demo tenant self-registration — non-sensitive IDs; secret goes via Key Vault below
+    { name = "DEMO_AAD_TENANT_ID",              value = var.demo_aad_tenant_id },
+    { name = "DEMO_GRAPH_CLIENT_ID",            value = var.demo_graph_client_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -282,6 +285,8 @@ module "container_apps" {
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING",    kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
     # Validates inbound webhook calls from Workday_Proxy (sandbox) or real Workday (prod).
     { env_name = "WORKDAY_WEBHOOK_SECRET",                   kv_secret_name = "WORKDAY-WEBHOOK-SECRET" },
+    # Demo tenant — Graph API client secret for self-registration (demo_router.py / graph_admin.py)
+    { env_name = "DEMO_GRAPH_CLIENT_SECRET",                 kv_secret_name = "DEMO-GRAPH-CLIENT-SECRET" },
   ]
 
   tags = local.tags

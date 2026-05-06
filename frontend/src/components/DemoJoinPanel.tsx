@@ -40,7 +40,7 @@ interface PasswordModalProps {
 }
 
 const PasswordModal: React.FC<PasswordModalProps> = ({
-  upn, password, aadTenantId, onContinue,
+  upn, password, onContinue,
 }) => {
   const [copied, setCopied] = useState(false);
 
