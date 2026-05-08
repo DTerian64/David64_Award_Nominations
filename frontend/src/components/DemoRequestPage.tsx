@@ -8,8 +8,9 @@
  * On success, shows a "Check your inbox" confirmation screen.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Award, Mail, ArrowLeft } from 'lucide-react';
+import { warmupDemoDatabase } from '../services/demoWarmup';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -22,6 +23,10 @@ export const DemoRequestPage: React.FC = () => {
   const [isAdmin,   setIsAdmin]   = useState(false);
   const [pageState, setPageState] = useState<PageState>('form');
   const [errorMsg,  setErrorMsg]  = useState('');
+
+  useEffect(() => {
+    warmupDemoDatabase();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

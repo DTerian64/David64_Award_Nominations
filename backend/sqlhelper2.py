@@ -292,6 +292,12 @@ def get_db_context():
         session.close()
 
 
+def warmup_database() -> None:
+    """Open a SQL connection and run a tiny query to wake Azure SQL Serverless."""
+    with get_db_context() as session:
+        session.execute(text("SELECT 1")).fetchone()
+
+
 def create_all_tables() -> None:
     """
     Code-First: create all tables declared in the ORM models if they do not

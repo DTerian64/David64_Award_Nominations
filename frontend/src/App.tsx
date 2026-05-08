@@ -17,6 +17,7 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { useImpersonation } from './contexts/ImpersonationContext';
 import { useTenantConfig } from './contexts/TenantConfigContext';
 import { getAccessToken } from './services/api';
+import { warmupDemoDatabase } from './services/demoWarmup';
 
 // Types matching your backend
 interface User {
@@ -99,6 +100,12 @@ const AwardNominationApp: React.FC = () => {
   const { t, i18n } = useTranslation();
 
   const pathname = window.location.pathname;
+
+  useEffect(() => {
+    if (accounts.length === 0 && pathname !== '/demo/request' && pathname !== '/demo/welcome') {
+      warmupDemoDatabase();
+    }
+  }, [accounts.length, pathname]);
 
   // Demo sub-pages — full-page layouts, rendered outside normal auth flow
   if (pathname === '/demo/request') return <DemoRequestPage />;

@@ -27,7 +27,7 @@ import logging
 import os
 import re
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from pydantic import BaseModel, validator
 
 import sqlhelper2 as sqlhelper
@@ -86,6 +86,12 @@ class DemoRequestResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
+
+@router.post("/warmup_database", status_code=202)
+async def warmup_database(background_tasks: BackgroundTasks):
+    background_tasks.add_task(sqlhelper.warmup_database)
+    return {"message": "Database warmup started"}
+
 
 @router.post(
     "/request",
