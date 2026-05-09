@@ -36,7 +36,7 @@ interface PasswordModalProps {
   upn:           string;
   password:      string;
   aadTenantId:   string;
-  onContinue:    () => void;
+  onContinue:    () => void; 
 }
 
 const PasswordModal: React.FC<PasswordModalProps> = ({
