@@ -20,7 +20,7 @@ import { loginRequest } from '../authConfig';
 
 const DEMO_AAD_TENANT_ID = import.meta.env.VITE_DEMO_AAD_TENANT_ID as string | undefined;
 
-type SsoState = 'trying' | 'needs-interaction';
+type SsoState = 'trying' | 'ready' | 'needs-interaction';
 
 export const DemoWelcomePage: React.FC = () => {
   const { instance, accounts } = useMsal();
@@ -31,29 +31,29 @@ export const DemoWelcomePage: React.FC = () => {
     : loginRequest;
 
   useEffect(() => {
-    // Already have a token — go straight to the app
+    // Already have a cached MSAL token — mark ready immediately
     if (accounts.length > 0) {
-      window.location.href = '/';
+      setSsoState('ready');
       return;
     }
 
-    // After B2B invitation redemption the user has a valid Microsoft session.
-    // ssoSilent() picks it up without showing a login page.
+    // Try to pick up the Microsoft session established during B2B invitation
+    // redemption — no login page shown to the user if this succeeds.
     instance
       .ssoSilent(demoLoginRequest)
-      .then(() => {
-        window.location.href = '/';
-      })
-      .catch(() => {
-        // No usable session — ask the user to click Sign In
-        setSsoState('needs-interaction');
-      });
+      .then(() => setSsoState('ready'))
+      .catch(() => setSsoState('needs-interaction'));
   }, []);
 
-  const handleSignIn = () => {
-    instance.loginRedirect(demoLoginRequest).catch((err) => {
-      console.error('MSAL redirect error:', err);
-    });
+  const handleExplore = () => {
+    if (ssoState === 'needs-interaction') {
+      // No session — full redirect login, then land on /
+      instance.loginRedirect(demoLoginRequest).catch((err) => {
+        console.error('MSAL redirect error:', err);
+      });
+    } else {
+      window.location.href = '/';
+    }
   };
 
   return (
@@ -89,25 +89,21 @@ export const DemoWelcomePage: React.FC = () => {
           ))}
         </div>
 
-        {ssoState === 'trying' ? (
-          <div className="flex flex-col items-center gap-3 py-2">
-            <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
-            <p className="text-sm text-gray-400">Signing you in…</p>
-          </div>
-        ) : (
-          <>
-            <button
-              onClick={handleSignIn}
-              className="w-full py-3 px-6 rounded-lg font-semibold text-white text-base transition-colors mb-3"
-              style={{ backgroundColor: 'var(--color-primary, #4f46e5)' }}
-            >
-              Sign In & Explore →
-            </button>
-            <p className="text-xs text-gray-400">
-              You'll be redirected to Microsoft to complete sign-in.
-            </p>
-          </>
-        )}
+        <button
+          onClick={handleExplore}
+          disabled={ssoState === 'trying'}
+          className="w-full py-3 px-6 rounded-lg font-semibold text-white text-base transition-opacity mb-3 flex items-center justify-center gap-2 disabled:opacity-60"
+          style={{ backgroundColor: 'var(--color-primary, #4f46e5)' }}
+        >
+          {ssoState === 'trying' ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Preparing your access…
+            </>
+          ) : (
+            'Explore →'
+          )}
+        </button>
       </div>
     </div>
   );
