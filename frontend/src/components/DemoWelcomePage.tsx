@@ -4,53 +4,54 @@
  * Landing page at /demo/welcome — shown after a visitor accepts the
  * Microsoft B2B invitation email (inviteRedirectUrl points here).
  *
- * The user is already authenticated with Microsoft at this point.
- * We trigger loginRedirect so MSAL processes their session and they
- * land on the main app dashboard.
+ * Flow:
+ *   1. If MSAL already has an account (returning visitor) → go straight to /.
+ *   2. Try ssoSilent() using the demo tenant authority — this picks up the
+ *      existing Microsoft session that was just established during B2B invitation
+ *      redemption, so the user doesn't have to sign in a second time.
+ *   3. If ssoSilent fails (no usable session) → show the Sign In button so
+ *      the user can trigger a full loginRedirect manually.
  */
 
 import React, { useEffect, useState } from 'react';
 import { useMsal } from '@azure/msal-react';
-import { Award, CheckCircle } from 'lucide-react';
+import { Award, CheckCircle, Loader2 } from 'lucide-react';
 import { loginRequest } from '../authConfig';
 
 const DEMO_AAD_TENANT_ID = import.meta.env.VITE_DEMO_AAD_TENANT_ID as string | undefined;
 
+type SsoState = 'trying' | 'needs-interaction';
+
 export const DemoWelcomePage: React.FC = () => {
   const { instance, accounts } = useMsal();
-  const [countdown, setCountdown] = useState(5);
+  const [ssoState, setSsoState] = useState<SsoState>('trying');
 
-  // If already authenticated (e.g. returning visitor), redirect immediately
+  const demoLoginRequest = DEMO_AAD_TENANT_ID
+    ? { ...loginRequest, authority: `https://login.microsoftonline.com/${DEMO_AAD_TENANT_ID}` }
+    : loginRequest;
+
   useEffect(() => {
+    // Already have a token — go straight to the app
     if (accounts.length > 0) {
       window.location.href = '/';
       return;
     }
 
-    // Countdown then auto-trigger sign-in
-    const timer = setInterval(() => {
-      setCountdown((c) => {
-        if (c <= 1) {
-          clearInterval(timer);
-          handleSignIn();
-          return 0;
-        }
-        return c - 1;
+    // After B2B invitation redemption the user has a valid Microsoft session.
+    // ssoSilent() picks it up without showing a login page.
+    instance
+      .ssoSilent(demoLoginRequest)
+      .then(() => {
+        window.location.href = '/';
+      })
+      .catch(() => {
+        // No usable session — ask the user to click Sign In
+        setSsoState('needs-interaction');
       });
-    }, 1000);
-
-    return () => clearInterval(timer);
   }, []);
 
   const handleSignIn = () => {
-    const request = DEMO_AAD_TENANT_ID
-      ? {
-          ...loginRequest,
-          authority: `https://login.microsoftonline.com/${DEMO_AAD_TENANT_ID}`,
-        }
-      : loginRequest;
-
-    instance.loginRedirect(request).catch((err) => {
+    instance.loginRedirect(demoLoginRequest).catch((err) => {
       console.error('MSAL redirect error:', err);
     });
   };
@@ -88,17 +89,25 @@ export const DemoWelcomePage: React.FC = () => {
           ))}
         </div>
 
-        <button
-          onClick={handleSignIn}
-          className="w-full py-3 px-6 rounded-lg font-semibold text-white text-base transition-colors mb-3"
-          style={{ backgroundColor: 'var(--color-primary, #4f46e5)' }}
-        >
-          Sign In & Explore →
-        </button>
-
-        <p className="text-xs text-gray-400">
-          Signing in automatically in {countdown}s…
-        </p>
+        {ssoState === 'trying' ? (
+          <div className="flex flex-col items-center gap-3 py-2">
+            <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
+            <p className="text-sm text-gray-400">Signing you in…</p>
+          </div>
+        ) : (
+          <>
+            <button
+              onClick={handleSignIn}
+              className="w-full py-3 px-6 rounded-lg font-semibold text-white text-base transition-colors mb-3"
+              style={{ backgroundColor: 'var(--color-primary, #4f46e5)' }}
+            >
+              Sign In & Explore →
+            </button>
+            <p className="text-xs text-gray-400">
+              You'll be redirected to Microsoft to complete sign-in.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

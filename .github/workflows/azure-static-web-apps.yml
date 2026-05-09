@@ -48,6 +48,7 @@ jobs:
           VITE_API_CLIENT_ID: ${{ vars.VITE_API_CLIENT_ID }}
           VITE_APPINSIGHTS_CONNECTION_STRING: ${{ vars.VITE_APPINSIGHTS_CONNECTION_STRING }}
           VITE_DEMO_ALLOWED_EMAILS: ${{ vars.VITE_DEMO_ALLOWED_EMAILS }}
+          VITE_DEMO_AAD_TENANT_ID: ${{ vars.VITE_DEMO_AAD_TENANT_ID }}
 
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
