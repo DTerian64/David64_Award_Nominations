@@ -4,55 +4,51 @@
  * Landing page at /demo/welcome — shown after a visitor accepts the
  * Microsoft B2B invitation email (inviteRedirectUrl points here).
  *
- * Flow:
- *   1. If MSAL already has an account (returning visitor) → go straight to /.
- *   2. Try ssoSilent() using the demo tenant authority — this picks up the
- *      existing Microsoft session that was just established during B2B invitation
- *      redemption, so the user doesn't have to sign in a second time.
- *   3. If ssoSilent fails (no usable session) → show the Sign In button so
- *      the user can trigger a full loginRedirect manually.
+ * Flow on "Explore →" click:
+ *   1. If MSAL already has a cached token → navigate to / directly.
+ *   2. Try ssoSilent() with the demo tenant authority — picks up the existing
+ *      Microsoft session from B2B redemption without showing a login page.
+ *   3. If ssoSilent fails (no usable session) → loginRedirect fallback.
+ *
+ * ssoSilent is intentionally deferred to click time, not mount time, because
+ * MSAL rejects ssoSilent calls while handleRedirectPromise is still settling
+ * (which is the case immediately after the B2B redemption redirect lands here).
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useMsal } from '@azure/msal-react';
 import { Award, CheckCircle, Loader2 } from 'lucide-react';
 import { loginRequest } from '../authConfig';
 
 const DEMO_AAD_TENANT_ID = import.meta.env.VITE_DEMO_AAD_TENANT_ID as string | undefined;
 
-type SsoState = 'trying' | 'ready' | 'needs-interaction';
-
 export const DemoWelcomePage: React.FC = () => {
   const { instance, accounts } = useMsal();
-  const [ssoState, setSsoState] = useState<SsoState>('trying');
+  const [exploring, setExploring] = useState(false);
 
   const demoLoginRequest = DEMO_AAD_TENANT_ID
     ? { ...loginRequest, authority: `https://login.microsoftonline.com/${DEMO_AAD_TENANT_ID}` }
     : loginRequest;
 
-  useEffect(() => {
-    // Already have a cached MSAL token — mark ready immediately
+  const handleExplore = async () => {
+    setExploring(true);
+
+    // Already authenticated — go straight to the app
     if (accounts.length > 0) {
-      setSsoState('ready');
+      window.location.href = '/';
       return;
     }
 
-    // Try to pick up the Microsoft session established during B2B invitation
-    // redemption — no login page shown to the user if this succeeds.
-    instance
-      .ssoSilent(demoLoginRequest)
-      .then(() => setSsoState('ready'))
-      .catch(() => setSsoState('needs-interaction'));
-  }, []);
-
-  const handleExplore = () => {
-    if (ssoState === 'needs-interaction') {
-      // No session — full redirect login, then land on /
+    // Try silent SSO first — picks up the Microsoft session from B2B redemption
+    try {
+      await instance.ssoSilent(demoLoginRequest);
+      window.location.href = '/';
+    } catch {
+      // No usable session — full interactive login, MSAL will return to /
       instance.loginRedirect(demoLoginRequest).catch((err) => {
         console.error('MSAL redirect error:', err);
+        setExploring(false);
       });
-    } else {
-      window.location.href = '/';
     }
   };
 
@@ -91,14 +87,14 @@ export const DemoWelcomePage: React.FC = () => {
 
         <button
           onClick={handleExplore}
-          disabled={ssoState === 'trying'}
+          disabled={exploring}
           className="w-full py-3 px-6 rounded-lg font-semibold text-white text-base transition-opacity mb-3 flex items-center justify-center gap-2 disabled:opacity-60"
           style={{ backgroundColor: 'var(--color-primary, #4f46e5)' }}
         >
-          {ssoState === 'trying' ? (
+          {exploring ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Preparing your access…
+              Opening…
             </>
           ) : (
             'Explore →'
