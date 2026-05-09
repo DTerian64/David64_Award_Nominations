@@ -170,11 +170,43 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
             message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
         )
 
-    # ── Permanent duplicate check — already a registered demo user ────────────
-    # This fires after the 1-hour rate limit window expires and prevents a
-    # second Graph API call + invitation email for an already-provisioned user.
+    # ── Already registered — resend invitation email, skip DB/role work ─────────
+    # Graph POST /invitations is safe to repeat: it returns the existing guest
+    # OID with a fresh inviteRedeemUrl, so the user gets an identical email they
+    # can use to reach the welcome page again.
     if sqlhelper.demo_email_registered(body.email):
-        logger.info("Demo re-registration suppressed for already-registered email: %s", body.email)
+        logger.info("Already-registered user requesting resend (is_admin=%s): %s",
+                    body.is_admin, body.email)
+        try:
+            reinvite = graph_admin.invite_external_user(
+                first_name=body.first_name,
+                last_name=body.last_name,
+                email=body.email,
+                invite_redirect_url=_INVITE_REDIRECT_URL,
+            )
+
+            # Upgrade to admin if they didn't request it the first time
+            if body.is_admin and reinvite["oid"]:
+                try:
+                    graph_admin.assign_admin_role(reinvite["oid"])
+                    logger.info("Admin role assigned on resend for oid=%s", reinvite["oid"])
+                except RuntimeError as e:
+                    logger.error("Admin role assignment failed on resend for oid=%s: %s",
+                                 reinvite["oid"], e)
+
+            await publish_event(
+                "notification.access_requested",
+                extra={
+                    "to":         body.email,
+                    "first_name": body.first_name,
+                    "redeem_url": reinvite["redeem_url"],
+                },
+            )
+            logger.info("Resent invitation to already-registered user: %s", body.email)
+        except Exception as e:
+            logger.error("Resend failed for %s: %s", body.email, e)
+            # Still return success — don't reveal internal state to the caller.
+
         return DemoRequestResponse(
             message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
         )
@@ -204,37 +236,12 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
         )
 
     oid        = invite_result["oid"]
-    upn        = invite_result["upn"]        # = body.email for B2B guests
+    upn        = invite_result["upn"]
     redeem_url = invite_result["redeem_url"]
 
-    # ── Queue branded invitation email via Service Bus → auxiliary worker ────
-    try:
-        await publish_event(
-            "notification.access_requested",
-            extra={
-                "to":         body.email,
-                "first_name": body.first_name,
-                "redeem_url": redeem_url,
-            },
-        )
-        logger.info("Demo access invitation queued for %s", body.email)
-    except Exception as e:
-        # Non-fatal — the B2B guest account is created; the visitor can be
-        # re-invited manually if the Service Bus publish fails.
-        logger.error("Failed to queue demo access invitation for %s: %s", body.email, e)
-
-    # ── Assign admin role (if requested) ──────────────────────────────────────
-    if body.is_admin and oid:
-        try:
-            graph_admin.assign_admin_role(oid)
-        except RuntimeError as e:
-            # Non-fatal — the user can still sign in; admin role can be
-            # granted manually if Graph is temporarily unavailable.
-            logger.error("Admin role assignment failed for oid=%s: %s", oid, e)
-
-    # ── Create dbo.Users row ──────────────────────────────────────────────────
-    # Store email as UPN — this is what auth.py reads from the JWT
-    # preferred_username claim for B2B guest tokens.
+    # ── Create dbo.Users row FIRST ───────────────────────────────────────────
+    # Must happen before publish_event so that a rapid second request hits the
+    # demo_email_registered guard and cannot slip through before the DB write.
     if not sqlhelper.upn_exists_in_tenant(upn, tenant_id):
         try:
             sqlhelper.create_demo_user(
@@ -246,9 +253,31 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
             )
         except Exception as e:
             logger.error("DB insert failed for %s: %s", upn, e)
-            # Non-fatal at this stage — invitation is already sent.
-            # The user's first sign-in will fail with 404; they can
-            # contact us to re-try the registration.
+            # Non-fatal — invitation already created in AAD; user can sign in
+            # once the row is inserted manually or via a retry.
+
+    # ── Assign admin role (if requested) ──────────────────────────────────────
+    if body.is_admin and oid:
+        try:
+            graph_admin.assign_admin_role(oid)
+        except RuntimeError as e:
+            logger.error("Admin role assignment failed for oid=%s: %s", oid, e)
+
+    # ── Queue branded invitation email via Service Bus → auxiliary worker ────
+    # Sent after the DB row exists so a concurrent retry sees the user and
+    # short-circuits before sending a duplicate email.
+    try:
+        await publish_event(
+            "notification.access_requested",
+            extra={
+                "to":         body.email,
+                "first_name": body.first_name,
+                "redeem_url": redeem_url,
+            },
+        )
+        logger.info("Demo access invitation queued for %s", body.email)
+    except Exception as e:
+        logger.error("Failed to queue demo access invitation for %s: %s", body.email, e)
 
     # ── Audit log ─────────────────────────────────────────────────────────────
     try:
