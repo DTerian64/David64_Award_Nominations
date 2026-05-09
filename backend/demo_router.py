@@ -170,6 +170,15 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
             message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
         )
 
+    # ── Permanent duplicate check — already a registered demo user ────────────
+    # This fires after the 1-hour rate limit window expires and prevents a
+    # second Graph API call + invitation email for an already-provisioned user.
+    if sqlhelper.demo_email_registered(body.email):
+        logger.info("Demo re-registration suppressed for already-registered email: %s", body.email)
+        return DemoRequestResponse(
+            message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
+        )
+
     # ── Resolve demo tenant ───────────────────────────────────────────────────
     tenant_id = sqlhelper.get_demo_tenant_id()
     if tenant_id is None:

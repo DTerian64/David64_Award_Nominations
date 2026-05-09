@@ -1585,6 +1585,26 @@ def get_demo_aad_tenant_id() -> Optional[str]:
         return row[0] if row else None
 
 
+def demo_email_registered(email: str) -> bool:
+    """
+    Return True if this email address has already been registered as a demo user
+    in dbo.Users (permanent check, not time-windowed).
+
+    Used in demo_router.py to short-circuit re-registration attempts before
+    calling the Graph API or sending another invitation email.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text(
+                "SELECT 1 FROM dbo.Users u "
+                "JOIN dbo.Tenants t ON u.TenantId = t.TenantId "
+                "WHERE u.userEmail = :email AND t.TenantName = :demo_name"
+            ),
+            {"email": email, "demo_name": DEMO_TENANT_NAME},
+        ).fetchone()
+        return row is not None
+
+
 def upn_exists_in_tenant(upn: str, tenant_id: int) -> bool:
     """Return True if a user with this UPN already exists in the given tenant."""
     with get_db_context() as session:
