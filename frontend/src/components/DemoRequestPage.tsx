@@ -16,20 +16,73 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 type PageState = 'form' | 'submitting' | 'success' | 'error';
 
+// ---------------------------------------------------------------------------
+// Personal / consumer email domain blocklist
+// Keep in sync with demo_router.py PERSONAL_EMAIL_DOMAINS
+// ---------------------------------------------------------------------------
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com',
+  'yahoo.com', 'yahoo.co.uk', 'yahoo.co.in', 'yahoo.fr', 'yahoo.de',
+  'yahoo.es', 'yahoo.it', 'yahoo.ca', 'yahoo.com.br', 'ymail.com',
+  'hotmail.com', 'hotmail.co.uk', 'hotmail.fr', 'hotmail.de', 'hotmail.es',
+  'outlook.com', 'live.com', 'live.co.uk', 'msn.com',
+  'icloud.com', 'me.com', 'mac.com',
+  'aol.com', 'aim.com',
+  'protonmail.com', 'proton.me', 'pm.me',
+  'mail.com', 'gmx.com', 'gmx.net', 'gmx.de',
+  'zoho.com', 'fastmail.com', 'fastmail.fm',
+  'tutanota.com', 'tutamail.com',
+  'yandex.com', 'yandex.ru',
+  'qq.com', '163.com', '126.com',
+  'inbox.com', 'rocketmail.com',
+]);
+
+function isPersonalEmail(email: string): boolean {
+  const domain = email.trim().toLowerCase().split('@')[1] ?? '';
+  return PERSONAL_EMAIL_DOMAINS.has(domain);
+}
+
 export const DemoRequestPage: React.FC = () => {
-  const [firstName, setFirstName] = useState('');
-  const [lastName,  setLastName]  = useState('');
-  const [email,     setEmail]     = useState('');
-  const [isAdmin,   setIsAdmin]   = useState(false);
-  const [pageState, setPageState] = useState<PageState>('form');
-  const [errorMsg,  setErrorMsg]  = useState('');
+  const [firstName,   setFirstName]   = useState('');
+  const [lastName,    setLastName]    = useState('');
+  const [email,       setEmail]       = useState('');
+  const [emailError,  setEmailError]  = useState('');
+  const [isAdmin,     setIsAdmin]     = useState(false);
+  const [pageState,   setPageState]   = useState<PageState>('form');
+  const [errorMsg,    setErrorMsg]    = useState('');
 
   useEffect(() => {
     warmupDemoDatabase();
   }, []);
 
+  const validateEmail = (value: string): string => {
+    if (value && isPersonalEmail(value)) {
+      return "That looks like a personal email address. Please use your work or school email to request demo access.";
+    }
+    return '';
+  };
+
+  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setEmail(value);
+    // Clear the error while typing so it doesn't nag on every keystroke;
+    // we'll re-validate on blur and on submit.
+    if (emailError) setEmailError('');
+  };
+
+  const handleEmailBlur = () => {
+    setEmailError(validateEmail(email));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const emailValidationError = validateEmail(email);
+    if (emailValidationError) {
+      setEmailError(emailValidationError);
+      return;
+    }
+
     setPageState('submitting');
     setErrorMsg('');
 
@@ -133,11 +186,27 @@ export const DemoRequestPage: React.FC = () => {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={handleEmailChange}
+                onBlur={handleEmailBlur}
                 required
                 placeholder="jane@yourcompany.com"
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                aria-describedby={emailError ? "email-error" : undefined}
+                className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 transition-colors ${
+                  emailError
+                    ? 'border-red-400 focus:ring-red-300 bg-red-50'
+                    : 'border-gray-300 focus:ring-indigo-400'
+                }`}
               />
+              {emailError ? (
+                <p id="email-error" className="mt-1.5 text-xs text-red-600 flex items-start gap-1.5">
+                  <svg className="w-3.5 h-3.5 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                  {emailError}
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-gray-400">Use your work or school email address</p>
+              )}
             </div>
 
             <label className="flex items-start gap-3 cursor-pointer select-none p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">

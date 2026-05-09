@@ -187,8 +187,25 @@ def invite_external_user(
     oid        = data.get("invitedUser", {}).get("id", "")
     redeem_url = data.get("inviteRedeemUrl", "")
 
+    # ── Resolve the actual UPN from Azure AD ──────────────────────────────────
+    # The JWT `upn` claim that auth.py reads is the EXT UPN assigned by Azure AD
+    # (e.g. david_terian_yahoo.com#EXT#@david64demo.onmicrosoft.com), NOT the
+    # original email address.  Fetching it here ensures dbo.Users stores the same
+    # value that will appear in the token so auth.py can resolve the user.
+    actual_upn = email  # safe fallback if Graph call fails
+    if oid:
+        upn_r = _gh(f"users/{oid}", params={"$select": "userPrincipalName"})
+        if upn_r.status_code == 200:
+            actual_upn = upn_r.json().get("userPrincipalName", email)
+            logger.info("Resolved guest UPN: %s → %s", email, actual_upn)
+        else:
+            logger.warning(
+                "Could not fetch UPN for oid=%s (%s) — falling back to email",
+                oid, upn_r.status_code,
+            )
+
     logger.info("B2B invitation created for %s (guest oid=%s)", email, oid)
-    return {"oid": oid, "upn": email, "redeem_url": redeem_url}
+    return {"oid": oid, "upn": actual_upn, "redeem_url": redeem_url}
 
 
 def assign_admin_role(user_oid: str) -> None:

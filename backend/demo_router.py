@@ -51,6 +51,27 @@ _RATE_LIMIT_PER_EMAIL = 1   # max invitations to one email per hour
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # ---------------------------------------------------------------------------
+# Personal / consumer email domain blocklist
+# Keep in sync with DemoRequestPage.tsx PERSONAL_EMAIL_DOMAINS
+# ---------------------------------------------------------------------------
+_PERSONAL_EMAIL_DOMAINS: frozenset[str] = frozenset({
+    "gmail.com", "googlemail.com",
+    "yahoo.com", "yahoo.co.uk", "yahoo.co.in", "yahoo.fr", "yahoo.de",
+    "yahoo.es", "yahoo.it", "yahoo.ca", "yahoo.com.br", "ymail.com",
+    "hotmail.com", "hotmail.co.uk", "hotmail.fr", "hotmail.de", "hotmail.es",
+    "outlook.com", "live.com", "live.co.uk", "msn.com",
+    "icloud.com", "me.com", "mac.com",
+    "aol.com", "aim.com",
+    "protonmail.com", "proton.me", "pm.me",
+    "mail.com", "gmx.com", "gmx.net", "gmx.de",
+    "zoho.com", "fastmail.com", "fastmail.fm",
+    "tutanota.com", "tutamail.com",
+    "yandex.com", "yandex.ru",
+    "qq.com", "163.com", "126.com",
+    "inbox.com", "rocketmail.com",
+})
+
+# ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
 
@@ -76,6 +97,12 @@ class DemoRequestBody(BaseModel):
             raise ValueError("Invalid email address")
         if len(v) > 256:
             raise ValueError("Email too long")
+        domain = v.split("@", 1)[1] if "@" in v else ""
+        if domain in _PERSONAL_EMAIL_DOMAINS:
+            raise ValueError(
+                "That looks like a personal email address. "
+                "Please use your work or school email to request demo access."
+            )
         return v
 
 
