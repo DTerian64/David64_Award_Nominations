@@ -26,6 +26,7 @@ resource "azurerm_static_web_app" "frontend" {
     VITE_CLIENT_ID                     = var.vite_client_id
     VITE_APPINSIGHTS_CONNECTION_STRING = var.vite_appinsights_connection_string
     AI_CLOUD_ROLE                      = var.app_name
+    VITE_DEMO_ALLOWED_EMAILS           = var.demo_allowed_emails
   }
 
   tags = var.tags

@@ -50,6 +50,15 @@ _RATE_LIMIT_PER_EMAIL = 1   # max invitations to one email per hour
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
+# Comma-separated list of specific emails that bypass the personal-domain block.
+# Intended for owner/developer test accounts only.
+# Example:  DEMO_ALLOWED_EMAILS=david.terian@gmail.com,david_terian@yahoo.com
+_ALLOWED_EMAILS: frozenset[str] = frozenset(
+    e.strip().lower()
+    for e in os.getenv("DEMO_ALLOWED_EMAILS", "").split(",")
+    if e.strip()
+)
+
 # ---------------------------------------------------------------------------
 # Personal / consumer email domain blocklist
 # Keep in sync with DemoRequestPage.tsx PERSONAL_EMAIL_DOMAINS
@@ -98,7 +107,7 @@ class DemoRequestBody(BaseModel):
         if len(v) > 256:
             raise ValueError("Email too long")
         domain = v.split("@", 1)[1] if "@" in v else ""
-        if domain in _PERSONAL_EMAIL_DOMAINS:
+        if domain in _PERSONAL_EMAIL_DOMAINS and v not in _ALLOWED_EMAILS:
             raise ValueError(
                 "That looks like a personal email address. "
                 "Please use your work or school email to request demo access."

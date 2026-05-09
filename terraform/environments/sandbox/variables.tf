@@ -226,3 +226,9 @@ variable "demo_graph_client_secret" {
   sensitive   = true
   default     = ""
 }
+
+variable "demo_allowed_emails" {
+  description = "Comma-separated personal email addresses that bypass the work-email domain block on the demo registration form (owner/developer test accounts). Passed to backend as DEMO_ALLOWED_EMAILS and to the SWA as VITE_DEMO_ALLOWED_EMAILS."
+  type        = string
+  default     = ""
+}

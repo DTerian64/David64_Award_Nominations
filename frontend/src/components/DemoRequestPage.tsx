@@ -37,8 +37,19 @@ const PERSONAL_EMAIL_DOMAINS = new Set([
   'inbox.com', 'rocketmail.com',
 ]);
 
+// Specific emails that bypass the personal-domain block (owner test accounts).
+// Set VITE_DEMO_ALLOWED_EMAILS=addr1@x.com,addr2@y.com at build time.
+const ALLOWED_EMAILS = new Set(
+  (import.meta.env.VITE_DEMO_ALLOWED_EMAILS ?? '')
+    .split(',')
+    .map((e: string) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+
 function isPersonalEmail(email: string): boolean {
-  const domain = email.trim().toLowerCase().split('@')[1] ?? '';
+  const normalised = email.trim().toLowerCase();
+  if (ALLOWED_EMAILS.has(normalised)) return false;
+  const domain = normalised.split('@')[1] ?? '';
   return PERSONAL_EMAIL_DOMAINS.has(domain);
 }
 

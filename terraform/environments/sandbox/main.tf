@@ -267,6 +267,8 @@ module "container_apps" {
     # Demo tenant self-registration — non-sensitive IDs; secret goes via Key Vault below
     { name = "DEMO_AAD_TENANT_ID",              value = var.demo_aad_tenant_id },
     { name = "DEMO_GRAPH_CLIENT_ID",            value = var.demo_graph_client_id },
+    # Owner/developer test accounts that bypass the personal-email domain block
+    { name = "DEMO_ALLOWED_EMAILS",             value = var.demo_allowed_emails },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -542,6 +544,7 @@ module "static_web_app" {
   vite_client_id                     = module.app_registrations.frontend_client_id
   vite_api_scope                     = module.app_registrations.api_scope
   vite_appinsights_connection_string = module.application_insights.frontend_connection_string
+  demo_allowed_emails                = var.demo_allowed_emails
   tags                               = local.tags
   depends_on                         = [azurerm_resource_group.rg]
 }
