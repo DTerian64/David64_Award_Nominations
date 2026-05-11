@@ -26,6 +26,7 @@ our branded welcome page after accepting the Microsoft invitation.
 import logging
 import os
 import re
+import urllib.parse
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from pydantic import BaseModel, validator
@@ -43,7 +44,23 @@ router = APIRouter(prefix="/api/demo", tags=["Demo"])
 # ---------------------------------------------------------------------------
 
 _DEMO_ORIGIN = os.getenv("DEMO_ORIGIN", "https://demo-awards.terian-services.com")
-_INVITE_REDIRECT_URL = f"{_DEMO_ORIGIN}/demo/welcome"
+_INVITE_REDIRECT_BASE = f"{_DEMO_ORIGIN}/demo/welcome"
+
+
+def _build_invite_redirect_url(email: str) -> str:
+    """
+    Build the inviteRedirectUrl passed to Graph POST /invitations.
+
+    The visitor's email is appended as a query parameter so DemoWelcomePage
+    can pass it to MSAL as `loginHint`.  Without that hint, MSAL's ssoSilent
+    cannot disambiguate between multiple cached AAD sessions in the browser
+    and falls through to a full account-picker login screen.
+
+    AAD preserves query params on the inviteRedirectUrl through B2B redemption,
+    so `?email=…` arrives intact at /demo/welcome after the user clicks
+    "Activate my Demo Access" in their email.
+    """
+    return f"{_INVITE_REDIRECT_BASE}?email={urllib.parse.quote(email, safe='')}"
 
 _RATE_LIMIT_PER_IP    = 3   # max invitations from one IP per hour
 _RATE_LIMIT_PER_EMAIL = 1   # max invitations to one email per hour
@@ -182,7 +199,7 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
                 first_name=body.first_name,
                 last_name=body.last_name,
                 email=body.email,
-                invite_redirect_url=_INVITE_REDIRECT_URL,
+                invite_redirect_url=_build_invite_redirect_url(body.email),
             )
 
             # Upgrade to admin if they didn't request it the first time
@@ -226,7 +243,7 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
             first_name=body.first_name,
             last_name=body.last_name,
             email=body.email,
-            invite_redirect_url=_INVITE_REDIRECT_URL,
+            invite_redirect_url=_build_invite_redirect_url(body.email),
         )
     except RuntimeError as e:
         logger.error("B2B invitation failed for %s: %s", body.email, e)

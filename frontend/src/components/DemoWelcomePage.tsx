@@ -8,7 +8,19 @@
  *   1. If MSAL already has a cached token → navigate to / directly.
  *   2. Try ssoSilent() with the demo tenant authority — picks up the existing
  *      Microsoft session from B2B redemption without showing a login page.
- *   3. If ssoSilent fails (no usable session) → loginRedirect fallback.
+ *   3. If ssoSilent fails (no usable session, third-party cookies blocked,
+ *      etc.) → loginRedirect fallback.  The loginHint pre-selects the
+ *      account so the user usually skips the picker even on the fallback.
+ *
+ * Why loginHint matters:
+ *   ssoSilent and loginRedirect cannot pick an account on their own when
+ *   the browser has multiple cached AAD sessions.  Without loginHint, AAD
+ *   returns `interaction_required` from the silent endpoint and shows
+ *   "Pick an account" on the interactive one.  The backend appends the
+ *   visitor's email as ?email=… on the inviteRedirectUrl precisely so we
+ *   can pass it here as loginHint.  AAD resolves the original email
+ *   against the B2B guest's `mail` attribute and routes silent auth to
+ *   the correct #EXT# UPN under the hood — no need to know the UPN.
  *
  * ssoSilent is intentionally deferred to click time, not mount time, because
  * MSAL rejects ssoSilent calls while handleRedirectPromise is still settling
@@ -22,13 +34,35 @@ import { loginRequest } from '../authConfig';
 
 const DEMO_AAD_TENANT_ID = import.meta.env.VITE_DEMO_AAD_TENANT_ID as string | undefined;
 
+/**
+ * Read the visitor's email from the inviteRedirectUrl query string.
+ * Set by the backend in _build_invite_redirect_url(...) so MSAL has a hint
+ * about which AAD account to silently authenticate against.
+ */
+function readLoginHintFromUrl(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const raw = new URLSearchParams(window.location.search).get('email');
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  // Basic sanity check — refuse anything that doesn't look like an email so we
+  // don't feed garbage into MSAL and trigger a confusing error.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 export const DemoWelcomePage: React.FC = () => {
   const { instance, accounts } = useMsal();
   const [exploring, setExploring] = useState(false);
 
-  const demoLoginRequest = DEMO_AAD_TENANT_ID
-    ? { ...loginRequest, authority: `https://login.microsoftonline.com/${DEMO_AAD_TENANT_ID}` }
-    : loginRequest;
+  const loginHint = readLoginHintFromUrl();
+
+  const demoLoginRequest = {
+    ...loginRequest,
+    ...(DEMO_AAD_TENANT_ID && {
+      authority: `https://login.microsoftonline.com/${DEMO_AAD_TENANT_ID}`,
+    }),
+    ...(loginHint && { loginHint }),
+  };
 
   const handleExplore = async () => {
     setExploring(true);
@@ -39,12 +73,16 @@ export const DemoWelcomePage: React.FC = () => {
       return;
     }
 
-    // Try silent SSO first — picks up the Microsoft session from B2B redemption
+    // Try silent SSO first — picks up the Microsoft session from B2B redemption.
+    // With loginHint set, AAD resolves the original email to the B2B guest's
+    // #EXT#@<tenant>.onmicrosoft.com UPN and issues tokens silently.
     try {
       await instance.ssoSilent(demoLoginRequest);
       window.location.href = '/';
     } catch {
-      // No usable session — full interactive login, MSAL will return to /
+      // No usable session (third-party cookies blocked, expired AAD session,
+      // etc.) — full interactive login. loginHint pre-selects the account so
+      // the user usually skips the "Pick an account" picker.
       instance.loginRedirect(demoLoginRequest).catch((err) => {
         console.error('MSAL redirect error:', err);
         setExploring(false);
