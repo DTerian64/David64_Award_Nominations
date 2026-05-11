@@ -188,12 +188,20 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
         )
 
     # ── Already registered — resend invitation email, skip DB/role work ─────────
+    # Contract: every successful POST /demo/request MUST result in an email
+    # being queued to the user.  Invitations are time-limited, so a returning
+    # user expects a fresh "Activate my Demo Access" link every time they hit
+    # this endpoint.  If we cannot fulfill that (Graph or Service Bus down),
+    # we surface a 503 so the SPA can show a retry-able error rather than
+    # claim "Check your inbox" while no email actually goes out.
+    #
     # Graph POST /invitations is safe to repeat: it returns the existing guest
-    # OID with a fresh inviteRedeemUrl, so the user gets an identical email they
-    # can use to reach the welcome page again.
+    # OID with a fresh inviteRedeemUrl, so the user gets a working link.
     if sqlhelper.demo_email_registered(body.email):
         logger.info("Already-registered user requesting resend (is_admin=%s): %s",
                     body.is_admin, body.email)
+
+        # 1. Ascertain B2B (create-or-get; fail loud if Graph is unhappy)
         try:
             reinvite = graph_admin.invite_external_user(
                 first_name=body.first_name,
@@ -201,16 +209,32 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
                 email=body.email,
                 invite_redirect_url=_build_invite_redirect_url(body.email),
             )
+        except RuntimeError as e:
+            logger.error("Resend: Graph invitation refresh failed for %s: %s", body.email, e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not refresh your invitation. Please try again in a moment.",
+            )
 
-            # Upgrade to admin if they didn't request it the first time
-            if body.is_admin and reinvite["oid"]:
-                try:
-                    graph_admin.assign_admin_role(reinvite["oid"])
-                    logger.info("Admin role assigned on resend for oid=%s", reinvite["oid"])
-                except RuntimeError as e:
-                    logger.error("Admin role assignment failed on resend for oid=%s: %s",
-                                 reinvite["oid"], e)
+        if not reinvite.get("redeem_url"):
+            # Graph returned 200 but no redeem URL — can't send a working email.
+            logger.error("Resend: Graph returned empty inviteRedeemUrl for %s", body.email)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not refresh your invitation. Please try again in a moment.",
+            )
 
+        # 2. Upgrade to admin if requested — best-effort, doesn't gate the email
+        if body.is_admin and reinvite["oid"]:
+            try:
+                graph_admin.assign_admin_role(reinvite["oid"])
+                logger.info("Admin role assigned on resend for oid=%s", reinvite["oid"])
+            except RuntimeError as e:
+                logger.error("Admin role assignment failed on resend for oid=%s: %s",
+                             reinvite["oid"], e)
+
+        # 3. Queue the branded invitation email — must succeed
+        try:
             await publish_event(
                 "notification.access_requested",
                 extra={
@@ -219,11 +243,14 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
                     "redeem_url": reinvite["redeem_url"],
                 },
             )
-            logger.info("Resent invitation to already-registered user: %s", body.email)
         except Exception as e:
-            logger.error("Resend failed for %s: %s", body.email, e)
-            # Still return success — don't reveal internal state to the caller.
+            logger.error("Resend: failed to queue invitation email for %s: %s", body.email, e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not queue invitation email. Please try again in a moment.",
+            )
 
+        logger.info("Resent invitation to already-registered user: %s", body.email)
         return DemoRequestResponse(
             message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
         )
