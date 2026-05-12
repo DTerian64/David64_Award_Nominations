@@ -398,10 +398,34 @@ def get_user_by_upn(upn: str) -> Optional[Tuple]:
         ).fetchone()
 
 
-def get_user_by_upn_and_tenant(upn: str, tenant_id: int) -> Optional[Tuple]:
+def get_user_by_upn_and_tenant(
+    upn: str,
+    tenant_id: int,
+    email: Optional[str] = None,
+) -> Optional[Tuple]:
     """
-    Get user by UPN scoped to a specific internal TenantId.
+    Get user by UPN (or email) scoped to a specific internal TenantId.
     This is the preferred lookup for all authenticated requests.
+
+    Why match on either column
+    --------------------------
+    For B2B guests, the JWT may carry the guest's `#EXT#` UPN, the home
+    identity's email, or both, depending on whether the `upn` optional
+    claim is configured on the SPA app registration with the
+    "Externally authenticated" extension property.
+
+    The dbo.Users row created at registration stores BOTH:
+      - userPrincipalName = the AAD #EXT# UPN (from Graph)
+      - userEmail         = the original invited email address
+
+    Matching on either column keeps auth working regardless of which
+    claim variant the token carries, and survives the case where the
+    Graph UPN fetch at invitation time fell back to email-as-UPN.
+
+    If email is None (older callers that haven't been updated yet), the
+    OR clause `userEmail = NULL` is never true and the function behaves
+    exactly like the original UPN-only lookup.
+
     Returns: (UserId, userPrincipalName, FirstName, LastName, Title, ManagerId, TenantId)
     """
     with get_db_context() as session:
@@ -409,10 +433,10 @@ def get_user_by_upn_and_tenant(upn: str, tenant_id: int) -> Optional[Tuple]:
             text("""
                 SELECT UserId, userPrincipalName, FirstName, LastName, Title, ManagerId, TenantId
                 FROM Users
-                WHERE userPrincipalName = :upn
+                WHERE (userPrincipalName = :upn OR userEmail = :email)
                   AND TenantId = :tenant_id
             """),
-            {"upn": upn, "tenant_id": tenant_id},
+            {"upn": upn, "email": email, "tenant_id": tenant_id},
         ).fetchone()
 
 

@@ -237,10 +237,17 @@ async def _authenticate(token: str, origin: Optional[str] = None) -> Dict[str, A
                 detail="User Principal Name not found in token.",
             )
 
-        logger.info("UPN: %s", upn)
+        # For B2B guests the `upn` claim (when present) is the resource-tenant
+        # #EXT# UPN, while `preferred_username` / `email` typically carry the
+        # original home identity's email — which is what we wrote to
+        # dbo.Users.userEmail at registration time.  Pass both so the lookup
+        # can match either column and survive either token shape.
+        email_claim = payload.get("email") or payload.get("preferred_username")
+
+        logger.info("UPN: %s  email_claim: %s", upn, email_claim)
 
         # ── 4. Look up user scoped to tenant ───────────────────────────────
-        row = sqlhelper.get_user_by_upn_and_tenant(upn, tenant_id)
+        row = sqlhelper.get_user_by_upn_and_tenant(upn, tenant_id, email=email_claim)
         if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -339,10 +346,12 @@ async def get_current_user_with_impersonation(
                 detail="Only administrators can impersonate users.",
             )
 
-        # Look up the target user — scoped to the SAME tenant as the admin
+        # Look up the target user — scoped to the SAME tenant as the admin.
+        # The admin may type either the #EXT# UPN or the original email; the
+        # lookup will OR-match either column.
         tenant_id = actual_user["TenantId"]
         impersonated_row = sqlhelper.get_user_by_upn_and_tenant(
-            x_impersonate_user, tenant_id
+            x_impersonate_user, tenant_id, email=x_impersonate_user
         )
         if not impersonated_row:
             raise HTTPException(
