@@ -48,3 +48,32 @@
 Note: FraudScores has no TenantId column — tenant isolation is enforced by
 joining through Nominations → Users:
 `JOIN dbo.Users u ON u.UserId = n.NominatorId WHERE u.TenantId = <TenantId>`
+
+## dbo.DemoRegistrationRequests
+Public self-registration audit log written by `POST /api/demo/request`
+(the form on https://demo-awards.terian-services.com/demo/request).
+One row per accepted demo-access request — used for audit, rate limiting
+(by email and by IP), and de-duplication. Contains PII.
+
+| Column        | Type           | Notes                                              |
+|---------------|----------------|----------------------------------------------------|
+| Id            | INT IDENTITY   | Primary Key                                        |
+| FirstName     | NVARCHAR(128)  |                                                    |
+| LastName      | NVARCHAR(128)  |                                                    |
+| Email         | VARCHAR(256)   | Original invitation email (not the #EXT# UPN)      |
+| IsAdmin       | BIT            | True if admin role was requested at signup         |
+| AadObjectId   | VARCHAR(36)    | Guest OID in the Demo tenant; NULL if Graph failed |
+| RequestIp     | VARCHAR(64)    | Originating IP for rate-limit accounting           |
+| RequestedAt   | DATETIME       | Server-side timestamp                              |
+
+**Tenant isolation: not directly queryable.** This table is global to the
+application — every demo signup, across every tenant context, is logged
+here. It has no `TenantId` column and no FK path to `Users` / `Tenants`, so
+the tenant-isolation guard in `query_database` will reject any SQL written
+against it (the SQL contains no `TenantId` reference). This is intentional:
+the table contains other visitors' names, emails, and IP addresses, which
+must not be exposed to in-tenant users.
+
+If an admin-facing use case needs this data, add a dedicated tool that
+checks the caller's admin role before bypassing the tenant guard — do not
+relax the guard on `query_database`.
