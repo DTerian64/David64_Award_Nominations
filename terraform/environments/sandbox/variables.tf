@@ -217,6 +217,13 @@ variable "workday_webhook_secret" {
   sensitive   = true
 }
 
+# ── Fraud Analytics Job callback ───────────────────────────────────────────────
+variable "fraud_analytics_job_webhook_secret" {
+  description = "Shared secret sent as X-Internal-Key by the fraud-analytics-job when calling /api/internal/refresh-fraud-model after uploading new model pkls. Must match JOB_CALLBACK_SECRET on both the API container apps and the fraud-analytics-job. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}
+
 # ── Demo tenant — self-registration (graph_admin.py / demo_router.py) ─────────
 variable "demo_aad_tenant_id" {
   description = "Azure AD tenant GUID for the Demo Terian Services tenant (DEMO_AAD_TENANT_ID). Non-sensitive — it appears in token tid claims."

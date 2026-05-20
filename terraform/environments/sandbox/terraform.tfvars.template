@@ -74,7 +74,11 @@ payout_orchestrator_name                 = "award-payout-orchestrator-sandbox"
 payout_orchestrator_storage_account_name = "stpayorchestrsbx"  # 3-24 chars, lowercase alphanumeric
 
 # ── Workday Proxy ─────────────────────────────────────────────────────────────
-workday_proxy_name = "workday-proxy-sandbox"
+workday_proxy_name             = "workday-proxy-sandbox"
+workday_webhook_secret         = "REPLACE_WITH_GENERATED_SECRET"  # python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# ── Fraud Analytics Job ────────────────────────────────────────────────────────
+fraud_analytics_job_webhook_secret = "REPLACE_WITH_GENERATED_SECRET"  # python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 # ── Log Analytics ─────────────────────────────────────────────────────────────
 workspace_name_primary   = "workspace-award-primary-sandbox"

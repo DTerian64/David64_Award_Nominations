@@ -169,6 +169,10 @@ module "key_vault" {
     # Workday_Proxy (sandbox) or real Workday (prod). X-Api-Key header.
     # Same value must be in Workday_proxy/terraform/.../terraform.tfvars → workday_webhook_secret.
     WORKDAY-WEBHOOK-SECRET                = var.workday_webhook_secret
+    # Shared secret — Award API validates this on the internal POST
+    # /api/internal/refresh-fraud-model callback from the fraud-analytics-job.
+    # Same value must be set in fraud-analytics-job terraform → fraud_analytics_job_webhook_secret.
+    FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET                   = var.fraud_analytics_job_webhook_secret
   })
 }
 
@@ -290,6 +294,8 @@ module "container_apps" {
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING",    kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
     # Validates inbound webhook calls from Workday_Proxy (sandbox) or real Workday (prod).
     { env_name = "WORKDAY_WEBHOOK_SECRET",                   kv_secret_name = "WORKDAY-WEBHOOK-SECRET" },
+    # Validates the post-training cache-refresh callback from the fraud-analytics-job.
+    { env_name = "FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET",                      kv_secret_name = "FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET" },
     # Demo tenant — Graph API client secret for self-registration (demo_router.py / graph_admin.py)
     { env_name = "DEMO_GRAPH_CLIENT_SECRET",                 kv_secret_name = "DEMO-GRAPH-CLIENT-SECRET" },
   ]
@@ -473,16 +479,21 @@ module "fraud_analytics_job" {
     { name = "LOGGING_LEVEL",             value = var.logging_level },
     { name = "DETECTION_WINDOW_DAYS",     value = tostring(var.fraud_analytics_detection_window_days) },
     { name = "RING_MAX_CLUSTER_SIZE",     value = tostring(var.fraud_analytics_ring_max_cluster_size) },
+    # Post-training cache-refresh callback — job POSTs here after uploading new pkls.
+    # Uses the primary app's internal FQDN (ACA-to-ACA routing within the same CAE).
+    { name = "API_BASE_URL",              value = "https://${var.app_name_primary}.internal.${module.container_apps.cae_primary_default_domain}" },
   ]
 
-  # Secrets from Key Vault — SQL + Storage only; no email or OpenAI needed
+  # Secrets from Key Vault — SQL + Storage + callback secret
   kv_secret_references = [
-    { env_name = "SQL_SERVER",       kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE",     kv_secret_name = "SQL-DATABASE" },
-    { env_name = "SQL_USER",         kv_secret_name = "SQL-USER" },
-    { env_name = "SQL_PASSWORD",     kv_secret_name = "SQL-PASSWORD" },
-    { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
+    { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
+    { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
+    { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
+    { env_name = "AZURE_STORAGE_KEY",   kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
+    # Shared secret for /api/internal/refresh-fraud-model — must match FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET on the API.
+    { env_name = "FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET", kv_secret_name = "FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET" },
   ]
 
   depends_on = [

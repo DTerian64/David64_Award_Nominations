@@ -1,29 +1,37 @@
 """
-Fraud Detection Integration for FastAPI  —  Multi-Tenant Lazy-Load Edition
-===========================================================================
+Fraud Detection Integration for FastAPI  —  Multi-Tenant Blob-Direct Edition
+=============================================================================
 
 One Random Forest model per tenant is trained by train_fraud_model.py and
-stored as:
-    ml_models/fraud_detection_model_tenant_1.pkl
-    ml_models/fraud_detection_model_tenant_2.pkl
+stored in Azure Blob Storage as:
+    ml-models/fraud_detection_model_tenant_1.pkl
+    ml-models/fraud_detection_model_tenant_2.pkl
     ...
 
-Models are loaded ON DEMAND: the first predict_fraud() call for a given
-tenant triggers a load (or blob download).  Models that have not been used
-within MODEL_IDLE_TTL_SECONDS (default: 1800 = 30 min) are evicted from
-memory by the background loop started in main.py's lifespan handler.
+Models are loaded ON DEMAND: the first predict_fraud() call for a given tenant
+streams the pkl DIRECTLY from blob into memory (pickle.loads(bytes)) — no local
+copy is written to disk.  Models that have not been used within
+MODEL_IDLE_TTL_SECONDS (default: 1800 = 30 min) are evicted from memory by the
+background loop started in main.py's lifespan handler.
 
-This design is SaaS-friendly: the container never holds memory for tenants
-that are not actively using the product, and onboarding a new tenant requires
-no restart and no TENANT_IDS config change.
+Freshness — how weekly retraining propagates automatically
+----------------------------------------------------------
+The fraud-analytics-job uploads a new pkl to blob storage every Monday.
+Because there is no local copy:
+  • The cached model is evicted after MODEL_IDLE_TTL_SECONDS of inactivity.
+  • The next predict_fraud() call after eviction streams the fresh blob.
+  • Net lag = at most one TTL period after the upload completes.
+
+This design is SaaS-friendly: no restarts, no TENANT_IDS config, no disk I/O.
+Onboarding a new tenant requires only a trained pkl in blob; the backend picks
+it up automatically on the first request for that tenant.
 
 Thread-safety
 -------------
 - A global cache lock protects reads/writes to the _cache dict.
 - A per-tenant load lock prevents "thundering herd" — if two requests arrive
-  simultaneously for a tenant that has no cached model, only one of them does
-  the actual blob download; the other waits and then reads the now-populated
-  cache entry.
+  simultaneously for a tenant with no cached model, only one does the blob
+  download; the other waits and reads the now-populated cache entry.
 """
 
 from __future__ import annotations
@@ -34,7 +42,6 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, Any, Optional
 
 import numpy as np
@@ -52,28 +59,24 @@ logger = logging.getLogger(__name__)
 @dataclass
 class _ModelEntry:
     """One slot in the lazy-load cache for a single tenant."""
-    model: Optional[dict]               # None = load attempted but failed
+    model: Optional[dict]               # None = load attempted but blob missing
     last_used: float = field(default_factory=time.monotonic)
 
 
 # ============================================================================
-# FRAUD DETECTOR  —  lazy-loading, multi-tenant
+# FRAUD DETECTOR  —  lazy-loading, multi-tenant, blob-direct
 # ============================================================================
 
 class FraudDetector:
     """
-    Multi-tenant fraud detection wrapper with lazy model loading.
+    Multi-tenant fraud detection wrapper with lazy, blob-direct model loading.
 
-    Models are loaded the first time predict_fraud() is called for a tenant
-    and evicted from memory after MODEL_IDLE_TTL_SECONDS of inactivity.
+    Models are streamed from Azure Blob Storage on the first predict_fraud()
+    call for a tenant and evicted from memory after MODEL_IDLE_TTL_SECONDS of
+    inactivity.  No pkl file is ever written to local disk.
     """
 
-    def __init__(
-        self,
-        model_dir: str = 'ml_models',
-        idle_ttl_seconds: Optional[int] = None,
-    ):
-        self.model_dir = model_dir
+    def __init__(self, idle_ttl_seconds: Optional[int] = None):
         self.idle_ttl: int = idle_ttl_seconds or int(
             os.getenv('MODEL_IDLE_TTL_SECONDS', '1800')
         )
@@ -82,26 +85,107 @@ class FraudDetector:
         self._cache: Dict[int, _ModelEntry] = {}
         self._cache_lock = threading.Lock()
 
-        # Per-tenant locks prevent duplicate loads when concurrent requests
-        # arrive for the same tenant before its model is cached.
+        # Per-tenant locks prevent duplicate blob downloads when concurrent
+        # requests arrive for the same tenant before its model is cached.
         self._tenant_load_locks: Dict[int, threading.Lock] = {}
         self._tenant_load_locks_lock = threading.Lock()
 
         logger.info(
-            "FraudDetector initialised (lazy-load mode). "
-            "Models load on first request per tenant; "
+            "FraudDetector initialised (blob-direct lazy-load mode). "
+            "Models stream from blob on first request per tenant; "
             "idle TTL = %ds.", self.idle_ttl
         )
 
-    # ── Path helpers ─────────────────────────────────────────────────────────
+    # ── Blob name helper ─────────────────────────────────────────────────────
 
-    def _local_path(self, tenant_id: int) -> str:
-        return os.path.join(
-            self.model_dir, f"fraud_detection_model_tenant_{tenant_id}.pkl"
+    @staticmethod
+    def _blob_name(tenant_id: int) -> str:
+        return f"fraud_detection_model_tenant_{tenant_id}.pkl"
+
+    # ── Blob client factory ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _blob_service_client():
+        """
+        Return an authenticated BlobServiceClient.
+
+        Auth priority:
+          1. AZURE_STORAGE_KEY env var  → AccountKey connection string
+          2. Fallback                   → DefaultAzureCredential (Managed Identity)
+        """
+        from azure.storage.blob import BlobServiceClient
+
+        storage_account = os.getenv('AZURE_STORAGE_ACCOUNT', 'awardnominationmodels')
+        storage_key     = os.getenv('AZURE_STORAGE_KEY')
+
+        if storage_key:
+            conn_str = (
+                f"DefaultEndpointsProtocol=https;"
+                f"AccountName={storage_account};"
+                f"AccountKey={storage_key};"
+                f"EndpointSuffix=core.windows.net"
+            )
+            logger.debug("BlobServiceClient: using storage account key auth.")
+            return BlobServiceClient.from_connection_string(conn_str)
+
+        from azure.identity import DefaultAzureCredential
+        logger.debug("BlobServiceClient: using DefaultAzureCredential (Managed Identity).")
+        return BlobServiceClient(
+            f"https://{storage_account}.blob.core.windows.net",
+            credential=DefaultAzureCredential(),
         )
 
-    def _blob_name(self, tenant_id: int) -> str:
-        return f"fraud_detection_model_tenant_{tenant_id}.pkl"
+    # ── Blob-direct model streaming ──────────────────────────────────────────
+
+    def _stream_from_blob(self, tenant_id: int) -> Optional[dict]:
+        """
+        Download the pkl for *tenant_id* directly from blob storage into memory
+        and deserialise it with pickle.loads().  No file is written to disk.
+
+        Returns None if the blob does not exist or on any error.
+        """
+        blob_name      = self._blob_name(tenant_id)
+        container_name = os.getenv('MODEL_CONTAINER', 'ml-models')
+
+        try:
+            blob_service = self._blob_service_client()
+            blob_client  = blob_service.get_blob_client(
+                container=container_name, blob=blob_name
+            )
+
+            logger.info(
+                "[Tenant %d] Streaming model from blob: %s/%s …",
+                tenant_id, container_name, blob_name,
+            )
+            data = blob_client.download_blob().readall()
+            model_data = pickle.loads(data)
+            logger.info(
+                "[Tenant %d] ✅ Model streamed from blob (%d bytes).",
+                tenant_id, len(data),
+            )
+            return model_data
+
+        except ImportError:
+            logger.error(
+                "[Tenant %d] azure-storage-blob not installed — cannot load model.",
+                tenant_id,
+            )
+            return None
+        except Exception as exc:
+            from azure.core.exceptions import ResourceNotFoundError
+            if isinstance(exc, ResourceNotFoundError):
+                logger.warning(
+                    "[Tenant %d] Model blob not found: %s/%s. "
+                    "Run train_fraud_model.py to generate it.",
+                    tenant_id, container_name, blob_name,
+                )
+            else:
+                import traceback
+                logger.error(
+                    "[Tenant %d] Error streaming model: %s\n%s",
+                    tenant_id, exc, traceback.format_exc(),
+                )
+            return None
 
     # ── Per-tenant load lock ──────────────────────────────────────────────────
 
@@ -115,7 +199,8 @@ class FraudDetector:
 
     def get_model(self, tenant_id: int) -> Optional[dict]:
         """
-        Return the cached model for *tenant_id*, loading it lazily if needed.
+        Return the cached model for *tenant_id*, streaming it from blob
+        lazily if needed.
 
         Returns None if no model is available (not trained yet / blob missing).
         """
@@ -126,19 +211,19 @@ class FraudDetector:
                 entry.last_used = time.monotonic()
                 return entry.model
 
-        # ── Slow path: need to load — per-tenant lock prevents thundering herd ──
+        # ── Slow path: stream from blob — per-tenant lock prevents thundering herd ──
         load_lock = self._get_load_lock(tenant_id)
         with load_lock:
-            # Double-check after acquiring: another thread may have loaded while
-            # we were waiting on load_lock.
+            # Double-check after acquiring: another thread may have streamed
+            # while we were waiting on load_lock.
             with self._cache_lock:
                 entry = self._cache.get(tenant_id)
                 if entry is not None:
                     entry.last_used = time.monotonic()
                     return entry.model
 
-            logger.info("[Tenant %d] Lazy-loading fraud model on first request...", tenant_id)
-            model = self._load_tenant_model(tenant_id)
+            logger.info("[Tenant %d] Cache miss — streaming model from blob…", tenant_id)
+            model = self._stream_from_blob(tenant_id)
 
             with self._cache_lock:
                 self._cache[tenant_id] = _ModelEntry(model=model)
@@ -173,7 +258,10 @@ class FraudDetector:
                 )
                 del self._cache[tid]
         if to_evict:
-            logger.info("Model eviction complete — removed %d tenant model(s): %s", len(to_evict), to_evict)
+            logger.info(
+                "Model eviction complete — removed %d tenant model(s): %s",
+                len(to_evict), to_evict,
+            )
         return len(to_evict)
 
     def loaded_tenants(self) -> Dict[int, _ModelEntry]:
@@ -186,151 +274,20 @@ class FraudDetector:
         with self._cache_lock:
             return dict(self._cache)
 
-    # ── Blob helpers ─────────────────────────────────────────────────────────
-
-    def _should_update_from_blob(self, local_path: str, blob_name: str) -> bool:
-        """
-        Return True if the blob has a newer model than the local file.
-        Returns False on any error (fall through to local copy).
-        """
-        try:
-            if not os.path.exists(local_path):
-                logger.info("No local model found: %s", local_path)
-                return True
-
-            local_mtime = os.path.getmtime(local_path)
-            local_modified = datetime.fromtimestamp(local_mtime, tz=timezone.utc)
-            logger.info("Local model last modified: %s", local_modified)
-
-            from azure.storage.blob import BlobServiceClient
-            from azure.core.exceptions import ResourceNotFoundError
-
-            storage_account = os.getenv('AZURE_STORAGE_ACCOUNT', 'awardnominationmodels')
-            storage_key     = os.getenv('AZURE_STORAGE_KEY')
-            container_name  = os.getenv('MODEL_CONTAINER', 'ml-models')
-
-            if storage_key:
-                conn_str = (
-                    f"DefaultEndpointsProtocol=https;"
-                    f"AccountName={storage_account};"
-                    f"AccountKey={storage_key};"
-                    f"EndpointSuffix=core.windows.net"
-                )
-                blob_service = BlobServiceClient.from_connection_string(conn_str)
-            else:
-                from azure.identity import DefaultAzureCredential
-                blob_service = BlobServiceClient(
-                    f"https://{storage_account}.blob.core.windows.net",
-                    credential=DefaultAzureCredential(),
-                )
-
-            blob_client = blob_service.get_blob_client(container=container_name, blob=blob_name)
-            try:
-                props = blob_client.get_blob_properties()
-                blob_modified = props.last_modified
-                if blob_modified > local_modified:
-                    logger.info(
-                        "Blob is newer by %.0fs — will download.",
-                        (blob_modified - local_modified).total_seconds(),
-                    )
-                    return True
-                logger.info("Local model is up to date.")
-                return False
-            except ResourceNotFoundError:
-                logger.warning("Model blob not found in storage: %s", blob_name)
-                return False
-
-        except ImportError:
-            logger.warning("Azure Storage SDK not installed — using local model.")
-            return False
-        except Exception as exc:
-            logger.error("Error checking blob freshness: %s", exc)
-            return False
-
-    def _download_model_from_blob(self, local_path: str, blob_name: str) -> dict:
-        """Download and pickle-load one tenant model from Azure Blob Storage."""
-        try:
-            from azure.storage.blob import BlobServiceClient
-
-            storage_account = os.getenv('AZURE_STORAGE_ACCOUNT', 'awardnominationmodels')
-            storage_key     = os.getenv('AZURE_STORAGE_KEY')
-            container_name  = os.getenv('MODEL_CONTAINER', 'ml-models')
-
-            if storage_key:
-                conn_str = (
-                    f"DefaultEndpointsProtocol=https;"
-                    f"AccountName={storage_account};"
-                    f"AccountKey={storage_key};"
-                    f"EndpointSuffix=core.windows.net"
-                )
-                blob_service = BlobServiceClient.from_connection_string(conn_str)
-                logger.info("Using storage account key auth.")
-            else:
-                from azure.identity import DefaultAzureCredential
-                blob_service = BlobServiceClient(
-                    f"https://{storage_account}.blob.core.windows.net",
-                    credential=DefaultAzureCredential(),
-                )
-                logger.info("Using managed identity auth.")
-
-            blob_client = blob_service.get_blob_client(container=container_name, blob=blob_name)
-            Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-
-            logger.info("Downloading model to %s ...", local_path)
-            with open(local_path, 'wb') as fh:
-                fh.write(blob_client.download_blob().readall())
-
-            logger.info("✅ Downloaded: %s", local_path)
-            with open(local_path, 'rb') as fh:
-                return pickle.load(fh)
-
-        except ImportError:
-            logger.warning("Azure Storage SDK not installed.")
-            raise FileNotFoundError("Cannot download model — azure-storage-blob not installed.")
-        except Exception as exc:
-            import traceback
-            logger.error("Error downloading model: %s\n%s", exc, traceback.format_exc())
-            raise FileNotFoundError(f"Cannot download model from blob: {exc}") from exc
-
-    # ── Single-tenant loader ─────────────────────────────────────────────────
-
-    def _load_tenant_model(self, tenant_id: int) -> Optional[dict]:
-        """Load (or download) the model for one tenant. Returns None on failure."""
-        local_path = self._local_path(tenant_id)
-        blob_name  = self._blob_name(tenant_id)
-        try:
-            if self._should_update_from_blob(local_path, blob_name):
-                logger.info("[Tenant %d] Newer model in blob — downloading...", tenant_id)
-                return self._download_model_from_blob(local_path, blob_name)
-            elif os.path.exists(local_path):
-                logger.info("[Tenant %d] Loading from local: %s", tenant_id, local_path)
-                with open(local_path, 'rb') as fh:
-                    return pickle.load(fh)
-            else:
-                logger.info("[Tenant %d] No local model — downloading from blob...", tenant_id)
-                return self._download_model_from_blob(local_path, blob_name)
-        except FileNotFoundError:
-            logger.warning(
-                "[Tenant %d] ⚠️  Model not found locally or in blob. "
-                "Run train_fraud_model.py to generate it.",
-                tenant_id,
-            )
-            return None
-        except Exception as exc:
-            logger.error("[Tenant %d] ⚠️  Error loading model: %s", tenant_id, exc)
-            return None
-
     # ── Model refresh (admin / scheduled) ───────────────────────────────────
 
     def check_for_updates(self, tenant_id: Optional[int] = None) -> bool:
         """
-        Check blob for newer model versions and hot-reload if found.
+        Eagerly re-stream model(s) from blob, replacing the in-memory cache.
 
         If *tenant_id* is given, refreshes only that tenant (loading it into
         cache even if it was not previously cached).  If omitted, refreshes
         all tenants currently in the cache.
 
-        Returns True if at least one model was updated.
+        Unlike the TTL eviction path, this immediately updates the cached entry
+        so that admin endpoints report the new training_date right away.
+
+        Returns True if at least one model was successfully refreshed.
         """
         with self._cache_lock:
             if tenant_id is not None:
@@ -344,26 +301,22 @@ class FraudDetector:
 
         updated_any = False
         for tid in tids:
-            local_path = self._local_path(tid)
-            blob_name  = self._blob_name(tid)
-            if self._should_update_from_blob(local_path, blob_name):
-                try:
-                    model_data = self._download_model_from_blob(local_path, blob_name)
-                    with self._cache_lock:
-                        if tid in self._cache:
-                            self._cache[tid].model     = model_data
-                            self._cache[tid].last_used = time.monotonic()
-                        else:
-                            self._cache[tid] = _ModelEntry(model=model_data)
-                    logger.info(
-                        "[Tenant %d] ✅ Model updated (%s)",
-                        tid, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
-                    )
-                    updated_any = True
-                except Exception as exc:
-                    logger.error("[Tenant %d] ❌ Failed to update model: %s", tid, exc)
+            logger.info("[Tenant %d] Forcing re-stream from blob…", tid)
+            model_data = self._stream_from_blob(tid)
+            if model_data is not None:
+                with self._cache_lock:
+                    if tid in self._cache:
+                        self._cache[tid].model     = model_data
+                        self._cache[tid].last_used = time.monotonic()
+                    else:
+                        self._cache[tid] = _ModelEntry(model=model_data)
+                logger.info(
+                    "[Tenant %d] ✅ Model refreshed (%s)",
+                    tid, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
+                )
+                updated_any = True
             else:
-                logger.info("[Tenant %d] ✅ Model already up to date.", tid)
+                logger.error("[Tenant %d] ❌ Failed to refresh model — blob stream returned None.", tid)
 
         return updated_any
 
@@ -477,8 +430,8 @@ class FraudDetector:
         Predict fraud probability for a nomination.
 
         nomination_data must include 'TenantId' (int).  The model for that
-        tenant is loaded lazily on the first call and kept in memory until
-        evicted by the idle-TTL background task.
+        tenant is streamed from blob lazily on the first call and kept in
+        memory until evicted by the idle-TTL background task.
 
         Returns a dict with fraud_probability, fraud_score, risk_level,
         warning_flags, and recommendation.
@@ -597,11 +550,12 @@ def get_fraud_assessment(nomination_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def refresh_model(tenant_id: Optional[int] = None) -> bool:
     """
-    Manually check blob for newer models and hot-reload if found.
+    Manually re-stream model(s) from blob, updating the in-memory cache
+    immediately.
 
     Pass tenant_id to target a single tenant; omit to refresh all currently
     cached tenants.  Can be called from an admin endpoint without restart.
 
-    Returns True if at least one model was updated.
+    Returns True if at least one model was successfully refreshed.
     """
     return fraud_detector.check_for_updates(tenant_id=tenant_id)

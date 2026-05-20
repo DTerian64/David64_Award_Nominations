@@ -14,7 +14,7 @@ load_dotenv()
 
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, status,HTTPException, Query, Response
+from fastapi import FastAPI, Depends, HTTPException, status, HTTPException, Header, Query, Response
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Any
@@ -769,6 +769,47 @@ async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_
         },
     }
 
+@app.post("/api/internal/refresh-fraud-model")
+async def internal_refresh_fraud_model(x_internal_key: str = Header(default="")):
+    """
+    Internal endpoint — called by the fraud-analytics-job after it uploads
+    fresh model pkls to blob storage.  Forces an immediate cache refresh so
+    all in-memory models are replaced without waiting for the idle-TTL eviction
+    cycle.
+
+    Auth: shared secret in X-Internal-Key header.
+    Set via Key Vault secret FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET → env var FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET.
+    Skip auth (dev only) when FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET is not configured.
+
+    Not exposed through Front Door — job calls the Container App's internal
+    FQDN (ACA-to-ACA routing within the same Container Apps Environment).
+    """
+    import fraud_ml
+
+    if _FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET and x_internal_key != _FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid internal key")
+
+    updated = fraud_ml.fraud_detector.check_for_updates()
+    tenant_summaries = {
+        tid: str(entry.model["training_date"]) if entry.model else "not loaded"
+        for tid, entry in fraud_ml.fraud_detector.loaded_tenants().items()
+    }
+    logger.info(
+        "internal_refresh_fraud_model: updated=%s tenants=%s",
+        updated, list(tenant_summaries.keys()),
+    )
+    return {
+        "status":        "success" if updated else "no_cached_models",
+        "updated":       updated,
+        "tenant_models": tenant_summaries,
+        "message": (
+            "Cache refreshed with latest blob models."
+            if updated
+            else "No models were cached — fresh pkls will be streamed on next request."
+        ),
+    }
+
+
 @app.get("/api/nominations/email-action", response_class=HTMLResponse)
 async def handle_email_action(token: str = Query(..., description="Action token from email")):
     """
@@ -903,6 +944,11 @@ async def handle_email_action(token: str = Query(..., description="Action token 
 # In production this is replaced by Workday's signed webhook payload (HMAC).
 # Set via Key Vault secret WORKDAY-WEBHOOK-SECRET → env var WORKDAY_WEBHOOK_SECRET.
 _WORKDAY_WEBHOOK_SECRET = os.getenv("WORKDAY_WEBHOOK_SECRET", "")
+
+# Shared secret used to authenticate the fraud-analytics-job's post-training
+# cache-refresh callback.  Set via Key Vault secret FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET →
+# env var FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET.  Omit (leave blank) in local dev to skip auth.
+_FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET = os.getenv("FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET", "")
 
 
 class WorkdayPaymentConfirmedRequest(BaseModel):

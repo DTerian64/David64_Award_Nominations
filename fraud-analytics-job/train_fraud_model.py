@@ -15,8 +15,12 @@ Why separate files?
     - Models can be retrained and uploaded independently without touching
       production scoring for other tenants.
 
-After training, upload each .pkl from Output/ to Azure Blob Storage under
-the same filename so the backend FraudDetector picks them up on next restart.
+After training, each .pkl is uploaded directly to Azure Blob Storage under
+the same filename.  The backend FraudDetector streams models directly from
+blob (no local copy); idle models are evicted from the in-process cache after
+MODEL_IDLE_TTL_SECONDS.  The next request after eviction re-streams the blob,
+so fresh models propagate automatically within one TTL period of upload — no
+container restart required.
 """
 
 import os

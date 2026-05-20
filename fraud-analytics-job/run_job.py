@@ -29,6 +29,9 @@ import logging
 import os
 import sys
 import time
+import urllib.request
+import urllib.error
+import json
 from pathlib import Path
 
 import pyodbc
@@ -131,6 +134,62 @@ def wake_database(
     )
 
 
+def notify_api_refresh() -> None:
+    """
+    POST to /api/internal/refresh-fraud-model so the live backend immediately
+    replaces its in-memory model cache with the freshly uploaded pkls.
+
+    This is best-effort: a failure here is logged but does NOT fail the job —
+    the backend's TTL eviction will pick up the new models within one eviction
+    cycle regardless.
+
+    Requires:
+        API_BASE_URL       — e.g. "https://award-api-sandbox.internal.cae-domain"
+        FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET — shared secret matching backend FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET
+    """
+    api_base = os.getenv("API_BASE_URL", "").rstrip("/")
+    secret   = os.getenv("FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET", "")
+
+    if not api_base:
+        logger.warning(
+            "notify_api_refresh: API_BASE_URL not set — skipping cache refresh call. "
+            "Backend will refresh via TTL eviction instead."
+        )
+        return
+
+    url = f"{api_base}/api/internal/refresh-fraud-model"
+    logger.info("notify_api_refresh: POST %s", url)
+
+    try:
+        req = urllib.request.Request(
+            url,
+            data=b"",
+            method="POST",
+            headers={
+                "X-Internal-Key": secret,
+                "Content-Type":   "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode())
+            logger.info(
+                "notify_api_refresh: ✅ status=%s updated=%s",
+                body.get("status"), body.get("updated"),
+            )
+    except urllib.error.HTTPError as exc:
+        logger.warning(
+            "notify_api_refresh: ⚠️  HTTP %d — %s. "
+            "Backend will refresh via TTL eviction.",
+            exc.code, exc.reason,
+        )
+    except Exception as exc:
+        logger.warning(
+            "notify_api_refresh: ⚠️  Could not reach backend (%s). "
+            "Backend will refresh via TTL eviction.",
+            exc,
+        )
+
+
 def run_stage(name: str, module_path: str) -> bool:
     """
     Import and execute the main() function of a pipeline stage.
@@ -177,6 +236,11 @@ def main() -> None:
         name        = "RF model training  (train_fraud_model)",
         module_path = "train_fraud_model",
     )
+
+    # ── Stage 1b: Notify API to refresh its in-memory model cache ─────────────
+    # Only call if training succeeded — no point refreshing if upload failed.
+    if results["RF model training"]:
+        notify_api_refresh()
 
     # ── Stage 2: Graph pattern detection ─────────────────────────────────────
     # Runs regardless of Stage 1 outcome — graph findings are independent.
