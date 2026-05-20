@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 # ── Tool implementation ───────────────────────────────────────────────────────
 
 async def _get_fraud_model_info(tenant_id: int = 0) -> dict[str, Any]:
-    model_data = fraud_ml.fraud_detector.tenant_models.get(tenant_id)
+    # get_model() triggers a lazy load if the model isn't cached yet
+    model_data = fraud_ml.fraud_detector.get_model(tenant_id)
 
     if model_data is None:
         logger.warning("tool:get_fraud_model_info — no model for tenant_id=%d", tenant_id)

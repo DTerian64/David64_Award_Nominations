@@ -238,6 +238,9 @@ module "container_apps" {
     # Service Bus — neither FQNS nor topic name is sensitive; MI credential grants access.
     { name = "SERVICE_BUS_FQNS",                value = module.service_bus.namespace_fqns },
     { name = "SERVICE_BUS_TOPIC_NAME",          value = module.service_bus.topic_name },
+    # Fraud model lazy-load tuning — controls in-memory cache lifetime and eviction frequency.
+    { name = "MODEL_IDLE_TTL_SECONDS",          value = tostring(var.model_idle_ttl_seconds) },
+    { name = "MODEL_EVICTION_INTERVAL_SECONDS", value = tostring(var.model_eviction_interval_seconds) },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity

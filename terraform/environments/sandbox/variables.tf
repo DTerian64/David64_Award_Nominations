@@ -44,6 +44,16 @@ variable "email_action_token_expiry_hours" {
   type    = number
   default = 72
 }
+variable "model_idle_ttl_seconds" {
+  description = "Seconds a per-tenant fraud model can sit idle before being evicted from memory. Shorter in sandbox to make eviction observable during development."
+  type        = number
+  default     = 600
+}
+variable "model_eviction_interval_seconds" {
+  description = "How often the eviction background loop runs. Faster in sandbox for easier testing."
+  type        = number
+  default     = 120
+}
 variable "email_action_secret_key" {
   description = "Secret key used to sign and verify email action tokens"
   type        = string

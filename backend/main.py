@@ -57,14 +57,49 @@ CLIENT_ID = os.getenv("CLIENT_ID")
 from fastapi.openapi.docs import get_swagger_ui_html
 
 
+async def _model_eviction_loop() -> None:
+    """
+    Background task: periodically evict idle tenant fraud models from memory.
+
+    Interval is controlled by MODEL_EVICTION_INTERVAL_SECONDS (default 300 = 5 min).
+    Models that have not been used within MODEL_IDLE_TTL_SECONDS (default 1800 = 30 min)
+    are dropped from the in-process cache; they will be lazy-reloaded on the
+    next request for that tenant.
+    """
+    import asyncio
+    interval = int(os.getenv('MODEL_EVICTION_INTERVAL_SECONDS', '300'))
+    logger.info("Model eviction loop starting — interval=%ds.", interval)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            n = fraud_ml.fraud_detector.evict_idle()
+            if n:
+                logger.info("Model eviction: removed %d idle tenant model(s).", n)
+        except Exception as exc:
+            logger.error("Model eviction error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler – runs startup logic, then yields control."""
+    import asyncio
     # Startup: ensure all ORM-defined tables exist in the database
     sqlhelper.create_all_tables()
     logger.info("Database tables verified on startup.")
+
+    # Start background task that evicts idle per-tenant fraud models
+    eviction_task = asyncio.create_task(_model_eviction_loop())
+    logger.info("Fraud model eviction loop started.")
+
     yield
-    # Shutdown: nothing to clean up (connection pool is managed per-request)
+
+    # Shutdown: cancel the eviction loop cleanly
+    eviction_task.cancel()
+    try:
+        await eviction_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Fraud model eviction loop stopped.")
 
 
 app = FastAPI(
@@ -685,15 +720,15 @@ async def refresh_fraud_model(current_user: dict = Depends(require_role("AWard_N
         updated = fraud_ml.refresh_model()
 
         tenant_summaries = {
-            tid: str(m['training_date']) if m else "not loaded"
-            for tid, m in fraud_ml.fraud_detector.tenant_models.items()
+            tid: str(entry.model['training_date']) if entry.model else "not loaded"
+            for tid, entry in fraud_ml.fraud_detector.loaded_tenants().items()
         }
 
         return {
             "status": "success",
             "message": "Fraud detection models updated successfully" if updated else "Models already up to date",
             "updated": updated,
-            "tenant_models": tenant_summaries
+            "tenant_models": tenant_summaries,
         }
     
     except Exception as e:
@@ -710,25 +745,28 @@ async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_
     """
     import fraud_ml
     
-    tenant_models = fraud_ml.fraud_detector.tenant_models
-    if not any(m is not None for m in tenant_models.values()):
+    loaded = fraud_ml.fraud_detector.loaded_tenants()
+    if not any(entry.model is not None for entry in loaded.values()):
         return {
             "status": "not_loaded",
-            "message": "No fraud detection models are loaded"
+            "message": "No fraud detection models are currently in cache",
         }
 
     return {
         "status": "loaded",
         "tenant_models": {
-            tid: {
-                "model_trained":  str(m['training_date']),
-                "training_samples": m.get('training_samples'),
-                "auc":            m.get('auc'),
-                "feature_count":  len(m['feature_columns']),
-                "features":       m['feature_columns']
-            } if m else {"status": "not_loaded"}
-            for tid, m in tenant_models.items()
-        }
+            tid: (
+                {
+                    "model_trained":    str(entry.model['training_date']),
+                    "training_samples": entry.model.get('training_samples'),
+                    "auc":              entry.model.get('auc'),
+                    "feature_count":    len(entry.model['feature_columns']),
+                    "features":         entry.model['feature_columns'],
+                }
+                if entry.model else {"status": "not_loaded"}
+            )
+            for tid, entry in loaded.items()
+        },
     }
 
 @app.get("/api/nominations/email-action", response_class=HTMLResponse)
