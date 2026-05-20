@@ -80,6 +80,10 @@ workday_webhook_secret         = "REPLACE_WITH_GENERATED_SECRET"  # python -c "i
 # ── Fraud Analytics Job ────────────────────────────────────────────────────────
 fraud_analytics_job_webhook_secret = "REPLACE_WITH_GENERATED_SECRET"  # python -c "import secrets; print(secrets.token_urlsafe(32))"
 
+# ── HRBP SLA Logic App ────────────────────────────────────────────────────────
+hrbp_sla_webhook_secret = "REPLACE_WITH_GENERATED_SECRET"  # python -c "import secrets; print(secrets.token_urlsafe(32))"
+hrbp_sla_hours          = 72
+
 # ── Log Analytics ─────────────────────────────────────────────────────────────
 workspace_name_primary   = "workspace-award-primary-sandbox"
 workspace_name_secondary = "workspace-award-secondary-sandbox"

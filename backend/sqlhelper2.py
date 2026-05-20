@@ -1730,3 +1730,306 @@ def create_demo_user(
         row = result.fetchone()
         session.commit()
         return row[0]
+
+
+# ===========================================================================
+# HRBP REVIEW WORKFLOW
+# ===========================================================================
+
+def save_fraud_flags(
+    nomination_id:       int,
+    fraud_score:         int,
+    fraud_probability:   float,
+    risk_level:          str,
+    warning_flags:       str,
+    top_features_json:   str | None = None,
+    feature_summary_json: str | None = None,
+) -> None:
+    """
+    Persist the ML inference snapshot for one nomination into dbo.FraudFlags.
+
+    Called at nomination-submission time for ANY flagged nomination so the
+    HRBP review queue has full context without re-running inference.
+    Uses INSERT … ON CONFLICT DO NOTHING pattern (MERGE) to be idempotent.
+    """
+    with get_db_context() as session:
+        session.execute(
+            text("""
+                MERGE dbo.FraudFlags AS target
+                USING (SELECT :nomination_id AS NominationId) AS src
+                ON target.NominationId = src.NominationId
+                WHEN NOT MATCHED THEN
+                    INSERT (NominationId, FraudScore, FraudProbability, RiskLevel,
+                            WarningFlags, TopFeaturesJson, FeatureSummaryJson)
+                    VALUES (:nomination_id, :fraud_score, :fraud_probability, :risk_level,
+                            :warning_flags, :top_features_json, :feature_summary_json);
+            """),
+            {
+                "nomination_id":        nomination_id,
+                "fraud_score":          fraud_score,
+                "fraud_probability":    fraud_probability,
+                "risk_level":           risk_level,
+                "warning_flags":        warning_flags,
+                "top_features_json":    top_features_json,
+                "feature_summary_json": feature_summary_json,
+            },
+        )
+        session.commit()
+
+
+def get_fraud_flags(nomination_id: int) -> dict | None:
+    """Return the FraudFlags row for a nomination, or None if not found."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT FraudScore, FraudProbability, RiskLevel,
+                       WarningFlags, TopFeaturesJson, FeatureSummaryJson, CreatedAt
+                FROM dbo.FraudFlags
+                WHERE NominationId = :nomination_id
+            """),
+            {"nomination_id": nomination_id},
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "fraud_score":          row[0],
+            "fraud_probability":    row[1],
+            "risk_level":           row[2],
+            "warning_flags":        row[3],
+            "top_features_json":    row[4],
+            "feature_summary_json": row[5],
+            "created_at":           str(row[6]),
+        }
+
+
+def set_nomination_status(nomination_id: int, status: str) -> None:
+    """Update the Status column of a single nomination row."""
+    with get_db_context() as session:
+        session.execute(
+            text("""
+                UPDATE dbo.Nominations
+                SET    Status = :status
+                WHERE  NominationId = :nomination_id
+            """),
+            {"nomination_id": nomination_id, "status": status},
+        )
+        session.commit()
+
+
+def get_hrbp_queue(tenant_id: int) -> list[dict]:
+    """
+    Return all nominations in PendingHRBPReview for a tenant, joined with
+    nominator / beneficiary names and the FraudFlags snapshot.
+    Ordered by submission time ascending (oldest first).
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT
+                    n.NominationId,
+                    n.Status,
+                    n.Amount,
+                    n.Currency,
+                    n.NominationDescription,
+                    n.NominationDate,
+                    nom.FirstName + ' ' + nom.LastName  AS NominatorName,
+                    nom.userEmail                        AS NominatorEmail,
+                    ben.FirstName + ' ' + ben.LastName  AS BeneficiaryName,
+                    ben.userEmail                        AS BeneficiaryEmail,
+                    ff.FraudScore,
+                    ff.FraudProbability,
+                    ff.RiskLevel,
+                    ff.WarningFlags,
+                    ff.TopFeaturesJson,
+                    ff.FeatureSummaryJson
+                FROM  dbo.Nominations n
+                JOIN  dbo.Users nom ON nom.UserId      = n.NominatorId
+                JOIN  dbo.Users ben ON ben.UserId      = n.BeneficiaryId
+                LEFT JOIN dbo.FraudFlags ff ON ff.NominationId = n.NominationId
+                WHERE n.Status    = 'PendingHRBPReview'
+                  AND n.TenantId  = :tenant_id
+                ORDER BY n.NominationDate ASC
+            """),
+            {"tenant_id": tenant_id},
+        ).fetchall()
+        return [
+            {
+                "nomination_id":      r[0],
+                "status":             r[1],
+                "amount":             r[2],
+                "currency":           r[3],
+                "description":        r[4],
+                "nomination_date":    str(r[5]),
+                "nominator_name":     r[6],
+                "nominator_email":    r[7],
+                "beneficiary_name":   r[8],
+                "beneficiary_email":  r[9],
+                "fraud_score":        r[10],
+                "fraud_probability":  r[11],
+                "risk_level":         r[12],
+                "warning_flags":      r[13].split(", ") if r[13] else [],
+                "top_features":       r[14],
+                "feature_summary":    r[15],
+            }
+            for r in rows
+        ]
+
+
+def get_user_roles(user_id: int) -> list[str]:
+    """Return all Role values assigned to a user in dbo.UserRoles."""
+    with get_db_context() as session:
+        rows = session.execute(
+            text("SELECT Role FROM dbo.UserRoles WHERE UserId = :uid"),
+            {"uid": user_id},
+        ).fetchall()
+        return [r[0] for r in rows]
+
+
+def assign_user_role(user_id: int, role: str, assigned_by: int) -> bool:
+    """
+    Grant *role* to *user_id*.  Idempotent — silently succeeds if already assigned.
+    Returns True if newly inserted, False if already existed.
+    """
+    with get_db_context() as session:
+        result = session.execute(
+            text("""
+                MERGE dbo.UserRoles AS target
+                USING (SELECT :uid AS UserId, :role AS Role) AS src
+                ON target.UserId = src.UserId AND target.Role = src.Role
+                WHEN NOT MATCHED THEN
+                    INSERT (UserId, Role, AssignedBy)
+                    VALUES (:uid, :role, :assigned_by);
+            """),
+            {"uid": user_id, "role": role, "assigned_by": assigned_by},
+        )
+        session.commit()
+        return result.rowcount > 0
+
+
+def revoke_user_role(user_id: int, role: str) -> bool:
+    """Remove a role assignment. Returns True if a row was deleted."""
+    with get_db_context() as session:
+        result = session.execute(
+            text("""
+                DELETE FROM dbo.UserRoles
+                WHERE UserId = :uid AND Role = :role
+            """),
+            {"uid": user_id, "role": role},
+        )
+        session.commit()
+        return result.rowcount > 0
+
+
+def get_hrbp_users(tenant_id: int) -> list[dict]:
+    """
+    Return all users with the HRBP role for a given tenant.
+    Used by the auxiliary service to email the right people when a
+    nomination is flagged.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT u.UserId,
+                       u.FirstName + ' ' + u.LastName AS FullName,
+                       u.userEmail
+                FROM   dbo.UserRoles ur
+                JOIN   dbo.Users u ON u.UserId = ur.UserId
+                WHERE  ur.Role      = 'HRBP'
+                  AND  u.TenantId   = :tenant_id
+            """),
+            {"tenant_id": tenant_id},
+        ).fetchall()
+        return [
+            {"user_id": r[0], "full_name": r[1], "email": r[2]}
+            for r in rows
+        ]
+
+
+def get_sla_breached_nominations(sla_hours: int) -> list[dict]:
+    """
+    Return all nominations in PendingHRBPReview whose NominationDate is
+    older than *sla_hours* hours.  Called by the Logic App internal endpoint.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT n.NominationId,
+                       n.TenantId,
+                       n.NominationDate,
+                       nom.FirstName + ' ' + nom.LastName AS NominatorName,
+                       ben.FirstName + ' ' + ben.LastName AS BeneficiaryName,
+                       ff.RiskLevel
+                FROM   dbo.Nominations n
+                JOIN   dbo.Users nom ON nom.UserId = n.NominatorId
+                JOIN   dbo.Users ben ON ben.UserId = n.BeneficiaryId
+                LEFT JOIN dbo.FraudFlags ff ON ff.NominationId = n.NominationId
+                WHERE  n.Status = 'PendingHRBPReview'
+                  AND  n.NominationDate < DATEADD(HOUR, :neg_hours, GETUTCDATE())
+                ORDER  BY n.NominationDate ASC
+            """),
+            {"neg_hours": -sla_hours},
+        ).fetchall()
+        return [
+            {
+                "nomination_id":   r[0],
+                "tenant_id":       r[1],
+                "nomination_date": str(r[2]),
+                "nominator_name":  r[3],
+                "beneficiary_name": r[4],
+                "risk_level":      r[5],
+            }
+            for r in rows
+        ]
+
+
+def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
+    """
+    Full nomination detail for the HRBP approval / rejection flow,
+    including nominator info, beneficiary info, and fraud flags.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT
+                    n.NominationId,
+                    n.TenantId,
+                    n.Amount,
+                    n.Currency,
+                    n.NominationDescription,
+                    n.NominationDate,
+                    n.Status,
+                    n.ApproverId,
+                    nom.FirstName + ' ' + nom.LastName AS NominatorName,
+                    nom.userEmail                       AS NominatorEmail,
+                    ben.FirstName + ' ' + ben.LastName AS BeneficiaryName,
+                    ben.userEmail                       AS BeneficiaryEmail,
+                    ff.FraudScore,
+                    ff.RiskLevel,
+                    ff.WarningFlags
+                FROM  dbo.Nominations n
+                JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
+                JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
+                LEFT JOIN dbo.FraudFlags ff ON ff.NominationId = n.NominationId
+                WHERE n.NominationId = :nomination_id
+            """),
+            {"nomination_id": nomination_id},
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "nomination_id":    row[0],
+            "tenant_id":        row[1],
+            "amount":           row[2],
+            "currency":         row[3],
+            "description":      row[4],
+            "nomination_date":  str(row[5]),
+            "status":           row[6],
+            "approver_id":      row[7],
+            "nominator_name":   row[8],
+            "nominator_email":  row[9],
+            "beneficiary_name": row[10],
+            "beneficiary_email": row[11],
+            "fraud_score":      row[12],
+            "risk_level":       row[13],
+            "warning_flags":    row[14].split(", ") if row[14] else [],
+        }

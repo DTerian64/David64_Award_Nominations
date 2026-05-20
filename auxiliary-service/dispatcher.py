@@ -32,7 +32,18 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import db
-from handlers import nomination_created, nomination_approved, payout_submit, payout_accepted, notification_requested, access_requested
+from handlers import (
+    nomination_created,
+    nomination_approved,
+    payout_submit,
+    payout_accepted,
+    notification_requested,
+    access_requested,
+    nomination_fraud_flagged,
+    nomination_hrbp_approved,
+    nomination_hrbp_rejected,
+    nomination_hrbp_sla_breach,
+)
 
 logger = logging.getLogger("auxiliary.dispatcher")
 
@@ -50,6 +61,16 @@ HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
     "notification.requested":  notification_requested.handle,
     # Branded HTML invitation email sent to a demo self-registration requestor.
     "notification.access_requested": access_requested.handle,
+    # ── HRBP review workflow ──────────────────────────────────────────────────
+    # Nomination held for HR review — email all HRBP users for the tenant.
+    "nomination.fraud-flagged":    nomination_fraud_flagged.handle,
+    # HRBP approved — email the nominator; backend also fires nomination.created
+    # so the manager gets their approval request separately.
+    "nomination.hrbp-approved":    nomination_hrbp_approved.handle,
+    # HRBP rejected — email the nominator with the HRBP's reason.
+    "nomination.hrbp-rejected":    nomination_hrbp_rejected.handle,
+    # SLA breach — Logic App daily cron detected a stale PendingHRBPReview.
+    "nomination.hrbp-sla-breach":  nomination_hrbp_sla_breach.handle,
 }
 
 

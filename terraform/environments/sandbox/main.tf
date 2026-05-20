@@ -172,7 +172,10 @@ module "key_vault" {
     # Shared secret — Award API validates this on the internal POST
     # /api/internal/refresh-fraud-model callback from the fraud-analytics-job.
     # Same value must be set in fraud-analytics-job terraform → fraud_analytics_job_webhook_secret.
-    FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET                   = var.fraud_analytics_job_webhook_secret
+    FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET = var.fraud_analytics_job_webhook_secret
+    # Shared secret — Award API validates this on the daily POST
+    # /api/internal/checkPendingHRBPReview callback from la-award-hrbp-sla.
+    HRBP-SLA-WEBHOOK-SECRET            = var.hrbp_sla_webhook_secret
   })
 }
 
@@ -276,6 +279,8 @@ module "container_apps" {
     { name = "DEMO_GRAPH_CLIENT_ID",            value = var.demo_graph_client_id },
     # Owner/developer test accounts that bypass the personal-email domain block
     { name = "DEMO_ALLOWED_EMAILS",             value = var.demo_allowed_emails },
+    # HRBP SLA — hours before a PendingHRBPReview nomination triggers an escalation email
+    { name = "HRBP_SLA_HOURS",                  value = tostring(var.hrbp_sla_hours) },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -295,9 +300,11 @@ module "container_apps" {
     # Validates inbound webhook calls from Workday_Proxy (sandbox) or real Workday (prod).
     { env_name = "WORKDAY_WEBHOOK_SECRET",                   kv_secret_name = "WORKDAY-WEBHOOK-SECRET" },
     # Validates the post-training cache-refresh callback from the fraud-analytics-job.
-    { env_name = "FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET",                      kv_secret_name = "FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET" },
+    { env_name = "FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET", kv_secret_name = "FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET" },
+    # Validates the daily SLA-check callback from la-award-hrbp-sla Logic App.
+    { env_name = "HRBP_SLA_WEBHOOK_SECRET",            kv_secret_name = "HRBP-SLA-WEBHOOK-SECRET" },
     # Demo tenant — Graph API client secret for self-registration (demo_router.py / graph_admin.py)
-    { env_name = "DEMO_GRAPH_CLIENT_SECRET",                 kv_secret_name = "DEMO-GRAPH-CLIENT-SECRET" },
+    { env_name = "DEMO_GRAPH_CLIENT_SECRET",           kv_secret_name = "DEMO-GRAPH-CLIENT-SECRET" },
   ]
 
   tags = local.tags
@@ -577,4 +584,72 @@ resource "azurerm_static_web_app_custom_domain" "swa_custom_domains" {
     # so it is absent from imported state and would force replacement on every plan.
     ignore_changes = [validation_type]
   }
+}
+
+# ── 12. HRBP SLA Logic App ────────────────────────────────────────────────────
+# Consumption (multi-tenant) Logic App — no dedicated hosting plan required.
+#
+# Purpose: daily weekday morning check for nominations that have exceeded their
+# HRBP review SLA. Calls POST /api/internal/checkPendingHRBPReview on the
+# primary backend, which queries dbo.Nominations for rows in PendingHRBPReview
+# older than HRBP_SLA_HOURS and publishes nomination.hrbp-sla-breach events.
+#
+# Why Logic Apps instead of an asyncio background loop inside the backend?
+# The backend Container App scales to zero (min_replicas = 0 in non-prod tiers).
+# An asyncio loop stops when the container is not running. The Logic App is an
+# external scheduler — it fires regardless of backend replica count, and its
+# HTTP action wakes the backend if needed.
+#
+# Security: X-Internal-Key header with HRBP-SLA-WEBHOOK-SECRET (same pattern
+# as the fraud-analytics-job callback). The secret is stored in Key Vault and
+# referenced as a sensitive variable — it does NOT appear in plan output.
+resource "azurerm_logic_app_workflow" "hrbp_sla" {
+  name                = "la-award-hrbp-sla-${var.environment}"
+  resource_group_name = var.resource_group_name
+  location            = var.location_primary
+  tags                = local.tags
+
+  depends_on = [azurerm_resource_group.rg]
+}
+
+# Recurrence trigger — fires every weekday at 08:00 UTC.
+# frequency = "Week" + on_these_days gives true weekday-only semantics
+# (as opposed to frequency = "Day" which includes weekends).
+resource "azurerm_logic_app_trigger_recurrence" "hrbp_sla_trigger" {
+  name         = "WeekdayMorning"
+  logic_app_id = azurerm_logic_app_workflow.hrbp_sla.id
+  frequency    = "Week"
+  interval     = 1
+
+  schedule {
+    on_these_days    = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    at_these_hours   = [8]
+    at_these_minutes = [0]
+  }
+}
+
+# HTTP action — POST to the backend's internal SLA check endpoint.
+# Uses the Front Door URL so the Logic App (which runs outside our VNet)
+# can reach the backend over the public internet with WAF protection.
+#
+# Note: hrbp_sla_webhook_secret is marked sensitive in variables.tf so
+# Terraform will not print it in plan/apply output. It is stored in state
+# (same trade-off as all other secrets in this environment). For a future
+# hardening pass, replace the header value with an Azure Key Vault reference
+# fetched via a preceding azurerm_logic_app_action_http Key Vault action.
+resource "azurerm_logic_app_action_http" "hrbp_sla_check" {
+  name         = "CheckPendingHRBPReview"
+  logic_app_id = azurerm_logic_app_workflow.hrbp_sla.id
+  method       = "POST"
+  uri          = "${var.api_base_url}/api/internal/checkPendingHRBPReview"
+
+  headers = {
+    "Content-Type"   = "application/json"
+    "X-Internal-Key" = var.hrbp_sla_webhook_secret
+  }
+
+  # Empty body — the backend derives everything it needs from the DB.
+  body = "{}"
+
+  depends_on = [azurerm_logic_app_trigger_recurrence.hrbp_sla_trigger]
 }

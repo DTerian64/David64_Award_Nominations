@@ -224,6 +224,19 @@ variable "fraud_analytics_job_webhook_secret" {
   sensitive   = true
 }
 
+# ── HRBP SLA Logic App ────────────────────────────────────────────────────────
+variable "hrbp_sla_webhook_secret" {
+  description = "Shared secret sent as X-Internal-Key by la-award-hrbp-sla when calling /api/internal/checkPendingHRBPReview. Must match HRBP_SLA_WEBHOOK_SECRET on the backend container apps. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}
+
+variable "hrbp_sla_hours" {
+  description = "Hours a nomination can sit in PendingHRBPReview before it is considered SLA-breached and escalation emails are sent. Default: 72 hours (3 business days)."
+  type        = number
+  default     = 72
+}
+
 # ── Demo tenant — self-registration (graph_admin.py / demo_router.py) ─────────
 variable "demo_aad_tenant_id" {
   description = "Azure AD tenant GUID for the Demo Terian Services tenant (DEMO_AAD_TENANT_ID). Non-sensitive — it appears in token tid claims."

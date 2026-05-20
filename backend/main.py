@@ -458,15 +458,10 @@ async def create_nomination(
         })
    
     
-    # Optionally block high-risk nominations
-    if fraud_result['risk_level'] == 'CRITICAL':
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Nomination blocked due to fraud risk: "
-                f"{', '.join(fraud_result['warning_flags'])}"
-        )
-    
-    # Insert nomination using effective_user
+    # ── HRBP routing: MEDIUM / HIGH / CRITICAL → hold for HRBP review ────────
+    # NONE / LOW pass straight through to the normal Pending → manager flow.
+    _flagged_for_hrbp = fraud_result['risk_level'] in ('MEDIUM', 'HIGH', 'CRITICAL')
+
     # Resolve the tenant's currency from the DB config (server-authoritative)
     import json as _json
     _raw_cfg = sqlhelper.get_tenant_config(tenant_id)
@@ -486,11 +481,16 @@ async def create_nomination(
         description=nomination.NominationDescription
     )
 
+    # Immediately override the default 'Pending' status for flagged nominations.
+    if _flagged_for_hrbp:
+        sqlhelper.set_nomination_status(nomination_id, "PendingHRBPReview")
+
     logger.info(
-        "Nomination created successfully", 
+        "Nomination created successfully",
         extra={
             "nomination_id": nomination_id,
-            "user_id": effective_user["UserId"]
+            "user_id":       effective_user["UserId"],
+            "hrbp_flagged":  _flagged_for_hrbp,
         }
     )
 
@@ -504,31 +504,62 @@ async def create_nomination(
             warning_flags=", ".join(fraud_result.get('warning_flags', [])),
         )
     except Exception as save_exc:
-        # Non-fatal — nomination is already created; just log and continue.
         logger.error(
             "Failed to save fraud assessment for nomination %d: %s",
             nomination_id, save_exc
         )
-    
+
+    # Persist the richer FraudFlags snapshot for the HRBP review queue.
+    if _flagged_for_hrbp:
+        try:
+            import json as _j
+            top_features = fraud_result.get('top_features')
+            feature_summary = fraud_result.get('feature_summary')
+            sqlhelper.save_fraud_flags(
+                nomination_id=nomination_id,
+                fraud_score=fraud_result['fraud_score'],
+                fraud_probability=fraud_result.get('fraud_probability', 0.0),
+                risk_level=fraud_result['risk_level'],
+                warning_flags=", ".join(fraud_result.get('warning_flags', [])),
+                top_features_json=_j.dumps(top_features) if top_features else None,
+                feature_summary_json=_j.dumps(feature_summary) if feature_summary else None,
+            )
+        except Exception as flag_exc:
+            logger.error(
+                "Failed to save fraud flags for nomination %d: %s",
+                nomination_id, flag_exc
+            )
+
     # Log if impersonating
     await log_action_if_impersonating(
         user_context,
         "created_nomination",
         f"NominationId: {nomination_id}, Beneficiary: {beneficiary_name}, Amount: {nomination.Amount} {_currency}"
     )
-    
-    # Publish event — the auxiliary worker picks this up, reads fresh DB data,
-    # generates the approve/reject action URLs, and sends the manager email.
+
+    # Publish the appropriate Service Bus event.
+    # Flagged nominations notify the HRBP team; clean nominations notify the manager.
     try:
-        await publish_event("nomination.created", int(nomination_id))
+        if _flagged_for_hrbp:
+            await publish_event(
+                "nomination.fraud-flagged",
+                int(nomination_id),
+                extra={"risk_level": fraud_result['risk_level']},
+            )
+        else:
+            await publish_event("nomination.created", int(nomination_id))
     except Exception as e:
         logger.warning(
-            "⚠️ Failed to publish nomination.created event for nomination %d: %s",
+            "⚠️ Failed to publish event for nomination %d: %s",
             nomination_id, e
         )
-        # Non-fatal: nomination is already persisted; worker will not send email
-        # but the nomination itself is not rolled back.
-    
+
+    if _flagged_for_hrbp:
+        return StatusResponse(
+            Status="PendingHRBPReview",
+            Message="Your nomination is being reviewed by HR before proceeding. You will be notified of the outcome."
+        )
+
     return StatusResponse(
         Status="Pending",
         Message="Nomination submitted successfully"
@@ -807,6 +838,185 @@ async def internal_refresh_fraud_model(x_internal_key: str = Header(default=""))
             if updated
             else "No models were cached — fresh pkls will be streamed on next request."
         ),
+    }
+
+
+# ============================================================================
+# HRBP REVIEW WORKFLOW
+# ============================================================================
+
+# SLA threshold — how many hours a nomination may sit in PendingHRBPReview
+# before the Logic App callback triggers escalation.
+_HRBP_SLA_HOURS: int = int(os.getenv("HRBP_SLA_HOURS", "72"))
+
+# Shared secret for the Logic App SLA-check callback — same pattern as the
+# fraud-analytics-job webhook.
+# Set via Key Vault secret HRBP-SLA-WEBHOOK-SECRET → env var HRBP_SLA_WEBHOOK_SECRET.
+_HRBP_SLA_WEBHOOK_SECRET: str = os.getenv("HRBP_SLA_WEBHOOK_SECRET", "")
+
+
+def require_hrbp_role(current_user: dict = Depends(get_current_user_with_impersonation)) -> dict:
+    """
+    FastAPI dependency — resolves the effective user and checks that they hold
+    the 'HRBP' role in dbo.UserRoles.
+
+    Raises 403 if the role is absent.
+    """
+    effective_user = current_user["effective_user"]
+    roles = sqlhelper.get_user_roles(effective_user["UserId"])
+    if "HRBP" not in roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="HRBP role required",
+        )
+    return current_user
+
+
+@app.get("/api/hrbp/queue")
+async def get_hrbp_queue(user_context: dict = Depends(require_hrbp_role)):
+    """
+    Return all nominations in PendingHRBPReview for the caller's tenant,
+    with full fraud-flag detail.  HRBP role required.
+    """
+    tenant_id = user_context["effective_user"]["TenantId"]
+    return sqlhelper.get_hrbp_queue(tenant_id)
+
+
+class HRBPDecisionRequest(BaseModel):
+    reason: str = ""   # required for rejection, optional for approval
+
+
+@app.post("/api/hrbp/nominations/{nomination_id}/approve")
+async def hrbp_approve(
+    nomination_id: int,
+    body: HRBPDecisionRequest,
+    user_context: dict = Depends(require_hrbp_role),
+):
+    """
+    HRBP approves a flagged nomination → transitions to Pending so the normal
+    manager-approval flow continues.  HRBP role required.
+    """
+    effective_user = user_context["effective_user"]
+    details = sqlhelper.get_nomination_details_for_hrbp(nomination_id)
+    if not details:
+        raise HTTPException(status_code=404, detail="Nomination not found")
+    if details["status"] != "PendingHRBPReview":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Nomination is not in PendingHRBPReview (current: {details['status']})",
+        )
+    if details["tenant_id"] != effective_user["TenantId"]:
+        raise HTTPException(status_code=403, detail="Cross-tenant access denied")
+
+    sqlhelper.set_nomination_status(nomination_id, "Pending")
+    logger.info(
+        "HRBP approved nomination %d (reviewer=%d)", nomination_id, effective_user["UserId"]
+    )
+
+    try:
+        await publish_event(
+            "nomination.hrbp-approved",
+            nomination_id,
+            extra={"reviewer_id": effective_user["UserId"]},
+        )
+        # Also fire nomination.created so the manager gets their approval email.
+        await publish_event("nomination.created", nomination_id)
+    except Exception as e:
+        logger.warning("Failed to publish hrbp-approved events for %d: %s", nomination_id, e)
+
+    return {"status": "approved", "nomination_id": nomination_id}
+
+
+@app.post("/api/hrbp/nominations/{nomination_id}/reject")
+async def hrbp_reject(
+    nomination_id: int,
+    body: HRBPDecisionRequest,
+    user_context: dict = Depends(require_hrbp_role),
+):
+    """
+    HRBP rejects a flagged nomination → transitions to Rejected.
+    A reason is strongly recommended and will be included in the nominator email.
+    HRBP role required.
+    """
+    effective_user = user_context["effective_user"]
+    details = sqlhelper.get_nomination_details_for_hrbp(nomination_id)
+    if not details:
+        raise HTTPException(status_code=404, detail="Nomination not found")
+    if details["status"] != "PendingHRBPReview":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Nomination is not in PendingHRBPReview (current: {details['status']})",
+        )
+    if details["tenant_id"] != effective_user["TenantId"]:
+        raise HTTPException(status_code=403, detail="Cross-tenant access denied")
+
+    sqlhelper.set_nomination_status(nomination_id, "Rejected")
+    logger.info(
+        "HRBP rejected nomination %d (reviewer=%d reason=%r)",
+        nomination_id, effective_user["UserId"], body.reason,
+    )
+
+    try:
+        await publish_event(
+            "nomination.hrbp-rejected",
+            nomination_id,
+            extra={
+                "reviewer_id": effective_user["UserId"],
+                "reason":      body.reason,
+            },
+        )
+    except Exception as e:
+        logger.warning("Failed to publish hrbp-rejected event for %d: %s", nomination_id, e)
+
+    return {"status": "rejected", "nomination_id": nomination_id}
+
+
+@app.post("/api/internal/checkPendingHRBPReview")
+async def internal_check_hrbp_sla(x_internal_key: str = Header(default="")):
+    """
+    Internal SLA-check endpoint — called daily by the Logic App
+    la-award-hrbp-sla-{env}.
+
+    Finds all nominations that have been in PendingHRBPReview longer than
+    HRBP_SLA_HOURS and publishes a nomination.hrbp-sla-breach event for each.
+    The auxiliary service emails the admin team.
+
+    Auth: shared secret in X-Internal-Key header (HRBP_SLA_WEBHOOK_SECRET).
+    Skip auth (dev only) when env var is not configured.
+    """
+    if _HRBP_SLA_WEBHOOK_SECRET and x_internal_key != _HRBP_SLA_WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid internal key")
+
+    breached = sqlhelper.get_sla_breached_nominations(_HRBP_SLA_HOURS)
+    published = 0
+    for nom in breached:
+        try:
+            await publish_event(
+                "nomination.hrbp-sla-breach",
+                nom["nomination_id"],
+                extra={
+                    "tenant_id":      nom["tenant_id"],
+                    "risk_level":     nom["risk_level"],
+                    "nomination_date": nom["nomination_date"],
+                    "sla_hours":      _HRBP_SLA_HOURS,
+                },
+            )
+            published += 1
+        except Exception as exc:
+            logger.error(
+                "Failed to publish sla-breach event for nomination %d: %s",
+                nom["nomination_id"], exc,
+            )
+
+    logger.info(
+        "internal_check_hrbp_sla: found %d breach(es), published %d event(s).",
+        len(breached), published,
+    )
+    return {
+        "status":             "ok",
+        "sla_hours":          _HRBP_SLA_HOURS,
+        "breaches_found":     len(breached),
+        "events_published":   published,
     }
 
 

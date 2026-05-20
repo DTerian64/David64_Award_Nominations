@@ -7,6 +7,8 @@ Exposes only the queries the worker needs:
   - claim_message()                 — idempotency insert into ProcessedEvents
   - update_processed_event_result() — update result/error after handling
   - set_approver_notified()         — stamp ApproverNotifiedAt on Nominations
+  - get_hrbp_users()                — HRBP role holders for a tenant
+  - get_fraud_flags()               — ML inference snapshot for HRBP emails
 """
 
 import logging
@@ -129,6 +131,50 @@ def set_approver_notified(nomination_id: int) -> None:
                 "ApproverNotifiedAt already set — no update needed",
                 extra={"nomination_id": nomination_id}
             )
+
+
+# ── HRBP review workflow ──────────────────────────────────────────────────────
+
+def get_hrbp_users(tenant_id: int) -> list[dict]:
+    """Return all users with the HRBP role for a given tenant."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT u.UserId,
+                   u.FirstName + ' ' + u.LastName AS FullName,
+                   u.userEmail
+            FROM   dbo.UserRoles ur
+            JOIN   dbo.Users u ON u.UserId = ur.UserId
+            WHERE  ur.Role    = 'HRBP'
+              AND  u.TenantId = ?
+        """, (tenant_id,))
+        return [
+            {"user_id": row[0], "full_name": row[1], "email": row[2]}
+            for row in cursor.fetchall()
+        ]
+
+
+def get_fraud_flags(nomination_id: int) -> Optional[dict]:
+    """Return the FraudFlags snapshot for a nomination, or None."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT FraudScore, FraudProbability, RiskLevel,
+                   WarningFlags, TopFeaturesJson, FeatureSummaryJson
+            FROM   dbo.FraudFlags
+            WHERE  NominationId = ?
+        """, (nomination_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "fraud_score":       row[0],
+            "fraud_probability": row[1],
+            "risk_level":        row[2],
+            "warning_flags":     row[3] or "",
+            "top_features_json": row[4],
+            "feature_summary":   row[5],
+        }
 
 
 # ── ProcessedEvents (idempotency) ─────────────────────────────────────────────

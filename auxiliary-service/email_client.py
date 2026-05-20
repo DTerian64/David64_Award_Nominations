@@ -376,6 +376,245 @@ def render_demo_access_invite(first_name: str, redeem_url: str) -> str:
     """
 
 
+# ── HRBP review workflow templates ───────────────────────────────────────────
+
+_RISK_COLORS: dict[str, str] = {
+    "CRITICAL": "#c0392b",
+    "HIGH":     "#e67e22",
+    "MEDIUM":   "#f39c12",
+    "LOW":      "#27ae60",
+    "NONE":     "#27ae60",
+    "UNKNOWN":  "#7f8c8d",
+}
+
+def render_hrbp_review_request(
+    hrbp_name: str,
+    nomination_id: int,
+    nominator_name: str,
+    beneficiary_name: str,
+    amount: float,
+    currency: str,
+    description: str,
+    risk_level: str,
+    fraud_score: float | None,
+    warning_flags: list[str],
+) -> str:
+    """HRBP notification — a nomination has been flagged and needs HR review."""
+    formatted_amount = _fmt(amount, currency)
+    risk_color = _RISK_COLORS.get(risk_level.upper(), "#7f8c8d")
+    score_html = (
+        f"<li><strong>Fraud Score:</strong> {fraud_score:.3f}</li>"
+        if fraud_score is not None else ""
+    )
+    flags_html = ""
+    if warning_flags:
+        flags_list = "".join(f"<li>{f}</li>" for f in warning_flags)
+        flags_html = f"""
+        <div style="background:#fff3cd;border-left:4px solid #f39c12;
+                    padding:12px 16px;border-radius:4px;margin:16px 0;">
+            <strong>⚠️ Warning Flags:</strong>
+            <ul style="margin:8px 0 0;padding-left:20px;">{flags_list}</ul>
+        </div>"""
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    </head>
+    <body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;
+                 max-width:600px;margin:0 auto;padding:20px;">
+        <div style="background:#f8f9fa;border-radius:10px;padding:30px;margin-bottom:20px;">
+            <h2 style="color:#2c3e50;margin-top:0;">🔍 HRBP Review Required</h2>
+            <p style="font-size:16px;">Dear <strong>{hrbp_name}</strong>,</p>
+            <p style="font-size:16px;">
+                The fraud detection system has flagged nomination
+                <strong>#{nomination_id}</strong> for your review before it proceeds
+                to manager approval.
+            </p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;
+                    padding:20px;margin-bottom:20px;">
+            <h3 style="color:#2c3e50;margin-top:0;">📋 Nomination Details</h3>
+            <ul style="padding-left:20px;">
+                <li><strong>Nominator:</strong> {nominator_name}</li>
+                <li><strong>Nominee:</strong> {beneficiary_name}</li>
+                <li><strong>Amount:</strong> {formatted_amount}</li>
+            </ul>
+            <p style="background:#f8f9fa;padding:12px;border-radius:5px;
+                      border-left:4px solid #3498db;margin:0;">{description}</p>
+        </div>
+
+        <div style="background:#fff;border:2px solid {risk_color};border-radius:8px;
+                    padding:20px;margin-bottom:20px;">
+            <h3 style="color:{risk_color};margin-top:0;">⚠️ Risk Assessment</h3>
+            <ul style="padding-left:20px;">
+                <li><strong>Risk Level:</strong>
+                    <span style="color:{risk_color};font-weight:bold;">{risk_level}</span>
+                </li>
+                {score_html}
+            </ul>
+            {flags_html}
+        </div>
+
+        <div style="background:#e8f4fd;border-left:4px solid #3498db;
+                    padding:15px;border-radius:4px;margin-bottom:20px;">
+            <p style="margin:0;font-size:14px;">
+                <strong>Action required:</strong> Please log into the Award Nominations
+                portal to review the full nomination details and either approve or
+                reject the nomination. The nominator will be notified of your decision.
+            </p>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #e0e0e0;margin:30px 0;">
+        <p style="color:#7f8c8d;font-size:12px;text-align:center;">
+            This is an automated message from the Award Nomination System.<br>
+            Please do not reply to this email.
+        </p>
+    </body>
+    </html>
+    """
+
+
+def render_hrbp_approved(
+    nominator_name: str,
+    beneficiary_name: str,
+    amount: float,
+    currency: str,
+) -> str:
+    """Nominator notification — their nomination has cleared HRBP review."""
+    formatted_amount = _fmt(amount, currency)
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+        <div style="background:#f8f9fa;border-radius:10px;padding:30px;margin-bottom:20px;">
+            <h2 style="color:#27ae60;margin-top:0;">✅ Nomination Cleared HR Review</h2>
+            <p style="font-size:16px;">Dear <strong>{nominator_name}</strong>,</p>
+            <p style="font-size:16px;">
+                Your nomination for <strong>{beneficiary_name}</strong>
+                ({formatted_amount}) has been reviewed and approved by the HR team.
+            </p>
+        </div>
+        <p style="font-size:15px;">
+            Your nomination has now been forwarded to the relevant manager for
+            final approval. You will receive another notification once the manager
+            has made their decision.
+        </p>
+        <hr style="border:none;border-top:1px solid #e0e0e0;margin:30px 0;">
+        <p style="color:#7f8c8d;font-size:12px;text-align:center;">
+            This is an automated message from the Award Nomination System.<br>
+            Please do not reply to this email.
+        </p>
+    </body>
+    </html>
+    """
+
+
+def render_hrbp_rejected(
+    nominator_name: str,
+    beneficiary_name: str,
+    amount: float,
+    currency: str,
+    reason: str,
+) -> str:
+    """Nominator notification — their nomination was rejected at the HRBP review stage."""
+    formatted_amount = _fmt(amount, currency)
+    reason_html = (
+        f"""<div style="background:#f8f9fa;padding:12px;border-radius:5px;
+                        border-left:4px solid #e74c3c;margin:16px 0;">
+                <strong>Reason provided:</strong><br>{reason}
+            </div>"""
+        if reason else ""
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+        <div style="background:#f8f9fa;border-radius:10px;padding:30px;margin-bottom:20px;">
+            <h2 style="color:#e74c3c;margin-top:0;">Nomination Not Approved</h2>
+            <p style="font-size:16px;">Dear <strong>{nominator_name}</strong>,</p>
+            <p style="font-size:16px;">
+                Your nomination for <strong>{beneficiary_name}</strong>
+                ({formatted_amount}) was reviewed by the HR team and has not
+                been approved to proceed at this time.
+            </p>
+        </div>
+        {reason_html}
+        <p style="font-size:15px;">
+            Thank you for recognising your colleague. You are encouraged to
+            continue nominating outstanding contributors.
+        </p>
+        <hr style="border:none;border-top:1px solid #e0e0e0;margin:30px 0;">
+        <p style="color:#7f8c8d;font-size:12px;text-align:center;">
+            This is an automated message from the Award Nomination System.<br>
+            Please do not reply to this email.
+        </p>
+    </body>
+    </html>
+    """
+
+
+def render_hrbp_sla_breach(
+    recipient_name: str,
+    nomination_id: int,
+    nominator_name: str,
+    beneficiary_name: str,
+    risk_level: str,
+    nomination_date: str,
+    sla_hours: int,
+) -> str:
+    """HRBP alert — a nomination has exceeded its review SLA."""
+    risk_color = _RISK_COLORS.get(risk_level.upper(), "#7f8c8d")
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+        <div style="background:#fdf2f2;border:2px solid #e74c3c;border-radius:10px;
+                    padding:30px;margin-bottom:20px;">
+            <h2 style="color:#c0392b;margin-top:0;">🚨 SLA Breach — HRBP Review Overdue</h2>
+            <p style="font-size:16px;">Dear <strong>{recipient_name}</strong>,</p>
+            <p style="font-size:16px;">
+                Nomination <strong>#{nomination_id}</strong> has been awaiting HRBP
+                review for more than <strong>{sla_hours} hours</strong> and requires
+                your immediate attention.
+            </p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;
+                    padding:20px;margin-bottom:20px;">
+            <h3 style="color:#2c3e50;margin-top:0;">📋 Nomination Details</h3>
+            <ul style="padding-left:20px;">
+                <li><strong>Nomination ID:</strong> #{nomination_id}</li>
+                <li><strong>Nominator:</strong> {nominator_name}</li>
+                <li><strong>Nominee:</strong> {beneficiary_name}</li>
+                <li><strong>Submitted:</strong> {nomination_date}</li>
+                <li><strong>Risk Level:</strong>
+                    <span style="color:{risk_color};font-weight:bold;">{risk_level}</span>
+                </li>
+            </ul>
+        </div>
+
+        <div style="background:#fff3cd;border-left:4px solid #ffc107;
+                    padding:15px;border-radius:4px;margin-bottom:20px;">
+            <p style="margin:0;font-size:14px;">
+                <strong>⏰ Action required:</strong> Please log into the Award Nominations
+                portal and review this nomination as soon as possible to avoid
+                further escalation.
+            </p>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #e0e0e0;margin:30px 0;">
+        <p style="color:#7f8c8d;font-size:12px;text-align:center;">
+            This is an automated message from the Award Nomination System.<br>
+            Please do not reply to this email.
+        </p>
+    </body>
+    </html>
+    """
+
+
 def render_nomination_rejected(beneficiary_name: str, dollar_amount: float, currency: str) -> str:
     """Nominator notification — their nomination was rejected."""
     formatted_amount = _fmt(dollar_amount, currency)
