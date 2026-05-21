@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
             logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
             logging.getLogger("azure.monitor.opentelemetry.exporter").setLevel(logging.WARNING)
             logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
-            logger.info("Azure Monitor OpenTelemetry configured.")
+            logger.debug("Azure Monitor OpenTelemetry configured (pid=%d).", os.getpid())
         except Exception as exc:
             logger.warning("Azure Monitor OpenTelemetry failed to configure: %s", exc)
     else:
