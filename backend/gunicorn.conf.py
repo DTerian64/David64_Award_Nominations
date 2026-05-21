@@ -32,45 +32,13 @@ logger = logging.getLogger(__name__)
 
 
 def post_fork(server, worker):
-    """Initialize per-worker resources after Gunicorn forks each worker process.
+    """Called in each worker immediately after forking from the master.
 
-    This is the correct place to call configure_azure_monitor() when running
-    under Gunicorn's pre-fork model. Each worker gets a fresh OTel setup with
-    its own background exporter threads.
+    Azure Monitor / OTel is intentionally NOT configured here.
+
+    UvicornWorker calls logging.config.dictConfig() during its own startup,
+    which runs after post_fork() and wipes any handlers added here.  OTel is
+    therefore initialized in the FastAPI lifespan startup event (main.py),
+    which runs after uvicorn has finished configuring logging.
     """
-    conn_str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
-    if conn_str:
-        try:
-            from azure.monitor.opentelemetry import configure_azure_monitor
-            configure_azure_monitor(
-                connection_string=conn_str,
-                # Disable FastAPI/ASGI auto-instrumentation — it wraps the ASGI
-                # callable outside Starlette's middleware chain and can interfere
-                # with CORSMiddleware. All other instrumentors remain active:
-                # httpx (outbound calls), sqlalchemy (DB queries), logging, exceptions.
-                instrumentation_options={"fastapi": {"enabled": False}},
-            )
-            # configure_azure_monitor() resets Azure SDK logger levels internally.
-            # Re-apply suppression here, after OTel is initialized, so these
-            # noisy internal loggers don't flood ContainerAppConsoleLogs or traces.
-            logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
-            logging.getLogger("azure.monitor.opentelemetry.exporter").setLevel(logging.WARNING)
-            logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
-            logger.info(
-                "[worker pid=%s] Azure Monitor OpenTelemetry configured "
-                "(FastAPI instrumentation disabled).",
-                worker.pid,
-            )
-        except Exception as exc:  # noqa: BLE001
-            # Never let observability bootstrap crash the application.
-            logger.warning(
-                "[worker pid=%s] Azure Monitor OpenTelemetry failed to configure: %s",
-                worker.pid,
-                exc,
-            )
-    else:
-        logger.warning(
-            "[worker pid=%s] APPLICATIONINSIGHTS_CONNECTION_STRING not set — "
-            "Azure Monitor disabled.",
-            worker.pid,
-        )
+    pass

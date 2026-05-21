@@ -83,6 +83,39 @@ async def _model_eviction_loop() -> None:
 async def lifespan(app: FastAPI):
     """Application lifespan handler – runs startup logic, then yields control."""
     import asyncio
+
+    # ── Azure Monitor / OpenTelemetry ─────────────────────────────────────────
+    # configure_azure_monitor() is called HERE (inside each worker's lifespan
+    # startup) rather than in gunicorn.conf.py post_fork().
+    #
+    # Why: UvicornWorker calls logging.config.dictConfig() during its own
+    # initialization, which runs AFTER post_fork() and wipes any handlers that
+    # were added there — including the OTel LoggingHandler.  By the time lifespan
+    # startup runs, uvicorn has finished configuring logging, so the handler we
+    # add here is the last one and stays in place.
+    #
+    # This is safe under the pre-fork model: lifespan runs in each worker
+    # process (not the master), so OTel background threads start fresh per worker
+    # with no inherited dead-thread state from a fork.
+    _ai_conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if _ai_conn:
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor
+            configure_azure_monitor(
+                connection_string=_ai_conn,
+                instrumentation_options={"fastapi": {"enabled": False}},
+            )
+            # Re-suppress Azure SDK internal loggers — configure_azure_monitor()
+            # resets their levels; we restore WARNING so they don't flood traces.
+            logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+            logging.getLogger("azure.monitor.opentelemetry.exporter").setLevel(logging.WARNING)
+            logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+            logger.info("Azure Monitor OpenTelemetry configured.")
+        except Exception as exc:
+            logger.warning("Azure Monitor OpenTelemetry failed to configure: %s", exc)
+    else:
+        logger.warning("APPLICATIONINSIGHTS_CONNECTION_STRING not set — telemetry disabled.")
+
     # Startup: ensure all ORM-defined tables exist in the database
     sqlhelper.create_all_tables()
     logger.info("Database tables verified on startup.")
@@ -111,9 +144,11 @@ app = FastAPI(
     redoc_url=None,
 )
 
-from azure.monitor.opentelemetry import configure_azure_monitor
+# Instrument FastAPI for HTTP request tracing (populates the `requests` table in
+# App Insights).  Called once in the master process so the instrumented ASGI app
+# is inherited by all workers on fork.  configure_azure_monitor() in the lifespan
+# sets up the TracerProvider that these spans flow into.
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
 FastAPIInstrumentor.instrument_app(app)
 
 # ============================================================================
