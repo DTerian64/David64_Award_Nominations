@@ -50,6 +50,12 @@ def post_fork(server, worker):
                 # httpx (outbound calls), sqlalchemy (DB queries), logging, exceptions.
                 instrumentation_options={"fastapi": {"enabled": False}},
             )
+            # configure_azure_monitor() resets Azure SDK logger levels internally.
+            # Re-apply suppression here, after OTel is initialized, so these
+            # noisy internal loggers don't flood ContainerAppConsoleLogs or traces.
+            logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+            logging.getLogger("azure.monitor.opentelemetry.exporter").setLevel(logging.WARNING)
+            logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
             logger.info(
                 "[worker pid=%s] Azure Monitor OpenTelemetry configured "
                 "(FastAPI instrumentation disabled).",
