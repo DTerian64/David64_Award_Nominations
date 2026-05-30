@@ -80,11 +80,13 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
                 beneficiary.FirstName + ' ' + beneficiary.LastName AS BeneficiaryName,
                 beneficiary.userEmail     AS BeneficiaryEmail,
                 approver.FirstName + ' ' + approver.LastName AS ApproverName,
-                approver.userEmail        AS ApproverEmail
+                approver.userEmail        AS ApproverEmail,
+                nc.category_description   AS CategoryDescription
             FROM  dbo.Nominations n
             INNER JOIN dbo.Users nominator   ON n.NominatorId   = nominator.UserId
             INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
             INNER JOIN dbo.Users approver    ON n.ApproverId    = approver.UserId
+            LEFT JOIN  dbo.nomination_categories nc ON nc.id    = n.CategoryId
             WHERE n.NominationId = ?
         """, (nomination_id,))
         row = cursor.fetchone()
@@ -93,20 +95,21 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
         return None
 
     return {
-        "nomination_id":     int(row[0]),
-        "amount":            float(row[1]),
-        "currency":          row[2],
-        "description":       row[3],
-        "status":            row[4],
-        "approver_id":       int(row[5]),
-        "nominator_id":      int(row[6]),
-        "nominator_name":    row[7],
-        "nominator_email":   row[8],
-        "beneficiary_id":    int(row[9]),   # needed by payout_submit handler
-        "beneficiary_name":  row[10],
-        "beneficiary_email": row[11],
-        "approver_name":     row[12],
-        "approver_email":    row[13],
+        "nomination_id":        int(row[0]),
+        "amount":               float(row[1]),
+        "currency":             row[2],
+        "description":          row[3],
+        "status":               row[4],
+        "approver_id":          int(row[5]),
+        "nominator_id":         int(row[6]),
+        "nominator_name":       row[7],
+        "nominator_email":      row[8],
+        "beneficiary_id":       int(row[9]),   # needed by payout_submit handler
+        "beneficiary_name":     row[10],
+        "beneficiary_email":    row[11],
+        "approver_name":        row[12],
+        "approver_email":       row[13],
+        "category_description": row[14],       # None for tenants without categories
     }
 
 

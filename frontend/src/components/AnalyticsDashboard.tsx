@@ -61,6 +61,13 @@ interface DiversityMetrics {
   topRecipientPercent: number;
 }
 
+interface CategoryBreakdown {
+  categoryDescription: string;
+  nominationCount: number;
+  totalAmount: number;
+  avgAmount: number;
+}
+
 interface IntegrityRun {
   runId: string;
   runDate: string;
@@ -108,6 +115,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const [fraudAlerts, setFraudAlerts] = useState<FraudAlert[]>([]);
   const [approvalMetrics, setApprovalMetrics] = useState<ApprovalMetrics | null>(null);
   const [diversityMetrics, setDiversityMetrics] = useState<DiversityMetrics | null>(null);
+  const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask' | 'integrity'>('ask');
@@ -177,7 +185,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
-      const [ovData, trendsData, deptData, topRecData, topNomData, fraudData, approvalData, divData] = 
+      const [ovData, trendsData, deptData, topRecData, topNomData, fraudData, approvalData, divData, catData] =
         await Promise.all([
           apiFetch<AnalyticsOverview>('/api/admin/analytics/overview'),
           apiFetch<SpendingTrend[]>('/api/admin/analytics/spending-trends?days=90'),
@@ -186,7 +194,8 @@ export const AnalyticsDashboard: React.FC = () => {
           apiFetch<TopRecipient[]>('/api/admin/analytics/top-nominators?limit=10'),
           apiFetch<FraudAlert[]>('/api/admin/analytics/fraud-alerts?limit=20'),
           apiFetch<ApprovalMetrics>('/api/admin/analytics/approval-metrics'),
-          apiFetch<DiversityMetrics>('/api/admin/analytics/diversity-metrics')
+          apiFetch<DiversityMetrics>('/api/admin/analytics/diversity-metrics'),
+          apiFetch<CategoryBreakdown[]>('/api/admin/analytics/category-breakdown'),
         ]);
 
       setOverview(ovData);
@@ -197,6 +206,7 @@ export const AnalyticsDashboard: React.FC = () => {
       setFraudAlerts(fraudData);
       setApprovalMetrics(approvalData);
       setDiversityMetrics(divData);
+      setCategoryBreakdown(catData);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load analytics');
@@ -544,6 +554,50 @@ export const AnalyticsDashboard: React.FC = () => {
               warning={overview.fraudAlertsThisMonth > 0}
             />
           </div>
+
+          {/* Category Breakdown — only shown when tenant has categories */}
+          {categoryBreakdown.length > 0 && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <BarChart3 size={20} />
+                Nominations by Category
+              </h2>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-gray-500 text-xs uppercase tracking-wide">
+                    <th className="pb-2 font-medium">Category</th>
+                    <th className="pb-2 font-medium text-right">Nominations</th>
+                    <th className="pb-2 font-medium text-right">Total Spend</th>
+                    <th className="pb-2 font-medium text-right">Avg Award</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {categoryBreakdown.map((cat, i) => {
+                    const maxCount = categoryBreakdown[0]?.nominationCount || 1;
+                    const barWidth = Math.round((cat.nominationCount / maxCount) * 100);
+                    return (
+                      <tr key={i} className="border-b border-gray-100 last:border-0">
+                        <td className="py-3 pr-4">
+                          <div className="flex flex-col gap-1">
+                            <span className="font-medium text-gray-800">{cat.categoryDescription}</span>
+                            <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden w-48">
+                              <div
+                                className="h-full rounded-full"
+                                style={{ width: `${barWidth}%`, backgroundColor: 'var(--color-primary)' }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 text-right font-semibold text-gray-700">{cat.nominationCount}</td>
+                        <td className="py-3 text-right text-gray-600">${cat.totalAmount.toLocaleString()}</td>
+                        <td className="py-3 text-right text-gray-600">${cat.avgAmount.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Department Spending */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">

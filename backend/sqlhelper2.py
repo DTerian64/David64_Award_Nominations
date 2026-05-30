@@ -581,16 +581,18 @@ def get_pending_nominations_for_approver(approver_id: int, tenant_id: int) -> Li
     Get all pending nominations for a specific approver, scoped to the tenant.
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
                       Amount, Currency, NominationDescription, NominationDate,
-                      ApprovedDate, PayedDate, Status)
+                      ApprovedDate, PayedDate, Status, CategoryDescription)
     """
     with get_db_context() as session:
         return session.execute(
             text("""
                 SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
                        n.Amount, n.Currency, n.NominationDescription, n.NominationDate,
-                       n.ApprovedDate, n.PayedDate, n.Status
+                       n.ApprovedDate, n.PayedDate, n.Status,
+                       nc.category_description AS CategoryDescription
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
+                LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
                 WHERE n.ApproverId = :approver_id
                   AND n.Status     = 'Pending'
                   AND u.TenantId   = :tenant_id
@@ -708,11 +710,13 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
                     approver.userEmail                                 AS ApproverEmail,
                     approver.FirstName + ' ' + approver.LastName      AS ApproverName,
                     n.NominationDescription,
-                    n.Status
+                    n.Status,
+                    nc.category_description                            AS CategoryDescription
                 FROM dbo.Nominations n
                 INNER JOIN dbo.Users nominator   ON n.NominatorId   = nominator.UserId
                 INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
                 INNER JOIN dbo.Users approver    ON n.ApproverId    = approver.UserId
+                LEFT JOIN  dbo.nomination_categories nc ON nc.id    = n.CategoryId
                 WHERE n.NominationId = :nomination_id
             """),
             {"nomination_id": nomination_id},
@@ -720,16 +724,17 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
 
     if row:
         return {
-            "nomination_id":     int(row[0]),
-            "dollar_amount":     float(row[1]),
-            "nominator_email":   row[2],
-            "nominator_name":    row[3],
-            "beneficiary_name":  row[4],
-            "beneficiary_email": row[5],
-            "approver_email":    row[6],
-            "approver_name":     row[7],
-            "description":       row[8],
-            "status":            row[9],
+            "nomination_id":        int(row[0]),
+            "dollar_amount":        float(row[1]),
+            "nominator_email":      row[2],
+            "nominator_name":       row[3],
+            "beneficiary_name":     row[4],
+            "beneficiary_email":    row[5],
+            "approver_email":       row[6],
+            "approver_name":        row[7],
+            "description":          row[8],
+            "status":               row[9],
+            "category_description": row[10],   # None for tenants without categories
         }
     return None
 
@@ -739,16 +744,18 @@ def get_nomination_history(user_id: int, tenant_id: int) -> List[Tuple]:
     Get nomination history for a user (as nominator), scoped to the tenant.
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
                       Amount, Currency, NominationDescription, NominationDate,
-                      ApprovedDate, PayedDate, Status)
+                      ApprovedDate, PayedDate, Status, CategoryDescription)
     """
     with get_db_context() as session:
         return session.execute(
             text("""
                 SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
                        n.Amount, n.Currency, n.NominationDescription, n.NominationDate,
-                       n.ApprovedDate, n.PayedDate, n.Status
+                       n.ApprovedDate, n.PayedDate, n.Status,
+                       nc.category_description AS CategoryDescription
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
+                LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
                 WHERE n.NominatorId = :user_id
                   AND u.TenantId    = :tenant_id
                 ORDER BY n.NominationDate DESC
@@ -1030,6 +1037,35 @@ def save_fraud_assessment(
 # ===========================================================================
 # ANALYTICS QUERIES
 # ===========================================================================
+
+def get_category_breakdown(tenant_id: int) -> List[Tuple]:
+    """
+    Return nomination counts and total spend per category for a tenant.
+
+    Only includes nominations that have a CategoryId set (tenants without
+    categories configured return an empty list).
+
+    Returns: List of (category_description, nomination_count, total_amount, avg_amount)
+    ordered by nomination_count DESC.
+    """
+    with get_db_context() as session:
+        return session.execute(
+            text("""
+                SELECT
+                    nc.category_description,
+                    COUNT(n.NominationId)          AS NominationCount,
+                    SUM(n.Amount)                  AS TotalAmount,
+                    AVG(CAST(n.Amount AS FLOAT))   AS AvgAmount
+                FROM dbo.Nominations n
+                JOIN dbo.Users u ON u.UserId = n.NominatorId
+                JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
+                WHERE u.TenantId = :tenant_id
+                GROUP BY nc.category_description
+                ORDER BY NominationCount DESC
+            """),
+            {"tenant_id": tenant_id},
+        ).fetchall()
+
 
 def get_analytics_overview(tenant_id: int) -> dict:
     """Get high-level analytics metrics for a tenant."""

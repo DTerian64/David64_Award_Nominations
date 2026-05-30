@@ -33,6 +33,7 @@ class Nomination(BaseModel):
     ApprovedDate: Optional[datetime] = None
     PayedDate: Optional[datetime] = None
     Status: Literal["Pending", "Approved", "Paid", "Rejected"]
+    CategoryDescription: Optional[str] = None
     # Business lifecycle data — when did the approver first receive the nomination
     # request? Populated by the auxiliary worker after SMTP hand-off.
     # None = approver not yet notified (event in flight or worker pending).

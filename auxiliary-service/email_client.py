@@ -118,9 +118,14 @@ def render_nomination_pending(
     description: str,
     approve_url: str,
     reject_url: str,
+    category: str | None = None,
 ) -> str:
     """Approver notification with Approve / Reject action buttons."""
     formatted_amount = _fmt(dollar_amount, currency)
+    category_html = (
+        f'<p style="margin: 4px 0 0;"><strong>Category:</strong> {category}</p>'
+        if category else ""
+    )
     return f"""
     <!DOCTYPE html>
     <html>
@@ -137,6 +142,7 @@ def render_nomination_pending(
                 <strong>{nominator_name}</strong> has nominated <strong>{beneficiary_name}</strong>
                 for a monetary award of <strong>{formatted_amount}</strong>.
             </p>
+            {category_html}
         </div>
 
         <div style="background-color: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
@@ -185,9 +191,15 @@ def render_nomination_pending(
     """
 
 
-def render_nomination_approved(beneficiary_name: str, dollar_amount: float, currency: str) -> str:
+def render_nomination_approved(
+    beneficiary_name: str,
+    dollar_amount: float,
+    currency: str,
+    category: str | None = None,
+) -> str:
     """Nominator notification — their nomination was approved."""
     formatted_amount = _fmt(dollar_amount, currency)
+    category_item = f"<li><strong>Category:</strong> {category}</li>" if category else ""
     return f"""
     <html>
     <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -196,6 +208,7 @@ def render_nomination_approved(beneficiary_name: str, dollar_amount: float, curr
         <ul>
             <li><strong>Nominee:</strong> {beneficiary_name}</li>
             <li><strong>Award:</strong> Monetary Award ({formatted_amount})</li>
+            {category_item}
         </ul>
         <p>The nominee will be notified of this honour.</p>
         <hr style="margin: 20px 0;">
@@ -615,9 +628,15 @@ def render_hrbp_sla_breach(
     """
 
 
-def render_nomination_rejected(beneficiary_name: str, dollar_amount: float, currency: str) -> str:
+def render_nomination_rejected(
+    beneficiary_name: str,
+    dollar_amount: float,
+    currency: str,
+    category: str | None = None,
+) -> str:
     """Nominator notification — their nomination was rejected."""
     formatted_amount = _fmt(dollar_amount, currency)
+    category_item = f"<li><strong>Category:</strong> {category}</li>" if category else ""
     return f"""
     <html>
     <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -626,6 +645,7 @@ def render_nomination_rejected(beneficiary_name: str, dollar_amount: float, curr
         <ul>
             <li><strong>Nominee:</strong> {beneficiary_name}</li>
             <li><strong>Award:</strong> Monetary Award ({formatted_amount})</li>
+            {category_item}
             <li><strong>Outcome:</strong> Not approved at this time</li>
         </ul>
         <p>

@@ -93,6 +93,7 @@ def handle(payload: dict) -> None:
         description=details["description"],
         approve_url=approve_url,
         reject_url=reject_url,
+        category=details.get("category_description"),
     )
 
     email_client.send_email(

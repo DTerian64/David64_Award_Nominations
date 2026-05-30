@@ -41,6 +41,7 @@ interface Nomination {
   ApprovedDate: string | null;
   PayedDate: string | null;
   Status: 'Pending' | 'Approved' | 'Paid' | 'Rejected';
+  CategoryDescription?: string | null;
 }
 
 interface CurrentUser {
@@ -554,6 +555,12 @@ const AwardNominationApp: React.FC = () => {
                         </div>
                       </div>
                       <p className="text-gray-700">{nom.NominationDescription}</p>
+                      {nom.CategoryDescription && (
+                        <span className="inline-block mt-2 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700"
+                              style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                          {nom.CategoryDescription}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -591,7 +598,13 @@ const AwardNominationApp: React.FC = () => {
                           {formatCurrency(nom.Amount)}
                         </p>
                       </div>
-                      <p className="text-gray-700 mb-4">{nom.NominationDescription}</p>
+                      <p className="text-gray-700 mb-2">{nom.NominationDescription}</p>
+                      {nom.CategoryDescription && (
+                        <span className="inline-block mb-4 px-2 py-0.5 rounded-full text-xs font-medium"
+                              style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                          {nom.CategoryDescription}
+                        </span>
+                      )}
                       <div className="flex space-x-3">
                         <button
                           onClick={() => handleApproval(nom.NominationId, true)}

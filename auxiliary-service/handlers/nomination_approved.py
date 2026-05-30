@@ -75,6 +75,7 @@ def handle(payload: dict) -> None:
             beneficiary_name=details["beneficiary_name"],
             dollar_amount=details["amount"],
             currency=details["currency"],
+            category=details.get("category_description"),
         )
         subject = f"✅ Nomination Approved — {details['beneficiary_name']}"
     else:  # Rejected (status in REJECTED_STATUSES)
@@ -82,6 +83,7 @@ def handle(payload: dict) -> None:
             beneficiary_name=details["beneficiary_name"],
             dollar_amount=details["amount"],
             currency=details["currency"],
+            category=details.get("category_description"),
         )
         subject = f"Nomination Status — {details['beneficiary_name']}"
 

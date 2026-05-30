@@ -635,7 +635,7 @@ async def get_pending_nominations(user_context: dict = Depends(get_current_user_
     tenant_id      = effective_user["TenantId"]
 
     rows = sqlhelper.get_pending_nominations_for_approver(effective_user["UserId"], tenant_id)
-    
+
     nominations = []
     for row in rows:
         nominations.append(Nomination(
@@ -649,7 +649,8 @@ async def get_pending_nominations(user_context: dict = Depends(get_current_user_
             NominationDate=row[7],
             ApprovedDate=row[8],
             PayedDate=row[9],
-            Status=row[10]
+            Status=row[10],
+            CategoryDescription=row[11],
         ))
 
     await log_action_if_impersonating(user_context, "viewed_pending_approvals")
@@ -756,7 +757,8 @@ async def get_nomination_history(user_context: dict = Depends(get_current_user_w
             NominationDate=row[7],
             ApprovedDate=row[8],
             PayedDate=row[9],
-            Status=row[10]
+            Status=row[10],
+            CategoryDescription=row[11],
         ))
 
     await log_action_if_impersonating(user_context, "viewed_nomination_history")
@@ -1544,6 +1546,31 @@ async def get_diversity_metrics(
         logger.error(f"Error fetching diversity metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/admin/analytics/category-breakdown")
+async def get_category_breakdown(
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin"))
+):
+    """
+    Return nomination counts and spend broken down by award category.
+    Returns an empty list for tenants that have no nomination categories configured.
+    """
+    tenant_id = current_user["effective_user"]["TenantId"]
+    try:
+        rows = sqlhelper.get_category_breakdown(tenant_id)
+        return [
+            {
+                "categoryDescription": row[0],
+                "nominationCount":     row[1],
+                "totalAmount":         float(row[2]) if row[2] is not None else 0.0,
+                "avgAmount":           round(float(row[3]), 2) if row[3] is not None else 0.0,
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching category breakdown: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
