@@ -5,6 +5,10 @@ import json
 import os
 from datetime import datetime
 
+# Absolute path of this package's directory.
+# Used by _AppLogFilter to identify records that originate from our own code.
+_APP_DIR = os.path.abspath(os.path.dirname(__file__))
+
 # Standard LogRecord attributes that are NOT application extras.
 # Used by both the filter and the formatter to identify user-supplied data.
 _STANDARD_ATTRS = frozenset({
@@ -13,6 +17,24 @@ _STANDARD_ATTRS = frozenset({
     "msecs", "msg", "name", "pathname", "process", "processName",
     "relativeCreated", "stack_info", "taskName", "thread", "threadName",
 })
+
+
+class _AppLogFilter(logging.Filter):
+    """Only pass log records that originate from this application's own code.
+
+    Records whose pathname falls outside _APP_DIR (i.e. third-party libraries,
+    uvicorn internals, azure-sdk, OpenTelemetry, etc.) are dropped at the
+    handler level so they never appear in stdout / ContainerAppConsoleLogs.
+
+    Records from our own code get the 'App_Log: ' prefix, making them easy
+    to isolate in Log Analytics:
+        | where message startswith "App_Log:"
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        if os.path.abspath(record.pathname).startswith(_APP_DIR):
+            record.msg = f"App_Log: {record.msg}"
+            return True
+        return False  # drop — not our code
 
 
 class _ExtrasToMessageFilter(logging.Filter):
@@ -87,16 +109,14 @@ def setup_logging():
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
+    # Attach filters to the handler so only our own code reaches stdout.
+    # _AppLogFilter drops third-party records entirely and prefixes ours with
+    # 'App_Log: ' for easy KQL filtering.
+    # _ExtrasToMessageFilter merges extra={} kwargs into the message body so
+    # they survive the App Insights OTel exporter into customDimensions.
+    console_handler.addFilter(_AppLogFilter())
+    console_handler.addFilter(_ExtrasToMessageFilter())
+
     root_logger.addHandler(console_handler)
-
-    # Merge extra kwargs into message body so they appear in App Insights traces.
-    root_logger.addFilter(_ExtrasToMessageFilter())
-
-    # Suppress noisy loggers
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
-    logging.getLogger("azure.monitor.opentelemetry.exporter").setLevel(logging.WARNING)
-    logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
     return root_logger
