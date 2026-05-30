@@ -36,11 +36,18 @@ export interface TenantTheme {
   primaryTextOnDark: string;  // e.g. "#ffffff"
 }
 
+export interface NominationCategory {
+  id: number;
+  category_description: string;
+}
+
 export interface TenantConfig {
   locale:   string;        // BCP 47 tag, e.g. "en-US" | "ko-KR"
   currency: string;        // ISO 4217, e.g. "USD" | "KRW"
   theme:    TenantTheme;
   domain?:  string;        // canonical public hostname, e.g. "acme-awards.terian-services.com"
+  /** Custom nomination categories. Empty array = feature disabled for this tenant. */
+  nomination_categories: NominationCategory[];
 }
 
 /** Defaults used for tenant 1 (and any tenant without a Config row). */
@@ -53,6 +60,7 @@ const DEFAULT_CONFIG: TenantConfig = {
     primaryLightColor: '#e0e7ff',   // indigo-100
     primaryTextOnDark: '#ffffff',
   },
+  nomination_categories: [],
 };
 
 // ── Context ────────────────────────────────────────────────────────────────
@@ -144,6 +152,7 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
           theme:    raw.theme    ? { ...DEFAULT_CONFIG.theme, ...raw.theme }
                                  : DEFAULT_CONFIG.theme,
           domain:   raw.domain,
+          nomination_categories: raw.nomination_categories ?? [],
         };
 
         // ── Domain isolation check ───────────────────────────────────────

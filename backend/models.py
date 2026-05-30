@@ -16,6 +16,9 @@ class NominationCreate(BaseModel):
     BeneficiaryId: int
     Amount: int = Field(gt=0)
     NominationDescription: str = Field(min_length=1, max_length=500)
+    # Optional — only submitted when the tenant has nomination_categories rows.
+    # The backend validates that it is provided when categories exist.
+    CategoryId: Optional[int] = None
 
 
 class Nomination(BaseModel):

@@ -96,7 +96,7 @@ const AwardNominationApp: React.FC = () => {
   // Hooks must always be called first — before any conditional return
   const { accounts } = useMsal();
   const { getEffectiveUser, isImpersonating, isAdmin } = useImpersonation();
-  const { formatCurrency, minAmount, maxAmount } = useTenantConfig();
+  const { config, formatCurrency, minAmount, maxAmount } = useTenantConfig();
   const { t, i18n } = useTranslation();
 
   const pathname = window.location.pathname;
@@ -126,6 +126,7 @@ const AwardNominationApp: React.FC = () => {
   const [selectedBeneficiary, setSelectedBeneficiary] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [submitStatus, setSubmitStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
@@ -184,7 +185,8 @@ const AwardNominationApp: React.FC = () => {
   };
 
   const handleSubmitNomination = async () => {
-    if (!selectedBeneficiary || !amount || !description) {
+    const hasCategories = config.nomination_categories.length > 0;
+    if (!selectedBeneficiary || !amount || !description || (hasCategories && !selectedCategoryId)) {
       setSubmitStatus({ type: 'error', message: t('messages.fillAllFields') });
       return;
     }
@@ -207,19 +209,25 @@ const AwardNominationApp: React.FC = () => {
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
 
+      const payload: Record<string, unknown> = {
+        BeneficiaryId: Number(selectedBeneficiary),
+        Amount:  dollarAmount,
+        NominationDescription: description,
+      };
+      if (config.nomination_categories.length > 0 && selectedCategoryId) {
+        payload.CategoryId = Number(selectedCategoryId);
+      }
+
       await apiFetch('/api/nominations', {
         method: 'POST',
-        body: JSON.stringify({
-          BeneficiaryId: Number(selectedBeneficiary),
-          Amount:  dollarAmount,
-          NominationDescription: description,
-        }),
+        body: JSON.stringify(payload),
       }, impersonatedUPN);
 
       setSubmitStatus({ type: 'success', message: t('messages.submitSuccess') });
       setSelectedBeneficiary('');
       setAmount('');
       setDescription('');
+      setSelectedCategoryId('');
 
       setTimeout(() => {
         loadNominations();
@@ -439,6 +447,27 @@ const AwardNominationApp: React.FC = () => {
                     ))}
                   </select>
                 </div>
+
+                {config.nomination_categories.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Award Category
+                    </label>
+                    <select
+                      value={selectedCategoryId}
+                      onChange={(e) => setSelectedCategoryId(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none"
+                      style={{ accentColor: 'var(--color-primary)' }}
+                    >
+                      <option value="">Select a category…</option>
+                      {config.nomination_categories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.category_description}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">

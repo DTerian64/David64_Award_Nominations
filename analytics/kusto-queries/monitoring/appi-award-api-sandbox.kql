@@ -1,0 +1,11 @@
+
+traces
+| where timestamp > ago(5m)
+| where message !contains "Request URL"
+    and message !contains "Response status: 200"
+    and message !contains "Transmission succeeded:"
+| extend 
+    PacificTime = datetime_utc_to_local(timestamp, 'US/Pacific') 
+| project PacificTime, message
+| order by PacificTime asc
+

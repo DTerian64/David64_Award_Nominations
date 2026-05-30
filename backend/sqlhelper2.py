@@ -170,6 +170,21 @@ class FraudScoreORM(Base):
     nomination = relationship("NominationORM", back_populates="fraud_score")
 
 
+class NominationCategoryORM(Base):
+    """
+    Maps to dbo.nomination_categories.
+
+    Per-tenant list of custom award categories (Premium / Enterprise feature).
+    When at least one row exists for a tenant the nomination form shows a
+    required category dropdown; tenants with no rows see no category field.
+    """
+    __tablename__ = "nomination_categories"
+
+    id                   = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id            = Column(Integer, ForeignKey("Tenants.TenantId"), nullable=False)
+    category_description = Column(Unicode(256), nullable=False)
+
+
 # ===========================================================================
 # Engine factory
 # ===========================================================================
@@ -361,6 +376,27 @@ def get_tenant_config(tenant_id: int) -> Optional[str]:
         return row[0] if row else None
 
 
+def get_nomination_categories(tenant_id: int) -> List[Tuple]:
+    """
+    Return all nomination categories for a tenant, ordered by id.
+
+    Returns: List of (id, category_description)
+    An empty list means the tenant has no custom categories — the nomination
+    form should show no category field at all.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text(
+                "SELECT id, category_description "
+                "FROM dbo.nomination_categories "
+                "WHERE tenant_id = :tid "
+                "ORDER BY id"
+            ),
+            {"tid": tenant_id},
+        ).fetchall()
+        return rows
+
+
 # ===========================================================================
 # USER QUERIES
 # ===========================================================================
@@ -502,6 +538,7 @@ def create_nomination(
     amount: int,
     currency: str,
     description: str,
+    category_id: Optional[int] = None,
 ) -> int:
     """
     Create a new nomination.
@@ -509,16 +546,20 @@ def create_nomination(
 
     Uses OUTPUT INSERTED instead of @@IDENTITY so the inserted ID is returned
     safely even when triggers are present on the table.
+
+    category_id is optional — pass None for tenants without custom categories.
     """
     with get_db_context() as session:
         result = session.execute(
             text("""
                 INSERT INTO Nominations
                     (NominatorId, BeneficiaryId, ApproverId, Amount, Currency,
-                     NominationDescription, NominationDate, Status, ApprovedDate, PayedDate)
+                     NominationDescription, NominationDate, Status, ApprovedDate, PayedDate,
+                     CategoryId)
                 OUTPUT INSERTED.NominationId
                 VALUES (:nominator_id, :beneficiary_id, :approver_id, :amount, :currency,
-                        :description, GETDATE(), 'Pending', NULL, NULL)
+                        :description, GETDATE(), 'Pending', NULL, NULL,
+                        :category_id)
             """),
             {
                 "nominator_id":   nominator_id,
@@ -527,6 +568,7 @@ def create_nomination(
                 "amount":         amount,
                 "currency":       currency,
                 "description":    description,
+                "category_id":    category_id,
             },
         )
         nomination_id = result.fetchone()[0]

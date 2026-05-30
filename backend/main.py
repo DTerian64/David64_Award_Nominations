@@ -375,6 +375,14 @@ async def get_tenant_config(user_context: dict = Depends(get_current_user_with_i
         if domain:
             parsed["domain"] = domain
 
+        # Inject custom nomination categories (Premium/Enterprise feature).
+        # Empty list → tenant has no categories → frontend hides the field.
+        cat_rows = sqlhelper.get_nomination_categories(tenant_id)
+        parsed["nomination_categories"] = [
+            {"id": row[0], "category_description": row[1]}
+            for row in cat_rows
+        ]
+
         return parsed
     except Exception as exc:
         logger.error(
@@ -507,13 +515,31 @@ async def create_nomination(
         except Exception:
             pass
 
+    # ── Category validation ───────────────────────────────────────────────────
+    # If the tenant has nomination categories defined, CategoryId is required.
+    # We validate server-side even though the frontend enforces it too.
+    _categories = sqlhelper.get_nomination_categories(tenant_id)
+    if _categories:
+        if nomination.CategoryId is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CategoryId is required for this tenant",
+            )
+        _valid_ids = {row[0] for row in _categories}
+        if nomination.CategoryId not in _valid_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"CategoryId {nomination.CategoryId} is not valid for this tenant",
+            )
+
     nomination_id = sqlhelper.create_nomination(
         nominator_id=effective_user["UserId"],
         beneficiary_id=nomination.BeneficiaryId,
         approver_id=manager_id,
         amount=nomination.Amount,
         currency=_currency,
-        description=nomination.NominationDescription
+        description=nomination.NominationDescription,
+        category_id=nomination.CategoryId,
     )
 
     # Immediately override the default 'Pending' status for flagged nominations.
