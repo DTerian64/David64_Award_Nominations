@@ -435,7 +435,44 @@ class FraudDetector:
                 except (ValueError, IndexError):
                     features[col] = 0
 
-        return pd.DataFrame([features])[feature_columns]
+        feature_df = pd.DataFrame([features])[feature_columns]
+
+        # ── Diagnostic: log the full feature vector ───────────────────────────
+        # Baked directly into the message string so _AppLogFilter / the OTel
+        # exporter cannot drop them.  Remove once investigation is complete.
+        logger.info(
+            "[Tenant %s] Fraud feature vector nominator=%s → beneficiary=%s | "
+            "Amount=%s AmountZScore=%s IsHighAmount=%s PairNominationCount=%s "
+            "HasReciprocal=%s NominatorTotal=%s NominatorUniqueBens=%s "
+            "ConcentrationRatio=%s NominatorAvgAmt=%s NominatorStdAmt=%s "
+            "BeneficiaryTotalReceived=%s BeneficiaryAvgAmt=%s "
+            "ApproverTotalApproved=%s ApproverAvgApprovalTime=%s "
+            "IsWeekend=%s IsRapidApproval=%s "
+            "pkl_amount_mean=%s pkl_amount_std=%s",
+            nomination_data.get('TenantId'),
+            nomination_data.get('NominatorId'),
+            nomination_data.get('BeneficiaryId'),
+            features.get('Amount'),
+            round(features.get('AmountZScore', 0), 3),
+            features.get('IsHighAmount'),
+            features.get('PairNominationCount'),
+            features.get('HasReciprocalNomination'),
+            features.get('NominatorTotalNominations'),
+            features.get('NominatorUniqueBeneficiaries'),
+            round(features.get('NominatorConcentrationRatio', 0), 3),
+            round(features.get('NominatorAvgAmount', 0), 2),
+            round(features.get('NominatorStdAmount', 0), 2),
+            features.get('BeneficiaryTotalReceived'),
+            round(features.get('BeneficiaryAvgAmountReceived', 0), 2),
+            features.get('ApproverTotalApproved'),
+            round(features.get('ApproverAvgApprovalTime', 0), 2),
+            features.get('IsWeekend'),
+            features.get('IsRapidApproval'),
+            round(tenant_model_data.get('amount_mean', 0), 2),
+            round(tenant_model_data.get('amount_std', 0), 2),
+        )
+
+        return feature_df
 
     # ── Inference ────────────────────────────────────────────────────────────
 
