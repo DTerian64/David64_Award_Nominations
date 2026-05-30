@@ -420,7 +420,21 @@ class FraudDetector:
             'NominatorConcentrationRatio':  concentration_ratio,
         }
 
+        # ── Nomination category one-hot features ─────────────────────────────
+        # Reproduce the same Category_<id> dummy columns the model was trained
+        # on.  All default to 0 (no category / tenant without categories);
+        # the matching column is set to 1 when CategoryId is provided.
         feature_columns = tenant_model_data['feature_columns']
+        category_id     = nomination_data.get('CategoryId')
+        for col in feature_columns:
+            if col.startswith('Category_'):
+                # Column name format: "Category_<int>" e.g. "Category_6"
+                try:
+                    col_cat_id = int(col.split('_', 1)[1])
+                    features[col] = 1 if (category_id is not None and category_id == col_cat_id) else 0
+                except (ValueError, IndexError):
+                    features[col] = 0
+
         return pd.DataFrame([features])[feature_columns]
 
     # ── Inference ────────────────────────────────────────────────────────────

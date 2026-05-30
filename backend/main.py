@@ -474,7 +474,8 @@ async def create_nomination(
             'BeneficiaryId': nomination.BeneficiaryId,
             'ApproverId':    manager_id,
             'Amount':        nomination.Amount,
-            'NominationDate': datetime.now()
+            'NominationDate': datetime.now(),
+            'CategoryId':    nomination.CategoryId,   # None for tenants without categories
         })
     except Exception as fraud_exc:
         logger.error("Fraud assessment raised an unhandled exception — defaulting to MANUAL_REVIEW", extra={"error": str(fraud_exc)})

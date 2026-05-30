@@ -158,6 +158,7 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         n.ApprovedDate,
         n.PayedDate,
         n.Status,
+        n.CategoryId,
         fs.FraudScore,
         fs.RiskLevel,
         fs.FraudFlags,
@@ -291,6 +292,18 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
         df['NominatorTotalNominations'] / (df['NominatorUniqueBeneficiaries'] + 1)
     )
 
+    # ── Nomination category (Premium/Enterprise feature) ─────────────────────
+    # One-hot encode CategoryId per tenant.  Nominations without a category
+    # (NULL / tenants that haven't enabled the feature) produce all-zero rows,
+    # which the model treats as a distinct implicit "no category" state.
+    # dummy_na=False so NULLs don't get their own column — they map to the
+    # all-zeros row, keeping the feature space clean.
+    if 'CategoryId' in df.columns:
+        cat_dummies = pd.get_dummies(df['CategoryId'], prefix='Category', dummy_na=False)
+        # Ensure integer dtype (get_dummies on float NaN cols can produce float)
+        cat_dummies = cat_dummies.astype(int)
+        df = pd.concat([df, cat_dummies], axis=1)
+
     print("  Feature extraction complete.")
     return df
 
@@ -359,7 +372,8 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
 # MODEL TRAINING  (per-tenant)
 # ============================================================================
 
-FEATURE_COLUMNS = [
+# Base features present for every tenant regardless of category configuration.
+BASE_FEATURE_COLUMNS = [
     'Amount',
     'DayOfWeek',
     'Month',
@@ -518,7 +532,16 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         f"({n_fraud / len(df_train) * 100:.1f}%)"
     )
 
-    X = df_train[FEATURE_COLUMNS].fillna(0)
+    # Build the full feature column list: base features + any Category_* dummies
+    # produced by extract_features() for this tenant's data.
+    cat_columns = sorted([c for c in df_train.columns if c.startswith('Category_')])
+    feature_columns = BASE_FEATURE_COLUMNS + cat_columns
+    if cat_columns:
+        print(f"[Tenant {tenant_id}]   Category features: {cat_columns}")
+    else:
+        print(f"[Tenant {tenant_id}]   No nomination categories configured — skipping category features.")
+
+    X = df_train[feature_columns].fillna(0)
     y = df_train['IsFraud']
 
     print(f"[Tenant {tenant_id}]   Training data shape: {X.shape}")
@@ -559,7 +582,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         print(f"ROC AUC Score: {auc:.4f}")
 
     feature_importance = pd.DataFrame({
-        'Feature': FEATURE_COLUMNS,
+        'Feature': feature_columns,
         'Importance': rf_model.feature_importances_,
     }).sort_values('Importance', ascending=False)
 
@@ -575,7 +598,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     model_data = {
         'model':           rf_model,
         'scaler':          scaler,
-        'feature_columns': FEATURE_COLUMNS,
+        'feature_columns': feature_columns,   # includes Category_* dummies if present
         # Tenant-scoped amount stats — used by fraud_ml.py to compute
         # z-scores at inference time without crossing tenant boundaries.
         'amount_mean':     float(df['Amount'].mean()),
