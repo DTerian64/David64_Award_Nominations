@@ -47,7 +47,7 @@ def handle(payload: dict) -> None:
         )
         return
 
-    fraud_flags = db.get_fraud_flags(nomination_id)
+    fraud_flags = db.get_hrbp_fraud_flags(nomination_id)
 
     for hrbp in hrbp_users:
         logger.info(

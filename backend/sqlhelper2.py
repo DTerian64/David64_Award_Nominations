@@ -28,7 +28,7 @@ import logging
 from sqlalchemy import (
     create_engine, text,
     Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint,
-    Unicode,
+    Unicode, Text,
 )
 from sqlalchemy.orm import (
     sessionmaker, DeclarativeBase, Session, relationship,
@@ -139,8 +139,6 @@ class NominationORM(Base):
                                back_populates="nominations_received")
     approver    = relationship("UserORM", foreign_keys=[ApproverId],
                                back_populates="nominations_approved")
-    fraud_score = relationship("FraudScoreORM", back_populates="nomination",
-                               uselist=False)
 
 
 class ImpersonationAuditLogORM(Base):
@@ -156,18 +154,40 @@ class ImpersonationAuditLogORM(Base):
     Timestamp       = Column(DateTime, server_default=text("GETDATE()"))
 
 
-class FraudScoreORM(Base):
-    """Maps to the [FraudScores] table."""
-    __tablename__ = "FraudScores"
+class P2PFraudScoreORM(Base):
+    """Maps to dbo.P2P_FraudScores — peer-to-peer fraud score at submission time."""
+    __tablename__ = "P2P_FraudScores"
 
-    FraudScoreId = Column(Integer, primary_key=True, autoincrement=True)
-    NominationId = Column(Integer, ForeignKey("Nominations.NominationId"),
-                          nullable=False)
-    FraudScore   = Column(Integer, nullable=False)
-    RiskLevel    = Column(String(50), nullable=False)
-    FraudFlags   = Column(String(2000), nullable=True)
+    P2PScoreId   = Column(Integer, primary_key=True, autoincrement=True)
+    NominationId = Column(Integer, ForeignKey("Nominations.NominationId"), nullable=False)
+    FraudScore   = Column(Integer,     nullable=False)
+    RiskLevel    = Column(String(20),  nullable=False)
+    FraudFlags   = Column(String(500), nullable=True)
 
-    nomination = relationship("NominationORM", back_populates="fraud_score")
+
+class ApprFraudScoreORM(Base):
+    """Maps to dbo.Appr_FraudScores — approver-behaviour fraud score (batch job)."""
+    __tablename__ = "Appr_FraudScores"
+
+    ApprScoreId  = Column(Integer, primary_key=True, autoincrement=True)
+    NominationId = Column(Integer, ForeignKey("Nominations.NominationId"), nullable=False)
+    FraudScore   = Column(Integer,     nullable=False)
+    RiskLevel    = Column(String(20),  nullable=False)
+    FraudFlags   = Column(String(500), nullable=True)
+
+
+class HRBPFraudFlagORM(Base):
+    """Maps to dbo.HRBP_FraudFlags — full inference snapshot for HRBP review queue."""
+    __tablename__ = "HRBP_FraudFlags"
+
+    FlagId             = Column(Integer, primary_key=True, autoincrement=True)
+    NominationId       = Column(Integer, ForeignKey("Nominations.NominationId"), nullable=False)
+    FraudScore         = Column(Integer,     nullable=False)
+    FraudProbability   = Column(Float(),     nullable=False)
+    RiskLevel          = Column(String(20),  nullable=False)
+    WarningFlags       = Column(String(500), nullable=True)
+    TopFeaturesJson    = Column(Unicode(None), nullable=True)
+    FeatureSummaryJson = Column(Unicode(None), nullable=True)
 
 
 class NominationCategoryORM(Base):
@@ -1010,18 +1030,26 @@ def get_overall_amount_stats(tenant_id: int) -> Tuple[float, float]:
         return result if result else (0.0, 0.0)
 
 
-def save_fraud_assessment(
+def save_p2p_fraud_score(
     nomination_id: int,
     fraud_score: int,
     risk_level: str,
     warning_flags: str,
 ) -> bool:
-    """Save fraud assessment to database."""
+    """Persist the peer-to-peer fraud score at nomination submission time."""
     with get_db_context() as session:
         result = session.execute(
             text("""
-                INSERT INTO FraudScores (NominationId, FraudScore, RiskLevel, FraudFlags)
-                VALUES (:nomination_id, :fraud_score, :risk_level, :warning_flags)
+                MERGE dbo.P2P_FraudScores AS target
+                USING (SELECT :nomination_id AS NominationId) AS src
+                ON target.NominationId = src.NominationId
+                WHEN MATCHED THEN
+                    UPDATE SET FraudScore = :fraud_score,
+                               RiskLevel  = :risk_level,
+                               FraudFlags = :warning_flags
+                WHEN NOT MATCHED THEN
+                    INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
+                    VALUES (:nomination_id, :fraud_score, :risk_level, :warning_flags);
             """),
             {
                 "nomination_id": nomination_id,
@@ -1229,7 +1257,7 @@ def get_top_nominators_by_department(department: str, limit: int = 5) -> List[Tu
 
 
 def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
-    """Get recent fraud alerts for a tenant."""
+    """Get recent P2P fraud alerts for a tenant."""
     with get_db_context() as session:
         return session.execute(
             text("""
@@ -1244,11 +1272,11 @@ def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
                     beneficiary.LastName  AS BeneficiaryLastName,
                     n.Amount,
                     n.NominationDate
-                FROM FraudScores fs
+                FROM dbo.P2P_FraudScores fs
                 JOIN Nominations n     ON fs.NominationId  = n.NominationId
                 JOIN Users nominator   ON n.NominatorId    = nominator.UserId
                 JOIN Users beneficiary ON n.BeneficiaryId  = beneficiary.UserId
-                WHERE fs.RiskLevel IN ('High', 'Medium')
+                WHERE fs.RiskLevel IN ('HIGH', 'MEDIUM')
                   AND nominator.TenantId = :tenant_id
                 ORDER BY n.NominationDate DESC
             """),
@@ -1814,26 +1842,26 @@ def create_demo_user(
 # HRBP REVIEW WORKFLOW
 # ===========================================================================
 
-def save_fraud_flags(
-    nomination_id:       int,
-    fraud_score:         int,
-    fraud_probability:   float,
-    risk_level:          str,
-    warning_flags:       str,
-    top_features_json:   str | None = None,
+def save_hrbp_fraud_flags(
+    nomination_id:        int,
+    fraud_score:          int,
+    fraud_probability:    float,
+    risk_level:           str,
+    warning_flags:        str,
+    top_features_json:    str | None = None,
     feature_summary_json: str | None = None,
 ) -> None:
     """
-    Persist the ML inference snapshot for one nomination into dbo.FraudFlags.
+    Persist the P2P ML inference snapshot into dbo.HRBP_FraudFlags.
 
-    Called at nomination-submission time for ANY flagged nomination so the
-    HRBP review queue has full context without re-running inference.
-    Uses INSERT … ON CONFLICT DO NOTHING pattern (MERGE) to be idempotent.
+    Called at nomination-submission time when the P2P score triggers HRBP
+    review, so the HRBP queue has full context without re-running inference.
+    Idempotent via MERGE.
     """
     with get_db_context() as session:
         session.execute(
             text("""
-                MERGE dbo.FraudFlags AS target
+                MERGE dbo.HRBP_FraudFlags AS target
                 USING (SELECT :nomination_id AS NominationId) AS src
                 ON target.NominationId = src.NominationId
                 WHEN NOT MATCHED THEN
@@ -1855,14 +1883,14 @@ def save_fraud_flags(
         session.commit()
 
 
-def get_fraud_flags(nomination_id: int) -> dict | None:
-    """Return the FraudFlags row for a nomination, or None if not found."""
+def get_hrbp_fraud_flags(nomination_id: int) -> dict | None:
+    """Return the HRBP_FraudFlags row for a nomination, or None if not found."""
     with get_db_context() as session:
         row = session.execute(
             text("""
                 SELECT FraudScore, FraudProbability, RiskLevel,
                        WarningFlags, TopFeaturesJson, FeatureSummaryJson, CreatedAt
-                FROM dbo.FraudFlags
+                FROM dbo.HRBP_FraudFlags
                 WHERE NominationId = :nomination_id
             """),
             {"nomination_id": nomination_id},
@@ -1923,7 +1951,7 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId      = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId      = n.BeneficiaryId
-                LEFT JOIN dbo.FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 WHERE n.Status    = 'PendingHRBPReview'
                   AND n.TenantId  = :tenant_id
                 ORDER BY n.NominationDate ASC
@@ -2040,7 +2068,7 @@ def get_sla_breached_nominations(sla_hours: int) -> list[dict]:
                 FROM   dbo.Nominations n
                 JOIN   dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN   dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 WHERE  n.Status = 'PendingHRBPReview'
                   AND  n.NominationDate < DATEADD(HOUR, :neg_hours, GETUTCDATE())
                 ORDER  BY n.NominationDate ASC
@@ -2087,7 +2115,7 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 WHERE n.NominationId = :nomination_id
             """),
             {"nomination_id": nomination_id},

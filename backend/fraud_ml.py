@@ -402,8 +402,8 @@ class FraudDetector:
             'DayOfWeek':                    day_of_week,
             'Month':                        month,
             'IsWeekend':                    is_weekend,
-            'HoursToApproval':              0,   # unknown at submission time
-            'HoursToPayment':               0,   # unknown at submission time
+            # HoursToApproval, HoursToPayment, IsRapidApproval intentionally
+            # omitted — post-decision measurements unknown at submission time.
             'NominatorTotalNominations':    nominator_total,
             'NominatorAvgAmount':           nominator_avg_amount,
             'NominatorStdAmount':           nominator_std_amount,
@@ -416,7 +416,6 @@ class FraudDetector:
             'PairNominationCount':          pair_count,
             'AmountZScore':                 amount_zscore,
             'IsHighAmount':                 is_high_amount,
-            'IsRapidApproval':              0,   # unknown at submission time
             'NominatorConcentrationRatio':  concentration_ratio,
         }
 
@@ -434,7 +433,7 @@ class FraudDetector:
             else 0.0
         )
 
-        feature_columns = tenant_model_data['feature_columns']
+        feature_columns = tenant_model_data['p2p_feature_columns']
 
         feature_df = pd.DataFrame([features])[feature_columns]
 
@@ -448,8 +447,7 @@ class FraudDetector:
             "ConcentrationRatio=%s NominatorAvgAmt=%s NominatorStdAmt=%s "
             "BeneficiaryTotalReceived=%s BeneficiaryAvgAmt=%s "
             "ApproverTotalApproved=%s ApproverAvgApprovalTime=%s "
-            "IsWeekend=%s IsRapidApproval=%s "
-            "CategoryFraudRate=%s "
+            "IsWeekend=%s CategoryFraudRate=%s "
             "pkl_amount_mean=%s pkl_amount_std=%s",
             nomination_data.get('TenantId'),
             nomination_data.get('NominatorId'),
@@ -469,7 +467,6 @@ class FraudDetector:
             features.get('ApproverTotalApproved'),
             round(features.get('ApproverAvgApprovalTime', 0), 2),
             features.get('IsWeekend'),
-            features.get('IsRapidApproval'),
             round(features.get('CategoryFraudRate', 0), 4),
             round(tenant_model_data.get('amount_mean', 0), 2),
             round(tenant_model_data.get('amount_std', 0), 2),
@@ -509,9 +506,9 @@ class FraudDetector:
 
         try:
             features_df     = self.calculate_features(nomination_data, tenant_model)
-            features_scaled = tenant_model['scaler'].transform(features_df)
+            features_scaled = tenant_model['p2p_scaler'].transform(features_df)
 
-            proba = tenant_model['model'].predict_proba(features_scaled)
+            proba = tenant_model['p2p_model'].predict_proba(features_scaled)
             if proba.shape[1] < 2:
                 logger.warning(
                     "[Tenant %d] Model has only one class — retrain with "

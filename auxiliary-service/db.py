@@ -8,7 +8,7 @@ Exposes only the queries the worker needs:
   - update_processed_event_result() — update result/error after handling
   - set_approver_notified()         — stamp ApproverNotifiedAt on Nominations
   - get_hrbp_users()                — HRBP role holders for a tenant
-  - get_fraud_flags()               — ML inference snapshot for HRBP emails
+  - get_hrbp_fraud_flags()          — ML inference snapshot for HRBP emails
 """
 
 import logging
@@ -157,14 +157,14 @@ def get_hrbp_users(tenant_id: int) -> list[dict]:
         ]
 
 
-def get_fraud_flags(nomination_id: int) -> Optional[dict]:
-    """Return the FraudFlags snapshot for a nomination, or None."""
+def get_hrbp_fraud_flags(nomination_id: int) -> Optional[dict]:
+    """Return the HRBP_FraudFlags snapshot for a nomination, or None."""
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT FraudScore, FraudProbability, RiskLevel,
                    WarningFlags, TopFeaturesJson, FeatureSummaryJson
-            FROM   dbo.FraudFlags
+            FROM   dbo.HRBP_FraudFlags
             WHERE  NominationId = ?
         """, (nomination_id,))
         row = cursor.fetchone()

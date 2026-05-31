@@ -159,16 +159,16 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         n.PayedDate,
         n.Status,
         n.CategoryId,
-        fs.FraudScore,
-        fs.RiskLevel,
-        fs.FraudFlags,
+        p2p.FraudScore,
+        p2p.RiskLevel,
+        p2p.FraudFlags,
         CASE
-            WHEN fs.RiskLevel IN ('HIGH', 'CRITICAL') THEN 1
+            WHEN p2p.RiskLevel IN ('HIGH', 'CRITICAL') THEN 1
             ELSE 0
         END AS IsFraud
     FROM dbo.Nominations n
     JOIN dbo.Users u ON u.UserId = n.NominatorId
-    LEFT JOIN dbo.FraudScores fs ON n.NominationId = fs.NominationId
+    LEFT JOIN dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
     WHERE n.Status = 'Paid'
       AND u.TenantId = ?
     ORDER BY n.NominationDate
@@ -379,30 +379,37 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
 # MODEL TRAINING  (per-tenant)
 # ============================================================================
 
-# Feature columns — fixed for all tenants.  CategoryFraudRate is a single
-# target-encoded float, stable across category additions/removals.
-FEATURE_COLUMNS = [
+# ── P2P feature columns ───────────────────────────────────────────────────────
+# All knowable at nomination submission time (peer-to-peer signals).
+# Used for live fraud scoring in the backend.
+P2P_FEATURE_COLUMNS = [
     'Amount',
     'DayOfWeek',
     'Month',
     'IsWeekend',
-    'HoursToApproval',
-    'HoursToPayment',
     'NominatorTotalNominations',
     'NominatorAvgAmount',
     'NominatorStdAmount',
     'NominatorUniqueBeneficiaries',
     'BeneficiaryTotalReceived',
     'BeneficiaryAvgAmountReceived',
-    'ApproverTotalApproved',
-    'ApproverAvgApprovalTime',
     'HasReciprocalNomination',
     'PairNominationCount',
     'AmountZScore',
     'IsHighAmount',
-    'IsRapidApproval',
     'NominatorConcentrationRatio',
     'CategoryFraudRate',
+]
+
+# ── Approver feature columns ──────────────────────────────────────────────────
+# Post-decision measurements — only available after a nomination is Paid.
+# Used by the batch job to detect approver-side fraud patterns.
+APPR_FEATURE_COLUMNS = [
+    'ApproverTotalApproved',
+    'ApproverAvgApprovalTime',
+    'HoursToApproval',
+    'HoursToPayment',
+    'IsRapidApproval',
 ]
 
 
@@ -420,82 +427,113 @@ def score_and_save_historical(
     tenant_id: int,
 ) -> None:
     """
-    Score every nomination in df with the freshly trained model and upsert
-    the results into dbo.FraudScores.
+    Score every nomination in df with both the P2P and Approver models
+    and upsert results into dbo.P2P_FraudScores and dbo.Appr_FraudScores.
 
-    Why this matters:
-      - Populates the FraudScores table so the analytics Fraud Score
-        Distribution chart has real data to display immediately after training.
-      - On the *next* retrain, load_data() will find real RiskLevel labels
-        (HIGH / CRITICAL) in FraudScores and use them instead of bootstrapped
-        rules, progressively improving model quality with every cycle.
-
-    Uses SQL Server MERGE so the function is safe to call multiple times —
-    existing rows are updated with scores from the improved model, missing
-    rows are inserted.
+    - P2P scores feed the analytics fraud dashboard and provide labels for
+      the next retrain cycle (progressive label improvement).
+    - Approver scores capture post-decision fraud patterns independently.
+    - Approver labels are derived from P2P: a nomination is approver-fraud
+      if the P2P model scored it HIGH/CRITICAL AND IsRapidApproval = 1.
     """
     print(f"\n[Tenant {tenant_id}] Scoring {len(df)} historical nominations ...")
-
-    rf_model        = model_data['model']
-    scaler          = model_data['scaler']
-    feature_columns = model_data['feature_columns']
-
-    X        = df[feature_columns].fillna(0)
-    X_scaled = scaler.transform(X)
-    probas   = rf_model.predict_proba(X_scaled)
-
-    if probas.shape[1] < 2:
-        print(f"[Tenant {tenant_id}] ⚠  Single-class model — skipping score persistence.")
-        return
-
-    fraud_probs = probas[:, 1]
 
     conn   = get_db_connection()
     cursor = conn.cursor()
 
-    upserted = 0
+    # ── P2P scoring ──────────────────────────────────────────────────────────
+    p2p_rf     = model_data['p2p_model']
+    p2p_scaler = model_data['p2p_scaler']
+    p2p_cols   = model_data['p2p_feature_columns']
+
+    p2p_probas = p2p_rf.predict_proba(p2p_scaler.transform(df[p2p_cols].fillna(0)))
+    if p2p_probas.shape[1] < 2:
+        print(f"[Tenant {tenant_id}] ⚠  P2P single-class model — skipping P2P score persistence.")
+        p2p_fraud_probs = None
+    else:
+        p2p_fraud_probs = p2p_probas[:, 1]
+
+    # ── Approver scoring ─────────────────────────────────────────────────────
+    appr_rf     = model_data['appr_model']
+    appr_scaler = model_data['appr_scaler']
+    appr_cols   = model_data['appr_feature_columns']
+
+    appr_probas = appr_rf.predict_proba(appr_scaler.transform(df[appr_cols].fillna(0)))
+    if appr_probas.shape[1] < 2:
+        print(f"[Tenant {tenant_id}] ⚠  Approver single-class model — skipping approver score persistence.")
+        appr_fraud_probs = None
+    else:
+        appr_fraud_probs = appr_probas[:, 1]
+
+    p2p_upserted = appr_upserted = 0
+
     for i, (_, row) in enumerate(df.iterrows()):
         nom_id = int(row['NominationId'])
-        prob   = float(fraud_probs[i])
-        score  = int(prob * 100)
-        level  = _risk_level(score)
 
-        flags = []
-        if row.get('PairNominationCount', 0) > 5:
-            flags.append('Repeated beneficiary')
-        if row.get('HasReciprocalNomination', 0) == 1:
-            flags.append('Reciprocal nomination detected')
-        if row.get('NominatorConcentrationRatio', 0) > 5:
-            flags.append('Limited beneficiary diversity')
-        if row.get('IsHighAmount', 0) == 1:
-            flags.append('Unusually high amount')
-        flags_str = ', '.join(flags)
+        # P2P
+        if p2p_fraud_probs is not None:
+            p2p_prob  = float(p2p_fraud_probs[i])
+            p2p_score = int(p2p_prob * 100)
+            p2p_level = _risk_level(p2p_score)
+            p2p_flags = []
+            if row.get('PairNominationCount', 0) > 5:
+                p2p_flags.append('Repeated beneficiary')
+            if row.get('HasReciprocalNomination', 0) == 1:
+                p2p_flags.append('Reciprocal nomination detected')
+            if row.get('NominatorConcentrationRatio', 0) > 5:
+                p2p_flags.append('Limited beneficiary diversity')
+            if row.get('IsHighAmount', 0) == 1:
+                p2p_flags.append('Unusually high amount')
+            cursor.execute(
+                """
+                MERGE dbo.P2P_FraudScores AS target
+                USING (SELECT ? AS NominationId) AS source
+                    ON target.NominationId = source.NominationId
+                WHEN MATCHED THEN
+                    UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
+                WHEN NOT MATCHED THEN
+                    INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
+                    VALUES (?,            ?,          ?,         ?);
+                """,
+                (nom_id, p2p_score, p2p_level, ', '.join(p2p_flags),
+                 nom_id, p2p_score, p2p_level, ', '.join(p2p_flags)),
+            )
+            p2p_upserted += 1
 
-        cursor.execute(
-            """
-            MERGE dbo.FraudScores AS target
-            USING (SELECT ? AS NominationId) AS source
-                ON target.NominationId = source.NominationId
-            WHEN MATCHED THEN
-                UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
-            WHEN NOT MATCHED THEN
-                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
-                VALUES (?,            ?,          ?,         ?);
-            """,
-            (nom_id, score, level, flags_str, nom_id, score, level, flags_str),
-        )
-        upserted += 1
+        # Approver
+        if appr_fraud_probs is not None:
+            appr_prob  = float(appr_fraud_probs[i])
+            appr_score = int(appr_prob * 100)
+            appr_level = _risk_level(appr_score)
+            appr_flags = []
+            if row.get('IsRapidApproval', 0) == 1:
+                appr_flags.append('Rapid approval')
+            if row.get('HoursToPayment', 0) < 24 and row.get('HoursToPayment', 0) > 0:
+                appr_flags.append('Fast payment')
+            cursor.execute(
+                """
+                MERGE dbo.Appr_FraudScores AS target
+                USING (SELECT ? AS NominationId) AS source
+                    ON target.NominationId = source.NominationId
+                WHEN MATCHED THEN
+                    UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
+                WHEN NOT MATCHED THEN
+                    INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
+                    VALUES (?,            ?,          ?,         ?);
+                """,
+                (nom_id, appr_score, appr_level, ', '.join(appr_flags),
+                 nom_id, appr_score, appr_level, ', '.join(appr_flags)),
+            )
+            appr_upserted += 1
 
     conn.commit()
     cursor.close()
     conn.close()
 
-    high_risk = sum(
-        1 for p in fraud_probs if int(p * 100) >= 60
-    )
+    p2p_high = sum(1 for p in (p2p_fraud_probs or []) if int(p * 100) >= 60)
     print(
-        f"[Tenant {tenant_id}] ✓ Upserted {upserted} fraud scores "
-        f"({high_risk} HIGH/CRITICAL)"
+        f"[Tenant {tenant_id}] ✓ P2P: {p2p_upserted} upserted ({p2p_high} HIGH/CRITICAL) | "
+        f"Approver: {appr_upserted} upserted"
     )
 
 
@@ -546,70 +584,98 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     else:
         print(f"[Tenant {tenant_id}]   No nomination categories — CategoryFraudRate=0.0 for all rows.")
 
-    X = df_train[FEATURE_COLUMNS].fillna(0)
     y = df_train['IsFraud']
 
-    print(f"[Tenant {tenant_id}]   Training data shape: {X.shape}")
+    def _train_rf(X: pd.DataFrame, label: str) -> tuple:
+        """Train one RF, print evaluation, return (model, scaler, auc)."""
+        print(f"\n[Tenant {tenant_id}] Training {label} model — shape: {X.shape}")
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        scaler_ = StandardScaler()
+        X_tr_s  = scaler_.fit_transform(X_tr)
+        X_te_s  = scaler_.transform(X_te)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+        rf_ = RandomForestClassifier(
+            n_estimators=40,
+            max_depth=10,
+            min_samples_split=20,
+            min_samples_leaf=10,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1,
+        )
+        rf_.fit(X_tr_s, y_tr)
+
+        y_pred_  = rf_.predict(X_te_s)
+        y_proba_ = rf_.predict_proba(X_te_s)[:, 1]
+
+        print(f"\n{'='*60}")
+        print(f"{label.upper()} MODEL EVALUATION — Tenant {tenant_id}")
+        print(f"{'='*60}")
+        print(classification_report(y_te, y_pred_, target_names=['Legitimate', 'Fraud']))
+        print("Confusion Matrix:")
+        print(confusion_matrix(y_te, y_pred_))
+
+        auc_ = None
+        if len(np.unique(y_te)) > 1:
+            auc_ = roc_auc_score(y_te, y_proba_)
+            print(f"ROC AUC Score: {auc_:.4f}")
+
+        fi = pd.DataFrame({'Feature': X.columns.tolist(),
+                           'Importance': rf_.feature_importances_}) \
+               .sort_values('Importance', ascending=False)
+        print(f"\nTop 10 Most Important {label} Features:")
+        print(fi.head(10).to_string(index=False))
+
+        return rf_, scaler_, auc_
+
+    # ── Train P2P model ───────────────────────────────────────────────────────
+    p2p_rf, p2p_scaler, p2p_auc = _train_rf(
+        df_train[P2P_FEATURE_COLUMNS].fillna(0), "P2P"
     )
 
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled  = scaler.transform(X_test)
+    # ── Derive approver fraud labels from P2P scores ──────────────────────────
+    # An approver is suspicious when they fast-approve a nomination the P2P
+    # model already considers HIGH/CRITICAL risk.
+    p2p_probas_full = p2p_rf.predict_proba(
+        p2p_scaler.transform(df_train[P2P_FEATURE_COLUMNS].fillna(0))
+    )[:, 1]
+    p2p_high_risk = (p2p_probas_full * 100 >= 60).astype(int)
+    df_train = df_train.copy()
+    df_train['IsApproverFraud'] = (
+        (p2p_high_risk == 1) & (df_train['IsRapidApproval'] == 1)
+    ).astype(int)
 
-    rf_model = RandomForestClassifier(
-        n_estimators=40,      # 100 → 40: ~60% memory saving with negligible AUC loss
-        max_depth=10,         # already capped — keeps each tree compact
-        min_samples_split=20,
-        min_samples_leaf=10,
-        class_weight='balanced',
-        random_state=42,
-        n_jobs=-1,
-    )
-    rf_model.fit(X_train_scaled, y_train)
+    appr_auc = None
+    if df_train['IsApproverFraud'].sum() > 0:
+        appr_rf, appr_scaler, appr_auc = _train_rf(
+            df_train[APPR_FEATURE_COLUMNS].fillna(0), "Approver"
+        )
+    else:
+        print(
+            f"[Tenant {tenant_id}] ⚠  No approver-fraud labels derived — "
+            "skipping approver model training. "
+            "Need HIGH/CRITICAL P2P nominations with IsRapidApproval=1."
+        )
+        # Placeholder: reuse P2P model as fallback so pkl is always complete.
+        appr_rf     = p2p_rf
+        appr_scaler = p2p_scaler
 
-    # ── Evaluation ───────────────────────────────────────────────────────────
-    y_pred       = rf_model.predict(X_test_scaled)
-    y_pred_proba = rf_model.predict_proba(X_test_scaled)[:, 1]
-
-    print(f"\n{'='*60}")
-    print(f"MODEL EVALUATION — Tenant {tenant_id}")
-    print(f"{'='*60}")
-    print(classification_report(y_test, y_pred, target_names=['Legitimate', 'Fraud']))
-    print("Confusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
-
-    auc = None
-    if len(np.unique(y_test)) > 1:
-        auc = roc_auc_score(y_test, y_pred_proba)
-        print(f"ROC AUC Score: {auc:.4f}")
-
-    feature_importance = pd.DataFrame({
-        'Feature': FEATURE_COLUMNS,
-        'Importance': rf_model.feature_importances_,
-    }).sort_values('Importance', ascending=False)
-
-    print("\nTop 10 Most Important Features:")
-    print(feature_importance.head(10).to_string(index=False))
-
-    # ── Persist ──────────────────────────────────────────────────────────────
-    # Only inference-critical fields go into the pkl.  Diagnostic fields
-    # (feature_importance, auc, training_date, training_samples) are logged
-    # above but not stored — they are never read by fraud_ml.py at inference
-    # time and were the second-largest contributor to pkl size after the RF
-    # tree structures themselves.
+    # ── Persist pkl ───────────────────────────────────────────────────────────
     model_data = {
-        'model':                rf_model,
-        'scaler':               scaler,
-        'feature_columns':      FEATURE_COLUMNS,
-        # Tenant-scoped amount stats — used by fraud_ml.py to compute
-        # z-scores at inference time without crossing tenant boundaries.
+        # P2P model — used for live submission-time fraud scoring
+        'p2p_model':            p2p_rf,
+        'p2p_scaler':           p2p_scaler,
+        'p2p_feature_columns':  P2P_FEATURE_COLUMNS,
+        # Approver model — used by the weekly batch job
+        'appr_model':           appr_rf,
+        'appr_scaler':          appr_scaler,
+        'appr_feature_columns': APPR_FEATURE_COLUMNS,
+        # Tenant-scoped amount stats for z-score computation at inference time
         'amount_mean':          float(df['Amount'].mean()),
         'amount_std':           float(df['Amount'].std()),
-        # Category target encoding map: {category_id (int): mean_fraud_rate (float)}
-        # Unknown categories at inference time fall back to global_fraud_rate.
+        # Category target encoding
         'category_fraud_rate':  category_fraud_rate,
         'global_fraud_rate':    float(global_fraud_rate),
     }
@@ -621,82 +687,47 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     print(f"\n✓ Model saved to '{pkl_filename}'")
     _upload_artefact(pkl_filename)
 
-    # ── Score all historical nominations and persist to dbo.FraudScores ──────
-    # This is the step that was missing: without it FraudScores stays empty,
-    # the analytics charts have no data, and every retrain is forced back to
-    # bootstrapped labels instead of graduating to real scored labels.
+    # ── Score all historical nominations into both score tables ───────────────
     score_and_save_historical(df, model_data, tenant_id)
 
-    # ── Visualisations ───────────────────────────────────────────────────────
-    # Re-fetch df so the Fraud Score Distribution chart reflects the scores
-    # just written to dbo.FraudScores.
+    # ── Visualisations ────────────────────────────────────────────────────────
     df_with_scores = load_data(tenant_id)
-    create_visualizations(df_with_scores, feature_importance, y_test, y_pred_proba, tenant_id)
+    create_visualizations(df_with_scores, None, None, None, tenant_id)
 
-    # Return model_data (for callers) plus lightweight diagnostics separately
-    # so main() can log them without reading back from the stripped pkl dict.
-    return model_data, {'auc': auc, 'training_samples': len(df_train)}
+    return model_data, {
+        'p2p_auc': p2p_auc, 'appr_auc': appr_auc,
+        'training_samples': len(df_train)
+    }
 
 
 # ============================================================================
 # VISUALISATIONS
 # ============================================================================
 
-def create_visualizations(
-    df: pd.DataFrame,
-    feature_importance: pd.DataFrame,
-    y_test,
-    y_pred_proba,
-    tenant_id: int,
-) -> None:
+def create_visualizations(df: pd.DataFrame, _fi, _yt, _yp, tenant_id: int) -> None:
+    """
+    Generate and upload a fraud score distribution chart.
+    Feature importance and ROC curve are now printed to stdout during training
+    rather than stored in the visualisation — they are diagnostic output, not
+    dashboarding data.
+    """
     print(f"\n[Tenant {tenant_id}] Creating visualisations ...")
 
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle(f"Fraud Detection Analysis — Tenant {tenant_id}", fontsize=14)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(f"Fraud Score Distribution — Tenant {tenant_id}", fontsize=13)
 
-    # 1. Feature importance
-    axes[0, 0].barh(
-        feature_importance.head(10)['Feature'],
-        feature_importance.head(10)['Importance'],
-    )
-    axes[0, 0].set_xlabel('Importance')
-    axes[0, 0].set_title('Top 10 Feature Importances')
-    axes[0, 0].invert_yaxis()
-
-    # 2. Fraud-score distribution
-    fraud_df = df[df['IsFraud'].notna()]
-    if 'FraudScore' in fraud_df.columns and fraud_df['FraudScore'].notna().any():
-        axes[0, 1].hist(
-            [
-                fraud_df[fraud_df['IsFraud'] == 0]['FraudScore'].dropna(),
-                fraud_df[fraud_df['IsFraud'] == 1]['FraudScore'].dropna(),
-            ],
-            bins=30, label=['Legitimate', 'Fraud'], alpha=0.7,
-        )
-    axes[0, 1].set_xlabel('Fraud Score')
-    axes[0, 1].set_ylabel('Count')
-    axes[0, 1].set_title('Fraud Score Distribution')
-    axes[0, 1].legend()
-
-    # 3. ROC curve
-    if len(np.unique(y_test)) > 1:
-        fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
-        auc_val = roc_auc_score(y_test, y_pred_proba)
-        axes[1, 0].plot(fpr, tpr, label=f'ROC Curve (AUC = {auc_val:.3f})')
-        axes[1, 0].plot([0, 1], [0, 1], 'k--', label='Random')
-        axes[1, 0].set_xlabel('False Positive Rate')
-        axes[1, 0].set_ylabel('True Positive Rate')
-        axes[1, 0].set_title('ROC Curve')
-        axes[1, 0].legend()
-
-    # 4. Nominations by risk level
-    if 'RiskLevel' in df.columns and df['RiskLevel'].notna().any():
-        risk_counts = df[df['RiskLevel'].notna()]['RiskLevel'].value_counts()
-        axes[1, 1].bar(risk_counts.index, risk_counts.values)
-        axes[1, 1].set_xlabel('Risk Level')
-        axes[1, 1].set_ylabel('Count')
-        axes[1, 1].set_title('Nominations by Risk Level')
-        axes[1, 1].tick_params(axis='x', rotation=45)
+    for ax, (score_col, label, table) in zip(axes, [
+        ('P2PFraudScore',  'P2P',      'P2P_FraudScores'),
+        ('ApprFraudScore', 'Approver',  'Appr_FraudScores'),
+    ]):
+        if score_col in df.columns and df[score_col].notna().any():
+            legit = df[df['IsFraud'] == 0][score_col].dropna()
+            fraud = df[df['IsFraud'] == 1][score_col].dropna()
+            ax.hist([legit, fraud], bins=30, label=['Legitimate', 'Fraud'], alpha=0.7)
+        ax.set_xlabel('Fraud Score')
+        ax.set_ylabel('Count')
+        ax.set_title(f'{label} Score Distribution')
+        ax.legend()
 
     plt.tight_layout()
     png_filename = OUTPUT_DIR / f"fraud_detection_analysis_tenant_{tenant_id}.png"
@@ -741,11 +772,11 @@ def main() -> None:
                 continue
 
             _, stats = train_model(df, tenant_id)
+            p2p_auc_str  = f"{stats['p2p_auc']:.4f}"  if stats.get('p2p_auc')  else "n/a"
+            appr_auc_str = f"{stats['appr_auc']:.4f}" if stats.get('appr_auc') else "n/a"
             results[tenant_id] = (
                 f"OK  ({stats['training_samples']} samples, "
-                f"AUC={stats['auc']:.4f})"
-                if stats['auc'] else
-                f"OK  ({stats['training_samples']} samples)"
+                f"P2P AUC={p2p_auc_str}, Approver AUC={appr_auc_str})"
             )
 
         except Exception as exc:

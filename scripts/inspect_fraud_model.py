@@ -77,45 +77,60 @@ def load_from_blob(tenant_id: int) -> dict:
     return pickle.loads(data)
 
 
-def inspect(model_data: dict) -> None:
-    rf      = model_data["model"]
-    scaler  = model_data["scaler"]
-    cols    = model_data["feature_columns"]
-    mean    = model_data.get("amount_mean", "n/a")
-    std     = model_data.get("amount_std",  "n/a")
-
+def _print_model_section(label: str, rf, scaler, cols: list) -> None:
     print("=" * 60)
-    print("PKL METADATA")
+    print(f"{label} — RANDOM FOREST")
     print("=" * 60)
-    print(f"  feature_columns  : {cols}")
-    print(f"  amount_mean      : {mean:.4f}" if isinstance(mean, float) else f"  amount_mean : {mean}")
-    print(f"  amount_std       : {std:.4f}"  if isinstance(std,  float) else f"  amount_std  : {std}")
+    print(f"  n_estimators   : {rf.n_estimators}")
+    print(f"  max_depth      : {rf.max_depth}")
+    print(f"  n_features_in_ : {rf.n_features_in_}")
+    print(f"  classes_       : {rf.classes_}")
     print()
 
     print("=" * 60)
-    print("RANDOM FOREST")
-    print("=" * 60)
-    print(f"  n_estimators     : {rf.n_estimators}")
-    print(f"  max_depth        : {rf.max_depth}")
-    print(f"  n_features_in_   : {rf.n_features_in_}")
-    print(f"  classes_         : {rf.classes_}")
-    print()
-
-    print("=" * 60)
-    print("STANDARD SCALER  (mean / std per feature)")
+    print(f"{label} — STANDARD SCALER  (mean / std per feature)")
     print("=" * 60)
     for col, m, s in zip(cols, scaler.mean_, scaler.scale_):
         print(f"  {col:<38}  mean={m:>10.4f}   std={s:>10.4f}")
     print()
 
     print("=" * 60)
-    print("FEATURE IMPORTANCES  (sorted)")
+    print(f"{label} — FEATURE IMPORTANCES  (sorted)")
     print("=" * 60)
     pairs = sorted(zip(cols, rf.feature_importances_), key=lambda x: x[1], reverse=True)
     for col, imp in pairs:
         bar = "█" * int(imp * 80)
         print(f"  {col:<38}  {imp:.6f}  {bar}")
     print()
+
+
+def inspect(model_data: dict) -> None:
+    mean = model_data.get("amount_mean", "n/a")
+    std  = model_data.get("amount_std",  "n/a")
+    cfr  = model_data.get("category_fraud_rate", {})
+    gfr  = model_data.get("global_fraud_rate", "n/a")
+
+    print("=" * 60)
+    print("PKL METADATA")
+    print("=" * 60)
+    print(f"  amount_mean          : {mean:.4f}" if isinstance(mean, float) else f"  amount_mean : {mean}")
+    print(f"  amount_std           : {std:.4f}"  if isinstance(std,  float) else f"  amount_std  : {std}")
+    print(f"  global_fraud_rate    : {gfr:.4f}"  if isinstance(gfr,  float) else f"  global_fraud_rate : {gfr}")
+    print(f"  category_fraud_rate  : {cfr}")
+    print()
+
+    _print_model_section(
+        "P2P",
+        model_data["p2p_model"],
+        model_data["p2p_scaler"],
+        model_data["p2p_feature_columns"],
+    )
+    _print_model_section(
+        "APPROVER",
+        model_data["appr_model"],
+        model_data["appr_scaler"],
+        model_data["appr_feature_columns"],
+    )
 
 
 def main() -> None:

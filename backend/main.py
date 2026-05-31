@@ -556,10 +556,10 @@ async def create_nomination(
         }
     )
 
-    # Persist the fraud assessment so it feeds future model retraining
-    # and populates the analytics fraud dashboard.
+    # Persist the P2P fraud score — feeds the analytics dashboard and
+    # provides labels for the next model retrain cycle.
     try:
-        sqlhelper.save_fraud_assessment(
+        sqlhelper.save_p2p_fraud_score(
             nomination_id=nomination_id,
             fraud_score=fraud_result['fraud_score'],
             risk_level=fraud_result['risk_level'],
@@ -567,17 +567,17 @@ async def create_nomination(
         )
     except Exception as save_exc:
         logger.error(
-            "Failed to save fraud assessment for nomination %d: %s",
+            "Failed to save P2P fraud score for nomination %d: %s",
             nomination_id, save_exc
         )
 
-    # Persist the richer FraudFlags snapshot for the HRBP review queue.
+    # Persist the richer HRBP snapshot for the HRBP review queue.
     if _flagged_for_hrbp:
         try:
             import json as _j
-            top_features = fraud_result.get('top_features')
+            top_features    = fraud_result.get('top_features')
             feature_summary = fraud_result.get('feature_summary')
-            sqlhelper.save_fraud_flags(
+            sqlhelper.save_hrbp_fraud_flags(
                 nomination_id=nomination_id,
                 fraud_score=fraud_result['fraud_score'],
                 fraud_probability=fraud_result.get('fraud_probability', 0.0),
@@ -588,7 +588,7 @@ async def create_nomination(
             )
         except Exception as flag_exc:
             logger.error(
-                "Failed to save fraud flags for nomination %d: %s",
+                "Failed to save HRBP fraud flags for nomination %d: %s",
                 nomination_id, flag_exc
             )
 
