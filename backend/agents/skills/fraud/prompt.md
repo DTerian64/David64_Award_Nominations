@@ -25,16 +25,30 @@ It returns:
 
 ## Fraud score query pattern
 
-When querying a user's fraud history, join through Nominations to enforce
-tenant isolation (FraudScores has no TenantId column):
+There are two fraud score tables — always use `P2P_FraudScores` for
+submission-time scores (what the model assigned when the nomination was
+submitted). Use `Appr_FraudScores` only when specifically asked about
+approver behaviour.
+
+Join through Nominations to enforce tenant isolation
+(neither table has a TenantId column):
 
 ```sql
+-- P2P fraud score for a specific nominator
 SELECT n.NominationId, n.Amount, fs.FraudScore, fs.RiskLevel, fs.FraudFlags
 FROM   dbo.Nominations n
 JOIN   dbo.Users u_nom ON u_nom.UserId = n.NominatorId
-LEFT JOIN dbo.FraudScores fs ON fs.NominationId = n.NominationId
+LEFT JOIN dbo.P2P_FraudScores fs ON fs.NominationId = n.NominationId
 WHERE  u_nom.TenantId = <TenantId>
   AND  n.NominatorId  = <UserId>
+
+-- Approver fraud score (post-decision, batch job)
+SELECT n.NominationId, n.Amount, fs.FraudScore, fs.RiskLevel, fs.FraudFlags
+FROM   dbo.Nominations n
+JOIN   dbo.Users u_nom ON u_nom.UserId = n.NominatorId
+LEFT JOIN dbo.Appr_FraudScores fs ON fs.NominationId = n.NominationId
+WHERE  u_nom.TenantId = <TenantId>
+  AND  n.ApproverId   = <UserId>
 ```
 
 ## Risk levels

@@ -35,19 +35,37 @@
 | ApprovedDate          | DATETIME2      |                                                  |
 | PayedDate             | DATETIME2      |                                                  |
 
-## dbo.FraudScores
+## dbo.P2P_FraudScores
+Peer-to-peer fraud score written at nomination submission time.
+Uses features knowable at submission time (nominator/beneficiary behaviour, amount, category).
+
 | Column       | Type           | Notes                                              |
 |--------------|----------------|----------------------------------------------------|
-| ScoreId      | INT IDENTITY   | Primary Key                                        |
-| NominationId | INT            | FK → Nominations.NominationId                      |
+| P2PScoreId   | INT IDENTITY   | Primary Key                                        |
+| NominationId | INT            | FK → Nominations.NominationId (UNIQUE)             |
 | FraudScore   | INT            | 0–100; higher = more suspicious                    |
-| RiskLevel    | NVARCHAR(20)   | Exact values: NONE, LOW, MEDIUM, HIGH, CRITICAL    |
+| RiskLevel    | NVARCHAR(20)   | Exact values: NONE, LOW, MEDIUM, HIGH, CRITICAL, UNKNOWN |
 | FraudFlags   | NVARCHAR(500)  | Comma-separated human-readable fraud signals       |
-| ScoredAt     | DATETIME2      | When the score was written                         |
+| CreatedAt    | DATETIME       | When the score was written                         |
 
-Note: FraudScores has no TenantId column — tenant isolation is enforced by
+Note: P2P_FraudScores has no TenantId column — tenant isolation is enforced by
 joining through Nominations → Users:
 `JOIN dbo.Users u ON u.UserId = n.NominatorId WHERE u.TenantId = <TenantId>`
+
+## dbo.Appr_FraudScores
+Approver-behaviour fraud score written by the weekly batch job after nominations are Paid.
+Uses post-decision features (approval speed, payment speed).
+
+| Column       | Type           | Notes                                              |
+|--------------|----------------|----------------------------------------------------|
+| ApprScoreId  | INT IDENTITY   | Primary Key                                        |
+| NominationId | INT            | FK → Nominations.NominationId (UNIQUE)             |
+| FraudScore   | INT            | 0–100; higher = more suspicious                    |
+| RiskLevel    | NVARCHAR(20)   | Exact values: NONE, LOW, MEDIUM, HIGH, CRITICAL    |
+| FraudFlags   | NVARCHAR(500)  | Comma-separated warning flags                      |
+| CreatedAt    | DATETIME       | When the score was written                         |
+
+Note: same tenant isolation pattern as P2P_FraudScores — join through Nominations → Users.
 
 ## dbo.DemoRegistrationRequests
 Public self-registration audit log written by `POST /api/demo/request`
