@@ -420,20 +420,21 @@ class FraudDetector:
             'NominatorConcentrationRatio':  concentration_ratio,
         }
 
-        # ── Nomination category one-hot features ─────────────────────────────
-        # Reproduce the same Category_<id> dummy columns the model was trained
-        # on.  All default to 0 (no category / tenant without categories);
-        # the matching column is set to 1 when CategoryId is provided.
+        # ── Nomination category — target-encoded fraud rate ──────────────────
+        # Look up the mean fraud rate for this CategoryId from the encoding map
+        # stored in the pkl at training time.  Unknown or absent categories fall
+        # back to the global fraud rate, so adding/removing tenant categories
+        # never breaks the feature vector.
+        category_id          = nomination_data.get('CategoryId')
+        category_fraud_rate  = tenant_model_data.get('category_fraud_rate', {})
+        global_fraud_rate    = tenant_model_data.get('global_fraud_rate', 0.0)
+        features['CategoryFraudRate'] = (
+            category_fraud_rate.get(category_id, global_fraud_rate)
+            if category_id is not None
+            else 0.0
+        )
+
         feature_columns = tenant_model_data['feature_columns']
-        category_id     = nomination_data.get('CategoryId')
-        for col in feature_columns:
-            if col.startswith('Category_'):
-                # Column name format: "Category_<int>" e.g. "Category_6"
-                try:
-                    col_cat_id = int(col.split('_', 1)[1])
-                    features[col] = 1 if (category_id is not None and category_id == col_cat_id) else 0
-                except (ValueError, IndexError):
-                    features[col] = 0
 
         feature_df = pd.DataFrame([features])[feature_columns]
 
@@ -448,6 +449,7 @@ class FraudDetector:
             "BeneficiaryTotalReceived=%s BeneficiaryAvgAmt=%s "
             "ApproverTotalApproved=%s ApproverAvgApprovalTime=%s "
             "IsWeekend=%s IsRapidApproval=%s "
+            "CategoryFraudRate=%s "
             "pkl_amount_mean=%s pkl_amount_std=%s",
             nomination_data.get('TenantId'),
             nomination_data.get('NominatorId'),
@@ -468,6 +470,7 @@ class FraudDetector:
             round(features.get('ApproverAvgApprovalTime', 0), 2),
             features.get('IsWeekend'),
             features.get('IsRapidApproval'),
+            round(features.get('CategoryFraudRate', 0), 4),
             round(tenant_model_data.get('amount_mean', 0), 2),
             round(tenant_model_data.get('amount_std', 0), 2),
         )

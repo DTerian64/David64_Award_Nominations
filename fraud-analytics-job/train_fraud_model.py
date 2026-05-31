@@ -292,20 +292,27 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
         df['NominatorTotalNominations'] / (df['NominatorUniqueBeneficiaries'] + 1)
     )
 
-    # ── Nomination category (Premium/Enterprise feature) ─────────────────────
-    # One-hot encode CategoryId per tenant.  Nominations without a category
-    # (NULL / tenants that haven't enabled the feature) produce all-zero rows,
-    # which the model treats as a distinct implicit "no category" state.
-    # dummy_na=False so NULLs don't get their own column — they map to the
-    # all-zeros row, keeping the feature space clean.
-    if 'CategoryId' in df.columns:
-        cat_dummies = pd.get_dummies(df['CategoryId'], prefix='Category', dummy_na=False)
-        # Ensure integer dtype (get_dummies on float NaN cols can produce float)
-        cat_dummies = cat_dummies.astype(int)
-        df = pd.concat([df, cat_dummies], axis=1)
+    # ── Nomination category — target encoding ────────────────────────────────
+    # Replace CategoryId with a single float: the mean fraud rate for that
+    # category in the training set.  This is stable across category changes:
+    # adding or removing a category never changes the feature space, and
+    # unknown categories at inference time get a neutral fallback (global mean).
+    # Nominations with no category (NULL) get 0.0 — a distinct neutral signal.
+    if 'CategoryId' in df.columns and 'IsFraud' in df.columns:
+        global_fraud_rate = df['IsFraud'].mean()
+        category_fraud_rate = (
+            df.groupby('CategoryId')['IsFraud']
+              .mean()
+              .to_dict()
+        )
+        df['CategoryFraudRate'] = df['CategoryId'].map(category_fraud_rate).fillna(0.0)
+    else:
+        df['CategoryFraudRate'] = 0.0
+        category_fraud_rate    = {}
+        global_fraud_rate      = 0.0
 
     print("  Feature extraction complete.")
-    return df
+    return df, category_fraud_rate, global_fraud_rate
 
 
 # ============================================================================
@@ -372,8 +379,9 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
 # MODEL TRAINING  (per-tenant)
 # ============================================================================
 
-# Base features present for every tenant regardless of category configuration.
-BASE_FEATURE_COLUMNS = [
+# Feature columns — fixed for all tenants.  CategoryFraudRate is a single
+# target-encoded float, stable across category additions/removals.
+FEATURE_COLUMNS = [
     'Amount',
     'DayOfWeek',
     'Month',
@@ -394,6 +402,7 @@ BASE_FEATURE_COLUMNS = [
     'IsHighAmount',
     'IsRapidApproval',
     'NominatorConcentrationRatio',
+    'CategoryFraudRate',
 ]
 
 
@@ -497,7 +506,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     """
     print(f"\n[Tenant {tenant_id}] Training model ...")
 
-    df = extract_features(df)
+    df, category_fraud_rate, global_fraud_rate = extract_features(df)
 
     # If no FraudScores have been recorded yet (cold start after first load test),
     # derive labels from the behavioural patterns embedded in the data.
@@ -532,16 +541,12 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         f"({n_fraud / len(df_train) * 100:.1f}%)"
     )
 
-    # Build the full feature column list: base features + any Category_* dummies
-    # produced by extract_features() for this tenant's data.
-    cat_columns = sorted([c for c in df_train.columns if c.startswith('Category_')])
-    feature_columns = BASE_FEATURE_COLUMNS + cat_columns
-    if cat_columns:
-        print(f"[Tenant {tenant_id}]   Category features: {cat_columns}")
+    if category_fraud_rate:
+        print(f"[Tenant {tenant_id}]   Category target encoding: {category_fraud_rate}")
     else:
-        print(f"[Tenant {tenant_id}]   No nomination categories configured — skipping category features.")
+        print(f"[Tenant {tenant_id}]   No nomination categories — CategoryFraudRate=0.0 for all rows.")
 
-    X = df_train[feature_columns].fillna(0)
+    X = df_train[FEATURE_COLUMNS].fillna(0)
     y = df_train['IsFraud']
 
     print(f"[Tenant {tenant_id}]   Training data shape: {X.shape}")
@@ -582,7 +587,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         print(f"ROC AUC Score: {auc:.4f}")
 
     feature_importance = pd.DataFrame({
-        'Feature': feature_columns,
+        'Feature': FEATURE_COLUMNS,
         'Importance': rf_model.feature_importances_,
     }).sort_values('Importance', ascending=False)
 
@@ -596,13 +601,17 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     # time and were the second-largest contributor to pkl size after the RF
     # tree structures themselves.
     model_data = {
-        'model':           rf_model,
-        'scaler':          scaler,
-        'feature_columns': feature_columns,   # includes Category_* dummies if present
+        'model':                rf_model,
+        'scaler':               scaler,
+        'feature_columns':      FEATURE_COLUMNS,
         # Tenant-scoped amount stats — used by fraud_ml.py to compute
         # z-scores at inference time without crossing tenant boundaries.
-        'amount_mean':     float(df['Amount'].mean()),
-        'amount_std':      float(df['Amount'].std()),
+        'amount_mean':          float(df['Amount'].mean()),
+        'amount_std':           float(df['Amount'].std()),
+        # Category target encoding map: {category_id (int): mean_fraud_rate (float)}
+        # Unknown categories at inference time fall back to global_fraud_rate.
+        'category_fraud_rate':  category_fraud_rate,
+        'global_fraud_rate':    float(global_fraud_rate),
     }
 
     pkl_filename = OUTPUT_DIR / f"fraud_detection_model_tenant_{tenant_id}.pkl"
