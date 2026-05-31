@@ -641,10 +641,10 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     p2p_probas_full = p2p_rf.predict_proba(
         p2p_scaler.transform(df_train[P2P_FEATURE_COLUMNS].fillna(0))
     )[:, 1]
-    p2p_high_risk = (p2p_probas_full * 100 >= 60).astype(int)
     df_train = df_train.copy()
     df_train['IsApproverFraud'] = (
-        (p2p_high_risk == 1) & (df_train['IsRapidApproval'] == 1)
+        pd.Series((p2p_probas_full * 100 >= 60).astype(int), index=df_train.index)
+        & (df_train['IsRapidApproval'] == 1)
     ).astype(int)
 
     appr_auc = None
@@ -691,8 +691,15 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     score_and_save_historical(df, model_data, tenant_id)
 
     # ── Visualisations ────────────────────────────────────────────────────────
-    df_with_scores = load_data(tenant_id)
-    create_visualizations(df_with_scores, None, None, None, tenant_id)
+    # Compute probability arrays from the already-loaded df so we don't need
+    # a second DB round-trip and so column names are unambiguous.
+    p2p_probs_viz = p2p_rf.predict_proba(
+        p2p_scaler.transform(df[P2P_FEATURE_COLUMNS].fillna(0))
+    )[:, 1]
+    appr_probs_viz = appr_rf.predict_proba(
+        appr_scaler.transform(df[APPR_FEATURE_COLUMNS].fillna(0))
+    )[:, 1]
+    create_visualizations(df, p2p_probs_viz, appr_probs_viz, tenant_id)
 
     return model_data, {
         'p2p_auc': p2p_auc, 'appr_auc': appr_auc,
@@ -704,27 +711,33 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
 # VISUALISATIONS
 # ============================================================================
 
-def create_visualizations(df: pd.DataFrame, _fi, _yt, _yp, tenant_id: int) -> None:
+def create_visualizations(
+    df: pd.DataFrame,
+    p2p_probs: np.ndarray,
+    appr_probs: np.ndarray,
+    tenant_id: int,
+) -> None:
     """
-    Generate and upload a fraud score distribution chart.
-    Feature importance and ROC curve are now printed to stdout during training
-    rather than stored in the visualisation — they are diagnostic output, not
-    dashboarding data.
+    Generate and upload a fraud score distribution chart showing P2P and
+    Approver score distributions side by side, coloured by IsFraud label.
+    Probabilities are passed in directly from the training run — no DB re-fetch.
     """
     print(f"\n[Tenant {tenant_id}] Creating visualisations ...")
+
+    is_fraud = df['IsFraud'].fillna(0).astype(int).values
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle(f"Fraud Score Distribution — Tenant {tenant_id}", fontsize=13)
 
-    for ax, (score_col, label, table) in zip(axes, [
-        ('P2PFraudScore',  'P2P',      'P2P_FraudScores'),
-        ('ApprFraudScore', 'Approver',  'Appr_FraudScores'),
+    for ax, (probs, label) in zip(axes, [
+        (p2p_probs,  'P2P'),
+        (appr_probs, 'Approver'),
     ]):
-        if score_col in df.columns and df[score_col].notna().any():
-            legit = df[df['IsFraud'] == 0][score_col].dropna()
-            fraud = df[df['IsFraud'] == 1][score_col].dropna()
-            ax.hist([legit, fraud], bins=30, label=['Legitimate', 'Fraud'], alpha=0.7)
-        ax.set_xlabel('Fraud Score')
+        scores = (probs * 100).astype(int)
+        legit  = scores[is_fraud == 0]
+        fraud  = scores[is_fraud == 1]
+        ax.hist([legit, fraud], bins=30, label=['Legitimate', 'Fraud'], alpha=0.7)
+        ax.set_xlabel('Fraud Score (0–100)')
         ax.set_ylabel('Count')
         ax.set_title(f'{label} Score Distribution')
         ax.legend()
