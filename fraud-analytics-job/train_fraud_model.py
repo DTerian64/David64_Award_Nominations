@@ -530,7 +530,7 @@ def score_and_save_historical(
     cursor.close()
     conn.close()
 
-    p2p_high = sum(1 for p in (p2p_fraud_probs or []) if int(p * 100) >= 60)
+    p2p_high = sum(1 for p in (p2p_fraud_probs if p2p_fraud_probs is not None else []) if int(p * 100) >= 60)
     print(
         f"[Tenant {tenant_id}] ✓ P2P: {p2p_upserted} upserted ({p2p_high} HIGH/CRITICAL) | "
         f"Approver: {appr_upserted} upserted"
@@ -793,7 +793,9 @@ def main() -> None:
             )
 
         except Exception as exc:
+            import traceback
             print(f"❌  Tenant {tenant_id} failed: {exc}")
+            print(traceback.format_exc())
             results[tenant_id] = f"FAILED — {exc}"
             failed.append(tenant_id)
 
