@@ -38,17 +38,49 @@ def handle(payload: dict) -> None:
     if not details:
         raise ValueError(f"Nomination {nomination_id} not found in DB")
 
-    hrbp_users = db.get_hrbp_users(details["tenant_id"])
-    if not hrbp_users:
-        logger.warning(
-            "No HRBP users configured for tenant %d — "
-            "nomination %d will remain in PendingHRBPReview until SLA breach.",
-            details["tenant_id"], nomination_id,
-        )
-        return
-
+    hrbp_users  = db.get_hrbp_users(details["tenant_id"])
     fraud_flags = db.get_hrbp_fraud_flags(nomination_id)
 
+    # ── No HRBP configured — attempt fallback to tenant admin ────────────────
+    if not hrbp_users:
+        fallback = db.get_tenant_fallback_admin(details["tenant_id"])
+        if fallback:
+            logger.warning(
+                "No HRBP users configured for tenant %d — "
+                "falling back to admin '%s' for nomination %d.",
+                details["tenant_id"], fallback["email"], nomination_id,
+            )
+            body = email_client.render_hrbp_review_request(
+                hrbp_name=fallback["full_name"],
+                nomination_id=nomination_id,
+                nominator_name=details["nominator_name"],
+                beneficiary_name=details["beneficiary_name"],
+                amount=details["amount"],
+                currency=details["currency"],
+                description=details["description"],
+                risk_level=risk_level,
+                fraud_score=fraud_flags["fraud_score"] if fraud_flags else None,
+                warning_flags=fraud_flags["warning_flags"].split(", ") if fraud_flags and fraud_flags["warning_flags"] else [],
+            )
+            email_client.send_email(
+                to_email=fallback["email"],
+                subject=(
+                    f"⚠️ [No HRBP Assigned] Fraud Review Required — "
+                    f"Nomination #{nomination_id} ({risk_level} Risk)"
+                ),
+                body=body,
+            )
+        else:
+            logger.warning(
+                "No HRBP users and no fallback_admin_email configured for "
+                "tenant %d — nomination %d remains in PendingHRBPReview. "
+                "SLA breach job will escalate. "
+                "Fix: add 'fallback_admin_email' to the tenant's Config JSON.",
+                details["tenant_id"], nomination_id,
+            )
+        return
+
+    # ── Normal path — notify all HRBP users ──────────────────────────────────
     for hrbp in hrbp_users:
         logger.info(
             "Sending HRBP review request to %s for nomination %d (risk=%s)",

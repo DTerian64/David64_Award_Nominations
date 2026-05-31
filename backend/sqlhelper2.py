@@ -68,11 +68,12 @@ class TenantORM(Base):
     """
     __tablename__ = "Tenants"
 
-    TenantId        = Column(Integer, primary_key=True, autoincrement=True)
-    TenantName      = Column(String(256), nullable=False, unique=True)
-    AzureAdTenantId = Column(String(36),  nullable=False, unique=True)   # UUID string
-    Config          = Column(Unicode(None), nullable=True)                 # NVARCHAR(MAX) JSON blob, NULL = defaults
-    Domain          = Column(String(253),  nullable=True,  unique=True)   # canonical public hostname, e.g. "acme-awards.terian-services.com"
+    TenantId             = Column(Integer, primary_key=True, autoincrement=True)
+    TenantName           = Column(String(256), nullable=False, unique=True)
+    AzureAdTenantId      = Column(String(36),  nullable=False, unique=True)
+    Config               = Column(Unicode(None), nullable=True)            # NVARCHAR(MAX) JSON blob, NULL = defaults
+    Domain               = Column(String(253),  nullable=True, unique=True)
+    fallback_admin_email = Column(String(256),  nullable=True)             # emailed when no HRBP is configured
 
     # Reverse relationship — rarely needed directly, but handy for admin queries
     users = relationship("UserORM", back_populates="tenant")

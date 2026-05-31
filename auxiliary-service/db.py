@@ -138,6 +138,30 @@ def set_approver_notified(nomination_id: int) -> None:
 
 # ── HRBP review workflow ──────────────────────────────────────────────────────
 
+def get_tenant_fallback_admin(tenant_id: int) -> Optional[dict]:
+    """
+    Return the fallback admin contact for a tenant when no HRBP users are
+    configured.  Reads dbo.Tenants.fallback_admin_email directly.
+
+    Returns a dict {full_name, email} or None if the column is NULL.
+
+    To configure: UPDATE dbo.Tenants
+                  SET fallback_admin_email = 'admin@example.com'
+                  WHERE TenantId = <id>
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT fallback_admin_email, TenantName "
+            "FROM dbo.Tenants WHERE TenantId = ?",
+            (tenant_id,)
+        )
+        row = cursor.fetchone()
+    if not row or not row[0]:
+        return None
+    return {"full_name": f"{row[1]} Administrator", "email": row[0]}
+
+
 def get_hrbp_users(tenant_id: int) -> list[dict]:
     """Return all users with the HRBP role for a given tenant."""
     with _get_conn() as conn:
