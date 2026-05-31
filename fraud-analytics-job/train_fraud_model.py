@@ -366,11 +366,13 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     )
 
     if fraud_n == 0:
-        raise ValueError(
-            f"[Tenant {tenant_id}] Bootstrap found no fraud patterns in the data. "
-            "Make sure the load generator ran with suspicious/fraudulent scenarios "
-            "(default 30% of traffic) before training."
+        print(
+            f"[Tenant {tenant_id}] ⚠  Bootstrap found no fraud patterns — "
+            "all nominations look legitimate. Skipping training for this tenant. "
+            "The backend will return UNKNOWN/MANUAL_REVIEW until fraud patterns "
+            "emerge and a model can be trained."
         )
+        return None   # signals train_model to skip gracefully
 
     return df
 
@@ -546,14 +548,17 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
 
     df, category_fraud_rate, global_fraud_rate = extract_features(df)
 
-    # If no FraudScores have been recorded yet (cold start after first load test),
-    # derive labels from the behavioural patterns embedded in the data.
+    # If no P2P scores have been recorded yet (cold start), derive labels
+    # from behavioural patterns.  If no patterns exist either (clean new
+    # tenant), bootstrap_fraud_labels returns None — skip gracefully.
     if df['IsFraud'].sum() == 0:
         print(
-            f"[Tenant {tenant_id}] ⚠  No FraudScores labels found — "
+            f"[Tenant {tenant_id}] ⚠  No P2P fraud labels found — "
             "bootstrapping from behavioural patterns."
         )
         df = bootstrap_fraud_labels(df, tenant_id)
+        if df is None:
+            return None, {'skipped': True}
 
     df_train = df[df['IsFraud'].notna()].copy()
     if len(df_train) < MIN_TRAINING_SAMPLES:
@@ -785,6 +790,10 @@ def main() -> None:
                 continue
 
             _, stats = train_model(df, tenant_id)
+            if stats.get('skipped'):
+                print(f"⚠  Tenant {tenant_id} skipped — no fraud patterns found.")
+                results[tenant_id] = "SKIPPED (no fraud patterns — model will be trained once patterns emerge)"
+                continue
             p2p_auc_str  = f"{stats['p2p_auc']:.4f}"  if stats.get('p2p_auc')  else "n/a"
             appr_auc_str = f"{stats['appr_auc']:.4f}" if stats.get('appr_auc') else "n/a"
             results[tenant_id] = (
