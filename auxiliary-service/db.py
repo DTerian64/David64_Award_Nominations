@@ -81,7 +81,8 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
                 beneficiary.userEmail     AS BeneficiaryEmail,
                 approver.FirstName + ' ' + approver.LastName AS ApproverName,
                 approver.userEmail        AS ApproverEmail,
-                nc.category_description   AS CategoryDescription
+                nc.category_description   AS CategoryDescription,
+                nominator.TenantId        AS TenantId
             FROM  dbo.Nominations n
             INNER JOIN dbo.Users nominator   ON n.NominatorId   = nominator.UserId
             INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
@@ -110,6 +111,7 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
         "approver_name":        row[12],
         "approver_email":       row[13],
         "category_description": row[14],       # None for tenants without categories
+        "tenant_id":            int(row[15]),
     }
 
 
@@ -246,16 +248,47 @@ def claim_message(
                 extra={"message_id": message_id, "event_type": event_type},
             )
             return False  # new message — proceed
-        except pyodbc.IntegrityError as exc:
-            # PK violation → already processed
+
+        except pyodbc.IntegrityError:
+            # PK violation — row already exists.  Check whether the previous
+            # attempt errored: if so, delete and re-insert so the message is
+            # retried.  Only block if the previous result was success/skipped.
+            cursor.execute(
+                "SELECT Result FROM dbo.ProcessedEvents WHERE MessageId = ?",
+                (message_id,)
+            )
+            existing = cursor.fetchone()
+            prior_result = existing[0] if existing else None
+
+            if prior_result == 'error':
+                # Previous attempt failed — allow retry by reclaiming the row.
+                cursor.execute(
+                    "DELETE FROM dbo.ProcessedEvents WHERE MessageId = ?",
+                    (message_id,)
+                )
+                cursor.execute("""
+                    INSERT INTO dbo.ProcessedEvents
+                        (MessageId, EventType, NominationId, ProcessedAt, Result)
+                    VALUES (?, ?, ?, ?, 'pending')
+                """, (message_id, event_type, nomination_id, processed_at))
+                conn.commit()
+                logger.warning(
+                    "claim_message: prior attempt errored — reclaimed for retry",
+                    extra={"message_id": message_id, "event_type": event_type},
+                )
+                return False  # proceed with retry
+
+            # Result is success, skipped, or pending (another worker is handling
+            # it) — do not reprocess.
             logger.info(
-                "claim_message: IntegrityError — message already processed, skipping",
-                extra={"message_id": message_id, "error": str(exc)},
+                "claim_message: already processed (result=%s) — skipping",
+                prior_result,
+                extra={"message_id": message_id, "prior_result": prior_result},
             )
             return True
+
         except Exception as exc:
             # Any other DB error (e.g. table missing, column mismatch, connection drop).
-            # Log the full exception type so we can diagnose schema/config problems.
             logger.exception(
                 "claim_message: unexpected %s — ProcessedEvents write failed",
                 type(exc).__name__,
