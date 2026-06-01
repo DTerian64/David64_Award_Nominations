@@ -413,6 +413,7 @@ async def get_me(user_context: dict = Depends(get_current_user_with_impersonatio
         "upn":        effective_user["userPrincipalName"],
         "tenant_id":  effective_user["TenantId"],
         "app_roles":  app_roles,
+        "is_hrbp":    "HRBP" in app_roles,
         "is_admin":   is_admin(actual_user),
     }
 

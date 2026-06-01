@@ -145,11 +145,11 @@ const AwardNominationApp: React.FC = () => {
   const loadMe = async () => {
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-      const me = await apiFetch<{ app_roles: string[] }>('/api/me', {}, impersonatedUPN);
-      setIsHRBP(me.app_roles.includes('HRBP'));
+      const me = await apiFetch<{ is_hrbp: boolean; is_admin: boolean }>('/api/me', {}, impersonatedUPN);
+      setIsHRBP(me.is_hrbp);
       // If switching away from HRBP tab after impersonation change, reset to nominate
       setActiveTab(prev => {
-        if (prev === 'hrbp' && !me.app_roles.includes('HRBP')) return 'nominate';
+        if (prev === 'hrbp' && !me.is_hrbp) return 'nominate';
         if (prev === 'analytics' && !isAdmin) return 'nominate';
         return prev;
       });

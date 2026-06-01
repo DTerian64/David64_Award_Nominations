@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ShieldAlert, ChevronDown, ChevronUp, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { ShieldAlert, ChevronDown, ChevronUp, CheckCircle, XCircle } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
