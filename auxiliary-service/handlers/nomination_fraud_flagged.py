@@ -40,6 +40,7 @@ def handle(payload: dict) -> None:
 
     hrbp_users  = db.get_hrbp_users(details["tenant_id"])
     fraud_flags = db.get_hrbp_fraud_flags(nomination_id)
+    portal_url  = db.get_tenant_portal_url(details["tenant_id"])
 
     # ── No HRBP configured — attempt fallback to tenant admin ────────────────
     if not hrbp_users:
@@ -97,6 +98,7 @@ def handle(payload: dict) -> None:
             risk_level=risk_level,
             fraud_score=fraud_flags["fraud_score"] if fraud_flags else None,
             warning_flags=fraud_flags["warning_flags"].split(", ") if fraud_flags and fraud_flags["warning_flags"] else [],
+            portal_url=portal_url,
         )
         email_client.send_email(
             to_email=hrbp["email"],

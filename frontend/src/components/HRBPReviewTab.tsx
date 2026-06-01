@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ShieldAlert, ChevronDown, ChevronUp, CheckCircle, XCircle } from 'lucide-react';
+import { useImpersonation } from '../contexts/ImpersonationContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,9 @@ interface Props {
 // ── Component ──────────────────────────────────────────────────────────────
 
 export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => {
+  const { isImpersonating, getEffectiveUser } = useImpersonation();
+  const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+
   const [queue, setQueue]           = useState<HRBPQueueItem[]>([]);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState<string | null>(null);
@@ -96,14 +100,14 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
     try {
       setLoading(true);
       setError(null);
-      const data = await apiFetch<HRBPQueueItem[]>('/api/hrbp/queue');
+      const data = await apiFetch<HRBPQueueItem[]>('/api/hrbp/queue', {}, impersonatedUPN);
       setQueue(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load HRBP queue');
     } finally {
       setLoading(false);
     }
-  }, [apiFetch]);
+  }, [apiFetch, impersonatedUPN]);
 
   useEffect(() => { loadQueue(); }, [loadQueue]);
 
@@ -116,7 +120,7 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
     if (!pairHistory[nominationId]) {
       setHistoryLoading(nominationId);
       try {
-        const data = await apiFetch<PairHistory>(`/api/hrbp/nominations/${nominationId}/pair-history`);
+        const data = await apiFetch<PairHistory>(`/api/hrbp/nominations/${nominationId}/pair-history`, {}, impersonatedUPN);
         setPairHistory(prev => ({ ...prev, [nominationId]: data }));
       } catch {
         // silently ignore — history panel will show empty
@@ -132,7 +136,7 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
       await apiFetch(`/api/hrbp/nominations/${nominationId}/${action}`, {
         method: 'POST',
         body: JSON.stringify({ reason: reason[nominationId] || '' }),
-      });
+      }, impersonatedUPN);
       setDecisionStatus(prev => ({ ...prev, [nominationId]: action === 'approve' ? 'approved' : 'rejected' }));
       // Remove from queue after short delay so the user sees the confirmation
       setTimeout(() => {

@@ -140,6 +140,24 @@ def set_approver_notified(nomination_id: int) -> None:
 
 # ── HRBP review workflow ──────────────────────────────────────────────────────
 
+def get_tenant_portal_url(tenant_id: int) -> str:
+    """
+    Return the tenant's frontend portal URL from dbo.Tenants.Site_URL.
+    Falls back to a generic URL if Site_URL is not set.
+
+    To configure: UPDATE dbo.Tenants SET Site_URL = 'https://awards.example.com'
+                  WHERE TenantId = <id>
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT Site_URL FROM dbo.Tenants WHERE TenantId = ?",
+            (tenant_id,)
+        )
+        row = cursor.fetchone()
+    return row[0] if row and row[0] else "https://awards.terian-services.com"
+
+
 def get_tenant_fallback_admin(tenant_id: int) -> Optional[dict]:
     """
     Return the fallback admin contact for a tenant when no HRBP users are

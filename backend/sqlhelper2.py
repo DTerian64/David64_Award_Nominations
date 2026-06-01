@@ -74,6 +74,7 @@ class TenantORM(Base):
     Config               = Column(Unicode(None), nullable=True)            # NVARCHAR(MAX) JSON blob, NULL = defaults
     Domain               = Column(String(253),  nullable=True, unique=True)
     fallback_admin_email = Column(String(256),  nullable=True)             # emailed when no HRBP is configured
+    Site_URL             = Column(String(256),  nullable=True)             # frontend portal URL for email hyperlinks
 
     # Reverse relationship — rarely needed directly, but handy for admin queries
     users = relationship("UserORM", back_populates="tenant")
