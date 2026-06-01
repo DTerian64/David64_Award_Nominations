@@ -1955,7 +1955,7 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                 JOIN  dbo.Users ben ON ben.UserId      = n.BeneficiaryId
                 LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 WHERE n.Status    = 'PendingHRBPReview'
-                  AND n.TenantId  = :tenant_id
+                  AND nom.TenantId = :tenant_id
                 ORDER BY n.NominationDate ASC
             """),
             {"tenant_id": tenant_id},
