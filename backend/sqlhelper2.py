@@ -2140,3 +2140,59 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
             "risk_level":       row[13],
             "warning_flags":    row[14].split(", ") if row[14] else [],
         }
+
+
+def get_pair_nomination_history(
+    nominator_id: int,
+    beneficiary_id: int,
+    tenant_id: int,
+    exclude_nomination_id: int,
+) -> list[dict]:
+    """
+    Return all previous nominations from nominator_id → beneficiary_id
+    within the tenant, excluding the currently-reviewed nomination.
+    Used by the HRBP review screen to show the full pair history.
+
+    Returns: list of dicts ordered oldest → newest.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT
+                    n.NominationId,
+                    n.Amount,
+                    n.Currency,
+                    n.NominationDescription,
+                    n.NominationDate,
+                    n.Status,
+                    p2p.FraudScore,
+                    p2p.RiskLevel
+                FROM dbo.Nominations n
+                JOIN dbo.Users u ON u.UserId = n.NominatorId
+                LEFT JOIN dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
+                WHERE n.NominatorId  = :nominator_id
+                  AND n.BeneficiaryId = :beneficiary_id
+                  AND u.TenantId     = :tenant_id
+                  AND n.NominationId != :exclude_id
+                ORDER BY n.NominationDate ASC
+            """),
+            {
+                "nominator_id":  nominator_id,
+                "beneficiary_id": beneficiary_id,
+                "tenant_id":     tenant_id,
+                "exclude_id":    exclude_nomination_id,
+            },
+        ).fetchall()
+        return [
+            {
+                "nomination_id": r[0],
+                "amount":        r[1],
+                "currency":      r[2],
+                "description":   r[3],
+                "nomination_date": str(r[4]),
+                "status":        r[5],
+                "fraud_score":   r[6],
+                "risk_level":    r[7],
+            }
+            for r in rows
+        ]

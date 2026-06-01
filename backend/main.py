@@ -393,6 +393,30 @@ async def get_tenant_config(user_context: dict = Depends(get_current_user_with_i
         return {}
 
 
+@app.get("/api/me")
+async def get_me(user_context: dict = Depends(get_current_user_with_impersonation)):
+    """
+    Return the effective user's identity and application roles.
+
+    - app_roles: roles from dbo.UserRoles (e.g. ['HRBP']) for the effective user.
+      The frontend uses this to conditionally show the HRBP tab.
+    - is_admin: derived from the Azure AD token of the *actual* user (not the
+      impersonated one) — admins retain their own identity for Analytics access.
+    """
+    effective_user = user_context["effective_user"]
+    actual_user    = user_context["actual_user"]
+
+    app_roles = sqlhelper.get_user_roles(effective_user["UserId"])
+
+    return {
+        "user_id":    effective_user["UserId"],
+        "upn":        effective_user["userPrincipalName"],
+        "tenant_id":  effective_user["TenantId"],
+        "app_roles":  app_roles,
+        "is_admin":   is_admin(actual_user),
+    }
+
+
 @app.get("/api/users", response_model=List[User])
 async def get_users(user_context: dict = Depends(get_current_user_with_impersonation)):
     """Get all users for nomination selection"""
@@ -1033,6 +1057,37 @@ async def hrbp_reject(
         logger.warning("Failed to publish hrbp-rejected event for %d: %s", nomination_id, e)
 
     return {"status": "rejected", "nomination_id": nomination_id}
+
+
+@app.get("/api/hrbp/nominations/{nomination_id}/pair-history")
+async def get_pair_history(
+    nomination_id: int,
+    user_context: dict = Depends(require_hrbp_role),
+):
+    """
+    Return all previous nominations between the same nominator → beneficiary
+    pair, excluding the currently-reviewed nomination.
+    Gives the HRBP reviewer the full relationship history to inform their decision.
+    """
+    tenant_id = user_context["effective_user"]["TenantId"]
+    details   = sqlhelper.get_nomination_details_for_hrbp(nomination_id)
+    if not details:
+        raise HTTPException(status_code=404, detail="Nomination not found")
+    if details["tenant_id"] != tenant_id:
+        raise HTTPException(status_code=403, detail="Cross-tenant access denied")
+
+    history = sqlhelper.get_pair_nomination_history(
+        nominator_id=details["nominator_id"],
+        beneficiary_id=details["beneficiary_id"],
+        tenant_id=tenant_id,
+        exclude_nomination_id=nomination_id,
+    )
+    return {
+        "nominator_name":   details["nominator_name"],
+        "beneficiary_name": details["beneficiary_name"],
+        "pair_count":       len(history),
+        "history":          history,
+    }
 
 
 @app.post("/api/internal/checkPendingHRBPReview")

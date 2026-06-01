@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, CheckCircle, Clock, Award, BarChart3 } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Award, BarChart3, ShieldAlert } from 'lucide-react';
 import {
   AuthenticatedTemplate,
   UnauthenticatedTemplate,
@@ -14,6 +14,7 @@ import { SignOutButton } from './components/SignOutButton';
 import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
 import { ImpersonationBanner } from './components/ImpersonationBanner';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { HRBPReviewTab } from './components/HRBPReviewTab';
 import { useImpersonation } from './contexts/ImpersonationContext';
 import { useTenantConfig } from './contexts/TenantConfigContext';
 import { getAccessToken } from './services/api';
@@ -120,7 +121,8 @@ const AwardNominationApp: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [nominations, setNominations] = useState<Nomination[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<Nomination[]>([]);
-  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'analytics'>('nominate');
+  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics'>('nominate');
+  const [isHRBP, setIsHRBP] = useState(false);
   const [loading, setLoading] = useState(false);
 
   // Nomination form state
@@ -136,8 +138,25 @@ const AwardNominationApp: React.FC = () => {
       loadUsers();
       loadNominations();
       loadPendingApprovals();
+      loadMe();
     }
   }, [accounts, isImpersonating]);
+
+  const loadMe = async () => {
+    try {
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      const me = await apiFetch<{ app_roles: string[] }>('/api/me', {}, impersonatedUPN);
+      setIsHRBP(me.app_roles.includes('HRBP'));
+      // If switching away from HRBP tab after impersonation change, reset to nominate
+      setActiveTab(prev => {
+        if (prev === 'hrbp' && !me.app_roles.includes('HRBP')) return 'nominate';
+        if (prev === 'analytics' && !isAdmin) return 'nominate';
+        return prev;
+      });
+    } catch {
+      setIsHRBP(false);
+    }
+  };
 
   const loadCurrentUser = async () => {
     try {
@@ -405,7 +424,24 @@ const AwardNominationApp: React.FC = () => {
                 </button>
               );
             })}
-            {isAdmin && (
+            {/* HRBP tab — driven by effective user's app_roles, works under impersonation */}
+            {isHRBP && (
+              <button
+                onClick={() => setActiveTab('hrbp')}
+                style={activeTab === 'hrbp' ? {
+                  backgroundColor: 'var(--color-primary)',
+                  color: 'var(--color-primary-text)',
+                } : {}}
+                className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
+                  activeTab === 'hrbp' ? '' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <ShieldAlert className="w-5 h-5 inline-block mr-2" />
+                HRBP Review
+              </button>
+            )}
+            {/* Analytics tab — visible only to actual admin, never when impersonating */}
+            {isAdmin && !isImpersonating && (
               <button
                 onClick={() => setActiveTab('analytics')}
                 style={activeTab === 'analytics' ? {
@@ -628,8 +664,13 @@ const AwardNominationApp: React.FC = () => {
             </div>
           )}
 
+          {/* ── HRBP Review tab ──────────────────────────────────────────── */}
+          {activeTab === 'hrbp' && isHRBP && (
+            <HRBPReviewTab apiFetch={apiFetch} formatCurrency={formatCurrency} />
+          )}
+
           {/* ── Analytics tab ────────────────────────────────────────────── */}
-          {activeTab === 'analytics' && isAdmin && (
+          {activeTab === 'analytics' && isAdmin && !isImpersonating && (
             <div className="bg-white rounded-lg shadow-md p-8">
               <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('analytics.heading')}</h2>
               <AnalyticsDashboard />
