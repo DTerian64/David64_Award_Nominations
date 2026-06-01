@@ -42,6 +42,7 @@ from token_utils import verify_action_token
 from email_utils import get_action_confirmation_page
 from service_bus_publisher import publish_event
 from demo_router import router as demo_router
+from routers.hrbp_router import router as hrbp_router
 
 # ============================================================================
 # CONFIGURATION
@@ -183,6 +184,7 @@ app.add_middleware(
 
 # ── Demo self-registration router (public, no auth) ─────────────────────────
 app.include_router(demo_router)
+app.include_router(hrbp_router)
 
 # ============================================================================
 # OBSERVABILITY — Azure Monitor / Application Insights
@@ -931,164 +933,17 @@ async def internal_refresh_fraud_model(x_internal_key: str = Header(default=""))
 
 
 # ============================================================================
-# HRBP REVIEW WORKFLOW
+# HRBP REVIEW WORKFLOW — SLA internal endpoint
+# (HRBP user-facing routes live in routers/hrbp_router.py)
 # ============================================================================
 
 # SLA threshold — how many hours a nomination may sit in PendingHRBPReview
 # before the Logic App callback triggers escalation.
 _HRBP_SLA_HOURS: int = int(os.getenv("HRBP_SLA_HOURS", "72"))
 
-# Shared secret for the Logic App SLA-check callback — same pattern as the
-# fraud-analytics-job webhook.
+# Shared secret for the Logic App SLA-check callback.
 # Set via Key Vault secret HRBP-SLA-WEBHOOK-SECRET → env var HRBP_SLA_WEBHOOK_SECRET.
 _HRBP_SLA_WEBHOOK_SECRET: str = os.getenv("HRBP_SLA_WEBHOOK_SECRET", "")
-
-
-def require_hrbp_role(current_user: dict = Depends(get_current_user_with_impersonation)) -> dict:
-    """
-    FastAPI dependency — resolves the effective user and checks that they hold
-    the 'HRBP' role in dbo.UserRoles.
-
-    Raises 403 if the role is absent.
-    """
-    effective_user = current_user["effective_user"]
-    roles = sqlhelper.get_user_roles(effective_user["UserId"])
-    if "HRBP" not in roles:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="HRBP role required",
-        )
-    return current_user
-
-
-@app.get("/api/hrbp/queue")
-async def get_hrbp_queue(user_context: dict = Depends(require_hrbp_role)):
-    """
-    Return all nominations in PendingHRBPReview for the caller's tenant,
-    with full fraud-flag detail.  HRBP role required.
-    """
-    tenant_id = user_context["effective_user"]["TenantId"]
-    return sqlhelper.get_hrbp_queue(tenant_id)
-
-
-class HRBPDecisionRequest(BaseModel):
-    reason: str = ""   # required for rejection, optional for approval
-
-
-@app.post("/api/hrbp/nominations/{nomination_id}/approve")
-async def hrbp_approve(
-    nomination_id: int,
-    body: HRBPDecisionRequest,
-    user_context: dict = Depends(require_hrbp_role),
-):
-    """
-    HRBP approves a flagged nomination → transitions to Pending so the normal
-    manager-approval flow continues.  HRBP role required.
-    """
-    effective_user = user_context["effective_user"]
-    details = sqlhelper.get_nomination_details_for_hrbp(nomination_id)
-    if not details:
-        raise HTTPException(status_code=404, detail="Nomination not found")
-    if details["status"] != "PendingHRBPReview":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Nomination is not in PendingHRBPReview (current: {details['status']})",
-        )
-    if details["tenant_id"] != effective_user["TenantId"]:
-        raise HTTPException(status_code=403, detail="Cross-tenant access denied")
-
-    sqlhelper.set_nomination_status(nomination_id, "Pending")
-    logger.info(
-        "HRBP approved nomination %d (reviewer=%d)", nomination_id, effective_user["UserId"]
-    )
-
-    try:
-        await publish_event(
-            "nomination.hrbp-approved",
-            nomination_id,
-            extra={"reviewer_id": effective_user["UserId"]},
-        )
-        # Also fire nomination.created so the manager gets their approval email.
-        await publish_event("nomination.created", nomination_id)
-    except Exception as e:
-        logger.warning("Failed to publish hrbp-approved events for %d: %s", nomination_id, e)
-
-    return {"status": "approved", "nomination_id": nomination_id}
-
-
-@app.post("/api/hrbp/nominations/{nomination_id}/reject")
-async def hrbp_reject(
-    nomination_id: int,
-    body: HRBPDecisionRequest,
-    user_context: dict = Depends(require_hrbp_role),
-):
-    """
-    HRBP rejects a flagged nomination → transitions to Rejected.
-    A reason is strongly recommended and will be included in the nominator email.
-    HRBP role required.
-    """
-    effective_user = user_context["effective_user"]
-    details = sqlhelper.get_nomination_details_for_hrbp(nomination_id)
-    if not details:
-        raise HTTPException(status_code=404, detail="Nomination not found")
-    if details["status"] != "PendingHRBPReview":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Nomination is not in PendingHRBPReview (current: {details['status']})",
-        )
-    if details["tenant_id"] != effective_user["TenantId"]:
-        raise HTTPException(status_code=403, detail="Cross-tenant access denied")
-
-    sqlhelper.set_nomination_status(nomination_id, "Rejected")
-    logger.info(
-        "HRBP rejected nomination %d (reviewer=%d reason=%r)",
-        nomination_id, effective_user["UserId"], body.reason,
-    )
-
-    try:
-        await publish_event(
-            "nomination.hrbp-rejected",
-            nomination_id,
-            extra={
-                "reviewer_id": effective_user["UserId"],
-                "reason":      body.reason,
-            },
-        )
-    except Exception as e:
-        logger.warning("Failed to publish hrbp-rejected event for %d: %s", nomination_id, e)
-
-    return {"status": "rejected", "nomination_id": nomination_id}
-
-
-@app.get("/api/hrbp/nominations/{nomination_id}/pair-history")
-async def get_pair_history(
-    nomination_id: int,
-    user_context: dict = Depends(require_hrbp_role),
-):
-    """
-    Return all previous nominations between the same nominator → beneficiary
-    pair, excluding the currently-reviewed nomination.
-    Gives the HRBP reviewer the full relationship history to inform their decision.
-    """
-    tenant_id = user_context["effective_user"]["TenantId"]
-    details   = sqlhelper.get_nomination_details_for_hrbp(nomination_id)
-    if not details:
-        raise HTTPException(status_code=404, detail="Nomination not found")
-    if details["tenant_id"] != tenant_id:
-        raise HTTPException(status_code=403, detail="Cross-tenant access denied")
-
-    history = sqlhelper.get_pair_nomination_history(
-        nominator_id=details["nominator_id"],
-        beneficiary_id=details["beneficiary_id"],
-        tenant_id=tenant_id,
-        exclude_nomination_id=nomination_id,
-    )
-    return {
-        "nominator_name":   details["nominator_name"],
-        "beneficiary_name": details["beneficiary_name"],
-        "pair_count":       len(history),
-        "history":          history,
-    }
 
 
 @app.post("/api/internal/checkPendingHRBPReview")

@@ -1,12 +1,38 @@
 # Schema Skill — Database Table Definitions
 
 ## dbo.Tenants
-| Column           | Type           | Notes                                              |
-|------------------|----------------|----------------------------------------------------|
-| TenantId         | INT IDENTITY   | Primary Key                                        |
-| TenantName       | NVARCHAR(256)  | Human-readable organisation name                   |
-| AzureAdTenantId  | NVARCHAR(36)   | Azure AD / Entra ID tenant GUID                    |
-| Config           | NVARCHAR(MAX)  | JSON blob of tenant configuration; may be NULL     |
+| Column               | Type           | Notes                                                        |
+|----------------------|----------------|--------------------------------------------------------------|
+| TenantId             | INT IDENTITY   | Primary Key                                                  |
+| TenantName           | NVARCHAR(256)  | Human-readable organisation name                             |
+| AzureAdTenantId      | NVARCHAR(36)   | Azure AD / Entra ID tenant GUID                              |
+| Config               | NVARCHAR(MAX)  | JSON blob of tenant configuration; may be NULL               |
+| Domain               | NVARCHAR(253)  | Canonical public hostname, e.g. acme-awards.terian-services.com |
+| fallback_admin_email | NVARCHAR(256)  | Emailed when no HRBP is configured for the tenant            |
+| Site_URL             | NVARCHAR(256)  | Frontend portal URL used in outbound email hyperlinks        |
+
+## dbo.UserRoles
+Application-level role assignments managed within the app (not Azure AD).
+Used to assign the HRBP role to users who review flagged nominations.
+
+| Column      | Type          | Notes                                                      |
+|-------------|---------------|------------------------------------------------------------|
+| UserRoleId  | INT IDENTITY  | Primary Key                                                |
+| UserId      | INT           | FK → Users.UserId                                          |
+| Role        | NVARCHAR(50)  | Exact values: HRBP                                         |
+| AssignedAt  | DATETIME      | When the role was assigned                                 |
+| AssignedBy  | INT           | FK → Users.UserId (who assigned the role); may be NULL     |
+
+Tenant isolation: join through Users to scope by TenantId.
+
+Example — find all HRBP users for the current tenant:
+```sql
+SELECT u.FirstName, u.LastName, u.userEmail
+FROM   dbo.UserRoles ur
+JOIN   dbo.Users u ON u.UserId = ur.UserId
+WHERE  ur.Role     = 'HRBP'
+  AND  u.TenantId  = <TenantId>
+```
 
 ## dbo.Users
 | Column             | Type           | Notes                                          |

@@ -2100,7 +2100,7 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
             text("""
                 SELECT
                     n.NominationId,
-                    n.TenantId,
+                    nom.TenantId,
                     n.Amount,
                     n.Currency,
                     n.NominationDescription,
@@ -2113,7 +2113,9 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
                     ben.userEmail                       AS BeneficiaryEmail,
                     ff.FraudScore,
                     ff.RiskLevel,
-                    ff.WarningFlags
+                    ff.WarningFlags,
+                    nom.UserId                          AS NominatorId,
+                    ben.UserId                          AS BeneficiaryId
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
@@ -2140,6 +2142,8 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
             "fraud_score":      row[12],
             "risk_level":       row[13],
             "warning_flags":    row[14].split(", ") if row[14] else [],
+            "nominator_id":     row[15],
+            "beneficiary_id":   row[16],
         }
 
 
