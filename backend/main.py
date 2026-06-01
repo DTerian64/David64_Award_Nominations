@@ -41,7 +41,7 @@ import fraud_ml
 from token_utils import verify_action_token
 from email_utils import get_action_confirmation_page
 from service_bus_publisher import publish_event
-from demo_router import router as demo_router
+from routers.demo_router import router as demo_router
 from routers.hrbp_router import router as hrbp_router
 
 # ============================================================================
