@@ -411,7 +411,7 @@ def render_hrbp_review_request(
     risk_level: str,
     fraud_score: float | None,
     warning_flags: list[str],
-    portal_url: str = "https://awards.terian-services.com",
+    portal_url: str | None = None,
 ) -> str:
     """HRBP notification — a nomination has been flagged and needs HR review."""
     formatted_amount = _fmt(amount, currency)
@@ -476,9 +476,7 @@ def render_hrbp_review_request(
                     padding:15px;border-radius:4px;margin-bottom:20px;">
             <p style="margin:0;font-size:14px;">
                 <strong>Action required:</strong> Please log into the
-                <a href="{portal_url}" style="color:#2980b9;font-weight:bold;">
-                    Award Nominations portal
-                </a>
+                {'<a href="' + portal_url + '" style="color:#2980b9;font-weight:bold;">Award Nominations portal</a>' if portal_url else '<strong>Award Nominations portal</strong>'}
                 to review the full nomination details and either approve or
                 reject the nomination. The nominator will be notified of your decision.
             </p>

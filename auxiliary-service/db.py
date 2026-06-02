@@ -155,7 +155,7 @@ def get_tenant_portal_url(tenant_id: int) -> str:
             (tenant_id,)
         )
         row = cursor.fetchone()
-    return row[0] if row and row[0] else "https://awards.terian-services.com"
+    return row[0] if row and row[0] else None
 
 
 def get_tenant_fallback_admin(tenant_id: int) -> Optional[dict]:
