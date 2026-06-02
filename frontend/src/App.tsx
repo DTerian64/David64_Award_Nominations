@@ -351,13 +351,6 @@ const AwardNominationApp: React.FC = () => {
                   />
                 )}
 
-                {/* Company name */}
-                {branding?.tenant_name && (
-                  <p className="text-sm font-semibold uppercase tracking-widest text-gray-400 mb-1">
-                    {branding.tenant_name}
-                  </p>
-                )}
-
                 <h1 className="text-3xl font-bold text-gray-900 mb-1">
                   {t('app.title')}
                 </h1>
