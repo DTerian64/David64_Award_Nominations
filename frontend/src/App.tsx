@@ -94,12 +94,29 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, impersonated
   }
 }
 
+interface TenantBranding {
+  tenant_name:   string;
+  primary_color: string | null;
+  company_logo_url:      string | null;
+  tagline:       string | null;
+}
+
 const AwardNominationApp: React.FC = () => {
   // Hooks must always be called first — before any conditional return
   const { accounts } = useMsal();
   const { getEffectiveUser, isImpersonating, isAdmin } = useImpersonation();
   const { config, formatCurrency, minAmount, maxAmount } = useTenantConfig();
   const { t, i18n } = useTranslation();
+
+  // ── Tenant branding (fetched before login, no auth required) ────────────────
+  const [branding, setBranding] = useState<TenantBranding | null>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/tenant/branding`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setBranding(data); })
+      .catch(() => {});   // silently ignore — branding is cosmetic
+  }, []);
 
   const pathname = window.location.pathname;
 
@@ -320,10 +337,35 @@ const AwardNominationApp: React.FC = () => {
           <div className="max-w-md w-full">
             <div className="bg-white p-8 rounded-lg shadow-lg">
               <div className="text-center mb-6">
-                <Award className="w-16 h-16 mx-auto mb-4" style={{ color: 'var(--color-primary)' }} />
+                {/* Logo — shown when the tenant has configured one */}
+                {branding?.company_logo_url ? (
+                  <img
+                    src={branding.company_logo_url}
+                    alt={branding.tenant_name}
+                    className="h-16 mx-auto mb-4 object-contain"
+                  />
+                ) : (
+                  <Award
+                    className="w-16 h-16 mx-auto mb-4"
+                    style={{ color: branding?.primary_color ?? 'var(--color-primary)' }}
+                  />
+                )}
+
+                {/* Company name */}
+                {branding?.tenant_name && (
+                  <p className="text-sm font-semibold uppercase tracking-widest text-gray-400 mb-1">
+                    {branding.tenant_name}
+                  </p>
+                )}
+
                 <h1 className="text-3xl font-bold text-gray-900 mb-1">
                   {t('app.title')}
                 </h1>
+
+                {/* Tagline */}
+                {branding?.tagline && (
+                  <p className="text-sm text-gray-500 mt-1">{branding.tagline}</p>
+                )}
               </div>
 
               {IS_DEMO_SITE ? (
@@ -336,7 +378,7 @@ const AwardNominationApp: React.FC = () => {
                     <a
                       href="/demo/request"
                       className="text-sm font-medium hover:underline"
-                      style={{ color: 'var(--color-primary, #4f46e5)' }}
+                      style={{ color: branding?.primary_color ?? 'var(--color-primary, #4f46e5)' }}
                     >
                       New to the demo? Request access →
                     </a>
@@ -362,10 +404,20 @@ const AwardNominationApp: React.FC = () => {
           <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center">
               <div className="flex items-center space-x-3">
-                <Award className="w-8 h-8" style={{ color: 'var(--color-primary)' }} />
+                {branding?.company_logo_url ? (
+                  <img
+                    src={branding.company_logo_url}
+                    alt={branding.tenant_name}
+                    className="h-8 object-contain"
+                  />
+                ) : (
+                  <Award className="w-8 h-8" style={{ color: branding?.primary_color ?? 'var(--color-primary)' }} />
+                )}
                 <div>
                   <h1 className="text-2xl font-bold text-gray-900">{t('app.title')}</h1>
-                  <p className="text-sm text-gray-600">{t('app.subtitle')}</p>
+                  <p className="text-sm text-gray-600">
+                    {branding?.tenant_name ?? t('app.subtitle')}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center space-x-4">

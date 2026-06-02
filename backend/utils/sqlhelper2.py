@@ -368,6 +368,50 @@ def get_tenant_by_aad_id(aad_tenant_id: str) -> Optional[Tuple]:
         ).fetchone()
 
 
+def get_tenant_branding_by_domain(hostname: str) -> Optional[dict]:
+    """
+    Return public branding fields for the tenant whose Domain matches *hostname*.
+
+    Called by the public GET /api/tenant/branding endpoint — no auth required.
+    The hostname is extracted from the request's Origin header by the caller
+    (protocol and port stripped).
+
+    Returns a dict with keys:
+        tenant_name   — TenantName from dbo.Tenants
+        primary_color — theme.primaryColor from Config JSON (or None)
+        company_logo_url      — Company_Logo_URL column (or None)
+        tagline       — Tagline column (or None)
+
+    Returns None if no tenant matches the hostname.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT TenantName, Config, Company_Logo_URL, Tagline
+                FROM   dbo.Tenants
+                WHERE  Domain = :hostname
+            """),
+            {"hostname": hostname},
+        ).fetchone()
+        if not row:
+            return None
+
+        import json as _json
+        primary_color = None
+        try:
+            cfg = _json.loads(row[1]) if row[1] else {}
+            primary_color = cfg.get("theme", {}).get("primaryColor")
+        except Exception:
+            pass
+
+        return {
+            "tenant_name":   row[0],
+            "primary_color": primary_color,
+            "company_logo_url":      row[2],
+            "tagline":       row[3],
+        }
+
+
 def get_site_url_by_user_id(user_id: int) -> Optional[str]:
     """
     Return the Site_URL for the tenant that owns *user_id*, or None if not set.
@@ -2160,64 +2204,4 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
             "beneficiary_name": row[10],
             "beneficiary_email": row[11],
             "fraud_score":      row[12],
-            "risk_level":       row[13],
-            "warning_flags":    row[14].split(", ") if row[14] else [],
-            "nominator_id":     row[15],
-            "beneficiary_id":   row[16],
-        }
-
-
-def get_pair_nomination_history(
-    nominator_id: int,
-    beneficiary_id: int,
-    tenant_id: int,
-    exclude_nomination_id: int,
-) -> list[dict]:
-    """
-    Return all previous nominations from nominator_id → beneficiary_id
-    within the tenant, excluding the currently-reviewed nomination.
-    Used by the HRBP review screen to show the full pair history.
-
-    Returns: list of dicts ordered oldest → newest.
-    """
-    with get_db_context() as session:
-        rows = session.execute(
-            text("""
-                SELECT
-                    n.NominationId,
-                    n.Amount,
-                    n.Currency,
-                    n.NominationDescription,
-                    n.NominationDate,
-                    n.Status,
-                    p2p.FraudScore,
-                    p2p.RiskLevel
-                FROM dbo.Nominations n
-                JOIN dbo.Users u ON u.UserId = n.NominatorId
-                LEFT JOIN dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
-                WHERE n.NominatorId  = :nominator_id
-                  AND n.BeneficiaryId = :beneficiary_id
-                  AND u.TenantId     = :tenant_id
-                  AND n.NominationId != :exclude_id
-                ORDER BY n.NominationDate ASC
-            """),
-            {
-                "nominator_id":  nominator_id,
-                "beneficiary_id": beneficiary_id,
-                "tenant_id":     tenant_id,
-                "exclude_id":    exclude_nomination_id,
-            },
-        ).fetchall()
-        return [
-            {
-                "nomination_id": r[0],
-                "amount":        r[1],
-                "currency":      r[2],
-                "description":   r[3],
-                "nomination_date": str(r[4]),
-                "status":        r[5],
-                "fraud_score":   r[6],
-                "risk_level":    r[7],
-            }
-            for r in rows
-        ]
+            

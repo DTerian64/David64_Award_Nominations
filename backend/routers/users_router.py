@@ -5,6 +5,7 @@ User identity, tenant config, and user-list endpoints.
 
 Routes
 ------
+GET /api/tenant/branding  — PUBLIC: tenant name, logo, tagline, primary colour (pre-login)
 GET /api/me               — effective user identity + app roles
 GET /api/users            — all users in tenant (for nomination form)
 GET /api/tenant/config    — per-tenant UI config (locale, currency, categories)
@@ -12,8 +13,9 @@ GET /api/tenant/config    — per-tenant UI config (locale, currency, categories
 
 import logging
 import json as _json
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from typing import List
 
 import utils.sqlhelper2 as sqlhelper
@@ -23,6 +25,42 @@ from routers.schemas import User
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["users"])
+
+
+# ── Public endpoint (no auth) ─────────────────────────────────────────────────
+
+@router.get("/api/tenant/branding")
+async def get_tenant_branding(request: Request):
+    """
+    Return public branding for the tenant that owns the requesting origin.
+
+    Called by the frontend on first load — before the user logs in — to
+    personalise the landing / login screen with the company name, logo,
+    tagline, and primary colour.
+
+    Auth: none required.  The tenant is identified by matching the
+    Origin (or Referer) request header against dbo.Tenants.Domain.
+
+    Returns 200 with branding fields, or 404 if the domain is not registered.
+    """
+    # Extract hostname from Origin header; fall back to Referer or Host.
+    origin = (
+        request.headers.get("origin")
+        or request.headers.get("referer")
+        or request.headers.get("host")
+        or ""
+    )
+    hostname = urlparse(origin).hostname or origin.split(":")[0]
+
+    if not hostname:
+        raise HTTPException(status_code=400, detail="Cannot determine tenant from request origin")
+
+    branding = sqlhelper.get_tenant_branding_by_domain(hostname)
+    if not branding:
+        logger.debug("get_tenant_branding: no tenant found for hostname=%s", hostname)
+        raise HTTPException(status_code=404, detail="Tenant not found for this domain")
+
+    return branding
 
 
 @router.get("/api/me")
