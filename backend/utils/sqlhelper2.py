@@ -2204,4 +2204,4 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
             "beneficiary_name": row[10],
             "beneficiary_email": row[11],
             "fraud_score":      row[12],
-            
+        }
