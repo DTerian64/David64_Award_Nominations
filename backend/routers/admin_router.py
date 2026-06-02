@@ -15,10 +15,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 import fraud_ml
 from auth import get_current_user, require_role, is_admin
-from models import AuditLog
+from routers.schemas import AuditLog
 
 logger = logging.getLogger(__name__)
 

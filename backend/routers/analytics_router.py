@@ -36,10 +36,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 from auth import get_current_user_with_impersonation, require_role
-from models import User
-from export_utils import build_finding_workbook
+from routers.schemas import User
+from utils.export_utils import build_finding_workbook
 from agents import AskAgent, AskResult
 from agents.orchestrator import AgentsOrchestrator, OrchestratorResult
 

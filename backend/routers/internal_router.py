@@ -15,9 +15,9 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException
 
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 import fraud_ml
-from service_bus_publisher import publish_event
+from utils.service_bus_publisher import publish_event
 
 logger = logging.getLogger(__name__)
 

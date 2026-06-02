@@ -16,9 +16,9 @@ import json as _json
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 from auth import get_current_user_with_impersonation, log_action_if_impersonating, is_admin
-from models import User
+from routers.schemas import User
 
 logger = logging.getLogger(__name__)
 

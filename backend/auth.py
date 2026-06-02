@@ -41,7 +41,7 @@ from urllib.parse import urlparse
 from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import OAuth2
 from typing import Optional, Dict, Any, Callable
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 import logging
 
 logger = logging.getLogger(__name__)

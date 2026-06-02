@@ -20,17 +20,89 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
 from typing import List
 
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 import fraud_ml
 from auth import get_current_user_with_impersonation, log_action_if_impersonating
-from models import Nomination, NominationApproval, NominationCreate, StatusResponse, User
-from service_bus_publisher import publish_event
-from token_utils import verify_action_token
-from email_utils import get_action_confirmation_page
+from routers.schemas import Nomination, NominationApproval, NominationCreate, StatusResponse, User
+from utils.service_bus_publisher import publish_event
+from utils.token_utils import verify_action_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["nominations"])
+
+
+# ── HTML confirmation page for email-action links ─────────────────────────────
+
+def get_action_confirmation_page(action: str, success: bool, message: str) -> str:
+    """
+    HTML page shown in the browser after a manager clicks approve/reject in email.
+
+    Args:
+        action:  "approved" or "rejected"
+        success: whether the action succeeded
+        message: detail message to display
+    """
+    if success:
+        color = "#27ae60" if action == "approved" else "#e74c3c"
+        icon  = "✅" if action == "approved" else "❌"
+        title = f"Nomination {action.title()}"
+    else:
+        color = "#e74c3c"
+        icon  = "⚠️"
+        title = "Action Failed"
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{title}</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }}
+            .container {{
+                background: white;
+                padding: 40px;
+                border-radius: 10px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                text-align: center;
+                max-width: 500px;
+            }}
+            .icon {{ font-size: 72px; margin-bottom: 20px; }}
+            h1 {{ color: {color}; margin-bottom: 20px; }}
+            p {{ font-size: 18px; color: #666; line-height: 1.6; }}
+            .button {{
+                display: inline-block;
+                background-color: #667eea;
+                color: white;
+                padding: 12px 30px;
+                text-decoration: none;
+                border-radius: 5px;
+                margin-top: 20px;
+                font-weight: bold;
+            }}
+            .button:hover {{ background-color: #5568d3; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="icon">{icon}</div>
+            <h1>{title}</h1>
+            <p>{message}</p>
+            <a href="https://awards.terian-services.com" class="button">Go to Dashboard</a>
+        </div>
+    </body>
+    </html>
+    """
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

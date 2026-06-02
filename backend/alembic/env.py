@@ -50,7 +50,7 @@ if config.config_file_name is not None:
 # ---------------------------------------------------------------------------
 # Import metadata from the ORM models so autogenerate can detect schema diffs
 # ---------------------------------------------------------------------------
-from sqlhelper2 import Base  # noqa: E402
+from utils.sqlhelper2 import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
@@ -108,7 +108,7 @@ def run_migrations_online() -> None:
     """Run migrations in 'online' mode (connects to DB and applies changes)."""
     if USE_MANAGED_IDENTITY:
         # Managed Identity: reuse the creator callable from sqlhelper2
-        from sqlhelper2 import engine as app_engine  # noqa: E402
+        from utils.sqlhelper2 import engine as app_engine  # noqa: E402
         connectable = app_engine
     else:
         connectable = create_engine(

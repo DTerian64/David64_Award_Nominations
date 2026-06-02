@@ -31,9 +31,9 @@ import urllib.parse
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from pydantic import BaseModel, validator
 
-import sqlhelper2 as sqlhelper
-import graph_admin
-from service_bus_publisher import publish_event
+import utils.sqlhelper2 as sqlhelper
+import entra_admin
+from utils.service_bus_publisher import publish_event
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
 
         # 1. Ascertain B2B (create-or-get; fail loud if Graph is unhappy)
         try:
-            reinvite = graph_admin.invite_external_user(
+            reinvite = entra_admin.invite_external_user(
                 first_name=body.first_name,
                 last_name=body.last_name,
                 email=body.email,
@@ -227,7 +227,7 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
         # 2. Upgrade to admin if requested — best-effort, doesn't gate the email
         if body.is_admin and reinvite["oid"]:
             try:
-                graph_admin.assign_admin_role(reinvite["oid"])
+                entra_admin.assign_admin_role(reinvite["oid"])
                 logger.info("Admin role assigned on resend for oid=%s", reinvite["oid"])
             except RuntimeError as e:
                 logger.error("Admin role assignment failed on resend for oid=%s: %s",
@@ -266,7 +266,7 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
 
     # ── Send B2B invitation via Graph API ─────────────────────────────────────
     try:
-        invite_result = graph_admin.invite_external_user(
+        invite_result = entra_admin.invite_external_user(
             first_name=body.first_name,
             last_name=body.last_name,
             email=body.email,
@@ -303,7 +303,7 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
     # ── Assign admin role (if requested) ──────────────────────────────────────
     if body.is_admin and oid:
         try:
-            graph_admin.assign_admin_role(oid)
+            entra_admin.assign_admin_role(oid)
         except RuntimeError as e:
             logger.error("Admin role assignment failed for oid=%s: %s", oid, e)
 

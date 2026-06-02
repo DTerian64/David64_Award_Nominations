@@ -27,9 +27,9 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 from auth import get_current_user_with_impersonation
-from service_bus_publisher import publish_event
+from utils.service_bus_publisher import publish_event
 
 logger = logging.getLogger(__name__)
 

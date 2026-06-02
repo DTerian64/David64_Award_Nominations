@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import sqlhelper2
-from export_utils import build_finding_workbook
+import utils.sqlhelper2 as sqlhelper2
+from utils.export_utils import build_finding_workbook
 from agents.skills.exports.blob_storage import upload_to_blob
 
 logger = logging.getLogger(__name__)

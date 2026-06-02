@@ -15,7 +15,7 @@ import logging
 import re
 from typing import Any
 
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 
 logger = logging.getLogger(__name__)
 

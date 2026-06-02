@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import os
 
-from service_bus_publisher import publish_event
+from utils.service_bus_publisher import publish_event
 
 logger = logging.getLogger(__name__)
 

@@ -47,7 +47,7 @@ from typing import Dict, Any, Optional
 import numpy as np
 import pandas as pd
 
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
 import logging
 
 logger = logging.getLogger(__name__)

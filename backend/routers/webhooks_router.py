@@ -15,8 +15,8 @@ import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-import sqlhelper2 as sqlhelper
-from service_bus_publisher import publish_event
+import utils.sqlhelper2 as sqlhelper
+from utils.service_bus_publisher import publish_event
 
 logger = logging.getLogger(__name__)
 
