@@ -334,57 +334,57 @@ const AwardNominationApp: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <UnauthenticatedTemplate>
         <div className="min-h-screen flex items-center justify-center p-4">
-          <div className="max-w-md w-full">
-            <div className="bg-white p-8 rounded-lg shadow-lg">
-              <div className="text-center mb-6">
-                {/* Logo — shown when the tenant has configured one */}
+          <div className="w-full max-w-2xl">
+            <div className="flex rounded-lg shadow-lg overflow-hidden bg-white" style={{ minHeight: '380px' }}>
+
+              {/* Left — brand panel */}
+              <div
+                className="flex flex-col items-center justify-center gap-4 p-10"
+                style={{ width: '42%', backgroundColor: branding?.primary_color ?? '#1E2A3A' }}
+              >
                 {branding?.company_logo_url ? (
                   <img
                     src={branding.company_logo_url}
                     alt={branding.tenant_name}
-                    className="h-16 mx-auto mb-4 object-contain"
+                    className="h-16 object-contain"
                   />
                 ) : (
-                  <Award
-                    className="w-16 h-16 mx-auto mb-4"
-                    style={{ color: branding?.primary_color ?? 'var(--color-primary)' }}
-                  />
+                  <Award className="w-14 h-14 text-white opacity-90" />
                 )}
-
-                <h1 className="text-3xl font-bold text-gray-900 mb-1">
-                  {t('app.title')}
-                </h1>
-
-                {/* Tagline */}
-                {branding?.tagline && (
-                  <p className="text-sm text-gray-500 mt-1">{branding.tagline}</p>
+                {branding?.tenant_name && (
+                  <div className="text-center">
+                    <p className="text-white text-lg font-semibold">{branding.tenant_name}</p>
+                  </div>
                 )}
               </div>
 
-              {IS_DEMO_SITE ? (
-                <>
-                  <p className="text-center text-gray-600 mb-6">
-                    Sign in with your Microsoft account to explore the demo environment.
-                  </p>
-                  <SignInButton />
-                  <div className="mt-5 text-center">
+              {/* Right — sign-in panel */}
+              <div className="flex flex-col justify-center gap-6 p-10" style={{ flex: 1 }}>
+                <div>
+                  <p className="text-xs text-gray-400 uppercase tracking-widest mb-2">{t('app.title')}</p>
+                  <h1 className="text-2xl font-bold text-gray-900 leading-snug">
+                    {branding?.tagline ?? t('app.subtitle')}
+                  </h1>
+                </div>
+
+                {IS_DEMO_SITE ? (
+                  <>
+                    <SignInButton />
                     <a
                       href="/demo/request"
-                      className="text-sm font-medium hover:underline"
+                      className="text-sm font-medium hover:underline text-center"
                       style={{ color: branding?.primary_color ?? 'var(--color-primary, #4f46e5)' }}
                     >
                       New to the demo? Request access →
                     </a>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-center text-gray-600 mb-6">{t('app.subtitle')}</p>
-                  <div className="text-center">
-                    <SignInButton />
-                  </div>
-                </>
-              )}
+                  </>
+                ) : (
+                  <SignInButton />
+                )}
+
+                <p className="text-xs text-gray-400">Use your organization account to continue.</p>
+              </div>
+
             </div>
           </div>
         </div>
