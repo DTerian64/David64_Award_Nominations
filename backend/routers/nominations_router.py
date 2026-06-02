@@ -34,14 +34,21 @@ router = APIRouter(tags=["nominations"])
 
 # ── HTML confirmation page for email-action links ─────────────────────────────
 
-def get_action_confirmation_page(action: str, success: bool, message: str) -> str:
+def get_action_confirmation_page(
+    action: str,
+    success: bool,
+    message: str,
+    dashboard_url: str | None = None,
+) -> str:
     """
     HTML page shown in the browser after a manager clicks approve/reject in email.
 
     Args:
-        action:  "approved" or "rejected"
-        success: whether the action succeeded
-        message: detail message to display
+        action:        "approved" or "rejected"
+        success:       whether the action succeeded
+        message:       detail message to display
+        dashboard_url: per-tenant Site_URL from dbo.Tenants; if None the
+                       'Go to Dashboard' button is omitted entirely
     """
     if success:
         color = "#27ae60" if action == "approved" else "#e74c3c"
@@ -98,7 +105,7 @@ def get_action_confirmation_page(action: str, success: bool, message: str) -> st
             <div class="icon">{icon}</div>
             <h1>{title}</h1>
             <p>{message}</p>
-            <a href="https://awards.terian-services.com" class="button">Go to Dashboard</a>
+            {f'<a href="{dashboard_url}" class="button">Go to Dashboard</a>' if dashboard_url else ''}
         </div>
     </body>
     </html>
@@ -474,18 +481,22 @@ async def handle_email_action(token: str = Query(..., description="Action token 
     action               = payload["action"]
     expected_approver_id = payload["approver_id"]
 
+    # Resolve the tenant's dashboard URL from the approver's tenant record.
+    # None if Site_URL is not configured — the button will be omitted.
+    dashboard_url = sqlhelper.get_site_url_by_user_id(expected_approver_id)
+
     try:
         actual_approver_id = sqlhelper.get_nomination_approver(nomination_id)
 
         if actual_approver_id is None:
-            return get_action_confirmation_page(
+            return get_action_confirmation_page(dashboard_url=dashboard_url,
                 action="",
                 success=False,
                 message="Nomination not found. It may have already been processed or deleted."
             )
 
         if actual_approver_id != expected_approver_id:
-            return get_action_confirmation_page(
+            return get_action_confirmation_page(dashboard_url=dashboard_url,
                 action="",
                 success=False,
                 message="You are not authorized to approve or reject this nomination."
@@ -494,14 +505,14 @@ async def handle_email_action(token: str = Query(..., description="Action token 
         nomination_status = sqlhelper.get_nomination_status(nomination_id)
     except Exception as e:
         logger.error("❌ Error looking up nomination %d for email action: %s", nomination_id, e)
-        return get_action_confirmation_page(
+        return get_action_confirmation_page(dashboard_url=dashboard_url,
             action="",
             success=False,
             message="An error occurred while looking up the nomination. Please try again or log in to the Award Nomination System."
         )
 
     if nomination_status in ["Approved", "Rejected"]:
-        return get_action_confirmation_page(
+        return get_action_confirmation_page(dashboard_url=dashboard_url,
             action=nomination_status.lower(),
             success=True,
             message=f"This nomination has already been {nomination_status.lower()}."
@@ -519,7 +530,7 @@ async def handle_email_action(token: str = Query(..., description="Action token 
                     nomination_id, e
                 )
 
-            return get_action_confirmation_page(
+            return get_action_confirmation_page(dashboard_url=dashboard_url,
                 action="approved",
                 success=True,
                 message="The nomination has been approved successfully. The nominator has been notified via email."
@@ -536,7 +547,7 @@ async def handle_email_action(token: str = Query(..., description="Action token 
                     nomination_id, e
                 )
 
-            return get_action_confirmation_page(
+            return get_action_confirmation_page(dashboard_url=dashboard_url,
                 action="rejected",
                 success=True,
                 message="The nomination has been rejected. The nominator has been notified via email."
@@ -544,7 +555,7 @@ async def handle_email_action(token: str = Query(..., description="Action token 
 
     except Exception as e:
         logger.error(f"❌ Error processing email action: {e}")
-        return get_action_confirmation_page(
+        return get_action_confirmation_page(dashboard_url=dashboard_url,
             action="",
             success=False,
             message=f"An error occurred while processing your request: {str(e)}"

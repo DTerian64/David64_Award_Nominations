@@ -368,6 +368,26 @@ def get_tenant_by_aad_id(aad_tenant_id: str) -> Optional[Tuple]:
         ).fetchone()
 
 
+def get_site_url_by_user_id(user_id: int) -> Optional[str]:
+    """
+    Return the Site_URL for the tenant that owns *user_id*, or None if not set.
+
+    Used by the email-action endpoint to build the 'Go to Dashboard' link
+    dynamically per tenant instead of hardcoding a URL.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT t.Site_URL
+                FROM   dbo.Tenants t
+                JOIN   dbo.Users   u ON u.TenantId = t.TenantId
+                WHERE  u.UserId = :user_id
+            """),
+            {"user_id": user_id},
+        ).fetchone()
+        return row[0] if row and row[0] else None
+
+
 def get_tenant_domain(tenant_id: int) -> Optional[str]:
     """
     Return the canonical public hostname for a tenant, or None if not set.
