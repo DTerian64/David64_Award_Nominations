@@ -1,0 +1,17 @@
+<svg width="340" height="100" viewBox="0 0 340 100" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Arial, sans-serif">
+  <!-- Icon: abstract trophy -->
+  <!-- Cup body -->
+  <path d="M30,18 L60,18 L56,52 Q45,62 45,62 Q45,62 34,52 Z" fill="#5C35A0"/>
+  <!-- Stem -->
+  <rect x="41" y="62" width="8" height="10" fill="#5C35A0"/>
+  <!-- Base -->
+  <rect x="34" y="72" width="22" height="6" rx="3" fill="#5C35A0"/>
+  <!-- Trophy handles -->
+  <path d="M30,22 Q18,22 18,34 Q18,44 30,44" fill="none" stroke="#5C35A0" stroke-width="4" stroke-linecap="round"/>
+  <path d="M60,22 Q72,22 72,34 Q72,44 60,44" fill="none" stroke="#5C35A0" stroke-width="4" stroke-linecap="round"/>
+  <!-- Star highlight -->
+  <polygon points="45,28 47,34 53,34 48,38 50,44 45,40 40,44 42,38 37,34 43,34" fill="#F9C843"/>
+  <!-- Wordmark -->
+  <text x="86" y="44" font-size="22" font-weight="700" fill="#5C35A0" letter-spacing="-0.3">Demo Awards</text>
+  <text x="86" y="66" font-size="13" font-weight="400" fill="#7B68A0" letter-spacing="2">I N C .</text>
+</svg>
