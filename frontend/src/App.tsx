@@ -404,16 +404,18 @@ const AwardNominationApp: React.FC = () => {
                   <img
                     src={branding.company_logo_url}
                     alt={branding.tenant_name}
-                    className="h-12 object-contain"
+                    className="h-10 max-w-[120px] object-contain"
                   />
                 ) : (
                   <Award className="w-8 h-8" style={{ color: branding?.primary_color ?? 'var(--color-primary)' }} />
                 )}
                 <div>
                   <h1 className="text-2xl font-bold text-gray-900">{t('app.title')}</h1>
-                  <p className="text-sm text-gray-600">
-                    {branding?.tenant_name ?? t('app.subtitle')}
-                  </p>
+                  {!branding?.company_logo_url && (
+                    <p className="text-sm text-gray-600">
+                      {branding?.tenant_name ?? t('app.subtitle')}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center space-x-4">
