@@ -404,7 +404,7 @@ const AwardNominationApp: React.FC = () => {
                   <img
                     src={branding.company_logo_url}
                     alt={branding.tenant_name}
-                    className="h-10 max-w-[120px] object-contain"
+                    className="h-16 object-contain"
                   />
                 ) : (
                   <Award className="w-8 h-8" style={{ color: branding?.primary_color ?? 'var(--color-primary)' }} />
@@ -418,15 +418,14 @@ const AwardNominationApp: React.FC = () => {
                   )}
                 </div>
               </div>
-              <div className="flex items-center space-x-4">
-                {isAdmin && <AdminImpersonationPanel users={users} />}
-                {accounts.length > 0 && (
-                  <div className="text-right">
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-3">
+                  {accounts.length > 0 && (
                     <p className="text-sm font-semibold text-gray-900">{accounts[0].name}</p>
-                    <p className="text-xs text-gray-600">{accounts[0].username}</p>
-                  </div>
-                )}
-                <SignOutButton />
+                  )}
+                  <SignOutButton />
+                </div>
+                {isAdmin && <AdminImpersonationPanel users={users} />}
               </div>
             </div>
           </div>
