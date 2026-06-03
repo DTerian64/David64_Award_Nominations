@@ -95,10 +95,13 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, impersonated
 }
 
 interface TenantBranding {
-  tenant_name:   string;
-  primary_color: string | null;
-  company_logo_url:      string | null;
-  tagline:       string | null;
+  tenant_name:          string;
+  primary_color:        string | null;
+  primary_hover_color:  string | null;
+  primary_light_color:  string | null;
+  primary_text_on_dark: string | null;
+  company_logo_url:     string | null;
+  tagline:              string | null;
 }
 
 const AwardNominationApp: React.FC = () => {

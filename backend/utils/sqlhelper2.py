@@ -397,18 +397,21 @@ def get_tenant_branding_by_domain(hostname: str) -> Optional[dict]:
             return None
 
         import json as _json
-        primary_color = None
+        theme: dict = {}
         try:
             cfg = _json.loads(row[1]) if row[1] else {}
-            primary_color = cfg.get("theme", {}).get("primaryColor")
+            theme = cfg.get("theme", {})
         except Exception:
             pass
 
         return {
-            "tenant_name":   row[0],
-            "primary_color": primary_color,
-            "company_logo_url":      row[2],
-            "tagline":       row[3],
+            "tenant_name":          row[0],
+            "primary_color":        theme.get("primaryColor"),
+            "primary_hover_color":  theme.get("primaryHoverColor"),
+            "primary_light_color":  theme.get("primaryLightColor"),
+            "primary_text_on_dark": theme.get("primaryTextOnDark"),
+            "company_logo_url":     row[2],
+            "tagline":              row[3],
         }
 
 

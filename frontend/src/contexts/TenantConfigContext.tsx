@@ -115,8 +115,23 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
 
   const fetchConfig = useCallback(async () => {
     if (!authenticated) {
-      console.info('[TenantConfig] Unauthenticated — using application defaults:', DEFAULT_CONFIG);
-      applyTheme(DEFAULT_CONFIG.theme);
+      console.info('[TenantConfig] Unauthenticated — fetching theme from branding endpoint');
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/tenant/branding`);
+        if (res.ok) {
+          const b = await res.json();
+          applyTheme({
+            primaryColor:      b.primary_color        ?? DEFAULT_CONFIG.theme.primaryColor,
+            primaryHoverColor: b.primary_hover_color  ?? DEFAULT_CONFIG.theme.primaryHoverColor,
+            primaryLightColor: b.primary_light_color  ?? DEFAULT_CONFIG.theme.primaryLightColor,
+            primaryTextOnDark: b.primary_text_on_dark ?? DEFAULT_CONFIG.theme.primaryTextOnDark,
+          });
+        } else {
+          applyTheme(DEFAULT_CONFIG.theme);
+        }
+      } catch {
+        applyTheme(DEFAULT_CONFIG.theme);
+      }
       setIsLoading(false);
       return;
     }
