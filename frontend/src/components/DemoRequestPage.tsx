@@ -61,9 +61,20 @@ export const DemoRequestPage: React.FC = () => {
   const [isAdmin,     setIsAdmin]     = useState(false);
   const [pageState,   setPageState]   = useState<PageState>('form');
   const [errorMsg,    setErrorMsg]    = useState('');
+  const [logoUrl,     setLogoUrl]     = useState<string | null>(null);
+  const [tenantName,  setTenantName]  = useState<string | null>(null);
 
   useEffect(() => {
     warmupDemoDatabase();
+    fetch(`${API_BASE}/api/tenant/branding`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data) {
+          setLogoUrl(data.company_logo_url ?? null);
+          setTenantName(data.tenant_name ?? null);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const validateEmail = (value: string): string => {
@@ -156,7 +167,10 @@ export const DemoRequestPage: React.FC = () => {
 
           {/* Header */}
           <div className="text-center mb-6">
-            <Award className="w-12 h-12 mx-auto mb-3" style={{ color: 'var(--color-primary, #4f46e5)' }} />
+            {logoUrl
+              ? <img src={logoUrl} alt={tenantName ?? ''} className="h-12 mx-auto mb-3 object-contain" />
+              : <Award className="w-12 h-12 mx-auto mb-3" style={{ color: 'var(--color-primary, #4f46e5)' }} />
+            }
             <h1 className="text-2xl font-bold text-gray-900">Request Demo Access</h1>
             <p className="text-sm text-gray-500 mt-1">
               Get hands-on access to the Award Nominations platform — no IT setup required.

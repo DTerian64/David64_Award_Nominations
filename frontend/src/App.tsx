@@ -404,7 +404,7 @@ const AwardNominationApp: React.FC = () => {
                   <img
                     src={branding.company_logo_url}
                     alt={branding.tenant_name}
-                    className="h-8 object-contain"
+                    className="h-12 object-contain"
                   />
                 ) : (
                   <Award className="w-8 h-8" style={{ color: branding?.primary_color ?? 'var(--color-primary)' }} />
