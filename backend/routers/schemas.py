@@ -32,7 +32,7 @@ class Nomination(BaseModel):
     NominationDate: datetime
     ApprovedDate: Optional[datetime] = None
     PayedDate: Optional[datetime] = None
-    Status: Literal["Pending", "Approved", "Paid", "Rejected"]
+    Status: Literal["Submitted", "Pending", "PendingHRBPReview", "Approved", "Paid", "Rejected"]
     CategoryDescription: Optional[str] = None
     # Business lifecycle data — when did the approver first receive the nomination
     # request? Populated by the auxiliary worker after SMTP hand-off.
