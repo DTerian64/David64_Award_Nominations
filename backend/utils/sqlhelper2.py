@@ -1062,6 +1062,31 @@ def check_reciprocal_nomination(nominator_id: int, beneficiary_id: int) -> bool:
         return result[0] > 0 if result else False
 
 
+def get_beneficiary_descriptions(beneficiary_id: int) -> List[str]:
+    """
+    Return the NominationDescriptions from past nominations WRITTEN BY
+    the beneficiary (i.e. where they were the nominator).
+
+    Used by fraud_ml.py to build the beneficiary's "voice" embedding at
+    inference time — the same logic add_semantic_features() uses during
+    training.  Returns an empty list when the beneficiary has never made
+    a nomination, in which case the semantic features fall back to neutral.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT NominationDescription
+                FROM Nominations
+                WHERE NominatorId = :beneficiary_id
+                  AND NominationDescription IS NOT NULL
+                  AND NominationDescription <> ''
+                ORDER BY NominationDate DESC
+            """),
+            {"beneficiary_id": beneficiary_id},
+        ).fetchall()
+        return [row[0] for row in rows]
+
+
 def get_pair_nomination_count(nominator_id: int, beneficiary_id: int) -> int:
     """Get count of nominations from this nominator to this beneficiary."""
     with get_db_context() as session:

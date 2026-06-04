@@ -46,11 +46,38 @@ from typing import Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 
 import utils.sqlhelper2 as sqlhelper
 import logging
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# SENTENCE-TRANSFORMER  —  lazy, module-level singleton
+# ============================================================================
+
+_embed_model = None
+_embed_model_lock = threading.Lock()
+
+
+def _get_embed_model(model_name: str = 'all-MiniLM-L6-v2'):
+    """
+    Load the SentenceTransformer model on first use and cache it for the
+    lifetime of the process.  Thread-safe: concurrent first-calls block on
+    the lock; the winner loads, losers use the cached copy.
+    """
+    global _embed_model
+    if _embed_model is not None:
+        return _embed_model
+    with _embed_model_lock:
+        if _embed_model is None:
+            from sentence_transformers import SentenceTransformer
+            logger.info("Loading sentence-transformer model '%s' …", model_name)
+            _embed_model = SentenceTransformer(model_name)
+            logger.info("Sentence-transformer model loaded.")
+    return _embed_model
+
 
 # ============================================================================
 # MODEL CACHE ENTRY
@@ -419,6 +446,31 @@ class FraudDetector:
             'NominatorConcentrationRatio':  concentration_ratio,
         }
 
+        # ── Semantic description features ────────────────────────────────────
+        # Compare the current nomination's description with the beneficiary's
+        # "voice" (the descriptions they have written as a nominator in the
+        # past).  High cosine similarity suggests coordinated / copy-pasted
+        # text — a collusion signal.
+        nom_description = nomination_data.get('NominationDescription', '') or ''
+        embed_model_name = tenant_model_data.get('embed_model_name', 'all-MiniLM-L6-v2')
+        embed_model      = _get_embed_model(embed_model_name)
+
+        ben_past_descs = sqlhelper.get_beneficiary_descriptions(beneficiary_id)
+
+        if nom_description.strip() and ben_past_descs:
+            nom_emb  = embed_model.encode([nom_description], normalize_embeddings=True)
+            ben_embs = embed_model.encode(ben_past_descs,    normalize_embeddings=True)
+            ben_mean = ben_embs.mean(axis=0, keepdims=True)
+            desc_cosine_sim   = float(sk_cosine_similarity(nom_emb, ben_mean)[0][0])
+            desc_emb_distance = float(np.linalg.norm(nom_emb[0] - ben_mean[0]))
+        else:
+            # Neutral fallback: no description or beneficiary has no history
+            desc_cosine_sim   = 0.0
+            desc_emb_distance = 1.0
+
+        features['DescriptionCosineSim']   = desc_cosine_sim
+        features['DescriptionEmbDistance'] = desc_emb_distance
+
         # ── Nomination category — target-encoded fraud rate ──────────────────
         # Look up the mean fraud rate for this CategoryId from the encoding map
         # stored in the pkl at training time.  Unknown or absent categories fall
@@ -448,6 +500,7 @@ class FraudDetector:
             "BeneficiaryTotalReceived=%s BeneficiaryAvgAmt=%s "
             "ApproverTotalApproved=%s ApproverAvgApprovalTime=%s "
             "IsWeekend=%s CategoryFraudRate=%s "
+            "DescriptionCosineSim=%s DescriptionEmbDistance=%s "
             "pkl_amount_mean=%s pkl_amount_std=%s",
             nomination_data.get('TenantId'),
             nomination_data.get('NominatorId'),
@@ -468,6 +521,8 @@ class FraudDetector:
             round(features.get('ApproverAvgApprovalTime', 0), 2),
             features.get('IsWeekend'),
             round(features.get('CategoryFraudRate', 0), 4),
+            round(features.get('DescriptionCosineSim', 0), 4),
+            round(features.get('DescriptionEmbDistance', 0), 4),
             round(tenant_model_data.get('amount_mean', 0), 2),
             round(tenant_model_data.get('amount_std', 0), 2),
         )
@@ -549,6 +604,8 @@ class FraudDetector:
                 warning_flags.append('Unusually high amount')
             if features['NominatorConcentrationRatio'] > 5:
                 warning_flags.append('Limited beneficiary diversity')
+            if features.get('DescriptionCosineSim', 0.0) > 0.85:
+                warning_flags.append('Nomination descriptions suspiciously similar')
 
             return {
                 'fraud_probability': round(fraud_probability, 4),

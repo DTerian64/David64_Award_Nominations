@@ -33,9 +33,15 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
+from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 from pathlib import Path
+from sentence_transformers import SentenceTransformer
+
+# Sentence-transformer model used for NominationDescription embeddings.
+# Stored in the pkl so fraud_ml.py loads the same model at inference time.
+EMBED_MODEL_NAME = 'all-MiniLM-L6-v2'
 
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
@@ -154,6 +160,7 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         n.ApproverId,
         n.Amount,
         n.Currency,
+        n.NominationDescription,
         n.NominationDate,
         n.ApprovedDate,
         n.PayedDate,
@@ -185,6 +192,80 @@ def load_data(tenant_id: int) -> pd.DataFrame:
             f"({fraud_count / len(df) * 100:.2f}%)"
         )
 
+    return df
+
+
+# ============================================================================
+# SEMANTIC FEATURE ENGINEERING
+# ============================================================================
+
+def add_semantic_features(df: pd.DataFrame, embed_model: SentenceTransformer) -> pd.DataFrame:
+    """
+    Add two semantic features derived from NominationDescription:
+
+      DescriptionCosineSim   — cosine similarity between the nominator's
+          current description and the mean embedding of all descriptions
+          the beneficiary has ever written as a nominator.  High similarity
+          suggests coordinated / copy-pasted text between ring members.
+
+      DescriptionEmbDistance — Euclidean distance in the same embedding
+          space.  Low distance (< 0.3) combined with high cosine sim is a
+          strong collusion signal.
+
+    Both features fall back to neutral values (0.0 / 1.0 respectively) when
+    either party has no past descriptions to compare against.
+
+    The embed_model is passed in so the caller controls when it is loaded
+    (once per training run, not once per tenant).
+    """
+    print("  Computing semantic description features ...")
+
+    descriptions = df['NominationDescription'].fillna('').tolist()
+    if not any(descriptions):
+        print("  ⚠  All NominationDescriptions are empty — semantic features set to neutral.")
+        df['DescriptionCosineSim']   = 0.0
+        df['DescriptionEmbDistance'] = 1.0
+        return df
+
+    # Embed every description in one batched pass.
+    all_embs = embed_model.encode(descriptions, batch_size=64, show_progress_bar=False,
+                                  normalize_embeddings=True)
+
+    # Build a lookup: BeneficiaryId → mean embedding of their own past descriptions
+    # (nominations where they were the nominator).
+    # This is the "nominee's voice" — we compare it against the nominator's text.
+    ben_emb_map: dict = {}
+    for user_id, group in df.groupby('BeneficiaryId'):
+        indices  = group.index.tolist()
+        user_embs = all_embs[df.index.get_indexer(indices)]
+        if len(user_embs) > 0:
+            ben_emb_map[user_id] = user_embs.mean(axis=0)
+
+    cosine_sims   = []
+    emb_distances = []
+
+    for i, (idx, row) in enumerate(df.iterrows()):
+        nom_emb = all_embs[i]
+        ben_mean = ben_emb_map.get(row['BeneficiaryId'])
+
+        if ben_mean is not None:
+            sim  = float(sk_cosine_similarity([nom_emb], [ben_mean])[0][0])
+            dist = float(np.linalg.norm(nom_emb - ben_mean))
+        else:
+            sim  = 0.0   # neutral — no beneficiary history to compare
+            dist = 1.0
+
+        cosine_sims.append(sim)
+        emb_distances.append(dist)
+
+    df['DescriptionCosineSim']   = cosine_sims
+    df['DescriptionEmbDistance'] = emb_distances
+
+    print(
+        f"  Semantic features computed — "
+        f"mean cosine sim: {np.mean(cosine_sims):.3f}, "
+        f"mean emb distance: {np.mean(emb_distances):.3f}"
+    )
     return df
 
 
@@ -401,6 +482,8 @@ P2P_FEATURE_COLUMNS = [
     'IsHighAmount',
     'NominatorConcentrationRatio',
     'CategoryFraudRate',
+    'DescriptionCosineSim',
+    'DescriptionEmbDistance',
 ]
 
 # ── Approver feature columns ──────────────────────────────────────────────────
@@ -546,6 +629,11 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     """
     print(f"\n[Tenant {tenant_id}] Training model ...")
 
+    # Load embedding model once per training run (shared across all tenants
+    # in the same process to avoid reloading the ~90 MB weights repeatedly).
+    embed_model = SentenceTransformer(EMBED_MODEL_NAME)
+    df = add_semantic_features(df, embed_model)
+
     df, category_fraud_rate, global_fraud_rate = extract_features(df)
 
     # If no P2P scores have been recorded yet (cold start), derive labels
@@ -683,6 +771,8 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         # Category target encoding
         'category_fraud_rate':  category_fraud_rate,
         'global_fraud_rate':    float(global_fraud_rate),
+        # Sentence-transformer model name — fraud_ml.py loads the same model
+        'embed_model_name':     EMBED_MODEL_NAME,
     }
 
     pkl_filename = OUTPUT_DIR / f"fraud_detection_model_tenant_{tenant_id}.pkl"
