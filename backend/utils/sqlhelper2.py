@@ -628,6 +628,7 @@ def create_nomination(
     currency: str,
     description: str,
     category_id: Optional[int] = None,
+    initial_status: str = 'Submitted',
 ) -> int:
     """
     Create a new nomination.
@@ -637,6 +638,10 @@ def create_nomination(
     safely even when triggers are present on the table.
 
     category_id is optional — pass None for tenants without custom categories.
+
+    initial_status defaults to 'Submitted' — the nomination.submitted Service Bus
+    event triggers the auxiliary service to run fraud detection asynchronously,
+    after which the status is moved to 'Pending' or 'PendingHRBPReview'.
     """
     with get_db_context() as session:
         result = session.execute(
@@ -647,7 +652,7 @@ def create_nomination(
                      CategoryId)
                 OUTPUT INSERTED.NominationId
                 VALUES (:nominator_id, :beneficiary_id, :approver_id, :amount, :currency,
-                        :description, GETDATE(), 'Pending', NULL, NULL,
+                        :description, GETDATE(), :initial_status, NULL, NULL,
                         :category_id)
             """),
             {
@@ -658,6 +663,7 @@ def create_nomination(
                 "currency":       currency,
                 "description":    description,
                 "category_id":    category_id,
+                "initial_status": initial_status,
             },
         )
         nomination_id = result.fetchone()[0]
@@ -1075,7 +1081,7 @@ def get_beneficiary_descriptions(beneficiary_id: int) -> List[str]:
     with get_db_context() as session:
         rows = session.execute(
             text("""
-                SELECT NominationDescription
+                SELECT TOP 20 NominationDescription
                 FROM Nominations
                 WHERE NominatorId = :beneficiary_id
                   AND NominationDescription IS NOT NULL

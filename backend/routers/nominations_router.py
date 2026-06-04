@@ -21,7 +21,6 @@ from fastapi.responses import HTMLResponse
 from typing import List
 
 import utils.sqlhelper2 as sqlhelper
-import fraud_ml
 from auth import get_current_user_with_impersonation, log_action_if_impersonating
 from routers.schemas import Nomination, NominationApproval, NominationCreate, StatusResponse, User
 from utils.service_bus_publisher import publish_event
@@ -179,48 +178,7 @@ async def create_nomination(
 
     manager_name = f"{manager[0]} {manager[1]}"
 
-    # Get fraud assessment
-    logger.info("Getting fraud assessment for nomination", extra={
-        "nomination": nomination,
-        "manager_id": manager_id
-    })
-    try:
-        fraud_result = fraud_ml.get_fraud_assessment({
-            'TenantId':      tenant_id,
-            'NominatorId':   effective_user["UserId"],
-            'BeneficiaryId': nomination.BeneficiaryId,
-            'ApproverId':    manager_id,
-            'Amount':        nomination.Amount,
-            'NominationDate': datetime.now(),
-            'CategoryId':    nomination.CategoryId,
-        })
-    except Exception as fraud_exc:
-        logger.error("Fraud assessment raised an unhandled exception — defaulting to MANUAL_REVIEW", extra={"error": str(fraud_exc)})
-        fraud_result = {
-            'fraud_probability': 0.0,
-            'fraud_score': 0,
-            'risk_level': 'UNKNOWN',
-            'warning_flags': ['Fraud check unavailable — manual review required'],
-            'recommendation': 'MANUAL_REVIEW'
-        }
-
-    if fraud_result['risk_level'] in ('CRITICAL', 'HIGH'):
-        logger.warning("Fraud assessment result", extra={
-            "risk_level": fraud_result['risk_level'],
-            "fraud_score": fraud_result['fraud_score'],
-            "warning_flags": fraud_result['warning_flags']
-        })
-    else:
-        logger.info("Fraud assessment result", extra={
-            "risk_level": fraud_result['risk_level'],
-            "fraud_score": fraud_result['fraud_score'],
-            "warning_flags": fraud_result['warning_flags']
-        })
-
-    # ── HRBP routing: MEDIUM / HIGH / CRITICAL → hold for HRBP review ────────
-    _flagged_for_hrbp = fraud_result['risk_level'] in ('MEDIUM', 'HIGH', 'CRITICAL')
-
-    # Resolve the tenant's currency from the DB config (server-authoritative)
+    # ── Currency (server-authoritative) ──────────────────────────────────────
     _raw_cfg = sqlhelper.get_tenant_config(tenant_id)
     _currency = "USD"
     if _raw_cfg:
@@ -244,6 +202,11 @@ async def create_nomination(
                 detail=f"CategoryId {nomination.CategoryId} is not valid for this tenant",
             )
 
+    # ── Save nomination — status starts as Submitted ──────────────────────────
+    # Fraud detection runs asynchronously in the auxiliary service after the
+    # nomination.submitted event is consumed. The auxiliary service moves the
+    # status to Pending (clean) or PendingHRBPReview (flagged) and publishes
+    # the appropriate downstream event (nomination.created / nomination.fraud-flagged).
     nomination_id = sqlhelper.create_nomination(
         nominator_id=effective_user["UserId"],
         beneficiary_id=nomination.BeneficiaryId,
@@ -252,53 +215,16 @@ async def create_nomination(
         currency=_currency,
         description=nomination.NominationDescription,
         category_id=nomination.CategoryId,
+        initial_status='Submitted',
     )
 
-    if _flagged_for_hrbp:
-        sqlhelper.set_nomination_status(nomination_id, "PendingHRBPReview")
-
     logger.info(
-        "Nomination created successfully",
+        "Nomination saved — publishing nomination.submitted for async fraud check",
         extra={
             "nomination_id": nomination_id,
             "user_id":       effective_user["UserId"],
-            "hrbp_flagged":  _flagged_for_hrbp,
         }
     )
-
-    # Persist the P2P fraud score
-    try:
-        sqlhelper.save_p2p_fraud_score(
-            nomination_id=nomination_id,
-            fraud_score=fraud_result['fraud_score'],
-            risk_level=fraud_result['risk_level'],
-            warning_flags=", ".join(fraud_result.get('warning_flags', [])),
-        )
-    except Exception as save_exc:
-        logger.error(
-            "Failed to save P2P fraud score for nomination %d: %s",
-            nomination_id, save_exc
-        )
-
-    # Persist the richer HRBP snapshot for the HRBP review queue.
-    if _flagged_for_hrbp:
-        try:
-            top_features    = fraud_result.get('top_features')
-            feature_summary = fraud_result.get('feature_summary')
-            sqlhelper.save_hrbp_fraud_flags(
-                nomination_id=nomination_id,
-                fraud_score=fraud_result['fraud_score'],
-                fraud_probability=fraud_result.get('fraud_probability', 0.0),
-                risk_level=fraud_result['risk_level'],
-                warning_flags=", ".join(fraud_result.get('warning_flags', [])),
-                top_features_json=_json.dumps(top_features) if top_features else None,
-                feature_summary_json=_json.dumps(feature_summary) if feature_summary else None,
-            )
-        except Exception as flag_exc:
-            logger.error(
-                "Failed to save HRBP fraud flags for nomination %d: %s",
-                nomination_id, flag_exc
-            )
 
     await log_action_if_impersonating(
         user_context,
@@ -307,28 +233,15 @@ async def create_nomination(
     )
 
     try:
-        if _flagged_for_hrbp:
-            await publish_event(
-                "nomination.fraud-flagged",
-                int(nomination_id),
-                extra={"risk_level": fraud_result['risk_level']},
-            )
-        else:
-            await publish_event("nomination.created", int(nomination_id))
+        await publish_event("nomination.submitted", int(nomination_id))
     except Exception as e:
         logger.warning(
-            "⚠️ Failed to publish event for nomination %d: %s",
+            "⚠️ Failed to publish nomination.submitted for nomination %d: %s",
             nomination_id, e
         )
 
-    if _flagged_for_hrbp:
-        return StatusResponse(
-            Status="PendingHRBPReview",
-            Message="Your nomination is being reviewed by HR before proceeding. You will be notified of the outcome."
-        )
-
     return StatusResponse(
-        Status="Pending",
+        Status="Submitted",
         Message="Nomination submitted successfully"
     )
 

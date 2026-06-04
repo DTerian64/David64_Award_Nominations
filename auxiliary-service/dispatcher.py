@@ -33,6 +33,7 @@ from typing import Callable
 
 import db
 from handlers import (
+    nomination_submitted,
     nomination_created,
     nomination_approved,
     payout_submit,
@@ -52,6 +53,9 @@ logger = logging.getLogger("auxiliary.dispatcher")
 # order.  All handlers in a list are called; if one raises, execution stops
 # and the message is abandoned for retry.
 HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
+    # Async fraud check — runs full RF + semantic assessment, then routes to
+    # nomination.created (clean) or nomination.fraud-flagged (HRBP flagged).
+    "nomination.submitted":    nomination_submitted.handle,
     "nomination.created":      nomination_created.handle,
     # nomination.approved triggers both the outcome email AND the payout submission.
     "nomination.approved":     [nomination_approved.handle, payout_submit.handle],

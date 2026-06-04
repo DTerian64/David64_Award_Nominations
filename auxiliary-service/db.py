@@ -9,6 +9,17 @@ Exposes only the queries the worker needs:
   - set_approver_notified()         — stamp ApproverNotifiedAt on Nominations
   - get_hrbp_users()                — HRBP role holders for a tenant
   - get_hrbp_fraud_flags()          — ML inference snapshot for HRBP emails
+
+Fraud detection helpers (used by nomination_submitted handler):
+  - get_nominator_history()         — past nominations sent by a user
+  - get_beneficiary_history()       — past nominations received by a user
+  - get_approver_history()          — past approvals by a user
+  - check_reciprocal_nomination()   — has B ever nominated A?
+  - get_pair_nomination_count()     — how many times has A nominated B?
+  - get_beneficiary_descriptions()  — past descriptions written BY the beneficiary
+  - set_nomination_status()         — move nomination to Pending / PendingHRBPReview
+  - save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
+  - save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
 """
 
 import logging
@@ -354,3 +365,157 @@ def update_processed_event_result(
             "ProcessedEvent recorded as error",
             extra={"message_id": message_id, "error": error}
         )
+
+
+# ── Fraud detection — history lookups ─────────────────────────────────────────
+
+def get_nominator_history(nominator_id: int) -> list[tuple]:
+    """All previous nominations sent by this nominator."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId, BeneficiaryId, Amount, NominationDate
+            FROM   dbo.Nominations
+            WHERE  NominatorId = ?
+            ORDER  BY NominationDate DESC
+        """, (nominator_id,))
+        return cursor.fetchall()
+
+
+def get_beneficiary_history(beneficiary_id: int) -> list[tuple]:
+    """All previous nominations received by this beneficiary."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId, NominatorId, Amount, NominationDate
+            FROM   dbo.Nominations
+            WHERE  BeneficiaryId = ?
+            ORDER  BY NominationDate DESC
+        """, (beneficiary_id,))
+        return cursor.fetchall()
+
+
+def get_approver_history(approver_id: int) -> list[tuple]:
+    """All previous nominations approved by this approver."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId,
+                   DATEDIFF(HOUR, NominationDate, ApprovedDate) AS HoursToApproval
+            FROM   dbo.Nominations
+            WHERE  ApproverId    = ?
+              AND  ApprovedDate IS NOT NULL
+            ORDER  BY NominationDate DESC
+        """, (approver_id,))
+        return cursor.fetchall()
+
+
+def check_reciprocal_nomination(nominator_id: int, beneficiary_id: int) -> bool:
+    """True if the beneficiary has ever nominated the nominator back."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM dbo.Nominations
+            WHERE  NominatorId   = ?
+              AND  BeneficiaryId = ?
+        """, (beneficiary_id, nominator_id))
+        row = cursor.fetchone()
+        return (row[0] > 0) if row else False
+
+
+def get_pair_nomination_count(nominator_id: int, beneficiary_id: int) -> int:
+    """How many times has this nominator nominated this beneficiary?"""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM dbo.Nominations
+            WHERE  NominatorId   = ?
+              AND  BeneficiaryId = ?
+        """, (nominator_id, beneficiary_id))
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+
+def get_beneficiary_descriptions(beneficiary_id: int) -> list[str]:
+    """
+    Past NominationDescriptions WRITTEN BY the beneficiary (as nominator).
+    Used to build their 'voice' embedding for semantic similarity scoring.
+    Capped at 20 most-recent to bound encoding time.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT TOP 20 NominationDescription
+            FROM   dbo.Nominations
+            WHERE  NominatorId            = ?
+              AND  NominationDescription IS NOT NULL
+              AND  NominationDescription  <> ''
+            ORDER  BY NominationDate DESC
+        """, (beneficiary_id,))
+        return [row[0] for row in cursor.fetchall()]
+
+
+# ── Fraud detection — write functions ─────────────────────────────────────────
+
+def set_nomination_status(nomination_id: int, new_status: str) -> None:
+    """Move a nomination to a new status (e.g. Pending, PendingHRBPReview)."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE dbo.Nominations SET Status = ? WHERE NominationId = ?
+        """, (new_status, nomination_id))
+        conn.commit()
+        logger.info(
+            "Nomination status updated",
+            extra={"nomination_id": nomination_id, "new_status": new_status},
+        )
+
+
+def save_p2p_fraud_score(
+    nomination_id: int,
+    fraud_score:   int,
+    risk_level:    str,
+    warning_flags: str,
+) -> None:
+    """Upsert the P2P fraud score for a nomination."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            MERGE dbo.P2P_FraudScores AS target
+            USING (SELECT ? AS NominationId) AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN
+                UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
+                VALUES (?,            ?,          ?,         ?);
+        """, (
+            nomination_id,
+            fraud_score, risk_level, warning_flags,
+            nomination_id, fraud_score, risk_level, warning_flags,
+        ))
+        conn.commit()
+
+
+def save_hrbp_fraud_flags(
+    nomination_id:        int,
+    fraud_score:          int,
+    fraud_probability:    float,
+    risk_level:           str,
+    warning_flags:        str,
+    top_features_json:    Optional[str],
+    feature_summary_json: Optional[str],
+) -> None:
+    """Insert the HRBP fraud flag snapshot (used by the HRBP review queue UI)."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO dbo.HRBP_FraudFlags
+                (NominationId, FraudScore, FraudProbability, RiskLevel,
+                 WarningFlags, TopFeaturesJson, FeatureSummaryJson, CreatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, GETUTCDATE())
+        """, (
+            nomination_id, fraud_score, fraud_probability, risk_level,
+            warning_flags, top_features_json, feature_summary_json,
+        ))
+        conn.commit()

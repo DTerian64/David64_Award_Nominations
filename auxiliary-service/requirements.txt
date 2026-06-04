@@ -1,6 +1,6 @@
 # Award Auxiliary Service — Service Bus worker
-# Intentionally minimal: no FastAPI, no gunicorn, no ML libraries.
-# Shares pyodbc + pyjwt with the backend for DB access and token generation.
+# No FastAPI or gunicorn — plain synchronous worker loop.
+# Includes ML libraries for async fraud detection (nomination_submitted handler).
 
 # Environment Variables
 python-dotenv>=1.0.0,<2.0.0
@@ -25,3 +25,14 @@ aiohttp>=3.9.0,<4.0.0
 
 # HTTP client — used by payout_submit.py to call Workday Proxy and Award API
 httpx>=0.25.0,<0.28.0
+
+# ML — fraud detection for nomination_submitted handler
+# CPU-only torch keeps the image ~1.5 GB lighter than the CUDA variant.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+sentence-transformers>=2.6.0
+scikit-learn==1.8.0
+numpy>=1.24.0
+
+# Blob storage — stream fraud model pkl from Azure Blob Storage
+azure-storage-blob>=12.19.0,<13.0.0
