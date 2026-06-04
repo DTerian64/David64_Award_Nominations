@@ -31,6 +31,32 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def on_starting(server):
+    """
+    Called once in the Gunicorn master process before any workers are forked.
+
+    We load the sentence-transformers model here so the ~500 MB PyTorch weights
+    land in the master's address space.  When workers fork they inherit the
+    model's memory pages as read-only CoW mappings — the OS never needs to copy
+    them as long as the workers only read (which they do — inference is
+    stateless).  Net result: one copy of the model shared across all workers
+    instead of N independent copies loaded on first request.
+
+    This has no interaction with OTel/Azure Monitor — configure_azure_monitor()
+    is still called per-worker inside the FastAPI lifespan (main.py), after
+    uvicorn has finished configuring logging.
+    """
+    model_name = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
+    logger.info("on_starting: pre-loading sentence-transformer '%s' in master …", model_name)
+    try:
+        from fraud_ml import _get_embed_model
+        _get_embed_model(model_name)
+        logger.info("on_starting: model loaded — workers will share via CoW.")
+    except Exception as exc:
+        # Non-fatal: workers will lazy-load individually on first request.
+        logger.warning("on_starting: model pre-load failed (%s) — workers will load on demand.", exc)
+
+
 def post_fork(server, worker):
     """Called in each worker immediately after forking from the master.
 

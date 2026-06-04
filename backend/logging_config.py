@@ -88,7 +88,7 @@ class JSONFormatter(logging.Formatter):
             if key not in _STANDARD_ATTRS and not key.startswith("_"):
                 log_data[key] = value
 
-        return json.dumps(log_data)
+        return json.dumps(log_data, default=str)
 
 
 def setup_logging():
