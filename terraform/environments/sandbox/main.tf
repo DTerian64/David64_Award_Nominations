@@ -293,8 +293,9 @@ module "container_apps" {
     { name = "DEMO_ALLOWED_EMAILS",             value = var.demo_allowed_emails },
     # HRBP SLA — hours before a PendingHRBPReview nomination triggers an escalation email
     { name = "HRBP_SLA_HOURS",                  value = tostring(var.hrbp_sla_hours) },
-    # Log Analytics workspace ID — used by the admin nomination-logs endpoint (azure-monitor-query)
-    { name = "LOG_ANALYTICS_WORKSPACE_ID",       value = module.log_analytics.workspace_primary_id },
+    # Log Analytics workspace GUID — used by the admin nomination-logs endpoint (azure-monitor-query).
+    # Must be the customer/workspace GUID, NOT the ARM resource ID.
+    { name = "LOG_ANALYTICS_WORKSPACE_ID",       value = module.log_analytics.workspace_primary_customer_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity

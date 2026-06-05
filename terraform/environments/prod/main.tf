@@ -241,8 +241,9 @@ module "container_apps" {
     # Fraud model lazy-load tuning — controls in-memory cache lifetime and eviction frequency.
     { name = "MODEL_IDLE_TTL_SECONDS",          value = tostring(var.model_idle_ttl_seconds) },
     { name = "MODEL_EVICTION_INTERVAL_SECONDS", value = tostring(var.model_eviction_interval_seconds) },
-    # Log Analytics workspace ID — used by the admin nomination-logs endpoint (azure-monitor-query)
-    { name = "LOG_ANALYTICS_WORKSPACE_ID",      value = module.log_analytics.workspace_primary_id },
+    # Log Analytics workspace GUID — used by the admin nomination-logs endpoint (azure-monitor-query).
+    # Must be the customer/workspace GUID, NOT the ARM resource ID.
+    { name = "LOG_ANALYTICS_WORKSPACE_ID",      value = module.log_analytics.workspace_primary_customer_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity

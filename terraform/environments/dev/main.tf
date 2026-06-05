@@ -234,8 +234,9 @@ module "container_apps" {
     # Service Bus — neither FQNS nor topic name is sensitive; MI credential grants access.
     { name = "SERVICE_BUS_FQNS",                value = module.service_bus.namespace_fqns },
     { name = "SERVICE_BUS_TOPIC_NAME",          value = module.service_bus.topic_name },
-    # Log Analytics workspace ID — used by the admin nomination-logs endpoint (azure-monitor-query)
-    { name = "LOG_ANALYTICS_WORKSPACE_ID",      value = module.log_analytics.workspace_primary_id },
+    # Log Analytics workspace GUID — used by the admin nomination-logs endpoint (azure-monitor-query).
+    # Must be the customer/workspace GUID, NOT the ARM resource ID.
+    { name = "LOG_ANALYTICS_WORKSPACE_ID",      value = module.log_analytics.workspace_primary_customer_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity

@@ -190,7 +190,7 @@ ContainerAppConsoleLogs_CL
         logs = []
         if response.tables:
             table = response.tables[0]
-            col_names = [col.name for col in table.columns]
+            col_names = list(table.columns)  # columns are plain strings in azure-monitor-query 1.x
             for row in table.rows:
                 entry = dict(zip(col_names, row))
                 logs.append({
