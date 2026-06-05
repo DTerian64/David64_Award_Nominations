@@ -640,15 +640,17 @@ const AwardNominationApp: React.FC = () => {
                         </div>
                       </div>
                       <p className="text-gray-700">{nom.NominationDescription}</p>
-                      {nom.CategoryDescription && (
-                        <span className="inline-block mt-2 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700"
-                              style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
-                          {nom.CategoryDescription}
-                        </span>
-                      )}
-                      <p style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', marginTop: '4px' }}>
-                        #{nom.NominationId}
-                      </p>
+                      <div className="flex items-end justify-between mt-2">
+                        {nom.CategoryDescription ? (
+                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                                style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                            {nom.CategoryDescription}
+                          </span>
+                        ) : <span />}
+                        <p style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all' }}>
+                          #{nom.NominationId}
+                        </p>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -687,15 +689,17 @@ const AwardNominationApp: React.FC = () => {
                         </p>
                       </div>
                       <p className="text-gray-700 mb-2">{nom.NominationDescription}</p>
-                      {nom.CategoryDescription && (
-                        <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
-                              style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
-                          {nom.CategoryDescription}
-                        </span>
-                      )}
-                      <p style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', marginTop: '4px', marginBottom: '16px' }}>
-                        #{nom.NominationId}
-                      </p>
+                      <div className="flex items-end justify-between mb-4">
+                        {nom.CategoryDescription ? (
+                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                                style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                            {nom.CategoryDescription}
+                          </span>
+                        ) : <span />}
+                        <p style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all' }}>
+                          #{nom.NominationId}
+                        </p>
+                      </div>
                       <div className="flex space-x-3">
                         <button
                           onClick={() => handleApproval(nom.NominationId, true)}
