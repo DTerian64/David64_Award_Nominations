@@ -47,9 +47,12 @@ def handle(payload: dict) -> None:
         fallback = db.get_tenant_fallback_admin(details["tenant_id"])
         if fallback:
             logger.warning(
-                "No HRBP users configured for tenant %d — "
-                "falling back to admin '%s' for nomination %d.",
-                details["tenant_id"], fallback["email"], nomination_id,
+                "No HRBP users configured — falling back to tenant admin",
+                extra={
+                    "nomination_id": nomination_id,
+                    "tenant_id":     details["tenant_id"],
+                    "fallback_email": fallback["email"],
+                },
             )
             body = email_client.render_hrbp_review_request(
                 hrbp_name=fallback["full_name"],
@@ -73,19 +76,25 @@ def handle(payload: dict) -> None:
             )
         else:
             logger.warning(
-                "No HRBP users and no fallback_admin_email configured for "
-                "tenant %d — nomination %d remains in PendingHRBPReview. "
-                "SLA breach job will escalate. "
-                "Fix: add 'fallback_admin_email' to the tenant's Config JSON.",
-                details["tenant_id"], nomination_id,
+                "No HRBP users and no fallback_admin_email configured — "
+                "nomination remains in PendingHRBPReview, SLA job will escalate. "
+                "Fix: add 'fallback_admin_email' to the tenant Config JSON.",
+                extra={
+                    "nomination_id": nomination_id,
+                    "tenant_id":     details["tenant_id"],
+                },
             )
         return
 
     # ── Normal path — notify all HRBP users ──────────────────────────────────
     for hrbp in hrbp_users:
         logger.info(
-            "Sending HRBP review request to %s for nomination %d (risk=%s)",
-            hrbp["email"], nomination_id, risk_level,
+            "Sending HRBP review request",
+            extra={
+                "nomination_id": nomination_id,
+                "risk_level":    risk_level,
+                "hrbp_email":    hrbp["email"],
+            },
         )
         body = email_client.render_hrbp_review_request(
             hrbp_name=hrbp["full_name"],
@@ -107,6 +116,10 @@ def handle(payload: dict) -> None:
         )
 
     logger.info(
-        "nomination.fraud-flagged handled — notified %d HRBP user(s) for nomination %d",
-        len(hrbp_users), nomination_id,
+        "nomination.fraud-flagged handled",
+        extra={
+            "nomination_id":    nomination_id,
+            "hrbp_users_count": len(hrbp_users),
+            "risk_level":       risk_level,
+        },
     )

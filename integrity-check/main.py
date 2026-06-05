@@ -38,15 +38,24 @@ from opentelemetry import context as otel_context
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from handler import handle
+from logging_config import setup_logging
 
 load_dotenv()
 
-# ── Logging ───────────────────────────────────────────────────────────────────
-
+# ── Message-ID context ────────────────────────────────────────────────────────
+# Holds the Service Bus message_id for the message currently being processed.
+# Propagates automatically to every logger via _MessageIdFilter.
 _current_message_id: ContextVar[str] = ContextVar("message_id", default="")
 
 
+# ── Logging ───────────────────────────────────────────────────────────────────
 class _MessageIdFilter(logging.Filter):
+    """Injects the current Service Bus message_id into every LogRecord.
+
+    Combined with setup_logging()'s _ExtrasToMessageFilter, the message_id
+    is merged into the JSON message body — searchable in KQL as:
+        | where Log_s has "4dffae70-baef-451f-808c-522636bbd3d7"
+    """
     def filter(self, record: logging.LogRecord) -> bool:
         if not hasattr(record, "message_id"):
             mid = _current_message_id.get()
@@ -55,31 +64,12 @@ class _MessageIdFilter(logging.Filter):
         return True
 
 
-class _ExtraFormatter(logging.Formatter):
-    _BUILTIN = frozenset({
-        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
-        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
-        "created", "msecs", "relativeCreated", "thread", "threadName",
-        "processName", "process", "message", "asctime", "taskName",
-    })
+# setup_logging() installs JSONFormatter + App_Log prefix + extras-to-message.
+# We then attach _MessageIdFilter so every log line also carries message_id.
+setup_logging()
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_MessageIdFilter())
 
-    def format(self, record: logging.LogRecord) -> str:
-        base = super().format(record)
-        extras = {k: v for k, v in record.__dict__.items()
-                  if k not in self._BUILTIN}
-        if extras:
-            pairs = "  ".join(f"{k}={v!r}" for k, v in sorted(extras.items()))
-            return f"{base}  {pairs}"
-        return base
-
-
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(_ExtraFormatter(
-    fmt="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-))
-_handler.addFilter(_MessageIdFilter())
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger("integrity_check.main")
 
 # ── Application Insights ──────────────────────────────────────────────────────
@@ -178,6 +168,14 @@ def main() -> None:
                             )
                             continue
 
+                        logger.info(
+                            "nomination.submitted received",
+                            extra={
+                                "nomination_id": payload.get("nomination_id"),
+                                "event_type":    payload.get("event_type"),
+                            },
+                        )
+
                         # Restore the OTel trace context published by the
                         # backend so all spans emitted during handle() are
                         # linked as children of the originating HTTP request.
@@ -192,7 +190,13 @@ def main() -> None:
                         try:
                             handle(message_id, payload)
                             receiver.complete_message(message)
-                            logger.info("Message completed", extra={"message_id": message_id})
+                            logger.info(
+                                "Message completed",
+                                extra={
+                                    "nomination_id": payload.get("nomination_id"),
+                                    "event_type":    payload.get("event_type"),
+                                },
+                            )
                         except Exception as exc:
                             logger.error(
                                 "Message processing failed — abandoning for retry",
