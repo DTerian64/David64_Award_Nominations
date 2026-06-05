@@ -293,6 +293,8 @@ module "container_apps" {
     { name = "DEMO_ALLOWED_EMAILS",             value = var.demo_allowed_emails },
     # HRBP SLA — hours before a PendingHRBPReview nomination triggers an escalation email
     { name = "HRBP_SLA_HOURS",                  value = tostring(var.hrbp_sla_hours) },
+    # Log Analytics workspace ID — used by the admin nomination-logs endpoint (azure-monitor-query)
+    { name = "LOG_ANALYTICS_WORKSPACE_ID",       value = module.log_analytics.workspace_primary_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -377,6 +379,15 @@ resource "azurerm_key_vault_access_policy" "integrity_check" {
   secret_permissions = ["Get", "List"]
 
   depends_on = [module.key_vault, azurerm_user_assigned_identity.integrity_check]
+}
+
+# Monitoring Reader — backend (aca_primary) queries Log Analytics for the admin
+# nomination-logs endpoint (/api/admin/nominations/{id}/logs).
+resource "azurerm_role_assignment" "aca_primary_monitoring_reader" {
+  scope                = module.log_analytics.workspace_primary_id
+  role_definition_name = "Monitoring Reader"
+  principal_id         = azurerm_user_assigned_identity.aca_primary.principal_id
+  depends_on           = [azurerm_user_assigned_identity.aca_primary, module.log_analytics]
 }
 
 # Blob Storage reader — Integrity Check needs to stream pkl files from ml-models

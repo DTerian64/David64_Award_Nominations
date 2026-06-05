@@ -33,6 +33,10 @@ router = APIRouter(tags=["admin"])
 # Required only for the nomination logs endpoint; other admin routes don't need it.
 _LOG_ANALYTICS_WORKSPACE_ID = os.getenv("LOG_ANALYTICS_WORKSPACE_ID", "")
 
+# Same pattern as service_bus_publisher.py — must be explicit on ACA so IMDS
+# resolves the correct user-assigned MI rather than looking for a system-assigned one.
+_MI_CLIENT_ID = os.getenv("MI_CLIENT_ID") or None
+
 
 @router.get("/api/admin/audit-logs", response_model=List[AuditLog])
 async def get_audit_logs(
@@ -168,7 +172,7 @@ ContainerAppConsoleLogs_CL
 """
 
     try:
-        credential = DefaultAzureCredential()
+        credential = DefaultAzureCredential(managed_identity_client_id=_MI_CLIENT_ID)
         client = LogsQueryClient(credential)
 
         response = client.query_workspace(

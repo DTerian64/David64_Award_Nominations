@@ -234,6 +234,8 @@ module "container_apps" {
     # Service Bus — neither FQNS nor topic name is sensitive; MI credential grants access.
     { name = "SERVICE_BUS_FQNS",                value = module.service_bus.namespace_fqns },
     { name = "SERVICE_BUS_TOPIC_NAME",          value = module.service_bus.topic_name },
+    # Log Analytics workspace ID — used by the admin nomination-logs endpoint (azure-monitor-query)
+    { name = "LOG_ANALYTICS_WORKSPACE_ID",      value = module.log_analytics.workspace_primary_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -288,6 +290,15 @@ resource "azurerm_key_vault_access_policy" "auxiliary_function" {
   secret_permissions = ["Get", "List"]
 
   depends_on = [module.key_vault, azurerm_user_assigned_identity.auxiliary_function]
+}
+
+# Monitoring Reader — backend (aca_primary) queries Log Analytics for the admin
+# nomination-logs endpoint (/api/admin/nominations/{id}/logs).
+resource "azurerm_role_assignment" "aca_primary_monitoring_reader" {
+  scope                = module.log_analytics.workspace_primary_id
+  role_definition_name = "Monitoring Reader"
+  principal_id         = azurerm_user_assigned_identity.aca_primary.principal_id
+  depends_on           = [azurerm_user_assigned_identity.aca_primary, module.log_analytics]
 }
 
 # ── 9. Service Bus ────────────────────────────────────────────────────────────
