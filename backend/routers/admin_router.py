@@ -122,7 +122,6 @@ async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_
 @router.get("/api/admin/nominations/{nomination_id}/logs")
 async def get_nomination_logs(
     nomination_id: int,
-    hours: int = Query(default=24, ge=1, le=168, description="Look-back window in hours (1–168)"),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -133,8 +132,8 @@ async def get_nomination_logs(
     containers. Results are sorted by the inner JSON timestamp (actual emission
     time, not Log Analytics ingestion time).
 
-    Query param:
-        hours   Look-back window in hours. Default 24. Max 168 (7 days).
+    Fixed 7-day lookback — covers any realistic support scenario within
+    Log Analytics' 30-day retention window.
 
     Note: Log Analytics has a ~2 minute ingestion delay. Logs for nominations
     submitted in the last 2 minutes may not appear yet.
@@ -151,7 +150,7 @@ async def get_nomination_logs(
 
     kql = f"""
 ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago({hours}h)
+| where TimeGenerated > ago(7d)
 | where Log_s has "App_Log:"
 | where Log_s has "{nomination_id}"
 | extend d = parse_json(Log_s)
@@ -175,7 +174,7 @@ ContainerAppConsoleLogs_CL
         response = client.query_workspace(
             workspace_id=_LOG_ANALYTICS_WORKSPACE_ID,
             query=kql,
-            timespan=timedelta(hours=hours),
+            timespan=timedelta(days=7),
         )
 
         if response.status != LogsQueryStatus.SUCCESS:
@@ -200,14 +199,13 @@ ContainerAppConsoleLogs_CL
 
         logger.info(
             "Admin fetched nomination logs",
-            extra={"nomination_id": nomination_id, "log_count": len(logs), "hours": hours},
+            extra={"nomination_id": nomination_id, "log_count": len(logs)},
         )
 
         return {
-            "nomination_id": nomination_id,
-            "hours":         hours,
-            "log_count":     len(logs),
-            "logs":          logs,
+            "nomination_id":  nomination_id,
+            "log_count":      len(logs),
+            "logs":           logs,
             "ingestion_note": "Log Analytics has a ~2 min ingestion delay. Recent nominations may show incomplete results.",
         }
 

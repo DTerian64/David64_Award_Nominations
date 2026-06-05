@@ -24,7 +24,6 @@ interface LogEntry {
 
 interface LogsResponse {
   nomination_id:   number;
-  hours:           number;
   log_count:       number;
   logs:            LogEntry[];
   ingestion_note:  string;
@@ -60,7 +59,6 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
   const [data, setData]       = useState<LogsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
-  const [hours, setHours]     = useState(24);
 
   const fetchLogs = useCallback(async () => {
     if (nominationId === null) return;
@@ -70,7 +68,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
     try {
       const token = await getAccessToken();
       const res = await fetch(
-        `${API_BASE_URL}/api/admin/nominations/${nominationId}/logs?hours=${hours}`,
+        `${API_BASE_URL}/api/admin/nominations/${nominationId}/logs`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!res.ok) {
@@ -119,19 +117,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
             </h2>
             <p className="text-xs text-gray-500 mt-0.5">Log Analytics trace across all services</p>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Look-back window selector */}
-            <select
-              value={hours}
-              onChange={e => setHours(Number(e.target.value))}
-              className="text-xs border border-gray-300 rounded px-2 py-1 text-gray-600"
-            >
-              <option value={1}>Last 1 hour</option>
-              <option value={6}>Last 6 hours</option>
-              <option value={24}>Last 24 hours</option>
-              <option value={72}>Last 3 days</option>
-              <option value={168}>Last 7 days</option>
-            </select>
+          <div className="flex items-center gap-2">
             <button
               onClick={fetchLogs}
               disabled={loading}
@@ -153,7 +139,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
         {/* Ingestion note */}
         <div className="flex items-start gap-2 px-6 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-700">
           <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Log Analytics has a ~2 min ingestion delay. Logs for very recent nominations may be incomplete.</span>
+          <span>Shows logs from the last 7 days. Log Analytics has a ~2 min ingestion delay, so very recent nominations may be incomplete. Logs older than 30 days are not retained.</span>
         </div>
 
         {/* Body */}
@@ -176,13 +162,13 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
           {data && !loading && (
             <>
               <p className="text-xs text-gray-400 mb-4">
-                {data.log_count} {data.log_count === 1 ? 'entry' : 'entries'} · last {data.hours}h
+                {data.log_count} {data.log_count === 1 ? 'entry' : 'entries'} · last 7 days
               </p>
 
               {data.log_count === 0 ? (
                 <div className="text-center py-16 text-gray-400 text-sm">
-                  <p>No logs found for nomination #{nominationId} in the last {data.hours} hours.</p>
-                  <p className="mt-1">Try extending the look-back window.</p>
+                  <p>No logs found for nomination #{nominationId}.</p>
+                  <p className="mt-1">If this nomination was just submitted, wait ~2 minutes and refresh.</p>
                 </div>
               ) : (
                 <div className="space-y-2">
