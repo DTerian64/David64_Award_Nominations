@@ -140,6 +140,18 @@ resource "azurerm_user_assigned_identity" "fraud_analytics_job" {
   depends_on          = [azurerm_resource_group.rg]
 }
 
+# Integrity Check identity — pre-created so KV access policy and Service Bus /
+# Blob RBAC assignments can be granted before the Container App is created.
+# This container runs fraud_check.py: streams pkl from Blob, writes to SQL,
+# re-publishes events to Service Bus.
+resource "azurerm_user_assigned_identity" "integrity_check" {
+  name                = "id-award-integrity-check-${var.environment}"
+  resource_group_name = var.resource_group_name
+  location            = var.location_primary
+  tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg]
+}
+
 # ── 5. Key Vault ──────────────────────────────────────────────────────────────
 module "key_vault" {
   source = "../../modules/key-vault"
@@ -356,6 +368,34 @@ resource "azurerm_key_vault_access_policy" "fraud_analytics_job" {
   depends_on = [module.key_vault, azurerm_user_assigned_identity.fraud_analytics_job]
 }
 
+# KV access policy — Integrity Check container
+resource "azurerm_key_vault_access_policy" "integrity_check" {
+  key_vault_id = module.key_vault.key_vault_id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_user_assigned_identity.integrity_check.principal_id
+
+  secret_permissions = ["Get", "List"]
+
+  depends_on = [module.key_vault, azurerm_user_assigned_identity.integrity_check]
+}
+
+# Blob Storage reader — Integrity Check needs to stream pkl files from ml-models
+resource "azurerm_role_assignment" "integrity_check_blob_reader" {
+  scope                = module.storage.storage_account_id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = azurerm_user_assigned_identity.integrity_check.principal_id
+  depends_on           = [azurerm_user_assigned_identity.integrity_check, module.storage]
+}
+
+# Service Bus Data Sender — Integrity Check re-publishes nomination.created /
+# nomination.fraud-flagged back to the topic after fraud assessment completes.
+resource "azurerm_role_assignment" "integrity_check_sb_sender" {
+  scope                = module.service_bus.topic_id
+  role_definition_name = "Azure Service Bus Data Sender"
+  principal_id         = azurerm_user_assigned_identity.integrity_check.principal_id
+  depends_on           = [azurerm_user_assigned_identity.integrity_check, module.service_bus]
+}
+
 # ── 9. Service Bus ────────────────────────────────────────────────────────────
 module "service_bus" {
   source = "../../modules/service-bus"
@@ -374,8 +414,10 @@ module "service_bus" {
   }
 
   receiver_principal_ids = {
-    # auxiliary-function consumes all event types: email, payout, exports, etc.
+    # auxiliary-function consumes email, payout, hrbp, and notification events.
     "auxiliary-function" = azurerm_user_assigned_identity.auxiliary_function.principal_id
+    # integrity-check consumes nomination.submitted for async fraud detection.
+    "integrity-check"    = azurerm_user_assigned_identity.integrity_check.principal_id
   }
 
   depends_on = [azurerm_resource_group.rg]
@@ -439,6 +481,74 @@ module "auxiliary" {
   # KV access policy and Service Bus RBAC must exist before the Container App starts
   depends_on = [
     azurerm_key_vault_access_policy.auxiliary_function,
+    module.service_bus,
+    module.container_apps,
+  ]
+
+  tags = local.tags
+}
+
+# ── 10b. Integrity Check Container App ───────────────────────────────────────
+# award-integrity-check-sandbox — async fraud detection worker.
+# Consumes nomination.submitted from the fraud-processor subscription,
+# runs fraud_check.py (RF + semantic features), writes scores to SQL,
+# and re-publishes nomination.created or nomination.fraud-flagged.
+#
+# Uses the same auxiliary-container-app module as award-auxiliary-sandbox —
+# same KEDA / Service Bus / KV pattern, different subscription + resources.
+# Higher CPU/memory than the auxiliary worker: sentence-transformers + sklearn
+# need ~500 MB RAM and meaningful CPU for inference.
+module "integrity_check" {
+  source = "../../modules/auxiliary-container-app"
+
+  resource_group_name          = var.resource_group_name
+  location                     = var.location_primary
+  app_name                     = var.integrity_check_container_app_name
+  environment                  = var.environment
+  container_app_environment_id = module.container_apps.cae_primary_id
+
+  auxiliary_identity_id        = azurerm_user_assigned_identity.integrity_check.id
+  auxiliary_identity_client_id = azurerm_user_assigned_identity.integrity_check.client_id
+
+  acr_login_server   = module.container_registry.login_server
+  acr_admin_username = module.container_registry.admin_username
+  acr_admin_password = module.container_registry.admin_password
+
+  service_bus_fqns              = module.service_bus.namespace_fqns
+  service_bus_topic_name        = module.service_bus.topic_name
+  service_bus_subscription_name = module.service_bus.fraud_processor_subscription_name
+
+  key_vault_uri = module.key_vault.vault_uri
+
+  # Scale to zero — fraud check is async so cold-start latency is acceptable.
+  min_replicas       = 0
+  max_replicas       = 2
+  keda_message_count = 1   # 1 replica per pending nomination for fast processing
+
+  # ML inference workload: sentence-transformers + PyTorch need ~500 MB RAM.
+  # Azure Consumption plan requires cpu:memory ratio of 1:2 — 1.0 vCPU / 2Gi
+  # is the smallest valid combination that fits the model comfortably.
+  cpu    = 1.0
+  memory = "2Gi"
+
+  environment_variables = [
+    { name = "AZURE_STORAGE_ACCOUNT", value = module.storage.storage_account_name },
+    { name = "MODEL_CONTAINER",       value = module.storage.ml_models_container_name },
+  ]
+
+  kv_secret_references = [
+    { env_name = "SQL_SERVER",       kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE",     kv_secret_name = "SQL-DATABASE" },
+    { env_name = "SQL_USER",         kv_secret_name = "SQL-USER" },
+    { env_name = "SQL_PASSWORD",     kv_secret_name = "SQL-PASSWORD" },
+    { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
+    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
+  ]
+
+  depends_on = [
+    azurerm_key_vault_access_policy.integrity_check,
+    azurerm_role_assignment.integrity_check_blob_reader,
+    azurerm_role_assignment.integrity_check_sb_sender,
     module.service_bus,
     module.container_apps,
   ]

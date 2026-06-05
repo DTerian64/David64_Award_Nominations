@@ -152,6 +152,39 @@ resource "azurerm_container_app" "primary" {
         value = var.aca_primary_identity_client_id
       }
 
+      # ── Health probes ─────────────────────────────────────────────────────
+      # TCP probes — check port 8000 is accepting connections, not a specific
+      # HTTP endpoint. Safe regardless of which routes are registered.
+      #
+      # startup_probe: gives Gunicorn + uvicorn workers up to 4 min to start
+      # (model metadata load from blob, SQL connections, OTel init).
+      # liveness_probe: restarts the container if port 8000 stops responding.
+      # readiness_probe: prevents traffic routing to not-yet-ready replicas.
+      startup_probe {
+        transport               = "TCP"
+        port                    = 8000
+        interval_seconds        = 24   # 10 × 24s = 240s total — same window as before
+        failure_count_threshold = 10   # provider max is 10
+        timeout                 = 3
+      }
+
+      liveness_probe {
+        transport               = "TCP"
+        port                    = 8000
+        interval_seconds        = 10
+        failure_count_threshold = 3
+        timeout                 = 5
+      }
+
+      readiness_probe {
+        transport               = "TCP"
+        port                    = 8000
+        interval_seconds        = 24   # 10 × 24s = 240s total — same window as before
+        failure_count_threshold = 10   # provider max is 10
+        success_count_threshold = 1
+        timeout                 = 5
+      }
+
     }
   }
 
@@ -245,6 +278,32 @@ resource "azurerm_container_app" "secondary" {
           secret_name = lower(env.value.kv_secret_name)
         }
       }
+
+      startup_probe {
+        transport               = "TCP"
+        port                    = 8000
+        interval_seconds        = 24   # 10 × 24s = 240s total — same window as before
+        failure_count_threshold = 10   # provider max is 10
+        timeout                 = 3
+      }
+
+      liveness_probe {
+        transport               = "TCP"
+        port                    = 8000
+        interval_seconds        = 10
+        failure_count_threshold = 3
+        timeout                 = 5
+      }
+
+      readiness_probe {
+        transport               = "TCP"
+        port                    = 8000
+        interval_seconds        = 24   # 10 × 24s = 240s total — same window as before
+        failure_count_threshold = 10   # provider max is 10
+        success_count_threshold = 1
+        timeout                 = 5
+      }
+
     }
   }
 

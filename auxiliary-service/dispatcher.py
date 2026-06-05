@@ -33,7 +33,6 @@ from typing import Callable
 
 import db
 from handlers import (
-    nomination_submitted,
     nomination_created,
     nomination_approved,
     payout_submit,
@@ -53,9 +52,6 @@ logger = logging.getLogger("auxiliary.dispatcher")
 # order.  All handlers in a list are called; if one raises, execution stops
 # and the message is abandoned for retry.
 HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
-    # Async fraud check — runs full RF + semantic assessment, then routes to
-    # nomination.created (clean) or nomination.fraud-flagged (HRBP flagged).
-    "nomination.submitted":    nomination_submitted.handle,
     "nomination.created":      nomination_created.handle,
     # nomination.approved triggers both the outcome email AND the payout submission.
     "nomination.approved":     [nomination_approved.handle, payout_submit.handle],
@@ -101,7 +97,15 @@ def dispatch(message_id: str, payload: dict) -> str:
 
     handler_entry = HANDLERS.get(event_type)
     if handler_entry is None:
-        raise ValueError(f"No handler registered for event_type='{event_type}'")
+        # nomination.submitted is routed to the fraud-processor subscription and
+        # handled by award-integrity-check-sandbox. The email-processor subscription
+        # still receives it (TrueFilter) — complete silently rather than dead-lettering.
+        logger.info(
+            "No handler for event_type='%s' — completing silently",
+            event_type,
+            extra={"event_type": event_type, "nomination_id": nomination_id},
+        )
+        return "skipped"
 
     # Normalise to a list so single-handler and multi-handler events are
     # treated identically below.

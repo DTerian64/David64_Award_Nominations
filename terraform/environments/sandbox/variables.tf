@@ -170,6 +170,12 @@ variable "auxiliary_container_app_name" {
   type        = string
 }
 
+variable "integrity_check_container_app_name" {
+  description = "Integrity Check Container App name. Convention: award-integrity-check-{env}"
+  type        = string
+  default     = "award-integrity-check-sandbox"
+}
+
 # ── Fraud Analytics Job ───────────────────────────────────────────────────────
 variable "fraud_analytics_job_name" {
   description = "Container Apps Job name for the fraud analytics pipeline. Convention: award-fraud-analytics-{env}"
