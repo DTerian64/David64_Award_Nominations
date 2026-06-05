@@ -1,0 +1,28 @@
+# award-integrity-check — async fraud detection worker
+# Consumes nomination.submitted, runs RF + semantic fraud check, re-publishes result.
+
+# Environment
+python-dotenv>=1.0.0,<2.0.0
+
+# Service Bus — consume fraud-processor subscription + re-publish results
+azure-servicebus>=7.12.0,<8.0.0
+
+# Managed Identity auth
+azure-identity>=1.15.0,<2.0.0
+
+# Blob Storage — stream fraud model pkl from ml-models container
+azure-storage-blob>=12.19.0,<13.0.0
+
+# Database — SQL Server via ODBC Driver 18
+pyodbc>=5.0.0,<6.0.0
+
+# ML — fraud detection pipeline
+# CPU-only torch: ~1.5 GB lighter than the CUDA variant
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+sentence-transformers>=2.6.0
+scikit-learn==1.8.0
+numpy>=1.24.0
+
+# Observability — Application Insights
+azure-monitor-opentelemetry>=1.6.0,<2.0.0
