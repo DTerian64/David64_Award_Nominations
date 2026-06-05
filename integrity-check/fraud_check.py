@@ -8,7 +8,7 @@ Owns the full fraud detection pipeline:
   • Feature engineering — behavioural + semantic, mirrors train_fraud_model.py
   • RF inference — predict_proba → fraud_score / risk_level / warning_flags
 
-Public API
+Public API 
 ----------
     result = assess(nomination_details, tenant_id)
 
