@@ -5,24 +5,33 @@ Admin-only management endpoints (AWard_Nomination_Admin role required).
 
 Routes
 ------
-GET  /api/admin/audit-logs          — impersonation audit log
-POST /api/admin/refresh-fraud-model — manually pull latest model from blob
-GET  /api/admin/fraud-model-info    — inspect loaded per-tenant models
+GET  /api/admin/audit-logs                      — impersonation audit log
+POST /api/admin/refresh-fraud-model             — manually pull latest model from blob
+GET  /api/admin/fraud-model-info                — inspect loaded per-tenant models
+GET  /api/admin/nominations/{id}/logs           — Log Analytics trace for a nomination
 """
 
 import logging
-
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+from datetime import timedelta
 from typing import List
 
-import utils.sqlhelper2 as sqlhelper
+from azure.identity import DefaultAzureCredential
+from azure.monitor.query import LogsQueryClient, LogsQueryStatus
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
 import fraud_ml
-from auth import get_current_user, require_role, is_admin
+import utils.sqlhelper2 as sqlhelper
+from auth import get_current_user, is_admin, require_role
 from routers.schemas import AuditLog
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
+
+# Log Analytics workspace ID — set by Terraform as a plain env var on the backend container.
+# Required only for the nomination logs endpoint; other admin routes don't need it.
+_LOG_ANALYTICS_WORKSPACE_ID = os.getenv("LOG_ANALYTICS_WORKSPACE_ID", "")
 
 
 @router.get("/api/admin/audit-logs", response_model=List[AuditLog])
@@ -108,3 +117,105 @@ async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_
             for tid, entry in loaded.items()
         },
     }
+
+
+@router.get("/api/admin/nominations/{nomination_id}/logs")
+async def get_nomination_logs(
+    nomination_id: int,
+    hours: int = Query(default=24, ge=1, le=168, description="Look-back window in hours (1–168)"),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Return the Log Analytics trace for a single nomination (Admin only).
+
+    Queries ContainerAppConsoleLogs_CL for all App_Log entries that mention
+    the given nomination_id across the backend, integrity-check, and auxiliary
+    containers. Results are sorted by the inner JSON timestamp (actual emission
+    time, not Log Analytics ingestion time).
+
+    Query param:
+        hours   Look-back window in hours. Default 24. Max 168 (7 days).
+
+    Note: Log Analytics has a ~2 minute ingestion delay. Logs for nominations
+    submitted in the last 2 minutes may not appear yet.
+    """
+    if not is_admin(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="AWard_Nomination_Admin access required")
+
+    if not _LOG_ANALYTICS_WORKSPACE_ID:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LOG_ANALYTICS_WORKSPACE_ID is not configured on this environment",
+        )
+
+    kql = f"""
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago({hours}h)
+| where Log_s has "App_Log:"
+| where Log_s has "{nomination_id}"
+| extend d = parse_json(Log_s)
+| extend
+    LogTime      = todatetime(d.timestamp),
+    PacificTime  = datetime_utc_to_local(todatetime(d.timestamp), 'US/Pacific'),
+    Level        = tostring(d.level),
+    Service      = ContainerAppName_s,
+    Logger       = tostring(d.logger),
+    Message      = tostring(d.message),
+    NominationId = toint(d.nomination_id)
+| where NominationId == {nomination_id}
+| project PacificTime, LogTime, Level, Service, Logger, Message
+| order by LogTime asc
+"""
+
+    try:
+        credential = DefaultAzureCredential()
+        client = LogsQueryClient(credential)
+
+        response = client.query_workspace(
+            workspace_id=_LOG_ANALYTICS_WORKSPACE_ID,
+            query=kql,
+            timespan=timedelta(hours=hours),
+        )
+
+        if response.status != LogsQueryStatus.SUCCESS:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Log Analytics query failed: {response.partial_error}",
+            )
+
+        logs = []
+        if response.tables:
+            table = response.tables[0]
+            col_names = [col.name for col in table.columns]
+            for row in table.rows:
+                entry = dict(zip(col_names, row))
+                logs.append({
+                    "time":    str(entry.get("PacificTime", "")),
+                    "level":   entry.get("Level", ""),
+                    "service": entry.get("Service", ""),
+                    "logger":  entry.get("Logger", ""),
+                    "message": entry.get("Message", ""),
+                })
+
+        logger.info(
+            "Admin fetched nomination logs",
+            extra={"nomination_id": nomination_id, "log_count": len(logs), "hours": hours},
+        )
+
+        return {
+            "nomination_id": nomination_id,
+            "hours":         hours,
+            "log_count":     len(logs),
+            "logs":          logs,
+            "ingestion_note": "Log Analytics has a ~2 min ingestion delay. Recent nominations may show incomplete results.",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to query nomination logs", extra={"nomination_id": nomination_id})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Log query failed: {str(exc)}",
+        )

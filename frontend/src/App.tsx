@@ -19,6 +19,7 @@ import { useImpersonation } from './contexts/ImpersonationContext';
 import { useTenantConfig } from './contexts/TenantConfigContext';
 import { getAccessToken } from './services/api';
 import { warmupDemoDatabase } from './services/demoWarmup';
+import { NominationLogsDrawer } from './components/NominationLogsDrawer';
 
 // Types matching your backend
 interface User {
@@ -144,6 +145,7 @@ const AwardNominationApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics'>('nominate');
   const [isHRBP, setIsHRBP] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [logsNominationId, setLogsNominationId] = useState<number | null>(null);
 
   // Nomination form state
   const [selectedBeneficiary, setSelectedBeneficiary] = useState('');
@@ -647,9 +649,15 @@ const AwardNominationApp: React.FC = () => {
                             {nom.CategoryDescription}
                           </span>
                         ) : <span />}
-                        <p style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all' }}>
-                          #{nom.NominationId}
-                        </p>
+                        {isAdmin && (
+                          <p
+                            style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', cursor: 'pointer' }}
+                            onClick={() => setLogsNominationId(nom.NominationId)}
+                            title="View logs for this nomination"
+                          >
+                            #{nom.NominationId}
+                          </p>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -696,9 +704,15 @@ const AwardNominationApp: React.FC = () => {
                             {nom.CategoryDescription}
                           </span>
                         ) : <span />}
-                        <p style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all' }}>
-                          #{nom.NominationId}
-                        </p>
+                        {isAdmin && (
+                          <p
+                            style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', cursor: 'pointer' }}
+                            onClick={() => setLogsNominationId(nom.NominationId)}
+                            title="View logs for this nomination"
+                          >
+                            #{nom.NominationId}
+                          </p>
+                        )}
                       </div>
                       <div className="flex space-x-3">
                         <button
@@ -736,6 +750,10 @@ const AwardNominationApp: React.FC = () => {
             </div>
           )}
         </div>
+        <NominationLogsDrawer
+          nominationId={logsNominationId}
+          onClose={() => setLogsNominationId(null)}
+        />
       </AuthenticatedTemplate>
     </div>
   );
