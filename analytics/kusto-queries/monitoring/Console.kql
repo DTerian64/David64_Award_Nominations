@@ -1,0 +1,13 @@
+ContainerAppConsoleLogs_CL
+| where Log_s has "App_Log:"
+| where Log_s has "13700"
+| extend d = parse_json(Log_s)
+| extend
+    PacificTime = datetime_utc_to_local(todatetime(d.timestamp), 'US/Pacific'),
+    Level       = tostring(d.level),
+    Service     = ContainerAppName_s,
+    Logger      = tostring(d.logger),
+    Message     = tostring(d.message),
+    NominationId = toint(d.nomination_id)
+| project PacificTime, Level, Service, Logger, Message, NominationId
+| order by PacificTime asc

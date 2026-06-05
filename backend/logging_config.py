@@ -57,7 +57,10 @@ class _ExtrasToMessageFilter(logging.Filter):
         }
         if extras:
             try:
-                record.msg = f"{record.msg} {json.dumps(extras, default=str)}"
+                # Call getMessage() FIRST so any % args are substituted before
+                # we clear record.args. Otherwise "event='%s'" stays unformatted.
+                formatted = record.getMessage()
+                record.msg = f"{formatted} {json.dumps(extras, default=str)}"
                 record.args = None
             except Exception:
                 pass  # Never let the filter break logging
