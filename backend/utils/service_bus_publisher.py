@@ -30,6 +30,7 @@ import uuid
 from azure.identity.aio import DefaultAzureCredential
 from azure.servicebus.aio import ServiceBusClient
 from azure.servicebus import ServiceBusMessage
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +86,17 @@ async def publish_event(
         body.update(extra)
     payload = json.dumps(body).encode("utf-8")
 
+    # Inject W3C TraceContext so downstream consumers (integrity-check,
+    # auxiliary) can link their spans back to this HTTP request's trace.
+    # If no active span exists (e.g. OTel not configured), inject() is a no-op.
+    props: dict = {"event_type": event_type}
+    TraceContextTextMapPropagator().inject(props)
+
     msg = ServiceBusMessage(
         payload,
         message_id=str(uuid.uuid4()),
         content_type="application/json",
-        application_properties={"event_type": event_type},
+        application_properties=props,
     )
 
     # Pass managed_identity_client_id explicitly so IMDS resolves the correct

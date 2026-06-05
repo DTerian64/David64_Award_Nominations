@@ -34,6 +34,8 @@ from azure.identity import DefaultAzureCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
 from dotenv import load_dotenv
+from opentelemetry import context as otel_context
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from handler import handle
 
@@ -176,6 +178,17 @@ def main() -> None:
                             )
                             continue
 
+                        # Restore the OTel trace context published by the
+                        # backend so all spans emitted during handle() are
+                        # linked as children of the originating HTTP request.
+                        carrier = {
+                            k: v for k, v in
+                            (message.application_properties or {}).items()
+                            if isinstance(k, str)
+                        }
+                        parent_ctx = TraceContextTextMapPropagator().extract(carrier)
+                        otel_token = otel_context.attach(parent_ctx)
+
                         try:
                             handle(message_id, payload)
                             receiver.complete_message(message)
@@ -187,6 +200,8 @@ def main() -> None:
                                 exc_info=True,
                             )
                             receiver.abandon_message(message)
+                        finally:
+                            otel_context.detach(otel_token)
 
                     finally:
                         _current_message_id.reset(_mid_token)

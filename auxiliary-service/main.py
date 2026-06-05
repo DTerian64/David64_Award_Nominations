@@ -34,6 +34,8 @@ from contextvars import ContextVar
 from azure.identity import DefaultAzureCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
+from opentelemetry import context as otel_context
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from dispatcher import dispatch
 
@@ -234,6 +236,18 @@ def main() -> None:
                             )
                             continue
 
+                        # Restore the OTel trace context published by the
+                        # upstream service (backend or integrity-check) so
+                        # all spans emitted during dispatch are linked as
+                        # children of the originating trace in App Insights.
+                        carrier = {
+                            k: v for k, v in
+                            (message.application_properties or {}).items()
+                            if isinstance(k, str)
+                        }
+                        parent_ctx = TraceContextTextMapPropagator().extract(carrier)
+                        otel_token = otel_context.attach(parent_ctx)
+
                         try:
                             result = dispatch(message_id, payload)
                             receiver.complete_message(message)
@@ -252,8 +266,9 @@ def main() -> None:
                             receiver.abandon_message(message)
 
                     finally:
-                        # Always clear the message_id context, even on exception,
-                        # so the next message starts with a clean logging context.
+                        # Always clear both contexts, even on exception,
+                        # so the next message starts clean.
+                        otel_context.detach(otel_token)
                         _current_message_id.reset(_mid_token)
 
     logger.info("Auxiliary worker shut down cleanly")

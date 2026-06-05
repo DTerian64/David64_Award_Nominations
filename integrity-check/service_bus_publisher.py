@@ -18,6 +18,7 @@ import os
 import uuid
 
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 logger = logging.getLogger("auxiliary.service_bus_publisher")
 
@@ -45,11 +46,17 @@ def publish_event(
         body.update(extra)
 
     payload = json.dumps(body).encode("utf-8")
-    msg     = ServiceBusMessage(
+
+    # Propagate the current trace context so auxiliary-service can link its
+    # spans (approver email, HRBP alert) back to the originating nomination request.
+    props: dict = {"event_type": event_type}
+    TraceContextTextMapPropagator().inject(props)
+
+    msg = ServiceBusMessage(
         payload,
         message_id=str(uuid.uuid4()),
         content_type="application/json",
-        application_properties={"event_type": event_type},
+        application_properties=props,
     )
 
     if _STORAGE_KEY:

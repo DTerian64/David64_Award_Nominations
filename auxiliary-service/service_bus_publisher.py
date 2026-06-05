@@ -18,6 +18,7 @@ import os
 import uuid
 
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 logger = logging.getLogger("auxiliary.service_bus_publisher")
 
@@ -45,11 +46,19 @@ def publish_event(
         body.update(extra)
 
     payload = json.dumps(body).encode("utf-8")
-    msg     = ServiceBusMessage(
+
+    # Propagate the current OTel trace context so downstream consumers
+    # (integrity-check, other auxiliary handlers) can create child spans
+    # linked back to the originating trace — enabling end-to-end tracing
+    # across Service Bus boundaries in Application Insights.
+    carrier: dict[str, str] = {}
+    TraceContextTextMapPropagator().inject(carrier)
+
+    msg = ServiceBusMessage(
         payload,
         message_id=str(uuid.uuid4()),
         content_type="application/json",
-        application_properties={"event_type": event_type},
+        application_properties={"event_type": event_type, **carrier},
     )
 
     if _STORAGE_KEY:
