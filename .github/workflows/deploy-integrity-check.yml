@@ -70,11 +70,15 @@ jobs:
           --name ${{ vars.ACR_NAME }} \
           --query "passwords[0].value" -o tsv)
 
+        if [ -z "$ACR_PASSWORD" ]; then
+          echo "::error::ACR password is empty — check that admin credentials are enabled on ${{ vars.ACR_NAME }}"
+          exit 1
+        fi
+
         az containerapp secret set \
           --name ${{ vars.CONTAINER_APP_INTEGRITY_CHECK }} \
           --resource-group ${{ vars.RESOURCE_GROUP }} \
-          --secrets \
-            "${{ vars.ACR_SECRET_NAME }}=${ACR_PASSWORD}"
+          --secrets "${{ vars.ACR_SECRET_NAME }}=${ACR_PASSWORD}"
 
     # ------------------------------------------------------------------
     # Deploy — update the container app to the new SHA-tagged image.
