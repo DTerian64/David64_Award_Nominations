@@ -81,9 +81,9 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
     } finally {
       setLoading(false);
     }
-  }, [nominationId, hours]);
+  }, [nominationId]);
 
-  // Fetch whenever the drawer opens or hours changes.
+  // Fetch whenever the drawer opens.
   useEffect(() => {
     if (nominationId !== null) fetchLogs();
   }, [fetchLogs]);
