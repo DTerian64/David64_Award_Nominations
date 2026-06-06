@@ -14,8 +14,10 @@ load_dotenv()
 
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, Response
+from fastapi import FastAPI, Depends, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Import authentication functions from auth.py
 from auth import require_role
@@ -153,6 +155,30 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600,
 )
+
+# ── Validation error handler ─────────────────────────────────────────────────
+# FastAPI's default 422 response wraps Pydantic errors as an array:
+#   { "detail": [{ "loc": [...], "msg": "...", "type": "..." }, ...] }
+# The frontend's apiCall() does `errorData.detail.toString()` which turns an
+# array into "[object Object]".  This handler flattens it to a plain string so
+# every error response has a consistent `{ "detail": "<string>" }` shape.
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    errors = exc.errors()
+    if errors:
+        # Prefer the human-readable 'msg' from the first failing field.
+        # e.g. "String should have at least 10 characters"
+        msg = errors[0].get("msg", "Invalid request")
+        # Strip the Pydantic "Value error, " prefix when present
+        if msg.lower().startswith("value error, "):
+            msg = msg[len("value error, "):]
+    else:
+        msg = "Invalid request"
+    return JSONResponse(status_code=422, content={"detail": msg})
+
 
 # ── Register routers ──────────────────────────────────────────────────────────
 app.include_router(demo_router)
