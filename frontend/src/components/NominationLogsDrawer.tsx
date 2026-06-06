@@ -56,9 +56,22 @@ function shortService(service: string): string {
 }
 
 export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose }) => {
-  const [data, setData]       = useState<LogsResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [data, setData]           = useState<LogsResponse | null>(null);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+
+  // Drive the open/close CSS transition from nominationId.
+  // requestAnimationFrame ensures the element is in the DOM before the
+  // transform kicks in, giving the browser a frame to register translateX(100%)
+  // before snapping to translateX(0) — without it the slide-in is skipped.
+  useEffect(() => {
+    if (nominationId !== null) {
+      requestAnimationFrame(() => setIsVisible(true));
+    } else {
+      setIsVisible(false);
+    }
+  }, [nominationId]);
 
   const fetchLogs = useCallback(async () => {
     if (nominationId === null) return;
@@ -95,18 +108,27 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  if (nominationId === null) return null;
-
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — fades in/out */}
       <div
         className="fixed inset-0 bg-black/30 z-40"
+        style={{
+          opacity:       isVisible ? 1 : 0,
+          transition:    'opacity 300ms ease-in-out',
+          pointerEvents: isVisible ? 'auto' : 'none',
+        }}
         onClick={onClose}
       />
 
-      {/* Drawer */}
-      <div className="fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50 flex flex-col">
+      {/* Drawer — slides in from the right */}
+      <div
+        className="fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50 flex flex-col"
+        style={{
+          transform:  isVisible ? 'translateX(0)' : 'translateX(100%)',
+          transition: 'transform 300ms ease-in-out',
+        }}
+      >
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">

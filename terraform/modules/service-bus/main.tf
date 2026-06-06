@@ -90,6 +90,17 @@ resource "azurerm_servicebus_subscription" "email_processor" {
   default_message_ttl = "P7D"
 }
 
+# Replace the auto-created $Default TrueFilter with a SQL filter that excludes
+# nomination.submitted — those are routed exclusively to the fraud-processor
+# subscription and handled by award-integrity-check. Auxiliary only needs the
+# downstream events (nomination.created, nomination.approved, etc.).
+resource "azurerm_servicebus_subscription_rule" "email_processor_filter" {
+  name            = "exclude-submitted"
+  subscription_id = azurerm_servicebus_subscription.email_processor.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "event_type != 'nomination.submitted'"
+}
+
 # ── Subscription — fraud-processor ────────────────────────────────────────────
 # Consumed exclusively by award-integrity-check-sandbox.
 # SQL filter ensures ONLY nomination.submitted events are delivered here.

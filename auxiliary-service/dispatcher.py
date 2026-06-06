@@ -97,12 +97,12 @@ def dispatch(message_id: str, payload: dict) -> str:
 
     handler_entry = HANDLERS.get(event_type)
     if handler_entry is None:
-        # nomination.submitted is routed to the fraud-processor subscription and
-        # handled by award-integrity-check-sandbox. The email-processor subscription
-        # still receives it (TrueFilter) — complete silently rather than dead-lettering.
-        logger.info(
-            "No handler for event_type='%s' — completing silently",
-            event_type,
+        # Unknown event type — complete silently rather than dead-lettering.
+        # The email-processor subscription filter excludes nomination.submitted
+        # (handled by integrity-check), so this should only fire for genuinely
+        # unrecognised event types.
+        logger.warning(
+            "No handler for event_type — completing silently",
             extra={"event_type": event_type, "nomination_id": nomination_id},
         )
         return "skipped"
