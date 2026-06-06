@@ -239,7 +239,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                         {extraEntries.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mt-2">
                             {extraEntries.map(([k, v]) => (
-                              <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-50 border border-gray-200 text-[10px] font-mono text-gray-600">
+                              <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-50 border border-gray-200 text-xs font-mono text-gray-600">
                                 <span className="text-gray-400">{k}</span>
                                 <span className="text-gray-800">
                                   {Array.isArray(v) ? (v.length === 0 ? '[]' : v.join(', ')) : String(v)}
