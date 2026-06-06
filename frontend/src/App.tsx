@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, CheckCircle, Clock, Award, BarChart3, ShieldAlert } from 'lucide-react';
+import { CheckCircle, Clock, Award, BarChart3, ShieldAlert } from 'lucide-react';
+import { Toast } from './components/Toast';
 import {
   AuthenticatedTemplate,
   UnauthenticatedTemplate,
@@ -434,18 +435,10 @@ const AwardNominationApp: React.FC = () => {
         </header>
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
-          {submitStatus && (
-            <div className={`mb-4 p-4 rounded-lg flex items-center ${
-              submitStatus.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
-            }`}>
-              {submitStatus.type === 'success' ? (
-                <CheckCircle className="w-5 h-5 mr-2" />
-              ) : (
-                <AlertCircle className="w-5 h-5 mr-2" />
-              )}
-              {submitStatus.message}
-            </div>
-          )}
+          <Toast
+            toast={submitStatus}
+            onDismiss={() => setSubmitStatus(null)}
+          />
 
           {/* Tab bar */}
           <div className="bg-white rounded-lg shadow-sm p-1 flex space-x-1">
