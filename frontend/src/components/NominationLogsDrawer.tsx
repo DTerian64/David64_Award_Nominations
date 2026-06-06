@@ -41,10 +41,26 @@ const LEVEL_STYLES: Record<string, string> = {
   CRITICAL: 'bg-red-100 text-red-900 font-bold',
 };
 
-// Strip the "App_Log: " prefix and the trailing JSON extras blob for display.
-// The extras are already shown as structured fields; the message alone is cleaner.
-function cleanMessage(raw: string): string {
-  return raw.replace(/^App_Log:\s*/, '').replace(/\s*\{.*\}$/, '').trim();
+// Fields too noisy or redundant to show as extras tags.
+const SKIP_EXTRAS = new Set(['nomination_id', 'message_id', 'body', 'NominationId']);
+
+/**
+ * Split a raw log message into the human-readable text and the structured
+ * extras blob that _ExtrasToMessageFilter appended.
+ *
+ * Raw format:  "App_Log: Fraud assessment complete {"fraud_score": 0.12, ...}"
+ * Returns:     { text: "Fraud assessment complete", extras: { fraud_score: 0.12, ... } }
+ */
+function parseMessage(raw: string): { text: string; extras: Record<string, unknown> } {
+  const stripped = raw.replace(/^App_Log:\s*/, '');
+  const braceIdx = stripped.indexOf(' {');
+  if (braceIdx === -1) return { text: stripped.trim(), extras: {} };
+  try {
+    const extras = JSON.parse(stripped.slice(braceIdx).trim());
+    return { text: stripped.slice(0, braceIdx).trim(), extras };
+  } catch {
+    return { text: stripped.trim(), extras: {} };
+  }
 }
 
 // Shorten service container name for display: "award-api-primary-sandbox" → "backend"
@@ -194,28 +210,47 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {data.logs.map((log, i) => (
-                    <div key={i} className="border border-gray-100 rounded-lg p-3 text-xs">
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        {/* Timestamp */}
-                        <span className="text-gray-400 font-mono whitespace-nowrap">
-                          {log.time.replace('T', ' ').slice(0, 19)}
-                        </span>
-                        {/* Level badge */}
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${LEVEL_STYLES[log.level] ?? 'bg-gray-100 text-gray-600'}`}>
-                          {log.level}
-                        </span>
-                        {/* Service badge */}
-                        <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px]">
-                          {shortService(log.service)}
-                        </span>
+                  {data.logs.map((log, i) => {
+                    const { text, extras } = parseMessage(log.message);
+                    const extraEntries = Object.entries(extras).filter(
+                      ([k]) => !SKIP_EXTRAS.has(k)
+                    );
+                    return (
+                      <div key={i} className="border border-gray-100 rounded-lg p-3 text-xs">
+                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                          {/* Timestamp */}
+                          <span className="text-gray-400 font-mono whitespace-nowrap">
+                            {log.time.replace('T', ' ').slice(0, 19)}
+                          </span>
+                          {/* Level badge */}
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${LEVEL_STYLES[log.level] ?? 'bg-gray-100 text-gray-600'}`}>
+                            {log.level}
+                          </span>
+                          {/* Service badge */}
+                          <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px]">
+                            {shortService(log.service)}
+                          </span>
+                        </div>
+                        {/* Message */}
+                        <p className="text-gray-800 leading-relaxed break-words">
+                          {text}
+                        </p>
+                        {/* Structured extras — fraud score, risk level, etc. */}
+                        {extraEntries.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {extraEntries.map(([k, v]) => (
+                              <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-50 border border-gray-200 text-[10px] font-mono text-gray-600">
+                                <span className="text-gray-400">{k}</span>
+                                <span className="text-gray-800">
+                                  {Array.isArray(v) ? (v.length === 0 ? '[]' : v.join(', ')) : String(v)}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      {/* Message */}
-                      <p className="text-gray-800 leading-relaxed break-words">
-                        {cleanMessage(log.message)}
-                      </p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </>
