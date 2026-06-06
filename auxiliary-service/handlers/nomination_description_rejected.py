@@ -45,6 +45,7 @@ def handle(payload: dict) -> None:
         check=check,
         reason=reason,
         category_description=details.get("category_description"),
+        nomination_description=details.get("description"),
     )
     email_client.send_email(
         to_email=details["nominator_email"],

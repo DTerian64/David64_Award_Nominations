@@ -631,13 +631,14 @@ def render_hrbp_sla_breach(
 
 
 def render_description_rejected(
-    nominator_name:       str,
-    beneficiary_name:     str,
-    amount:               float,
-    currency:             str,
-    check:                str,
-    reason:               str,
-    category_description: str | None = None,
+    nominator_name:        str,
+    beneficiary_name:      str,
+    amount:                float,
+    currency:              str,
+    check:                 str,
+    reason:                str,
+    category_description:  str | None = None,
+    nomination_description: str | None = None,
 ) -> str:
     """
     Nominator notification — nomination auto-rejected by the description
@@ -678,6 +679,12 @@ def render_description_rejected(
                 {category_item}
             </ul>
         </div>
+
+        {f'''<div style="background:#f4f6f8;border:1px solid #d0d7de;border-radius:8px;
+                    padding:20px;margin-bottom:20px;">
+            <h3 style="color:#2c3e50;margin-top:0;">Your Original Description</h3>
+            <p style="font-size:14px;white-space:pre-wrap;margin:0;">{nomination_description}</p>
+        </div>''' if nomination_description else ''}
 
         <div style="background:#fff8f0;border-left:4px solid #e67e22;
                     padding:15px;border-radius:4px;margin-bottom:20px;">
