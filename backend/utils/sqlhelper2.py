@@ -17,10 +17,12 @@ once at startup (or use Alembic migrations) to create/update the schema.
 Public API is identical to sqlhelper.py so callers need zero changes.
 """
 
+import json
 import os
 import struct
 from contextlib import contextmanager
-from typing import Optional, Tuple, List
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
 from urllib.parse import quote_plus
 
 import logging
@@ -484,6 +486,73 @@ def get_nomination_categories(tenant_id: int) -> List[Tuple]:
             {"tid": tenant_id},
         ).fetchall()
         return rows
+
+
+@dataclass
+class DescCheckConfig:
+    """
+    Per-tenant description quality thresholds, read from
+    dbo.Tenants.desc_check_config (NVARCHAR(MAX) JSON).
+
+    Used by the nomination submission endpoint for synchronous API-layer
+    validation (word/char count, blocklist phrases) before the nomination
+    enters the DB.  The integrity-check pipeline has its own copy of this
+    dataclass for the async semantic checks.
+
+    NULL column → all defaults (English, word-count based).
+    """
+    embed_model:                    str       = "all-MiniLM-L6-v2"
+    use_char_count:                 bool      = False
+    min_char_count:                 int       = 12
+    min_word_count:                 int       = 3
+    category_alignment_threshold:   float     = 0.15
+    duplicate_similarity_threshold: float     = 0.85
+    boilerplate_phrases:            List[str] = field(default_factory=list)
+
+
+def get_tenant_desc_check_config(tenant_id: int) -> DescCheckConfig:
+    """
+    Load desc_check_config JSON from dbo.Tenants and return a DescCheckConfig.
+
+    Missing keys fall back to dataclass defaults.  A NULL column or any JSON
+    parse error returns a fully-defaulted config — never raises.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT desc_check_config FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+
+    raw = row[0] if row else None
+    if not raw:
+        return DescCheckConfig()
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Invalid JSON in desc_check_config for tenant %d — using defaults",
+            tenant_id,
+        )
+        return DescCheckConfig()
+
+    return DescCheckConfig(
+        embed_model=data.get("embed_model", DescCheckConfig.embed_model),
+        use_char_count=bool(data.get("use_char_count", DescCheckConfig.use_char_count)),
+        min_char_count=int(data.get("min_char_count", DescCheckConfig.min_char_count)),
+        min_word_count=int(data.get("min_word_count", DescCheckConfig.min_word_count)),
+        category_alignment_threshold=float(
+            data.get("category_alignment_threshold",
+                     DescCheckConfig.category_alignment_threshold)
+        ),
+        duplicate_similarity_threshold=float(
+            data.get("duplicate_similarity_threshold",
+                     DescCheckConfig.duplicate_similarity_threshold)
+        ),
+        boilerplate_phrases=[
+            p.lower() for p in data.get("boilerplate_phrases", [])
+        ],
+    )
 
 
 # ===========================================================================

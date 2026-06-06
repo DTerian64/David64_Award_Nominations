@@ -14,6 +14,7 @@ GET  /api/nominations/email-action                 — token-based email approve
 
 import logging
 import json as _json
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -201,6 +202,50 @@ async def create_nomination(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"CategoryId {nomination.CategoryId} is not valid for this tenant",
             )
+
+    # ── Description quality validation (API-layer, synchronous) ──────────────
+    # Structural checks only — no embedding model involved.
+    # Semantic checks (category alignment, duplicate detection) run async in
+    # the integrity-check pipeline after the nomination is saved.
+    _desc_cfg = sqlhelper.get_tenant_desc_check_config(tenant_id)
+    _desc     = nomination.NominationDescription.strip()
+
+    # Length gate — word count for Western languages, char count for CJK
+    if _desc_cfg.use_char_count:
+        if len(_desc) < _desc_cfg.min_char_count:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Nomination description is too short — please provide at least "
+                    f"{_desc_cfg.min_char_count} characters that describe what "
+                    f"this person did and why it was impactful."
+                ),
+            )
+    else:
+        _word_count = len(re.findall(r"\S+", _desc))
+        if _word_count < _desc_cfg.min_word_count:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Nomination description is too short — please use at least "
+                    f"{_desc_cfg.min_word_count} words to describe what this person "
+                    f"did and why it was impactful."
+                ),
+            )
+
+    # Boilerplate phrase check — exact match against lowercased description
+    if _desc_cfg.boilerplate_phrases:
+        _desc_lower = _desc.lower()
+        for _phrase in _desc_cfg.boilerplate_phrases:
+            if _phrase in _desc_lower:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Nomination description appears too generic. "
+                        f"Please describe a specific action or achievement — "
+                        f"what did this person do, and what was the impact?"
+                    ),
+                )
 
     # ── Save nomination — status starts as Submitted ──────────────────────────
     # Fraud detection runs asynchronously in the auxiliary service after the

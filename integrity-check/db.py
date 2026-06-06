@@ -11,6 +11,9 @@ Focused subset of queries needed by handler.py and fraud_check.py:
     get_nomination_details()        — full nomination for fraud feature engineering
     set_nomination_status()         — move to Pending / PendingHRBPReview
 
+  Tenant config:
+    get_tenant_desc_check_config()  — per-tenant description check thresholds
+
   Fraud history lookups (called by fraud_check.py):
     get_nominator_history()         — past nominations sent by a user
     get_beneficiary_history()       — past nominations received by a user
@@ -18,17 +21,20 @@ Focused subset of queries needed by handler.py and fraud_check.py:
     check_reciprocal_nomination()   — has B ever nominated A?
     get_pair_nomination_count()     — how many times has A nominated B?
     get_beneficiary_descriptions()  — past descriptions written BY the beneficiary
+    get_nominator_descriptions()    — past descriptions written BY the nominator
 
   Fraud score persistence:
     save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
     save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
 """
 
+import json
 import logging
 import os
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 import pyodbc
 
@@ -59,6 +65,100 @@ def _get_conn():
         yield conn
     finally:
         conn.close()
+
+
+# ── Per-tenant description check config ──────────────────────────────────────
+
+@dataclass
+class DescCheckConfig:
+    """
+    Per-tenant thresholds for description quality checks.
+
+    Populated from dbo.Tenants.desc_check_config (NVARCHAR(MAX) JSON).
+    NULL column → all fields take their defaults (English, word-count based).
+
+    Fields
+    ------
+    embed_model
+        Sentence-transformer model name used for semantic similarity.
+        'all-MiniLM-L6-v2'                       — English-optimised (default)
+        'paraphrase-multilingual-MiniLM-L12-v2'  — multilingual (CJK, etc.)
+
+    use_char_count
+        When True, length gate uses character count (appropriate for CJK
+        languages where one character carries full-word meaning).
+
+    min_char_count / min_word_count
+        Minimum length thresholds — enforced at the API Pydantic layer, not
+        the pipeline, but stored here so the API can read the same config.
+
+    category_alignment_threshold
+        Minimum cosine similarity between description and category embeddings.
+        Descriptions scoring below this are auto-rejected (Check A).
+        0.0 disables the check — correct for tenants with no categories.
+
+    duplicate_similarity_threshold
+        Cosine similarity above which a description is considered a near-
+        duplicate of the nominator's own prior descriptions.  Triggers a
+        warning flag routed to HRBP review (Check B), not an auto-reject.
+
+    boilerplate_phrases
+        Lowercased phrases that trigger an API-layer 422.  Language-specific.
+    """
+    embed_model:                    str       = "all-MiniLM-L6-v2"
+    use_char_count:                 bool      = False
+    min_char_count:                 int       = 12
+    min_word_count:                 int       = 3
+    category_alignment_threshold:   float     = 0.15
+    duplicate_similarity_threshold: float     = 0.85
+    boilerplate_phrases:            List[str] = field(default_factory=list)
+
+
+def get_tenant_desc_check_config(tenant_id: int) -> DescCheckConfig:
+    """
+    Load desc_check_config JSON from dbo.Tenants and return a DescCheckConfig.
+
+    Missing keys fall back to dataclass defaults, so partial configs are safe.
+    A NULL column (or any parse error) returns a fully-defaulted config.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT desc_check_config FROM dbo.Tenants WHERE TenantId = ?",
+            (tenant_id,),
+        )
+        row = cursor.fetchone()
+
+    raw = row[0] if row else None
+    if not raw:
+        return DescCheckConfig()
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Invalid JSON in desc_check_config for tenant %d — using defaults",
+            tenant_id,
+        )
+        return DescCheckConfig()
+
+    return DescCheckConfig(
+        embed_model=data.get("embed_model", DescCheckConfig.embed_model),
+        use_char_count=bool(data.get("use_char_count", DescCheckConfig.use_char_count)),
+        min_char_count=int(data.get("min_char_count", DescCheckConfig.min_char_count)),
+        min_word_count=int(data.get("min_word_count", DescCheckConfig.min_word_count)),
+        category_alignment_threshold=float(
+            data.get("category_alignment_threshold",
+                     DescCheckConfig.category_alignment_threshold)
+        ),
+        duplicate_similarity_threshold=float(
+            data.get("duplicate_similarity_threshold",
+                     DescCheckConfig.duplicate_similarity_threshold)
+        ),
+        boilerplate_phrases=[
+            p.lower() for p in data.get("boilerplate_phrases", [])
+        ],
+    )
 
 
 # ── Nomination details ────────────────────────────────────────────────────────
@@ -205,6 +305,26 @@ def get_beneficiary_descriptions(beneficiary_id: int) -> list[str]:
               AND  NominationDescription  <> ''
             ORDER  BY NominationDate DESC
         """, (beneficiary_id,))
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_nominator_descriptions(nominator_id: int) -> list[str]:
+    """
+    Past descriptions written BY this nominator — capped at 50.
+
+    Used by description_check.py (Check B) to detect near-duplicate
+    descriptions submitted by the same person across different nominations.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT TOP 50 NominationDescription
+            FROM   dbo.Nominations
+            WHERE  NominatorId            = ?
+              AND  NominationDescription IS NOT NULL
+              AND  NominationDescription  <> ''
+            ORDER  BY NominationDate DESC
+        """, (nominator_id,))
         return [row[0] for row in cursor.fetchall()]
 
 

@@ -630,6 +630,79 @@ def render_hrbp_sla_breach(
     """
 
 
+def render_description_rejected(
+    nominator_name:       str,
+    beneficiary_name:     str,
+    amount:               float,
+    currency:             str,
+    check:                str,
+    reason:               str,
+    category_description: str | None = None,
+) -> str:
+    """
+    Nominator notification — nomination auto-rejected by the description
+    quality pipeline (Check A: category alignment).
+
+    'reason' is the human-readable explanation from description_check.py,
+    already including a resubmission suggestion.
+    """
+    formatted_amount = _fmt(amount, currency)
+    category_item = (
+        f"<li><strong>Category:</strong> {category_description}</li>"
+        if category_description else ""
+    )
+    check_label = {
+        "category_alignment": "Description does not match category",
+    }.get(check, "Description quality check failed")
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+        <div style="background:#f8f9fa;border-radius:10px;padding:30px;margin-bottom:20px;">
+            <h2 style="color:#e67e22;margin-top:0;">Nomination Requires a Better Description</h2>
+            <p style="font-size:16px;">Dear <strong>{nominator_name}</strong>,</p>
+            <p style="font-size:16px;">
+                Your nomination for <strong>{beneficiary_name}</strong>
+                ({formatted_amount}) was not accepted because the description
+                did not meet our quality requirements.
+            </p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;
+                    padding:20px;margin-bottom:20px;">
+            <h3 style="color:#2c3e50;margin-top:0;">📋 Nomination Details</h3>
+            <ul style="padding-left:20px;">
+                <li><strong>Nominee:</strong> {beneficiary_name}</li>
+                <li><strong>Award Amount:</strong> {formatted_amount}</li>
+                {category_item}
+            </ul>
+        </div>
+
+        <div style="background:#fff8f0;border-left:4px solid #e67e22;
+                    padding:15px;border-radius:4px;margin-bottom:20px;">
+            <p style="margin:0 0 8px 0;font-size:14px;">
+                <strong>⚠ Issue: {check_label}</strong>
+            </p>
+            <p style="margin:0;font-size:14px;">{reason}</p>
+        </div>
+
+        <p style="font-size:15px;">
+            You are welcome to resubmit this nomination with an improved description.
+            A good description explains <em>what</em> the person did and
+            <em>why</em> it was impactful — specific examples make a strong case.
+        </p>
+
+        <hr style="border:none;border-top:1px solid #e0e0e0;margin:30px 0;">
+        <p style="color:#7f8c8d;font-size:12px;text-align:center;">
+            This is an automated message from the Award Nomination System.<br>
+            Please do not reply to this email.
+        </p>
+    </body>
+    </html>
+    """
+
+
 def render_nomination_rejected(
     beneficiary_name: str,
     dollar_amount: float,

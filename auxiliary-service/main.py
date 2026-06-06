@@ -156,6 +156,7 @@ def main() -> None:
                     # (db, dispatcher, handlers) — no need to pass it through
                     # function args or add it to every extra={} call.
                     _mid_token = _current_message_id.set(message_id)
+                    otel_token = None   # assigned after JSON decode; guard finally
                     try:
                         # Reassemble body — handle both AMQP encodings:
                         #   data section  (bytes) → publisher used .encode("utf-8")
@@ -226,7 +227,10 @@ def main() -> None:
                     finally:
                         # Always clear both contexts, even on exception,
                         # so the next message starts clean.
-                        otel_context.detach(otel_token)
+                        # otel_token is None when JSON decode failed (dead-lettered
+                        # before the OTel attach call) — nothing to detach in that case.
+                        if otel_token is not None:
+                            otel_context.detach(otel_token)
                         _current_message_id.reset(_mid_token)
 
     logger.info("Auxiliary worker shut down cleanly")

@@ -105,23 +105,27 @@ def _stream_from_blob(tenant_id: int) -> dict | None:
         return None
 
 
-# ── Embedding model singleton ─────────────────────────────────────────────────
+# ── Embedding model cache (keyed by model name) ───────────────────────────────
+# Multiple tenants may use different sentence-transformer models (e.g.
+# 'all-MiniLM-L6-v2' for English, 'paraphrase-multilingual-MiniLM-L12-v2'
+# for Korean/Japanese/etc.).  Each model is loaded once and cached for the
+# process lifetime.  description_check.py delegates here so both modules
+# share the same loaded instances.
 
-_embed_model      = None
-_embed_model_lock = threading.Lock()
+_embed_models:      dict[str, object] = {}
+_embed_models_lock = threading.Lock()
 
 
 def _get_embed_model(model_name: str = "all-MiniLM-L6-v2"):
-    global _embed_model
-    if _embed_model is not None:
-        return _embed_model
-    with _embed_model_lock:
-        if _embed_model is None:
+    if model_name in _embed_models:
+        return _embed_models[model_name]
+    with _embed_models_lock:
+        if model_name not in _embed_models:
             from sentence_transformers import SentenceTransformer
             logger.info("Loading sentence-transformer '%s' …", model_name)
-            _embed_model = SentenceTransformer(model_name)
-            logger.info("Sentence-transformer loaded.")
-    return _embed_model
+            _embed_models[model_name] = SentenceTransformer(model_name)
+            logger.info("Sentence-transformer '%s' loaded.", model_name)
+    return _embed_models[model_name]
 
 
 # ── Feature engineering ───────────────────────────────────────────────────────

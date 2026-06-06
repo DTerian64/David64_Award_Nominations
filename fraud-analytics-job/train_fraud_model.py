@@ -39,9 +39,12 @@ from dotenv import load_dotenv
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
 
-# Sentence-transformer model used for NominationDescription embeddings.
-# Stored in the pkl so fraud_ml.py loads the same model at inference time.
-EMBED_MODEL_NAME = 'all-MiniLM-L6-v2'
+# Default sentence-transformer model for English tenants.
+# Per-tenant overrides are read from dbo.Tenants.desc_check_config at
+# training time and stored in the pkl so fraud_check.py loads the same
+# model at inference time (e.g. 'paraphrase-multilingual-MiniLM-L12-v2'
+# for Korean / Japanese / other non-English tenants).
+DEFAULT_EMBED_MODEL_NAME = 'all-MiniLM-L6-v2'
 
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
@@ -134,6 +137,39 @@ def get_tenants(conn) -> list:
         "SELECT TenantId, TenantName FROM dbo.Tenants ORDER BY TenantId", conn
     )
     return list(df.itertuples(index=False, name=None))
+
+
+def get_tenant_embed_model(tenant_id: int) -> str:
+    """
+    Read the sentence-transformer model name from dbo.Tenants.desc_check_config.
+
+    Falls back to DEFAULT_EMBED_MODEL_NAME when the column is NULL, the JSON
+    is malformed, or the 'embed_model' key is absent.  This ensures the model
+    stored in the pkl always matches what fraud_check.py will load at inference.
+    """
+    import json as _json
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT desc_check_config FROM dbo.Tenants WHERE TenantId = ?",
+            (tenant_id,),
+        )
+        row = cursor.fetchone()
+    finally:
+        conn.close()
+
+    if not row or not row[0]:
+        return DEFAULT_EMBED_MODEL_NAME
+    try:
+        data = _json.loads(row[0])
+        return data.get("embed_model", DEFAULT_EMBED_MODEL_NAME)
+    except (_json.JSONDecodeError, TypeError):
+        print(
+            f"[Tenant {tenant_id}] ⚠  Could not parse desc_check_config JSON — "
+            f"using default embed model '{DEFAULT_EMBED_MODEL_NAME}'."
+        )
+        return DEFAULT_EMBED_MODEL_NAME
 
 
 # ============================================================================
@@ -631,7 +667,9 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
 
     # Load embedding model once per training run (shared across all tenants
     # in the same process to avoid reloading the ~90 MB weights repeatedly).
-    embed_model = SentenceTransformer(EMBED_MODEL_NAME)
+    embed_model_name = get_tenant_embed_model(tenant_id)
+    print(f"[Tenant {tenant_id}]   Embed model: {embed_model_name}")
+    embed_model = SentenceTransformer(embed_model_name)
     df = add_semantic_features(df, embed_model)
 
     df, category_fraud_rate, global_fraud_rate = extract_features(df)
@@ -772,7 +810,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         'category_fraud_rate':  category_fraud_rate,
         'global_fraud_rate':    float(global_fraud_rate),
         # Sentence-transformer model name — fraud_ml.py loads the same model
-        'embed_model_name':     EMBED_MODEL_NAME,
+        'embed_model_name':     embed_model_name,
     }
 
     pkl_filename = OUTPUT_DIR / f"fraud_detection_model_tenant_{tenant_id}.pkl"

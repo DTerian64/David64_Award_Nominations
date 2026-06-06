@@ -39,6 +39,7 @@ from handlers import (
     payout_accepted,
     notification_requested,
     access_requested,
+    nomination_description_rejected,
     nomination_fraud_flagged,
     nomination_hrbp_approved,
     nomination_hrbp_rejected,
@@ -63,6 +64,8 @@ HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
     "notification.access_requested": access_requested.handle,
     # ── HRBP review workflow ──────────────────────────────────────────────────
     # Nomination held for HR review — email all HRBP users for the tenant.
+    # Description quality auto-reject — nominator email with reason + resubmit suggestion.
+    "nomination.description-rejected": nomination_description_rejected.handle,
     "nomination.fraud-flagged":    nomination_fraud_flagged.handle,
     # HRBP approved — email the nominator; backend also fires nomination.created
     # so the manager gets their approval request separately.
