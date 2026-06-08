@@ -382,13 +382,24 @@ resource "azurerm_key_vault_access_policy" "integrity_check" {
   depends_on = [module.key_vault, azurerm_user_assigned_identity.integrity_check]
 }
 
-# Monitoring Reader — backend (aca_primary) queries Log Analytics for the admin
+# Log Analytics Reader — both backend containers query Log Analytics for the admin
 # nomination-logs endpoint (/api/admin/nominations/{id}/logs).
-resource "azurerm_role_assignment" "aca_primary_monitoring_reader" {
+# Both primary and secondary need the role — Front Door load-balances between them
+# and either container may handle the request.
+# Requires Microsoft.OperationalInsights/workspaces/query/*/read — Log Analytics
+# Reader grants this; Monitoring Reader does not.
+resource "azurerm_role_assignment" "aca_primary_log_analytics_reader" {
   scope                = module.log_analytics.workspace_primary_id
-  role_definition_name = "Monitoring Reader"
+  role_definition_name = "Log Analytics Reader"
   principal_id         = azurerm_user_assigned_identity.aca_primary.principal_id
   depends_on           = [azurerm_user_assigned_identity.aca_primary, module.log_analytics]
+}
+
+resource "azurerm_role_assignment" "aca_secondary_log_analytics_reader" {
+  scope                = module.log_analytics.workspace_primary_id
+  role_definition_name = "Log Analytics Reader"
+  principal_id         = azurerm_user_assigned_identity.aca_secondary.principal_id
+  depends_on           = [azurerm_user_assigned_identity.aca_secondary, module.log_analytics]
 }
 
 # Blob Storage reader — Integrity Check needs to stream pkl files from ml-models
