@@ -46,6 +46,9 @@ export interface TenantConfig {
   currency: string;        // ISO 4217, e.g. "USD" | "KRW"
   theme:    TenantTheme;
   domain?:  string;        // canonical public hostname, e.g. "acme-awards.terian-services.com"
+  /** Tenant-specific award amount bounds (integer, denominated in tenant currency). */
+  min_award?: number;
+  max_award?: number;
   /** Custom nomination categories. Empty array = feature disabled for this tenant. */
   nomination_categories: NominationCategory[];
 }
@@ -162,11 +165,13 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
         }
 
         const merged: TenantConfig = {
-          locale:   raw.locale   ?? DEFAULT_CONFIG.locale,
-          currency: raw.currency ?? DEFAULT_CONFIG.currency,
-          theme:    raw.theme    ? { ...DEFAULT_CONFIG.theme, ...raw.theme }
-                                 : DEFAULT_CONFIG.theme,
-          domain:   raw.domain,
+          locale:    raw.locale   ?? DEFAULT_CONFIG.locale,
+          currency:  raw.currency ?? DEFAULT_CONFIG.currency,
+          theme:     raw.theme    ? { ...DEFAULT_CONFIG.theme, ...raw.theme }
+                                  : DEFAULT_CONFIG.theme,
+          domain:    raw.domain,
+          min_award: typeof raw.min_award === 'number' ? raw.min_award : undefined,
+          max_award: typeof raw.max_award === 'number' ? raw.max_award : undefined,
           nomination_categories: raw.nomination_categories ?? [],
         };
 
@@ -242,11 +247,10 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
     [config.locale, config.currency],
   );
 
-  // KRW minimum is conceptually different from USD, but since DollarAmount
-  // is stored as an integer and reflects whatever the admin configured, we
-  // keep the same numeric bounds and just display them in the tenant currency.
-  const minAmount = 50;
-  const maxAmount = 5000;
+  // Award amount bounds come from tenant config; fall back to application
+  // defaults (50 / 5000) when not configured so the app works out of the box.
+  const minAmount = config.min_award ?? 50;
+  const maxAmount = config.max_award ?? 5000;
 
   // Block rendering until config is resolved so there is no locale/theme flash
   if (isLoading) return null;

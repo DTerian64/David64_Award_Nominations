@@ -179,14 +179,30 @@ async def create_nomination(
 
     manager_name = f"{manager[0]} {manager[1]}"
 
-    # ── Currency (server-authoritative) ──────────────────────────────────────
-    _raw_cfg = sqlhelper.get_tenant_config(tenant_id)
-    _currency = "USD"
+    # ── Tenant config (currency + award limits) ───────────────────────────────
+    _raw_cfg    = sqlhelper.get_tenant_config(tenant_id)
+    _currency   = "USD"
+    _min_award  = 50
+    _max_award  = 5000
     if _raw_cfg:
         try:
-            _currency = _json.loads(_raw_cfg).get("currency", "USD")
+            _cfg       = _json.loads(_raw_cfg)
+            _currency  = _cfg.get("currency",   "USD")
+            _min_award = int(_cfg.get("min_award", 50))
+            _max_award = int(_cfg.get("max_award", 5000))
         except Exception:
             pass
+
+    # ── Award amount validation (server-authoritative) ────────────────────────
+    _amount = int(nomination.Amount)
+    if not (_min_award <= _amount <= _max_award):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Award amount must be between {_min_award} and {_max_award} "
+                f"{_currency} for this tenant."
+            ),
+        )
 
     # ── Category validation ───────────────────────────────────────────────────
     _categories = sqlhelper.get_nomination_categories(tenant_id)
