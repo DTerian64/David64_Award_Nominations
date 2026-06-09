@@ -1176,6 +1176,62 @@ def get_pair_nomination_count(nominator_id: int, beneficiary_id: int) -> int:
         return result[0] if result else 0
 
 
+def get_pair_nomination_history(
+    nominator_id: int,
+    beneficiary_id: int,
+    tenant_id: int,
+    exclude_nomination_id: int,
+) -> list[dict]:
+    """
+    Return all nominations from *nominator_id* to *beneficiary_id* within
+    *tenant_id*, excluding the nomination currently under HRBP review.
+
+    Used by GET /api/hrbp/nominations/{id}/pair-history so the reviewer can
+    see the full relationship history between this nominator/beneficiary pair.
+
+    Returns list of dicts ordered newest-first.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT
+                    n.NominationId,
+                    n.Amount,
+                    n.Currency,
+                    n.NominationDescription,
+                    n.NominationDate,
+                    n.Status,
+                    nc.category_description AS CategoryDescription
+                FROM  dbo.Nominations n
+                JOIN  dbo.Users u ON u.UserId = n.NominatorId
+                LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
+                WHERE n.NominatorId   = :nominator_id
+                  AND n.BeneficiaryId = :beneficiary_id
+                  AND u.TenantId      = :tenant_id
+                  AND n.NominationId != :exclude_id
+                ORDER BY n.NominationDate DESC
+            """),
+            {
+                "nominator_id":  nominator_id,
+                "beneficiary_id": beneficiary_id,
+                "tenant_id":     tenant_id,
+                "exclude_id":    exclude_nomination_id,
+            },
+        ).fetchall()
+        return [
+            {
+                "nomination_id":   r[0],
+                "amount":          r[1],
+                "currency":        r[2],
+                "description":     r[3],
+                "nomination_date": str(r[4]),
+                "status":          r[5],
+                "category":        r[6],
+            }
+            for r in rows
+        ]
+
+
 def get_overall_amount_stats(tenant_id: int) -> Tuple[float, float]:
     """
     Get mean and standard deviation of nomination amounts for a single tenant.
