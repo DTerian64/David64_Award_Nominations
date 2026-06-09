@@ -161,7 +161,107 @@ resource "azurerm_cdn_frontdoor_security_policy" "waf" {
         domain {
           cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_endpoint.endpoint.id
         }
+
+        # Apply WAF to legacy redirect domains so inbound traffic on old hostnames
+        # is inspected before the edge issues the 301 redirect.
+        dynamic "domain" {
+          for_each = azurerm_cdn_frontdoor_custom_domain.legacy
+          content {
+            cdn_frontdoor_domain_id = domain.value.id
+          }
+        }
       }
     }
   }
+}
+
+# ── Legacy domain redirects (terian-services.com → terianix.ai) ───────────────
+# Each entry in var.legacy_redirect_map:
+#   1. Registers the old hostname as an AFD custom domain (managed TLS cert).
+#   2. Uses the AFD Rules Engine to issue a 301 redirect to the mapped new
+#      hostname, preserving path and query string — no round-trip to origin.
+#
+# DNS prerequisite (managed in sandbox/main.tf):
+#   Each old subdomain CNAME must already point to the AFD endpoint hostname
+#   before `terraform apply`. Azure validates subdomain ownership via the CNAME;
+#   no separate _dnsauth TXT record is required for subdomains.
+#
+# NOTE: AFD TLS cert issuance can take up to 30 minutes. If validation times
+#   out on the first apply, re-run `terraform apply` after DNS has propagated.
+
+resource "azurerm_cdn_frontdoor_custom_domain" "legacy" {
+  for_each = var.legacy_redirect_map
+
+  # Name: alphanumeric only, derived from the subdomain label (e.g. "sandboxawards")
+  name                     = replace(split(".", each.key)[0], "-", "")
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd.id
+  host_name                = each.key
+
+  tls {
+    certificate_type    = "ManagedCertificate"
+    minimum_tls_version = "TLS12"
+  }
+}
+
+resource "azurerm_cdn_frontdoor_rule_set" "legacy_redirect" {
+  count                    = length(var.legacy_redirect_map) > 0 ? 1 : 0
+  name                     = "legacyredirect"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd.id
+}
+
+resource "azurerm_cdn_frontdoor_rule" "legacy_redirect" {
+  for_each = var.legacy_redirect_map
+
+  # Rule name: alphanumeric only (e.g. "redirectsandboxawards")
+  name                      = "redirect${replace(split(".", each.key)[0], "-", "")}"
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.legacy_redirect[0].id
+  # sort() keeps order deterministic across plan/apply cycles
+  order             = index(sort(keys(var.legacy_redirect_map)), each.key) + 1
+  behavior_on_match = "Stop"
+
+  conditions {
+    host_name_condition {
+      operator         = "Equal"
+      negate_condition = false
+      match_values     = [each.key]
+    }
+  }
+
+  actions {
+    url_redirect_action {
+      redirect_type        = "PermanentRedirect" # 301
+      redirect_protocol    = "Https"
+      destination_hostname = each.value          # e.g. "sandbox-awards.terianix.ai"
+      # destination_path and query_string omitted → AFD preserves originals
+    }
+  }
+
+  depends_on = [azurerm_cdn_frontdoor_rule_set.legacy_redirect]
+}
+
+resource "azurerm_cdn_frontdoor_route" "legacy_redirect" {
+  count = length(var.legacy_redirect_map) > 0 ? 1 : 0
+
+  name                          = "route-legacy-redirect"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.endpoint.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.api.id
+  cdn_frontdoor_origin_ids = [
+    azurerm_cdn_frontdoor_origin.primary.id,
+  ]
+  cdn_frontdoor_custom_domain_ids = [
+    for d in azurerm_cdn_frontdoor_custom_domain.legacy : d.id
+  ]
+  cdn_frontdoor_rule_set_ids = [azurerm_cdn_frontdoor_rule_set.legacy_redirect[0].id]
+
+  enabled                = true
+  forwarding_protocol    = "HttpsOnly"
+  https_redirect_enabled = false  # rules engine issues the redirect; disabling AFD's own HTTP→HTTPS avoids double-redirect
+  patterns_to_match      = ["/*"]
+  supported_protocols    = ["Http", "Https"]
+  link_to_default_domain = false
+
+  depends_on = [
+    azurerm_cdn_frontdoor_rule_set.legacy_redirect,
+    azurerm_cdn_frontdoor_custom_domain.legacy,
+  ]
 }

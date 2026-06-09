@@ -268,3 +268,29 @@ variable "demo_allowed_emails" {
   type        = string
   default     = ""
 }
+
+# ── terianix.ai domain migration ──────────────────────────────────────────────
+
+variable "swa_terianix_domains" {
+  description = "New custom domains under terianix.ai to bind to the SWA. A CNAME record is created in the terianix.ai DNS zone for each entry, pointing to the SWA default hostname."
+  type        = list(string)
+  default     = []
+}
+
+variable "dns_zone_terianix_resource_group" {
+  description = "Resource group containing the terianix.ai Azure DNS zone."
+  type        = string
+  default     = "rg_platform"
+}
+
+variable "legacy_redirect_domains" {
+  description = "Map of old terian-services.com hostname → new terianix.ai hostname. CNAME records for old hosts are updated to point to the AFD endpoint; AFD Rules Engine issues a 301 redirect to the mapped new hostname."
+  type        = map(string)
+  default     = {}
+  # Example:
+  # {
+  #   "sandbox-awards.terian-services.com" = "sandbox-awards.terianix.ai"
+  #   "acme-awards.terian-services.com"    = "acme-awards.terianix.ai"
+  #   "demo-awards.terian-services.com"    = "demo-awards.terianix.ai"
+  # }
+}

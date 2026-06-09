@@ -649,36 +649,70 @@ module "fraud_analytics_job" {
 module "front_door" {
   source = "../../modules/front-door"
 
-  resource_group_name     = var.resource_group_name
-  afd_profile_name        = var.afd_profile_name
-  afd_endpoint_name       = var.afd_endpoint_name
+  resource_group_name          = var.resource_group_name
+  afd_profile_name             = var.afd_profile_name
+  afd_endpoint_name            = var.afd_endpoint_name
   container_app_primary_fqdn   = module.container_apps.primary_app_fqdn
   container_app_secondary_fqdn = module.container_apps.secondary_app_fqdn
-  tags                    = local.tags
-  depends_on              = [azurerm_resource_group.rg, module.container_apps]
+  # Old terian-services.com hostnames → AFD registers them as custom domains
+  # and issues 301 redirects to their mapped terianix.ai counterparts.
+  legacy_redirect_map = var.legacy_redirect_domains
+  tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg, module.container_apps]
 }
 
-# ── DNS — CNAME records for SWA custom domains ────────────────────────────────
-# terian-services.com is managed in Azure DNS (rg_platform).
-# One CNAME record per entry in swa_custom_domains, each pointing to the
-# SWA default hostname. Validation is handled by the SWA custom domain
-# resource (cname-delegation) which reads these same records.
-#
-# Current domains:
-#   sandbox-awards.terian-services.com  — main sandbox / existing tenants
-#   acme-awards.terian-services.com     — ACME Corp tenant
-#   demo-awards.terian-services.com     — public demo (self-registration)
+# ── DNS — terian-services.com zone ───────────────────────────────────────────
+# Used for:
+#   (a) Any remaining swa_custom_domains under terian-services.com (if any).
+#   (b) Legacy redirect CNAME records that now point to AFD (not the SWA).
 data "azurerm_dns_zone" "terian_services" {
-  count               = length(var.swa_custom_domains) > 0 ? 1 : 0
+  count               = (length(var.swa_custom_domains) > 0 || length(var.legacy_redirect_domains) > 0) ? 1 : 0
   name                = "terian-services.com"
   resource_group_name = var.dns_zone_resource_group
 }
 
+# CNAME records for any swa_custom_domains still under terian-services.com.
+# (After the migration this list is empty; kept for backward compatibility.)
 resource "azurerm_dns_cname_record" "swa_custom_domains" {
   for_each            = toset(var.swa_custom_domains)
-  name                = split(".", each.value)[0]   # "sandbox-awards", "acme-awards", "demo-awards"
+  name                = split(".", each.value)[0]
   zone_name           = data.azurerm_dns_zone.terian_services[0].name
   resource_group_name = var.dns_zone_resource_group
+  ttl                 = 3600
+  record              = module.static_web_app.default_hostname
+  tags                = local.tags
+  depends_on          = [module.static_web_app]
+}
+
+# ── DNS — legacy redirect CNAMEs (terian-services.com → AFD) ─────────────────
+# Old subdomain CNAMEs now point to the AFD endpoint instead of the SWA.
+# AFD validates ownership via these CNAMEs and returns 301 → terianix.ai.
+# Low TTL (300 s) speeds up cut-over; raise to 3600 once migration is stable.
+resource "azurerm_dns_cname_record" "legacy_redirect_domains" {
+  for_each            = var.legacy_redirect_domains
+  name                = split(".", each.key)[0]  # "sandbox-awards", "acme-awards", "demo-awards"
+  zone_name           = data.azurerm_dns_zone.terian_services[0].name
+  resource_group_name = var.dns_zone_resource_group
+  ttl                 = 300
+  record              = module.front_door.afd_endpoint_hostname
+  tags                = local.tags
+  depends_on          = [module.front_door]
+}
+
+# ── DNS — terianix.ai zone ────────────────────────────────────────────────────
+# New custom domains for the SWA.  One CNAME per entry in swa_terianix_domains,
+# each pointing to the SWA default hostname for cname-delegation validation.
+data "azurerm_dns_zone" "terianix" {
+  count               = length(var.swa_terianix_domains) > 0 ? 1 : 0
+  name                = "terianix.ai"
+  resource_group_name = var.dns_zone_terianix_resource_group
+}
+
+resource "azurerm_dns_cname_record" "swa_terianix_domains" {
+  for_each            = toset(var.swa_terianix_domains)
+  name                = split(".", each.value)[0]  # "sandbox-awards", "acme-awards", "demo-awards"
+  zone_name           = data.azurerm_dns_zone.terianix[0].name
+  resource_group_name = var.dns_zone_terianix_resource_group
   ttl                 = 3600
   record              = module.static_web_app.default_hostname
   tags                = local.tags
@@ -703,8 +737,9 @@ module "static_web_app" {
   depends_on                         = [azurerm_resource_group.rg]
 }
 
-# Custom domain — lives here (not in the module) so it can explicitly wait for
-# the DNS CNAME record before Azure attempts cname-delegation validation.
+# ── SWA custom domains — terian-services.com (legacy; kept until redirect is stable) ──
+# After the migration, swa_custom_domains should be empty and these resources
+# will no longer be created.  Remove this block once legacy CNAMEs are decommissioned.
 resource "azurerm_static_web_app_custom_domain" "swa_custom_domains" {
   for_each          = toset(var.swa_custom_domains)
   static_web_app_id = module.static_web_app.static_web_app_id
@@ -713,8 +748,21 @@ resource "azurerm_static_web_app_custom_domain" "swa_custom_domains" {
   depends_on        = [azurerm_dns_cname_record.swa_custom_domains]
 
   lifecycle {
-    # validation_type is not returned by the API after the domain is validated,
-    # so it is absent from imported state and would force replacement on every plan.
+    ignore_changes = [validation_type]
+  }
+}
+
+# ── SWA custom domains — terianix.ai (new canonical domains) ─────────────────
+# Lives here (not in the module) so it can wait for the DNS CNAME record
+# before Azure attempts cname-delegation validation.
+resource "azurerm_static_web_app_custom_domain" "swa_terianix_domains" {
+  for_each          = toset(var.swa_terianix_domains)
+  static_web_app_id = module.static_web_app.static_web_app_id
+  domain_name       = each.value
+  validation_type   = "cname-delegation"
+  depends_on        = [azurerm_dns_cname_record.swa_terianix_domains]
+
+  lifecycle {
     ignore_changes = [validation_type]
   }
 }

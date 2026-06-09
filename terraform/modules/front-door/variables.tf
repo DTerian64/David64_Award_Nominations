@@ -35,3 +35,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "legacy_redirect_map" {
+  description = "Map of old hostname → new hostname for 301 redirects served at the AFD edge. CNAME records for each old hostname must point to the AFD endpoint hostname. AFD validates domain ownership via the CNAME and issues a managed TLS cert. Empty map = no legacy redirect infrastructure created."
+  type        = map(string)
+  default     = {}
+  # Example:
+  # {
+  #   "sandbox-awards.terian-services.com" = "sandbox-awards.terianix.ai"
+  #   "acme-awards.terian-services.com"    = "acme-awards.terianix.ai"
+  #   "demo-awards.terian-services.com"    = "demo-awards.terianix.ai"
+  # }
+}
