@@ -74,6 +74,7 @@ def handle(message_id: str, payload: dict) -> None:
         category_description=details.get("category_description"),
         nominator_id=details["nominator_id"],
         config=desc_config,
+        nomination_id=nomination_id,
     )
 
     if desc_result.action == "reject":

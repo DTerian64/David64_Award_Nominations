@@ -308,23 +308,41 @@ def get_beneficiary_descriptions(beneficiary_id: int) -> list[str]:
         return [row[0] for row in cursor.fetchall()]
 
 
-def get_nominator_descriptions(nominator_id: int) -> list[str]:
+def get_nominator_descriptions(
+    nominator_id: int,
+    exclude_nomination_id: Optional[int] = None,
+) -> list[str]:
     """
     Past descriptions written BY this nominator — capped at 50.
 
     Used by description_check.py (Check B) to detect near-duplicate
     descriptions submitted by the same person across different nominations.
+
+    exclude_nomination_id should always be the current nomination so it is
+    not compared against itself (the nomination is already committed to the DB
+    before the integrity-check event fires).
     """
     with _get_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT TOP 50 NominationDescription
-            FROM   dbo.Nominations
-            WHERE  NominatorId            = ?
-              AND  NominationDescription IS NOT NULL
-              AND  NominationDescription  <> ''
-            ORDER  BY NominationDate DESC
-        """, (nominator_id,))
+        if exclude_nomination_id is not None:
+            cursor.execute("""
+                SELECT TOP 50 NominationDescription
+                FROM   dbo.Nominations
+                WHERE  NominatorId            = ?
+                  AND  NominationId          <> ?
+                  AND  NominationDescription IS NOT NULL
+                  AND  NominationDescription  <> ''
+                ORDER  BY NominationDate DESC
+            """, (nominator_id, exclude_nomination_id))
+        else:
+            cursor.execute("""
+                SELECT TOP 50 NominationDescription
+                FROM   dbo.Nominations
+                WHERE  NominatorId            = ?
+                  AND  NominationDescription IS NOT NULL
+                  AND  NominationDescription  <> ''
+                ORDER  BY NominationDate DESC
+            """, (nominator_id,))
         return [row[0] for row in cursor.fetchall()]
 
 

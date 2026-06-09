@@ -124,16 +124,20 @@ def _check_category_alignment(
 # ── Check B: duplicate description ───────────────────────────────────────────
 
 def _check_duplicate_description(
-    description:  str,
-    nominator_id: int,
-    config:       DescCheckConfig,
+    description:           str,
+    nominator_id:          int,
+    config:                DescCheckConfig,
+    exclude_nomination_id: int | None = None,
 ) -> CheckResult:
     """
     Returns "flag" if the description is near-identical to descriptions the
     same nominator has submitted before.  Uses HRBP review rather than
     outright rejection because team nominations legitimately share a description.
+
+    exclude_nomination_id must be the current nomination's ID so the query
+    does not compare the nomination against itself.
     """
-    prior_descs = db.get_nominator_descriptions(nominator_id)
+    prior_descs = db.get_nominator_descriptions(nominator_id, exclude_nomination_id)
     if not prior_descs:
         return _PASS
 
@@ -169,6 +173,7 @@ def check(
     category_description: Optional[str],
     nominator_id:         int,
     config:               DescCheckConfig,
+    nomination_id:        Optional[int] = None,
 ) -> CheckResult:
     """
     Run Check A then Check B.  Check A failure short-circuits (no point running
@@ -180,6 +185,10 @@ def check(
                               tenant uses no categories.
         nominator_id:         Used to look up the nominator's prior descriptions.
         config:               Per-tenant thresholds from DescCheckConfig.
+        nomination_id:        The current nomination's ID — excluded from the
+                              duplicate lookup so a nomination is never compared
+                              against itself (the row is already committed to the
+                              DB before this event fires).
 
     Returns:
         CheckResult with action "reject", "flag", or "pass".
@@ -205,7 +214,7 @@ def check(
             return result_a
 
     # ── Check B ───────────────────────────────────────────────────────────────
-    result_b = _check_duplicate_description(desc, nominator_id, config)
+    result_b = _check_duplicate_description(desc, nominator_id, config, nomination_id)
     if result_b.action == "flag":
         logger.info(
             "Check B flagged (duplicate_description) for nominator %d", nominator_id
