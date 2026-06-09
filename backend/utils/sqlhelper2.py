@@ -1201,10 +1201,12 @@ def get_pair_nomination_history(
                     n.NominationDescription,
                     n.NominationDate,
                     n.Status,
-                    nc.category_description AS CategoryDescription
+                    nc.category_description AS CategoryDescription,
+                    ff.RiskLevel
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users u ON u.UserId = n.NominatorId
                 LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
+                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 WHERE n.NominatorId   = :nominator_id
                   AND n.BeneficiaryId = :beneficiary_id
                   AND u.TenantId      = :tenant_id
@@ -1212,10 +1214,10 @@ def get_pair_nomination_history(
                 ORDER BY n.NominationDate DESC
             """),
             {
-                "nominator_id":  nominator_id,
+                "nominator_id":   nominator_id,
                 "beneficiary_id": beneficiary_id,
-                "tenant_id":     tenant_id,
-                "exclude_id":    exclude_nomination_id,
+                "tenant_id":      tenant_id,
+                "exclude_id":     exclude_nomination_id,
             },
         ).fetchall()
         return [
@@ -1227,6 +1229,7 @@ def get_pair_nomination_history(
                 "nomination_date": str(r[4]),
                 "status":          r[5],
                 "category":        r[6],
+                "risk_level":      r[7],
             }
             for r in rows
         ]
