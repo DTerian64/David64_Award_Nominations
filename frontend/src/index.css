@@ -57,10 +57,16 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
+}
+
+/* Ensure the app root always fills the viewport width. Without this, the
+   leftover Vite-default `display:flex; place-items:center` on <body> sized
+   #root to its content width — making the Nominate form tab render narrow
+   (and its tab labels wrap) while wide-content tabs rendered full width. */
+#root {
+  width: 100%;
 }
 
 h1 {
