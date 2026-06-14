@@ -31,12 +31,14 @@ POST   /api/admin/analytics/investigate
 import logging
 import uuid
 import json as _json
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import utils.sqlhelper2 as sqlhelper
+import utils.forecasting as forecasting
 from auth import get_current_user_with_impersonation, require_role
 from routers.schemas import User
 from utils.export_utils import build_finding_workbook
@@ -264,6 +266,113 @@ async def get_category_breakdown(
         ]
     except Exception as e:
         logger.error(f"Error fetching category breakdown: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Forecasting — predictive review-load & budget pacing ─────────────────────
+
+# Fallback flag/review rate when a tenant has no historical HRBP flags to learn
+# from (e.g. a fresh tenant). Kept conservative; the response flags when it is used.
+_DEFAULT_REVIEW_RATE = 0.15
+# Fallback SLA (avg days-to-approval) when approval metrics are unavailable.
+_DEFAULT_AVG_DAYS_TO_APPROVAL = 12.6
+
+
+@router.get("/api/admin/analytics/forecast")
+async def get_forecast(
+    weeks: int = Query(default=8, ge=1, le=26,
+                       description="Forecast horizon in weeks"),
+    history_days: int = Query(default=180, ge=28, le=730,
+                              description="Days of history to learn from"),
+    annual_budget: float | None = Query(default=None, ge=0,
+                                        description="Annual recognition budget for pacing (omit to skip)"),
+    confidence: float = Query(default=0.80, ge=0.50, le=0.99,
+                              description="Prediction-interval confidence level"),
+    current_user: User = Depends(get_current_user_with_impersonation),
+    _: None = Depends(require_role("AWard_Nomination_Admin")),
+):
+    """
+    Predictive forecast over the tenant's daily nomination series.
+
+    Primary: HRBP review-queue load — projected nominations/week × historical
+    flag/review rate, translated to expected queue depth via Little's Law using
+    the average days-to-approval SLA.
+
+    Secondary: recognition-budget pacing — projected cumulative spend vs.
+    `annual_budget`, with an estimated exhaustion date. Omitted when no budget
+    is supplied.
+
+    Model: Holt's linear trend (no seasonal term) with closed-form prediction
+    intervals that widen with the horizon. See utils/forecasting.py.
+    """
+    tenant_id = current_user["effective_user"]["TenantId"]
+    try:
+        # ── Core daily series (date, count, amount) ──────────────────────────
+        trends = sqlhelper.get_spending_trends(tenant_id, days=history_days)
+        daily_counts  = [(row[0], float(row[1] or 0)) for row in trends]
+        daily_amounts = [(row[0], float(row[2] or 0)) for row in trends]
+
+        # ── Scalar inputs: review rate + SLA ─────────────────────────────────
+        rate_info = sqlhelper.get_review_rate(tenant_id, days=history_days)
+        review_rate = rate_info["reviewRate"]
+        review_rate_is_default = review_rate <= 0.0
+        if review_rate_is_default:
+            review_rate = _DEFAULT_REVIEW_RATE
+
+        approval = sqlhelper.get_approval_metrics(tenant_id) or {}
+        avg_days = approval.get("avgDaysToApproval") or 0
+        avg_days_is_default = not avg_days or avg_days <= 0
+        if avg_days_is_default:
+            avg_days = _DEFAULT_AVG_DAYS_TO_APPROVAL
+
+        # ── Build the two products ───────────────────────────────────────────
+        review_load = forecasting.forecast_review_load(
+            daily_counts=daily_counts,
+            horizon_weeks=weeks,
+            review_rate=review_rate,
+            avg_days_to_approval=avg_days,
+            confidence=confidence,
+        )
+        budget_pacing = forecasting.forecast_budget_pacing(
+            daily_amounts=daily_amounts,
+            annual_budget=annual_budget,
+            horizon_weeks=weeks,
+            confidence=confidence,
+        )
+
+        weekly_obs = review_load["model"]["weeklyObservations"]
+        degraded = review_load["model"]["degradedToFlat"]
+        if degraded:
+            note = ("Limited history — projecting a flat trend with wide "
+                    "prediction intervals rather than a fitted slope. Forecast "
+                    "confidence improves as more weeks accrue.")
+        else:
+            note = ("Holt linear trend, no seasonal component. Prediction "
+                    "intervals widen with the horizon to reflect compounding "
+                    "uncertainty.")
+
+        return {
+            "generatedAt":   datetime.utcnow().isoformat() + "Z",
+            "tenantId":      tenant_id,
+            "horizonWeeks":  weeks,
+            "historyDays":   history_days,
+            "confidence":    confidence,
+            "inputs": {
+                "reviewRate":              round(review_rate, 4),
+                "reviewRateIsDefault":     review_rate_is_default,
+                "flaggedNominations":      rate_info["flaggedNominations"],
+                "totalNominationsWindow":  rate_info["totalNominations"],
+                "avgDaysToApproval":       round(float(avg_days), 2),
+                "avgDaysToApprovalIsDefault": avg_days_is_default,
+                "weeklyObservations":      weekly_obs,
+                "seasonalityUsed":         False,
+                "note":                    note,
+            },
+            "reviewLoad":    review_load,
+            "budgetPacing":  budget_pacing,
+        }
+    except Exception as e:
+        logger.error(f"Error computing forecast: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

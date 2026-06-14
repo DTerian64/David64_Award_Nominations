@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download } from 'lucide-react';
+import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download, LineChart } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import { getAccessToken } from '../services/api';
 
@@ -103,6 +103,63 @@ const SEVERITY_STYLES: Record<string, { card: string; badge: string }> = {
   Low:      { card: 'bg-blue-50 border-blue-300',   badge: 'bg-blue-200 text-blue-800' },
 };
 
+interface ForecastWeek {
+  weekStart: string;
+  weekIndex: number;
+  projectedNominations: number;
+  projectedNominationsLower: number;
+  projectedNominationsUpper: number;
+  projectedReviews: number;
+  projectedReviewsLower: number;
+  projectedReviewsUpper: number;
+  projectedQueueDepth: number;
+  projectedQueueDepthLower: number;
+  projectedQueueDepthUpper: number;
+}
+interface ForecastHistoryWeek { weekStart: string; nominations: number; reviews: number; }
+interface BudgetCumulativePoint {
+  weekStart: string;
+  actual: number | null;
+  projected: number | null;
+  lower: number | null;
+  upper: number | null;
+}
+interface ForecastResponse {
+  generatedAt: string;
+  horizonWeeks: number;
+  historyDays: number;
+  confidence: number;
+  inputs: {
+    reviewRate: number;
+    reviewRateIsDefault: boolean;
+    flaggedNominations: number;
+    totalNominationsWindow: number;
+    avgDaysToApproval: number;
+    avgDaysToApprovalIsDefault: boolean;
+    weeklyObservations: number;
+    seasonalityUsed: boolean;
+    note: string;
+  };
+  reviewLoad: {
+    history: ForecastHistoryWeek[];
+    forecast: ForecastWeek[];
+    model: { name: string; alpha: number; beta: number; residualSigma: number; weeklyObservations: number; degradedToFlat: boolean; };
+  };
+  budgetPacing: {
+    annualBudget: number;
+    fiscalYearStart: string;
+    spentToDate: number;
+    projectedHorizonSpend: number;
+    projectedHorizonLower: number;
+    projectedHorizonUpper: number;
+    budgetUtilizationAtHorizon: number | null;
+    exhaustionDate: string | null;
+    exhaustionDateEarliest: string | null;
+    exhaustionDateLatest: string | null;
+    cumulative: BudgetCumulativePoint[];
+  } | null;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export const AnalyticsDashboard: React.FC = () => {
@@ -118,7 +175,12 @@ export const AnalyticsDashboard: React.FC = () => {
   const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask' | 'integrity'>('ask');
+  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask' | 'integrity' | 'forecast'>('ask');
+  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
+  // Annual recognition budget for the pacing projection (admin-supplied). Blank = pacing omitted.
+  const [budgetInput, setBudgetInput] = useState<string>('');
+  const [appliedBudget, setAppliedBudget] = useState<number | null>(null);
   const [integrityRuns, setIntegrityRuns] = useState<IntegrityRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [integrityFindings, setIntegrityFindings] = useState<IntegrityFinding[]>([]);
@@ -215,6 +277,28 @@ export const AnalyticsDashboard: React.FC = () => {
     }
   };
 
+  const fetchForecast = async (budget?: number | null) => {
+    setForecastLoading(true);
+    try {
+      const params = new URLSearchParams({ weeks: '8', history_days: '180', confidence: '0.8' });
+      if (budget && budget > 0) params.set('annual_budget', String(budget));
+      const data = await apiFetch<ForecastResponse>(`/api/admin/analytics/forecast?${params.toString()}`);
+      setForecast(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load forecast');
+    } finally {
+      setForecastLoading(false);
+    }
+  };
+
+  const applyBudget = async () => {
+    const parsed = parseFloat(budgetInput.replace(/[^0-9.]/g, ''));
+    const budget = isNaN(parsed) || parsed <= 0 ? null : parsed;
+    setAppliedBudget(budget);
+    await fetchForecast(budget);
+  };
+
   const fetchIntegrityRuns = async () => {
     setIntegrityLoading(true);
     setActivePatternFilters(new Set());
@@ -287,6 +371,15 @@ export const AnalyticsDashboard: React.FC = () => {
       if (!loadedTabs.has('integrity')) {
         await fetchIntegrityRuns();
         setLoadedTabs(prev => new Set([...prev, 'integrity']));
+      }
+      return;
+    }
+
+    // Forecast tab has its own fetch path
+    if (tabId === 'forecast') {
+      if (!loadedTabs.has('forecast')) {
+        await fetchForecast(appliedBudget);
+        setLoadedTabs(prev => new Set([...prev, 'forecast']));
       }
       return;
     }
@@ -491,6 +584,7 @@ export const AnalyticsDashboard: React.FC = () => {
           { id: 'ask', label: 'Ask Analytics', icon: Send },
           { id: 'overview', label: 'Overview', icon: BarChart3 },
           { id: 'spending', label: 'Spending Trends', icon: TrendingUp },
+          { id: 'forecast', label: 'Forecasting', icon: LineChart },
           { id: 'fraud', label: 'Fraud Alerts', icon: AlertTriangle },
           { id: 'diversity', label: 'Diversity Metrics', icon: Users },
           { id: 'integrity', label: 'Integrity', icon: ShieldAlert }
@@ -652,6 +746,198 @@ export const AnalyticsDashboard: React.FC = () => {
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold mb-4">90-Day Spending Trends</h2>
           <SpendingTrendChart trends={trends} />
+        </div>
+      )}
+
+      {/* Forecasting Tab */}
+      {selectedTab === 'forecast' && (
+        <div className="space-y-6">
+          {forecastLoading && (
+            <div className="flex justify-center py-12">
+              <RefreshCw className="animate-spin text-blue-600" size={28} />
+            </div>
+          )}
+
+          {!forecastLoading && forecast && (
+            <>
+              {/* Header + model honesty note */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
+                      <LineChart size={20} className="text-blue-600" />
+                      HRBP Review-Load Forecast
+                    </h2>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Projected HRBP reviews per week for the next {forecast.horizonWeeks} weeks,
+                      with {Math.round(forecast.confidence * 100)}% prediction intervals.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => fetchForecast(appliedBudget)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <RefreshCw size={14} /> Refresh
+                  </button>
+                </div>
+
+                {/* Inputs / assumptions */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Flag / review rate</p>
+                    <p className="text-xl font-bold">{(forecast.inputs.reviewRate * 100).toFixed(1)}%</p>
+                    <p className="text-[11px] text-gray-400">
+                      {forecast.inputs.reviewRateIsDefault
+                        ? 'default (no history)'
+                        : `${forecast.inputs.flaggedNominations}/${forecast.inputs.totalNominationsWindow} nominations`}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Avg days to approval (SLA)</p>
+                    <p className="text-xl font-bold">{forecast.inputs.avgDaysToApproval.toFixed(1)}</p>
+                    <p className="text-[11px] text-gray-400">used for queue depth</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">History learned from</p>
+                    <p className="text-xl font-bold">{forecast.inputs.weeklyObservations} wks</p>
+                    <p className="text-[11px] text-gray-400">{forecast.historyDays}-day window</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Model</p>
+                    <p className="text-xl font-bold">Holt linear</p>
+                    <p className="text-[11px] text-gray-400">
+                      {forecast.inputs.seasonalityUsed ? 'with seasonality' : 'no seasonal term'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-start gap-2 text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg p-3">
+                  <AlertCircle size={14} className="text-blue-500 mt-0.5 shrink-0" />
+                  <span>{forecast.inputs.note}</span>
+                </div>
+              </div>
+
+              {/* Review-load chart */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <h3 className="text-base font-semibold mb-4">Projected nominations &amp; reviews per week</h3>
+                <ForecastBandChart
+                  history={forecast.reviewLoad.history.map(h => ({ x: h.weekStart, y: h.nominations }))}
+                  forecast={forecast.reviewLoad.forecast.map(f => ({
+                    x: f.weekStart, y: f.projectedNominations,
+                    lo: f.projectedNominationsLower, up: f.projectedNominationsUpper,
+                  }))}
+                  yLabel="Nominations / week"
+                  color="#2563eb"
+                  forecastColor="#7c3aed"
+                />
+              </div>
+
+              {/* Queue-depth table */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <h3 className="text-base font-semibold mb-1">Expected HRBP queue depth</h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  Reviews/week translated to concurrent queue depth via Little&apos;s Law
+                  (L = arrival rate &times; {forecast.inputs.avgDaysToApproval.toFixed(1)}-day time-in-queue).
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-gray-500 border-b">
+                        <th className="py-2 pr-4">Week of</th>
+                        <th className="py-2 pr-4">Proj. reviews</th>
+                        <th className="py-2 pr-4">Reviews range</th>
+                        <th className="py-2 pr-4">Queue depth</th>
+                        <th className="py-2">Queue range</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {forecast.reviewLoad.forecast.map(f => (
+                        <tr key={f.weekIndex} className="border-b border-gray-100">
+                          <td className="py-2 pr-4 font-medium">{f.weekStart}</td>
+                          <td className="py-2 pr-4">{f.projectedReviews.toFixed(1)}</td>
+                          <td className="py-2 pr-4 text-gray-500">{f.projectedReviewsLower.toFixed(1)} – {f.projectedReviewsUpper.toFixed(1)}</td>
+                          <td className="py-2 pr-4 font-semibold">{f.projectedQueueDepth.toFixed(1)}</td>
+                          <td className="py-2 text-gray-500">{f.projectedQueueDepthLower.toFixed(1)} – {f.projectedQueueDepthUpper.toFixed(1)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Budget pacing */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+                  <h3 className="text-base font-semibold flex items-center gap-2">
+                    <DollarSign size={18} className="text-green-600" />
+                    Recognition-budget pacing
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">Annual budget</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={budgetInput}
+                      onChange={e => setBudgetInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') applyBudget(); }}
+                      placeholder="e.g. 500000"
+                      className="w-36 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                      onClick={applyBudget}
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                    >
+                      Project
+                    </button>
+                  </div>
+                </div>
+
+                {!forecast.budgetPacing && (
+                  <p className="text-sm text-gray-500 py-6 text-center">
+                    Enter your annual recognition budget above to project cumulative spend and the expected exhaustion date.
+                  </p>
+                )}
+
+                {forecast.budgetPacing && (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs text-gray-500">Spent to date (FY)</p>
+                        <p className="text-xl font-bold">${forecast.budgetPacing.spentToDate.toLocaleString()}</p>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs text-gray-500">Annual budget</p>
+                        <p className="text-xl font-bold">${forecast.budgetPacing.annualBudget.toLocaleString()}</p>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs text-gray-500">Projected exhaustion</p>
+                        <p className={`text-xl font-bold ${forecast.budgetPacing.exhaustionDate ? 'text-orange-600' : 'text-green-600'}`}>
+                          {forecast.budgetPacing.exhaustionDate || 'Within budget'}
+                        </p>
+                        {forecast.budgetPacing.exhaustionDate && (
+                          <p className="text-[11px] text-gray-400">
+                            range {forecast.budgetPacing.exhaustionDateEarliest || '—'} to {forecast.budgetPacing.exhaustionDateLatest || '—'}
+                          </p>
+                        )}
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs text-gray-500">Utilization @ +{forecast.horizonWeeks}w</p>
+                        <p className="text-xl font-bold">
+                          {forecast.budgetPacing.budgetUtilizationAtHorizon != null
+                            ? `${(forecast.budgetPacing.budgetUtilizationAtHorizon * 100).toFixed(0)}%`
+                            : '—'}
+                        </p>
+                      </div>
+                    </div>
+                    <BudgetPacingChart
+                      points={forecast.budgetPacing.cumulative}
+                      budget={forecast.budgetPacing.annualBudget}
+                    />
+                  </>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1282,6 +1568,136 @@ const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends }) => {
         ))}
       </div>
       <p className="text-xs text-gray-600 text-center">Last 30 days</p>
+    </div>
+  );
+};
+
+// ── Forecast band chart (SVG, no chart lib) ──────────────────────────────────
+interface BandPoint { x: string; y: number; lo?: number; up?: number; }
+interface ForecastBandChartProps {
+  history: BandPoint[];
+  forecast: BandPoint[];
+  yLabel: string;
+  color: string;
+  forecastColor: string;
+}
+
+const ForecastBandChart: React.FC<ForecastBandChartProps> = ({ history, forecast, yLabel, color, forecastColor }) => {
+  const W = 800, H = 320, padL = 48, padR = 16, padT = 16, padB = 40;
+  const all = [...history, ...forecast];
+  if (all.length === 0) return <p className="text-sm text-gray-500">No data.</p>;
+
+  const n = all.length;
+  const yMax = Math.max(1, ...all.map(p => Math.max(p.y, p.up ?? 0)));
+  const yMin = 0;
+  const xAt = (i: number) => padL + (n === 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
+  const yAt = (v: number) => H - padB - ((v - yMin) / (yMax - yMin)) * (H - padT - padB);
+
+  const histPts = history.map((p, i) => `${xAt(i)},${yAt(p.y)}`).join(' ');
+  const fStart = history.length;
+  // Connect last history point into the forecast line for visual continuity.
+  const lastHist = history.length ? `${xAt(history.length - 1)},${yAt(history[history.length - 1].y)} ` : '';
+  const fcPts = lastHist + forecast.map((p, i) => `${xAt(fStart + i)},${yAt(p.y)}`).join(' ');
+
+  // Confidence band polygon (upper edge forward, lower edge back), anchored at last history point.
+  const upper = forecast.map((p, i) => `${xAt(fStart + i)},${yAt(p.up ?? p.y)}`);
+  const lower = forecast.map((p, i) => `${xAt(fStart + i)},${yAt(p.lo ?? p.y)}`).reverse();
+  const anchor = history.length ? `${xAt(history.length - 1)},${yAt(history[history.length - 1].y)}` : '';
+  const bandPath = [anchor, ...upper, ...lower].filter(Boolean).join(' ');
+
+  const dividerX = history.length ? xAt(history.length - 1) : padL;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => yMin + f * (yMax - yMin));
+  const labelIdx = Array.from(new Set([0, Math.floor(n / 2), n - 1])).filter(i => i >= 0 && i < n);
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 520 }} role="img" aria-label="forecast chart">
+        {/* gridlines + y ticks */}
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} y1={yAt(t)} x2={W - padR} y2={yAt(t)} stroke="#eef2f7" strokeWidth={1} />
+            <text x={padL - 6} y={yAt(t) + 4} textAnchor="end" fontSize={11} fill="#94a3b8">{Math.round(t)}</text>
+          </g>
+        ))}
+        {/* forecast region shading divider */}
+        <line x1={dividerX} y1={padT} x2={dividerX} y2={H - padB} stroke="#cbd5e1" strokeWidth={1} strokeDasharray="3 3" />
+        <text x={dividerX + 4} y={padT + 12} fontSize={10} fill="#94a3b8">forecast →</text>
+        {/* confidence band */}
+        {bandPath && <polygon points={bandPath} fill={forecastColor} opacity={0.16} />}
+        {/* history line */}
+        {history.length > 1 && <polyline points={histPts} fill="none" stroke={color} strokeWidth={2.5} />}
+        {history.map((p, i) => <circle key={`h${i}`} cx={xAt(i)} cy={yAt(p.y)} r={3} fill={color} />)}
+        {/* forecast line (dashed) */}
+        <polyline points={fcPts} fill="none" stroke={forecastColor} strokeWidth={2.5} strokeDasharray="6 4" />
+        {forecast.map((p, i) => <circle key={`f${i}`} cx={xAt(fStart + i)} cy={yAt(p.y)} r={3} fill={forecastColor} />)}
+        {/* x labels */}
+        {labelIdx.map(i => (
+          <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" fontSize={10} fill="#94a3b8">
+            {all[i].x.slice(5)}
+          </text>
+        ))}
+        <text x={12} y={padT + 4} fontSize={10} fill="#94a3b8" transform={`rotate(-90 12 ${H / 2})`}>{yLabel}</text>
+      </svg>
+      <div className="flex gap-4 text-xs text-gray-500 mt-2 pl-12">
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5" style={{ background: color }} /> Observed</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 border-t border-dashed" style={{ borderColor: forecastColor }} /> Forecast</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: forecastColor, opacity: 0.16 }} /> Prediction interval</span>
+      </div>
+    </div>
+  );
+};
+
+// ── Budget pacing chart (cumulative actual vs projected vs budget line) ───────
+interface BudgetPacingChartProps {
+  points: BudgetCumulativePoint[];
+  budget: number;
+}
+const BudgetPacingChart: React.FC<BudgetPacingChartProps> = ({ points, budget }) => {
+  const W = 800, H = 300, padL = 64, padR = 16, padT = 16, padB = 40;
+  if (!points.length) return null;
+  const n = points.length;
+  const yMax = Math.max(budget * 1.05, ...points.map(p => Math.max(p.actual ?? 0, p.upper ?? p.projected ?? 0)));
+  const xAt = (i: number) => padL + (n === 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
+  const yAt = (v: number) => H - padB - (v / yMax) * (H - padT - padB);
+
+  const actualPts = points.map((p, i) => p.actual != null ? `${xAt(i)},${yAt(p.actual)}` : null).filter(Boolean).join(' ');
+  const lastActualIdx = points.reduce((acc, p, i) => p.actual != null ? i : acc, -1);
+  const projStartAnchor = lastActualIdx >= 0 ? `${xAt(lastActualIdx)},${yAt(points[lastActualIdx].actual as number)} ` : '';
+  const projPts = projStartAnchor + points.map((p, i) => p.projected != null ? `${xAt(i)},${yAt(p.projected)}` : null).filter(Boolean).join(' ');
+
+  const up = points.map((p, i) => p.upper != null ? `${xAt(i)},${yAt(p.upper)}` : null).filter(Boolean);
+  const lo = points.map((p, i) => p.lower != null ? `${xAt(i)},${yAt(p.lower)}` : null).filter(Boolean).reverse();
+  const band = [...up, ...lo].join(' ');
+
+  const ticks = [0, 0.5, 1].map(f => f * yMax);
+  const labelIdx = Array.from(new Set([0, Math.floor(n / 2), n - 1])).filter(i => i >= 0 && i < n);
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 520 }} role="img" aria-label="budget pacing chart">
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} y1={yAt(t)} x2={W - padR} y2={yAt(t)} stroke="#eef2f7" strokeWidth={1} />
+            <text x={padL - 6} y={yAt(t) + 4} textAnchor="end" fontSize={11} fill="#94a3b8">${Math.round(t).toLocaleString()}</text>
+          </g>
+        ))}
+        {/* budget threshold */}
+        <line x1={padL} y1={yAt(budget)} x2={W - padR} y2={yAt(budget)} stroke="#dc2626" strokeWidth={1.5} strokeDasharray="5 4" />
+        <text x={W - padR} y={yAt(budget) - 5} textAnchor="end" fontSize={10} fill="#dc2626">Annual budget</text>
+        {band && <polygon points={band} fill="#16a34a" opacity={0.14} />}
+        {actualPts && <polyline points={actualPts} fill="none" stroke="#16a34a" strokeWidth={2.5} />}
+        <polyline points={projPts} fill="none" stroke="#16a34a" strokeWidth={2.5} strokeDasharray="6 4" />
+        {labelIdx.map(i => (
+          <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" fontSize={10} fill="#94a3b8">
+            {points[i].weekStart.slice(5)}
+          </text>
+        ))}
+      </svg>
+      <div className="flex gap-4 text-xs text-gray-500 mt-2 pl-16">
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-green-600" /> Actual cumulative</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 border-t border-dashed border-green-600" /> Projected</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 border-t border-dashed border-red-600" /> Budget</span>
+      </div>
     </div>
   );
 };

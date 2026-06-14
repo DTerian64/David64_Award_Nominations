@@ -1375,6 +1375,43 @@ def get_spending_trends(tenant_id: int, days: int = 90) -> List[Tuple]:
         ).fetchall()
 
 
+def get_review_rate(tenant_id: int, days: int = 180) -> dict:
+    """
+    Historical HRBP flag/review rate for a tenant over the last N days.
+
+    A nomination enters the HRBP review queue when fraud detection records a row
+    in dbo.HRBP_FraudFlags (unique per NominationId). The review rate is that
+    flagged count divided by all nominations submitted in the window — i.e. the
+    fraction of incoming volume that lands on an HRBP's desk.
+
+    Returns {"totalNominations", "flaggedNominations", "reviewRate"}.
+    reviewRate is 0.0 when there is no volume (callers should treat that as
+    "unknown" and may substitute a default).
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT
+                    COUNT(*) AS TotalNominations,
+                    SUM(CASE WHEN f.NominationId IS NOT NULL THEN 1 ELSE 0 END)
+                        AS FlaggedNominations
+                FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
+                LEFT JOIN dbo.HRBP_FraudFlags f ON f.NominationId = n.NominationId
+                WHERE n.NominationDate >= DATEADD(DAY, :neg_days, CAST(GETDATE() AS DATE))
+                  AND u.TenantId = :tenant_id
+            """),
+            {"neg_days": -abs(days), "tenant_id": tenant_id},
+        ).fetchone()
+        total   = (row[0] or 0) if row else 0
+        flagged = (row[1] or 0) if row else 0
+        return {
+            "totalNominations":   total,
+            "flaggedNominations": flagged,
+            "reviewRate":         (flagged / total) if total > 0 else 0.0,
+        }
+
+
 def get_department_spending(tenant_id: int) -> List[Tuple]:
     """Get spending by department for a tenant."""
     with get_db_context() as session:
