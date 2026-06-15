@@ -778,13 +778,16 @@ export const AnalyticsDashboard: React.FC = () => {
       {/* Forecasting Tab */}
       {selectedTab === 'forecast' && (
         <div className="space-y-6">
-          {forecastLoading && (
+          {/* Full spinner only on the initial load; on a re-fetch (Project /
+              Refresh) we keep the existing cards mounted so the page doesn't
+              collapse to a spinner and jump to the top. */}
+          {forecastLoading && !forecast && (
             <div className="flex justify-center py-12">
               <RefreshCw className="animate-spin text-blue-600" size={28} />
             </div>
           )}
 
-          {!forecastLoading && forecast && (
+          {forecast && (
             <>
               {/* Model comparison (bake-off) */}
               {forecast.modelComparison && (
@@ -792,10 +795,12 @@ export const AnalyticsDashboard: React.FC = () => {
                   <div className="flex items-start justify-between gap-4">
                     <h3 className="text-base font-semibold mb-1">Model comparison (backtest)</h3>
                     <button
+                      type="button"
                       onClick={() => fetchForecast(appliedBudget)}
-                      className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors shrink-0"
+                      disabled={forecastLoading}
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors shrink-0 disabled:opacity-50"
                     >
-                      <RefreshCw size={14} /> Refresh
+                      <RefreshCw size={14} className={forecastLoading ? 'animate-spin' : ''} /> Refresh
                     </button>
                   </div>
                   <p className="text-xs text-gray-500 mb-4">
@@ -1042,10 +1047,12 @@ export const AnalyticsDashboard: React.FC = () => {
                       className="w-36 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <button
+                      type="button"
                       onClick={applyBudget}
-                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                      disabled={forecastLoading}
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Project
+                      {forecastLoading ? 'Projecting…' : 'Project'}
                     </button>
                   </div>
                 </div>
