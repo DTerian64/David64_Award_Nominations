@@ -16,6 +16,10 @@ matplotlib>=3.8.0
 statsmodels>=0.14.0
 lightgbm>=4.0.0
 
+# ── Holiday sync (sync_holidays.py stage) ────────────────────────────────────
+# Offline fallback when the Nager.Date API is unreachable.
+holidays>=0.50
+
 # ── Graph analytics ───────────────────────────────────────────────────────────
 networkx>=3.2.0
 

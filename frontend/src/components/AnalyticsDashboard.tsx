@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download, LineChart } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
+import { useTenantConfig } from '../contexts/TenantConfigContext';
 import { getAccessToken } from '../services/api';
 
 interface AnalyticsOverview {
@@ -188,6 +189,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export const AnalyticsDashboard: React.FC = () => {
   const { impersonatedUser } = useImpersonation();
+  const { formatCurrency } = useTenantConfig();   // tenant locale + currency aware
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
   const [trends, setTrends] = useState<SpendingTrend[]>([]);
   const [departments, setDepartments] = useState<DepartmentSpending[]>([]);
@@ -647,7 +649,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <MetricCard
               icon={DollarSign}
               label="Total Spent"
-              value={`$${(overview.totalAmountSpent / 1000).toFixed(1)}K`}
+              value={formatCurrency(overview.totalAmountSpent)}
               change="+12% vs last month"
               positive
             />
@@ -662,7 +664,7 @@ export const AnalyticsDashboard: React.FC = () => {
               icon={Clock}
               label="Pending Approvals"
               value={overview.pendingNominations.toString()}
-              change={`Avg award: $${Math.round(overview.averageAwardAmount)}`}
+              change={`Avg award: ${formatCurrency(Math.round(overview.averageAwardAmount))}`}
             />
             <MetricCard
               icon={AlertTriangle}
@@ -707,8 +709,8 @@ export const AnalyticsDashboard: React.FC = () => {
                           </div>
                         </td>
                         <td className="py-3 text-right font-semibold text-gray-700">{cat.nominationCount}</td>
-                        <td className="py-3 text-right text-gray-600">${cat.totalAmount.toLocaleString()}</td>
-                        <td className="py-3 text-right text-gray-600">${cat.avgAmount.toLocaleString()}</td>
+                        <td className="py-3 text-right text-gray-600">{formatCurrency(cat.totalAmount)}</td>
+                        <td className="py-3 text-right text-gray-600">{formatCurrency(cat.avgAmount)}</td>
                       </tr>
                     );
                   })}
@@ -769,7 +771,7 @@ export const AnalyticsDashboard: React.FC = () => {
       {selectedTab === 'spending' && !loading && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold mb-4">30-Day Spending Trends</h2>
-          <SpendingTrendChart trends={trends} />
+          <SpendingTrendChart trends={trends} formatCurrency={formatCurrency} />
         </div>
       )}
 
@@ -885,8 +887,8 @@ export const AnalyticsDashboard: React.FC = () => {
                               </td>
                               <td className="py-2 pr-4 font-semibold">{nSum.toFixed(0)}</td>
                               <td className="py-2 pr-4 text-gray-500">{nLo.toFixed(0)} – {nUp.toFixed(0)}</td>
-                              <td className="py-2 pr-4 font-semibold">${Math.round(sSum).toLocaleString()}</td>
-                              <td className="py-2 text-gray-500">${Math.round(sLo).toLocaleString()} – ${Math.round(sUp).toLocaleString()}</td>
+                              <td className="py-2 pr-4 font-semibold">{formatCurrency(Math.round(sSum))}</td>
+                              <td className="py-2 text-gray-500">{formatCurrency(Math.round(sLo))} – {formatCurrency(Math.round(sUp))}</td>
                             </tr>
                           ))}
                       </tbody>
@@ -922,7 +924,7 @@ export const AnalyticsDashboard: React.FC = () => {
                     yLabel="Spend / week"
                     color="#16a34a"
                     forecastColor="#15803d"
-                    valueFormat={(n) => `$${Math.round(n).toLocaleString()}`}
+                    valueFormat={(n) => formatCurrency(Math.round(n))}
                   />
                 </div>
               )}
@@ -1059,11 +1061,11 @@ export const AnalyticsDashboard: React.FC = () => {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
                       <div className="bg-gray-50 rounded-lg p-3">
                         <p className="text-xs text-gray-500">Spent to date (FY)</p>
-                        <p className="text-xl font-bold">${forecast.budgetPacing.spentToDate.toLocaleString()}</p>
+                        <p className="text-xl font-bold">{formatCurrency(forecast.budgetPacing.spentToDate)}</p>
                       </div>
                       <div className="bg-gray-50 rounded-lg p-3">
                         <p className="text-xs text-gray-500">Annual budget</p>
-                        <p className="text-xl font-bold">${forecast.budgetPacing.annualBudget.toLocaleString()}</p>
+                        <p className="text-xl font-bold">{formatCurrency(forecast.budgetPacing.annualBudget)}</p>
                       </div>
                       <div className="bg-gray-50 rounded-lg p-3">
                         <p className="text-xs text-gray-500">Projected exhaustion</p>
@@ -1088,6 +1090,7 @@ export const AnalyticsDashboard: React.FC = () => {
                     <BudgetPacingChart
                       points={forecast.budgetPacing.cumulative}
                       budget={forecast.budgetPacing.annualBudget}
+                      formatCurrency={formatCurrency}
                     />
                   </>
                 )}
@@ -1541,7 +1544,7 @@ export const AnalyticsDashboard: React.FC = () => {
                             <div className="flex items-center gap-3 shrink-0">
                               {finding.totalAmount != null && finding.totalAmount > 0 && (
                                 <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2.5 py-1 rounded-full">
-                                  ${finding.totalAmount.toLocaleString()}
+                                  {formatCurrency(finding.totalAmount)}
                                 </span>
                               )}
                               <ChevronDown
@@ -1572,7 +1575,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                   Total Approved / Paid
                                 </p>
                                 <p className="text-sm font-bold text-gray-900">
-                                  ${finding.totalAmount.toLocaleString()}
+                                  {formatCurrency(finding.totalAmount)}
                                 </p>
                               </div>
                             )}
@@ -1653,7 +1656,9 @@ interface DepartmentTableProps {
   departments: DepartmentSpending[];
 }
 
-const DepartmentTable: React.FC<DepartmentTableProps> = ({ departments }) => (
+const DepartmentTable: React.FC<DepartmentTableProps> = ({ departments }) => {
+  const { formatCurrency } = useTenantConfig();
+  return (
   <div className="overflow-x-auto">
     <table className="w-full text-sm">
       <thead className="bg-gray-50 border-b">
@@ -1669,20 +1674,23 @@ const DepartmentTable: React.FC<DepartmentTableProps> = ({ departments }) => (
           <tr key={i} className="hover:bg-gray-50">
             <td className="px-4 py-3">{dept.departmentName}</td>
             <td className="text-right px-4 py-3">{dept.nominationCount}</td>
-            <td className="text-right px-4 py-3 font-semibold">${dept.totalSpent.toLocaleString()}</td>
-            <td className="text-right px-4 py-3">${Math.round(dept.averageAmount).toLocaleString()}</td>
+            <td className="text-right px-4 py-3 font-semibold">{formatCurrency(dept.totalSpent)}</td>
+            <td className="text-right px-4 py-3">{formatCurrency(Math.round(dept.averageAmount))}</td>
           </tr>
         ))}
       </tbody>
     </table>
   </div>
-);
+  );
+};
 
 interface RecipientListProps {
   recipients: TopRecipient[];
 }
 
-const RecipientList: React.FC<RecipientListProps> = ({ recipients }) => (
+const RecipientList: React.FC<RecipientListProps> = ({ recipients }) => {
+  const { formatCurrency } = useTenantConfig();
+  return (
   <div className="space-y-3">
     {recipients.map((person, i) => (
       <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded">
@@ -1690,17 +1698,19 @@ const RecipientList: React.FC<RecipientListProps> = ({ recipients }) => (
           <p className="font-medium">{person.FirstName} {person.LastName}</p>
           <p className="text-xs text-gray-600">{person.nominationCount} awards</p>
         </div>
-        <p className="font-semibold">${person.totalAmount.toLocaleString()}</p>
+        <p className="font-semibold">{formatCurrency(person.totalAmount)}</p>
       </div>
     ))}
   </div>
-);
+  );
+};
 
 interface SpendingTrendChartProps {
   trends: SpendingTrend[];
+  formatCurrency: (n: number) => string;
 }
 
-const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends }) => {
+const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends, formatCurrency }) => {
   // API returns newest-first; reverse to oldest→newest, then take the most
   // recent 30 (slice(-30)) so the last bar is the latest day, not the oldest.
   const sorted = [...trends].reverse();
@@ -1718,10 +1728,10 @@ const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends }) => {
               height: `${(trend.amount / maxAmount) * 100}%`,
               minHeight: '4px'
             }}
-            title={`${trend.date}: $${trend.amount.toLocaleString()}`}
+            title={`${trend.date}: ${formatCurrency(trend.amount)}`}
           >
             <div className="opacity-0 group-hover:opacity-100 absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap">
-              ${trend.amount.toLocaleString()}
+              {formatCurrency(trend.amount)}
             </div>
           </div>
         ))}
@@ -1823,8 +1833,9 @@ const ForecastBandChart: React.FC<ForecastBandChartProps> = ({ history, forecast
 interface BudgetPacingChartProps {
   points: BudgetCumulativePoint[];
   budget: number;
+  formatCurrency: (n: number) => string;
 }
-const BudgetPacingChart: React.FC<BudgetPacingChartProps> = ({ points, budget }) => {
+const BudgetPacingChart: React.FC<BudgetPacingChartProps> = ({ points, budget, formatCurrency }) => {
   const W = 800, H = 300, padL = 64, padR = 16, padT = 16, padB = 40;
   if (!points.length) return null;
   const n = points.length;
@@ -1850,7 +1861,7 @@ const BudgetPacingChart: React.FC<BudgetPacingChartProps> = ({ points, budget })
         {ticks.map((t, i) => (
           <g key={i}>
             <line x1={padL} y1={yAt(t)} x2={W - padR} y2={yAt(t)} stroke="#eef2f7" strokeWidth={1} />
-            <text x={padL - 6} y={yAt(t) + 4} textAnchor="end" fontSize={11} fill="#94a3b8">${Math.round(t).toLocaleString()}</text>
+            <text x={padL - 6} y={yAt(t) + 4} textAnchor="end" fontSize={11} fill="#94a3b8">{formatCurrency(Math.round(t))}</text>
           </g>
         ))}
         {/* budget threshold */}
@@ -1879,6 +1890,7 @@ interface FraudAlertsListProps {
 }
 
 const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts }) => {
+  const { formatCurrency } = useTenantConfig();
   if (!alerts.length) {
     return <p className="text-center text-gray-600 py-8">No fraud alerts detected</p>;
   }
@@ -1894,7 +1906,7 @@ const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts }) => {
               <p className="font-semibold">
                 {alert.nominatorName} → {alert.beneficiaryName}
               </p>
-              <p className="text-sm text-gray-600">${alert.amount.toLocaleString()} on {alert.nominationDate}</p>
+              <p className="text-sm text-gray-600">{formatCurrency(alert.amount)} on {alert.nominationDate}</p>
             </div>
             <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
               alert.riskLevel === 'High' 

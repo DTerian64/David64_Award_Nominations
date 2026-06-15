@@ -58,16 +58,11 @@ Z = 1.2816              # ~80% two-sided normal quantile (for the stat models' b
 HISTORY_DAYS = 900      # how far back to pull history (~2.5 years)
 TOP_DEPARTMENTS = 6     # model the N busiest titles individually; rest → "Other"
 
-# US federal holidays 2024–2026. Used as a calendar feature for LightGBM and kept
-# in sync with the respread script so the modelled dips line up with the data.
-US_HOLIDAYS = {
-    date(2024,1,1),date(2024,1,15),date(2024,2,19),date(2024,5,27),date(2024,6,19),
-    date(2024,7,4),date(2024,9,2),date(2024,11,11),date(2024,11,28),date(2024,11,29),date(2024,12,25),
-    date(2025,1,1),date(2025,1,20),date(2025,2,17),date(2025,5,26),date(2025,6,19),
-    date(2025,7,4),date(2025,9,1),date(2025,11,11),date(2025,11,27),date(2025,11,28),date(2025,12,25),
-    date(2026,1,1),date(2026,1,19),date(2026,2,16),date(2026,5,25),date(2026,6,19),
-    date(2026,7,3),date(2026,9,7),date(2026,11,11),date(2026,11,26),date(2026,11,27),date(2026,12,25),
-}
+# Holidays for the is_holiday calendar feature are loaded per-tenant from
+# dbo.Holidays (populated by the sync_holidays stage, keyed by country) into this
+# module-level set before each tenant is forecast. An empty set simply means
+# is_holiday is always 0 — harmless, never an error.
+_HOLIDAY_SET: set = set()
 
 
 # ── DB ──────────────────────────────────────────────────────────────────────────
@@ -107,6 +102,36 @@ def load_nominations(conn, tenant_id: int) -> pd.DataFrame:
           AND n.NominationDate >= DATEADD(DAY, ?, CAST(GETDATE() AS DATE))
     """
     return pd.read_sql(q, conn, params=[tenant_id, -abs(HISTORY_DAYS)])
+
+
+def _tenant_country(conn, tenant_id: int) -> str | None:
+    """Country code from the tenant's Config.locale ('en-US' → 'US'); None if absent."""
+    df = pd.read_sql("SELECT Config FROM dbo.Tenants WHERE TenantId = ?", conn, params=[tenant_id])
+    if df.empty or not df.iloc[0]["Config"]:
+        return None
+    try:
+        locale = json.loads(df.iloc[0]["Config"]).get("locale", "")
+    except Exception:
+        return None
+    if not locale or "-" not in locale:
+        return None
+    region = locale.split("-")[-1].strip().upper()
+    return region[:2] if len(region) >= 2 else None
+
+
+def load_holidays(conn, country: str | None) -> set:
+    """Holiday dates for a country from dbo.Holidays (empty set if none / no country).
+
+    Populated by the sync_holidays stage. Reading from SQL (not the network) means
+    forecasting never depends on a live fetch succeeding.
+    """
+    if not country:
+        return set()
+    df = pd.read_sql(
+        "SELECT HolidayDate FROM dbo.Holidays WHERE CountryCode = ?", conn, params=[country])
+    if df.empty:
+        return set()
+    return {ts.date() for ts in pd.to_datetime(df["HolidayDate"])}
 
 
 # ── Aggregation ─────────────────────────────────────────────────────────────────
@@ -262,7 +287,7 @@ def _calendar(ds: pd.Timestamp) -> dict:
     return {"month": ds.month, "quarter": ds.quarter,
             "weekofyear": int(ds.isocalendar().week), "dayofyear": ds.dayofyear,
             "is_quarter_end_month": int(ds.month in (3, 6, 9, 12)),
-            "is_holiday": int(ds.date() in US_HOLIDAYS)}
+            "is_holiday": int(ds.date() in _HOLIDAY_SET)}
 
 
 def _supervised(df, lags, group_col=None):
@@ -440,6 +465,11 @@ def forecast_tenant(conn, tenant_id: int) -> int:
     df["ds"] = pd.to_datetime(df["ds"])
     start = df["ds"].min().date()
     end = date.today()
+
+    # Load this tenant's country holidays into the module set so the is_holiday
+    # calendar feature is correct for whichever country the tenant operates in.
+    global _HOLIDAY_SET
+    _HOLIDAY_SET = load_holidays(conn, _tenant_country(conn, tenant_id))
 
     # Build daily series (count via ones, spend via Amount), then weekly versions.
     daily_cnt = daily_frame(df["ds"], np.ones(len(df)), start, end)

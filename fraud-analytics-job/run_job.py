@@ -229,6 +229,7 @@ def run_stage(name: str, module_path: str) -> bool:
 STAGES = [
     {"key": "train_fraud_model",      "label": "RF model training",        "module": "train_fraud_model",      "post": notify_api_refresh},
     {"key": "graph_pattern_detector", "label": "Graph pattern detection",  "module": "graph_pattern_detector", "post": None},
+    {"key": "sync_holidays",          "label": "Holiday sync",             "module": "sync_holidays",          "post": None},
     {"key": "forecast_models",        "label": "Forecast models",          "module": "forecast_models",        "post": None},
 ]
 _STAGE_KEYS = [s["key"] for s in STAGES]
