@@ -311,6 +311,17 @@ def _supervised(df, lags, group_col=None):
     return pd.concat(frames, ignore_index=True)
 
 
+def _flat(yvals, h, z=Z):
+    """Last-value flat forecast with a spread-based widening band — the fallback
+    when a series is too short to train LightGBM (so thin tenants never crash)."""
+    yvals = np.asarray(yvals, float)
+    last = float(yvals[-1]) if len(yvals) else 0.0
+    spread = float(np.std(yvals)) if len(yvals) > 1 else max(abs(last) * 0.5, 1.0)
+    sd = spread * np.sqrt(np.arange(1, h + 1))
+    pt = np.full(h, max(last, 0.0))
+    return pt, np.maximum(pt - z * sd, 0.0), pt + z * sd
+
+
 def lgbm_forecast(history, h, freq, lags, group_col=None, confidence=CONFIDENCE, seed=42):
     """Gradient-boosted-tree forecaster over lag + calendar features.
 
@@ -331,8 +342,16 @@ def lgbm_forecast(history, h, freq, lags, group_col=None, confidence=CONFIDENCE,
     cats = [group_col] if group_col else []
     if group_col:
         feat = feat + [group_col]
-    # Build the training table; drop early rows that lack the longest lag.
-    sup = _supervised(history, lags, group_col).dropna(subset=[f"lag{max(lags)}"])
+    # Build the training table. Require only the SHORTEST lag (the immediate prior
+    # value); longer lags may be NaN for short-history tenants and LightGBM handles
+    # missing values natively. This stops tenants with < a year of data (where the
+    # 364-day lag is always NaN) from producing an empty training set and crashing.
+    sup = _supervised(history, lags, group_col).dropna(subset=[f"lag{min(lags)}"])
+    if sup.empty:                          # truly too little history → flat fallback
+        if group_col:
+            return {g: _flat(history[history[group_col] == g].sort_values("ds")["y"].values, h)
+                    for g in history[group_col].unique()}
+        return _flat(history.sort_values("ds")["y"].values, h)
     if group_col:
         sup[group_col] = sup[group_col].astype("category")
     X, y = sup[feat], sup["y"]
