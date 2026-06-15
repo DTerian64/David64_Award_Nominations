@@ -12,7 +12,7 @@ interface User {
 }
 
 interface AdminImpersonationPanelProps {
-  users: User[];
+  users: User[]; 
 }
 
 export const AdminImpersonationPanel: React.FC<AdminImpersonationPanelProps> = ({ users }) => {
