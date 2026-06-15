@@ -357,6 +357,13 @@ async def get_forecast(
                                                        "model": r["model"], "forecast": []})
                 d["forecast"].append({"weekStart": r["targetDate"], "point": r["point"],
                                       "lower": r["lower"], "upper": r["upper"]})
+            # Weekly observed spend history (for the spend chart's history segment).
+            _sdates, _sdaily = forecasting.build_contiguous_daily(
+                daily_amounts, end=datetime.utcnow().date())
+            _sweeks, _svals = forecasting.resample_weekly(_sdates, _sdaily)
+            spend_history = [{"weekStart": w.isoformat(), "amount": float(v)}
+                             for w, v in zip(_sweeks, _svals)]
+
             forecasts_payload = {
                 "nominationsWeekly": [{"weekStart": r["targetDate"], "point": r["point"],
                                        "lower": r["lower"], "upper": r["upper"], "model": r["model"]}
@@ -364,6 +371,7 @@ async def get_forecast(
                 "spendWeekly": [{"weekStart": r["targetDate"], "point": r["point"],
                                  "lower": r["lower"], "upper": r["upper"], "model": r["model"]}
                                 for r in spend_weekly_rows],
+                "spendHistory": spend_history,
                 "nominationsDaily": [{"date": r["targetDate"], "point": r["point"],
                                       "lower": r["lower"], "upper": r["upper"]}
                                      for r in nom_daily_rows],

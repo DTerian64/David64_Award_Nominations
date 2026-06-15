@@ -143,6 +143,7 @@ interface ForecastResponse {
     nominationsWeekly: ForecastSeriesPoint[];
     spendWeekly: ForecastSeriesPoint[];
     nominationsDaily: ForecastSeriesPoint[];
+    spendHistory?: { weekStart: string; amount: number }[];
     departments: DepartmentForecast[];
   } | null;
   inputs: {
@@ -945,6 +946,23 @@ export const AnalyticsDashboard: React.FC = () => {
                 />
               </div>
 
+              {/* Spend history → forecast chart */}
+              {forecast.forecasts?.spendWeekly && forecast.forecasts.spendWeekly.length > 0 && (
+                <div className="bg-white rounded-lg border border-gray-200 p-6">
+                  <h3 className="text-base font-semibold mb-4">Projected award spend per week</h3>
+                  <ForecastBandChart
+                    history={(forecast.forecasts.spendHistory ?? []).map(h => ({ x: h.weekStart, y: h.amount }))}
+                    forecast={forecast.forecasts.spendWeekly.map(f => ({
+                      x: f.weekStart ?? '', y: f.point, lo: f.lower, up: f.upper,
+                    }))}
+                    yLabel="Spend / week"
+                    color="#16a34a"
+                    forecastColor="#15803d"
+                    valueFormat={(n) => `$${Math.round(n).toLocaleString()}`}
+                  />
+                </div>
+              )}
+
               {/* Queue-depth table */}
               <div className="bg-white rounded-lg border border-gray-200 p-6">
                 <h3 className="text-base font-semibold mb-1">Expected HRBP queue depth</h3>
@@ -1693,9 +1711,11 @@ interface ForecastBandChartProps {
   yLabel: string;
   color: string;
   forecastColor: string;
+  valueFormat?: (n: number) => string;
 }
 
-const ForecastBandChart: React.FC<ForecastBandChartProps> = ({ history, forecast, yLabel, color, forecastColor }) => {
+const ForecastBandChart: React.FC<ForecastBandChartProps> = ({ history, forecast, yLabel, color, forecastColor, valueFormat }) => {
+  const fmt = valueFormat ?? ((n: number) => Math.round(n).toLocaleString());
   const W = 800, H = 320, padL = 48, padR = 16, padT = 16, padB = 40;
   const all = [...history, ...forecast];
   if (all.length === 0) return <p className="text-sm text-gray-500">No data.</p>;
@@ -1729,7 +1749,7 @@ const ForecastBandChart: React.FC<ForecastBandChartProps> = ({ history, forecast
         {ticks.map((t, i) => (
           <g key={i}>
             <line x1={padL} y1={yAt(t)} x2={W - padR} y2={yAt(t)} stroke="#eef2f7" strokeWidth={1} />
-            <text x={padL - 6} y={yAt(t) + 4} textAnchor="end" fontSize={11} fill="#94a3b8">{Math.round(t)}</text>
+            <text x={padL - 6} y={yAt(t) + 4} textAnchor="end" fontSize={11} fill="#94a3b8">{fmt(t)}</text>
           </g>
         ))}
         {/* forecast region shading divider */}
@@ -1743,6 +1763,17 @@ const ForecastBandChart: React.FC<ForecastBandChartProps> = ({ history, forecast
         {/* forecast line (dashed) */}
         <polyline points={fcPts} fill="none" stroke={forecastColor} strokeWidth={2.5} strokeDasharray="6 4" />
         {forecast.map((p, i) => <circle key={`f${i}`} cx={xAt(fStart + i)} cy={yAt(p.y)} r={3} fill={forecastColor} />)}
+        {/* transparent hover targets with native tooltips (date + exact value, band for forecast) */}
+        {history.map((p, i) => (
+          <circle key={`ht${i}`} cx={xAt(i)} cy={yAt(p.y)} r={9} fill="transparent" style={{ cursor: 'pointer' }}>
+            <title>{`${p.x}: ${fmt(p.y)}`}</title>
+          </circle>
+        ))}
+        {forecast.map((p, i) => (
+          <circle key={`ft${i}`} cx={xAt(fStart + i)} cy={yAt(p.y)} r={9} fill="transparent" style={{ cursor: 'pointer' }}>
+            <title>{`${p.x}: ${fmt(p.y)}  (${fmt(p.lo ?? p.y)} – ${fmt(p.up ?? p.y)})`}</title>
+          </circle>
+        ))}
         {/* x labels */}
         {labelIdx.map(i => (
           <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" fontSize={10} fill="#94a3b8">
