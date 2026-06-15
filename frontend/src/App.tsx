@@ -481,7 +481,7 @@ const AwardNominationApp: React.FC = () => {
                 }`}
               >
                 <ShieldAlert className="w-5 h-5 inline-block mr-2" />
-                HRBP Review
+                {t('nav.hrbp')}
               </button>
             )}
             {/* Analytics tab — visible only to actual admin, never when impersonating */}

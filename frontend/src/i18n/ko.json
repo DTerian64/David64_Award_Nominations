@@ -7,7 +7,8 @@
     "nominate": "직원 추천",
     "history": "내 추천 내역",
     "approvals": "대기 중인 승인",
-    "analytics": "분석"
+    "analytics": "분석",
+    "hrbp": "HRBP 검토"
   },
   "nominate": {
     "heading": "포상 추천 제출",
@@ -35,7 +36,16 @@
     "reject": "반려"
   },
   "analytics": {
-    "heading": "분석 및 보고"
+    "heading": "분석 및 보고",
+    "tabs": {
+      "ask": "분석 질문",
+      "overview": "개요",
+      "spending": "지출 추이",
+      "forecast": "예측",
+      "fraud": "부정 알림",
+      "diversity": "다양성 지표",
+      "integrity": "무결성"
+    }
   },
   "status": {
     "Pending": "대기 중",
@@ -56,5 +66,8 @@
   "auth": {
     "signIn": "Microsoft로 로그인",
     "signOut": "로그아웃"
+  },
+  "impersonation": {
+    "title": "사용자 가장"
   }
 }

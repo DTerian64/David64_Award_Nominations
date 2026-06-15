@@ -7,7 +7,8 @@
     "nominate": "Nominate Employee",
     "history": "My Nominations",
     "approvals": "Pending Approvals",
-    "analytics": "Analytics"
+    "analytics": "Analytics",
+    "hrbp": "HRBP Review"
   },
   "nominate": {
     "heading": "Submit Award Nomination",
@@ -35,7 +36,16 @@
     "reject": "Reject"
   },
   "analytics": {
-    "heading": "Analytics & Reporting"
+    "heading": "Analytics & Reporting",
+    "tabs": {
+      "ask": "Ask Analytics",
+      "overview": "Overview",
+      "spending": "Spending Trends",
+      "forecast": "Forecasting",
+      "fraud": "Fraud Alerts",
+      "diversity": "Diversity Metrics",
+      "integrity": "Integrity"
+    }
   },
   "status": {
     "Pending": "Pending",
@@ -56,5 +66,8 @@
   "auth": {
     "signIn": "Sign in with Microsoft",
     "signOut": "Sign Out"
+  },
+  "impersonation": {
+    "title": "Impersonate User"
   }
 }

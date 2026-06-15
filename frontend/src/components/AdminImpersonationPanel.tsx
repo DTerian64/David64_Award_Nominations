@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { UserCog, X, Search } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 
 interface User {
@@ -16,6 +17,7 @@ interface AdminImpersonationPanelProps {
 
 export const AdminImpersonationPanel: React.FC<AdminImpersonationPanelProps> = ({ users }) => {
   const { isAdmin, startImpersonation } = useImpersonation();
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -45,14 +47,14 @@ export const AdminImpersonationPanel: React.FC<AdminImpersonationPanelProps> = (
         className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
       >
         <UserCog className="w-5 h-5" />
-        <span>Impersonate User</span>
+        <span>{t('impersonation.title')}</span>
       </button>
 
       {isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-gray-900">Impersonate User</h2>
+              <h2 className="text-2xl font-bold text-gray-900">{t('impersonation.title')}</h2>
               <button
                 onClick={() => setIsOpen(false)}
                 className="text-gray-400 hover:text-gray-600"

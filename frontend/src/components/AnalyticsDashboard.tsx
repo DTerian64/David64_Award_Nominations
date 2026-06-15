@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download, LineChart } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import { useTenantConfig } from '../contexts/TenantConfigContext';
+import { useTranslation } from 'react-i18next';
 import { getAccessToken } from '../services/api';
 
 interface AnalyticsOverview {
@@ -190,6 +191,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 export const AnalyticsDashboard: React.FC = () => {
   const { impersonatedUser } = useImpersonation();
   const { formatCurrency } = useTenantConfig();   // tenant locale + currency aware
+  const { t } = useTranslation();
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
   const [trends, setTrends] = useState<SpendingTrend[]>([]);
   const [departments, setDepartments] = useState<DepartmentSpending[]>([]);
@@ -607,13 +609,13 @@ export const AnalyticsDashboard: React.FC = () => {
       {/* Tab Navigation */}
       <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
         {[
-          { id: 'ask', label: 'Ask Analytics', icon: Send },
-          { id: 'overview', label: 'Overview', icon: BarChart3 },
-          { id: 'spending', label: 'Spending Trends', icon: TrendingUp },
-          { id: 'forecast', label: 'Forecasting', icon: LineChart },
-          { id: 'fraud', label: 'Fraud Alerts', icon: AlertTriangle },
-          { id: 'diversity', label: 'Diversity Metrics', icon: Users },
-          { id: 'integrity', label: 'Integrity', icon: ShieldAlert }
+          { id: 'ask', label: t('analytics.tabs.ask'), icon: Send },
+          { id: 'overview', label: t('analytics.tabs.overview'), icon: BarChart3 },
+          { id: 'spending', label: t('analytics.tabs.spending'), icon: TrendingUp },
+          { id: 'forecast', label: t('analytics.tabs.forecast'), icon: LineChart },
+          { id: 'fraud', label: t('analytics.tabs.fraud'), icon: AlertTriangle },
+          { id: 'diversity', label: t('analytics.tabs.diversity'), icon: Users },
+          { id: 'integrity', label: t('analytics.tabs.integrity'), icon: ShieldAlert }
         ].map(tab => {
           const TabIcon = tab.icon;
           const isActive = selectedTab === (tab.id as any);
