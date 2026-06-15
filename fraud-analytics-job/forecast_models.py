@@ -34,10 +34,17 @@ import os
 import uuid
 import warnings
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pyodbc
+from dotenv import load_dotenv
+
+# Same .env loading as train_fraud_model.py / graph_pattern_detector.py so this
+# stage can be run standalone locally. No-op in Container Apps (env injected).
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(env_path)
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger("forecast_models")
@@ -80,9 +87,9 @@ def get_tenants(conn) -> list:
 
 
 def load_nominations(conn, tenant_id: int) -> pd.DataFrame:
-    """Per-record NominationDate, DollarAmount, Title for the tenant's window."""
+    """Per-record NominationDate, Amount, Title for the tenant's window."""
     q = """
-        SELECT n.NominationDate AS ds, n.DollarAmount AS amount, u.Title AS title
+        SELECT n.NominationDate AS ds, n.Amount AS amount, u.Title AS title
         FROM dbo.Nominations n
         JOIN dbo.Users u ON u.UserId = n.BeneficiaryId
         WHERE u.TenantId = ?
@@ -387,5 +394,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    from logging_config import setup_logging
+    setup_logging()
     main()

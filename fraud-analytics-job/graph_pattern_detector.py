@@ -42,6 +42,13 @@ from typing import Any
 import networkx as nx
 import numpy as np
 import pyodbc
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Same .env loading as train_fraud_model.py / forecast_models.py so this stage
+# can be run standalone locally. No-op in Container Apps (env injected).
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(env_path)
 
 logger = logging.getLogger(__name__)
 

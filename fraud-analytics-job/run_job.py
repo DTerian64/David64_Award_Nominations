@@ -25,6 +25,7 @@ Logging:
   and forwarded to the Log Analytics workspace defined in the CAE.
 """
 
+import argparse
 import logging
 import os
 import sys
@@ -35,14 +36,24 @@ import json
 from pathlib import Path
 
 import pyodbc
+from dotenv import load_dotenv
+
+# ── Environment ───────────────────────────────────────────────────────────────
+# Load .env FIRST — before wake_database() or setup_logging() read os.environ,
+# and before any stage module is imported. Same path the stages use, so the
+# orchestrated and standalone paths are identical. In Azure Container Apps there
+# is no .env file: env vars are injected by the platform and load_dotenv is a
+# harmless no-op (and won't override platform values).
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(env_path)
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=os.getenv("LOGGING_LEVEL", "INFO"),
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-    stream=sys.stdout,
-)
+# Structured JSON logging with the 'App_Log: ' prefix on our own records, so they
+# can be isolated in Log Analytics with `| where message startswith "App_Log:"`.
+# Mirrors backend/logging_config.py. run_job.py is the container entrypoint, so
+# its directory is on sys.path[0] and logging_config imports cleanly.
+from logging_config import setup_logging
+setup_logging()
 logger = logging.getLogger("fraud_analytics_job")
 
 # ── Path setup ───────────────────────────────────────────────────────────────
@@ -212,17 +223,43 @@ def run_stage(name: str, module_path: str) -> bool:
         return False
 
 
+# ── Stage registry ───────────────────────────────────────────────────────────
+# Single source of truth. `key` is what --only accepts (and the module name);
+# `post` is an optional hook run only if the stage succeeded.
+STAGES = [
+    {"key": "train_fraud_model",      "label": "RF model training",        "module": "train_fraud_model",      "post": notify_api_refresh},
+    {"key": "graph_pattern_detector", "label": "Graph pattern detection",  "module": "graph_pattern_detector", "post": None},
+    {"key": "forecast_models",        "label": "Forecast models",          "module": "forecast_models",        "post": None},
+]
+_STAGE_KEYS = [s["key"] for s in STAGES]
+
+
+def _parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="Weekly analytics job runner. Runs all stages by default; "
+                    "use --only to run a single stage with the same harness "
+                    "(DB wake-up, logging, exit codes).")
+    ap.add_argument("--only", "--stage", dest="only", choices=_STAGE_KEYS, default=None,
+                    metavar="STAGE",
+                    help="run only this stage: " + ", ".join(_STAGE_KEYS))
+    return ap.parse_args()
+
+
 def main() -> None:
+    args = _parse_args()
+    selected = [s for s in STAGES if args.only is None or s["key"] == args.only]
+
     logger.info("╔══════════════════════════════════════════════════╗")
-    logger.info("║        FRAUD ANALYTICS JOB — START               ║")
+    logger.info("║        WEEKLY ANALYTICS JOB — START              ║")
     logger.info("╚══════════════════════════════════════════════════╝")
     logger.info("Environment : %s", os.getenv("ENVIRONMENT", "unknown"))
     logger.info("SQL Server  : %s", os.getenv("SQL_SERVER", "(not set)"))
     logger.info("Storage acct: %s", os.getenv("AZURE_STORAGE_ACCOUNT", "(not set)"))
+    logger.info("Stages      : %s", args.only or "ALL (%s)" % ", ".join(_STAGE_KEYS))
 
     # ── DB wake-up — must succeed before any stage runs ──────────────────────
-    # Serverless SQL auto-pauses after 60 min; this job fires at 2 AM UTC
-    # when the DB has been idle for hours. We wait here until it responds.
+    # Serverless SQL auto-pauses after 60 min; resuming takes 60–90 s. Every
+    # stage needs the DB, so we wake it up regardless of which stage(s) we run.
     try:
         wake_database()
     except RuntimeError as exc:
@@ -230,33 +267,15 @@ def main() -> None:
         sys.exit(1)
 
     results: dict[str, bool] = {}
-
-    # ── Stage 1: Random Forest retrain ───────────────────────────────────────
-    results["RF model training"] = run_stage(
-        name        = "RF model training  (train_fraud_model)",
-        module_path = "train_fraud_model",
-    )
-
-    # ── Stage 1b: Notify API to refresh its in-memory model cache ─────────────
-    # Only call if training succeeded — no point refreshing if upload failed.
-    if results["RF model training"]:
-        notify_api_refresh()
-
-    # ── Stage 2: Graph pattern detection ─────────────────────────────────────
-    # Runs regardless of Stage 1 outcome — graph findings are independent.
-    results["Graph pattern detection"] = run_stage(
-        name        = "Graph pattern detection  (graph_pattern_detector)",
-        module_path = "graph_pattern_detector",
-    )
-
-    # ── Stage 3: Forecast models ─────────────────────────────────────────────
-    # Independent of the fraud/graph stages — bakes off Seasonal-Naive / ETS /
-    # LightGBM per tenant and writes dbo.ForecastRuns + dbo.Forecasts, which the
-    # analytics API serves on the Forecasting tab.
-    results["Forecast models"] = run_stage(
-        name        = "Forecast models  (forecast_models)",
-        module_path = "forecast_models",
-    )
+    for stage in selected:
+        ok = run_stage(
+            name        = f"{stage['label']}  ({stage['module']})",
+            module_path = stage["module"],
+        )
+        results[stage["label"]] = ok
+        # Stage-specific post-hook, only on success.
+        if ok and stage["post"] is not None:
+            stage["post"]()
 
     # ── Summary ───────────────────────────────────────────────────────────────
     logger.info("")
