@@ -315,42 +315,54 @@ def forecast_tenant(conn, tenant_id: int) -> int:
         rows.append(("nominations", "total", None, "daily", td, i + 1, "LightGBM",
                      float(dp[i]), float(dl[i]), float(du[i])))
 
-    # departments: weekly nominations, global LGBM vs per-dept ETS, keep best
-    dept_metrics = {}
+    # ── departments: model BOTH nominations and spend per department ──────────
+    # Global LightGBM (pools across departments, helping sparse titles) vs a
+    # per-department ETS on the holdout; the lower-MASE model is kept per dept.
     counts = df["title"].fillna("Unknown").value_counts()
     top = list(counts.head(TOP_DEPARTMENTS).index)
     df["bucket"] = df["title"].where(df["title"].isin(top), "Other")
-    panel_rows = []
-    for (wk, b), c in df.assign(
-            wk=df["ds"].dt.to_period("W-MON").dt.start_time).groupby(["wk", "bucket"]).size().items():
-        panel_rows.append({"ds": pd.Timestamp(wk), "Title": b, "y": c})
-    panel = pd.DataFrame(panel_rows).sort_values(["Title", "ds"])
-    # drop partial last week
-    if not panel.empty:
-        mx = panel["ds"].max()
-        if (end - mx.date()).days < 6:
-            panel = panel[panel["ds"] < mx]
+    df["wk"] = df["ds"].dt.to_period("W-MON").dt.start_time
 
-    if not panel.empty:
+    def _dept_panel(agg: str) -> pd.DataFrame:
+        """Weekly per-department panel: agg='count' (nominations) or 'amount' (spend)."""
+        grp = df.groupby(["wk", "bucket"])
+        s = grp.size() if agg == "count" else grp["amount"].sum()
+        p = pd.DataFrame([{"ds": pd.Timestamp(wk), "Title": b, "y": float(v)}
+                          for (wk, b), v in s.items()])
+        if p.empty:
+            return p
+        p = p.sort_values(["Title", "ds"])
+        mx = p["ds"].max()
+        if (end - mx.date()).days < 6:        # drop partial last week
+            p = p[p["ds"] < mx]
+        return p
+
+    def _run_dept(panel: pd.DataFrame, series_name: str) -> dict:
+        md: dict = {}
+        if panel.empty:
+            return md
         glob = lgbm_forecast(panel, HORIZON_WEEKS, "W", lags=[1, 2, 4, 8, 52], group_col="Title")
         for t in panel["Title"].unique():
             s = panel[panel["Title"] == t].sort_values("ds")["y"].values
             chosen_d, gp = "GlobalLGBM", glob[t]
-            # holdout compare vs ETS if enough history
-            if len(s) >= SEASON_WEEKS + HORIZON_WEEKS:
+            if len(s) >= SEASON_WEEKS + HORIZON_WEEKS:        # holdout compare vs ETS
                 tr, te = s[:-HORIZON_WEEKS], s[-HORIZON_WEEKS:]
                 ptr = panel[panel["ds"] < panel["ds"].max() - pd.Timedelta(weeks=HORIZON_WEEKS - 1)]
                 e_g = mase(te, lgbm_forecast(ptr, HORIZON_WEEKS, "W", lags=[1, 2, 4, 8, 52],
                                              group_col="Title")[t][0][:len(te)], tr, SEASON_WEEKS)
                 e_e = mase(te, ets(tr, HORIZON_WEEKS, SEASON_WEEKS)[0][:len(te)], tr, SEASON_WEEKS)
-                dept_metrics[t] = {"GlobalLGBM": round(e_g, 4), "ETS": round(e_e, 4)}
+                md[t] = {"GlobalLGBM": round(e_g, 4), "ETS": round(e_e, 4)}
                 if e_e < e_g:
                     chosen_d, gp = "ETS", ets(s, HORIZON_WEEKS, SEASON_WEEKS)
-            tdf = panel[panel["Title"] == t]
-            add_weekly("nominations", tdf, gp[0], gp[1], gp[2], chosen_d,
-                       level="department", dept=t)
+            add_weekly(series_name, panel[panel["Title"] == t], gp[0], gp[1], gp[2],
+                       chosen_d, level="department", dept=t)
+        return md
 
-    metrics = {"nominations_total": m_cnt, "spend_total": m_spd, "departments": dept_metrics}
+    dept_metrics       = _run_dept(_dept_panel("count"),  "nominations")
+    dept_spend_metrics = _run_dept(_dept_panel("amount"), "spend")
+
+    metrics = {"nominations_total": m_cnt, "spend_total": m_spd,
+               "departments": dept_metrics, "departments_spend": dept_spend_metrics}
     _persist(conn, run_id, tenant_id, start, end, metrics, rows)
     logger.info("[Tenant %s] forecast run %s — %d rows (nom=%s, spend=%s)",
                 tenant_id, run_id[:8], len(rows), chosen_cnt, chosen_spd)

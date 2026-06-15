@@ -353,10 +353,19 @@ async def get_forecast(
 
             depts: dict = {}
             for r in dept_rows:
-                d = depts.setdefault(r["department"], {"title": r["department"],
-                                                       "model": r["model"], "forecast": []})
-                d["forecast"].append({"weekStart": r["targetDate"], "point": r["point"],
-                                      "lower": r["lower"], "upper": r["upper"]})
+                d = depts.setdefault(r["department"], {
+                    "title": r["department"],
+                    "nominationsModel": None, "spendModel": None,
+                    "nominations": [], "spend": [],
+                })
+                pt = {"weekStart": r["targetDate"], "point": r["point"],
+                      "lower": r["lower"], "upper": r["upper"]}
+                if r["series"] == "spend":
+                    d["spendModel"] = r["model"]
+                    d["spend"].append(pt)
+                else:
+                    d["nominationsModel"] = r["model"]
+                    d["nominations"].append(pt)
             # Weekly observed spend history (for the spend chart's history segment).
             _sdates, _sdaily = forecasting.build_contiguous_daily(
                 daily_amounts, end=datetime.utcnow().date())

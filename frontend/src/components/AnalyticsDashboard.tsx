@@ -125,7 +125,14 @@ interface BudgetCumulativePoint {
   upper: number | null;
 }
 interface ForecastSeriesPoint { weekStart?: string; date?: string; point: number; lower: number; upper: number; model?: string; }
-interface DepartmentForecast { title: string; model: string; forecast: ForecastSeriesPoint[]; }
+interface DeptSeriesPoint { weekStart: string; point: number; lower: number; upper: number; }
+interface DepartmentForecast {
+  title: string;
+  nominationsModel?: string;
+  spendModel?: string;
+  nominations: DeptSeriesPoint[];
+  spend: DeptSeriesPoint[];
+}
 interface ModelMetric { MASE: number | null; sMAPE: number | null; RMSE: number | null; coverage: number | null; folds: number; }
 interface ForecastResponse {
   generatedAt: string;
@@ -898,33 +905,48 @@ export const AnalyticsDashboard: React.FC = () => {
                 <div className="bg-white rounded-lg border border-gray-200 p-6">
                   <h3 className="text-base font-semibold mb-1">Department forecast (next {forecast.horizonWeeks} weeks)</h3>
                   <p className="text-xs text-gray-500 mb-4">
-                    Per-department nominations, projected by the model that backtests best for each
-                    (global LightGBM pools across departments; dense ones may pick ETS).
+                    Per-department nominations and spend, each projected by the model that backtests
+                    best for it (global LightGBM pools across departments; dense ones may pick ETS).
                   </p>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-left text-gray-500 border-b">
                           <th className="py-2 pr-4">Department</th>
-                          <th className="py-2 pr-4">Model</th>
-                          <th className="py-2 pr-4">Next {forecast.horizonWeeks}w total</th>
-                          <th className="py-2">Range</th>
+                          <th className="py-2 pr-4">Noms (next {forecast.horizonWeeks}w)</th>
+                          <th className="py-2 pr-4">Noms range</th>
+                          <th className="py-2 pr-4">Spend (next {forecast.horizonWeeks}w)</th>
+                          <th className="py-2">Spend range</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {forecast.forecasts.departments.map(d => {
-                          const sum = d.forecast.reduce((a, p) => a + p.point, 0);
-                          const lo = d.forecast.reduce((a, p) => a + p.lower, 0);
-                          const up = d.forecast.reduce((a, p) => a + p.upper, 0);
-                          return (
+                        {[...forecast.forecasts.departments]
+                          .map(d => ({
+                            d,
+                            nSum: d.nominations.reduce((a, p) => a + p.point, 0),
+                            nLo: d.nominations.reduce((a, p) => a + p.lower, 0),
+                            nUp: d.nominations.reduce((a, p) => a + p.upper, 0),
+                            sSum: d.spend.reduce((a, p) => a + p.point, 0),
+                            sLo: d.spend.reduce((a, p) => a + p.lower, 0),
+                            sUp: d.spend.reduce((a, p) => a + p.upper, 0),
+                          }))
+                          // 'Other' always last; real departments by projected nominations desc
+                          .sort((a, b) =>
+                            a.d.title === 'Other' ? 1 : b.d.title === 'Other' ? -1 : b.nSum - a.nSum)
+                          .map(({ d, nSum, nLo, nUp, sSum, sLo, sUp }) => (
                             <tr key={d.title} className="border-b border-gray-100">
-                              <td className="py-2 pr-4 font-medium">{d.title}</td>
-                              <td className="py-2 pr-4 text-gray-500">{d.model}</td>
-                              <td className="py-2 pr-4 font-semibold">{sum.toFixed(0)}</td>
-                              <td className="py-2 text-gray-500">{lo.toFixed(0)} – {up.toFixed(0)}</td>
+                              <td className="py-2 pr-4 font-medium">
+                                {d.title}
+                                <span className="block text-[11px] text-gray-400">
+                                  noms: {d.nominationsModel || '—'} · spend: {d.spendModel || '—'}
+                                </span>
+                              </td>
+                              <td className="py-2 pr-4 font-semibold">{nSum.toFixed(0)}</td>
+                              <td className="py-2 pr-4 text-gray-500">{nLo.toFixed(0)} – {nUp.toFixed(0)}</td>
+                              <td className="py-2 pr-4 font-semibold">${Math.round(sSum).toLocaleString()}</td>
+                              <td className="py-2 text-gray-500">${Math.round(sLo).toLocaleString()} – ${Math.round(sUp).toLocaleString()}</td>
                             </tr>
-                          );
-                        })}
+                          ))}
                       </tbody>
                     </table>
                   </div>
