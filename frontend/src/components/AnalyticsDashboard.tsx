@@ -267,7 +267,7 @@ export const AnalyticsDashboard: React.FC = () => {
       const [ovData, trendsData, deptData, topRecData, topNomData, fraudData, approvalData, divData, catData] =
         await Promise.all([
           apiFetch<AnalyticsOverview>('/api/admin/analytics/overview'),
-          apiFetch<SpendingTrend[]>('/api/admin/analytics/spending-trends?days=90'),
+          apiFetch<SpendingTrend[]>('/api/admin/analytics/spending-trends?days=30'),
           apiFetch<DepartmentSpending[]>('/api/admin/analytics/department-spending'),
           apiFetch<TopRecipient[]>('/api/admin/analytics/top-recipients?limit=10'),
           apiFetch<TopRecipient[]>('/api/admin/analytics/top-nominators?limit=10'),
@@ -761,7 +761,7 @@ export const AnalyticsDashboard: React.FC = () => {
       {/* Spending Trends Tab */}
       {selectedTab === 'spending' && !loading && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-4">90-Day Spending Trends</h2>
+          <h2 className="text-lg font-semibold mb-4">30-Day Spending Trends</h2>
           <SpendingTrendChart trends={trends} />
         </div>
       )}
@@ -1676,13 +1676,16 @@ interface SpendingTrendChartProps {
 }
 
 const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends }) => {
-  const maxAmount = Math.max(...trends.map(t => t.amount), 1);
+  // API returns newest-first; reverse to oldest→newest, then take the most
+  // recent 30 (slice(-30)) so the last bar is the latest day, not the oldest.
   const sorted = [...trends].reverse();
+  const shown = sorted.slice(-30);
+  const maxAmount = Math.max(...shown.map(t => t.amount), 1);
 
   return (
     <div className="space-y-4">
       <div className="h-64 flex items-end gap-1 border-l border-b border-gray-300 p-4">
-        {sorted.slice(0, 30).map((trend, i) => (
+        {shown.map((trend, i) => (
           <div
             key={i}
             className="flex-1 bg-blue-500 rounded-t hover:bg-blue-600 transition-colors relative group"
