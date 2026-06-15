@@ -406,17 +406,23 @@ def rolling_backtest(y, model_fn, folds, h, m):
     for MASE's seasonal denominator, so short series simply yield fewer folds.
     """
     y = np.asarray(y, float); n = len(y)
+    # Adaptive seasonal period for scoring: only trust the annual season (m) when
+    # there are >= 2 full cycles of history to validate it; otherwise fall back to a
+    # non-seasonal MASE (m_eff = 1, scored vs a lag-1 naive). Without this, a tenant
+    # with < ~14 months of weeks gets zero folds and an empty bake-off (every model
+    # null → default to ETS). The models themselves still adapt internally.
+    m_eff = m if n >= 2 * m else 1
     mae, sm, rm, ma, cov = [], [], [], [], []
     for k in range(folds, 0, -1):
         cut = n - k * h                 # origin for this fold
-        if cut <= m:                    # need > one season behind the cut
+        if cut <= m_eff:                # need enough training behind the cut for the MASE scaler
             continue
         train, test = y[:cut], y[cut:cut + h]
         if len(test) < h:               # not a full horizon left to score
             continue
         pt, lo, up = model_fn(train, h); pt = pt[:len(test)]
         mae.append(float(np.mean(np.abs(test - pt)))); sm.append(smape(test, pt))
-        rm.append(rmse(test, pt)); ma.append(mase(test, pt, train, m))
+        rm.append(rmse(test, pt)); ma.append(mase(test, pt, train, m_eff))
         # coverage = fraction of actuals that fell inside the prediction band
         # (a calibrated 80% interval should land near 0.80).
         cov.append(float(np.mean((test >= lo[:len(test)]) & (test <= up[:len(test)]))))
