@@ -49,15 +49,17 @@ load_dotenv(env_path)
 warnings.filterwarnings("ignore")
 logger = logging.getLogger("forecast_models")
 
-# Tuning
-HORIZON_WEEKS = 8
-BACKTEST_FOLDS = 5
-SEASON_WEEKS = 52
-CONFIDENCE = 0.80
-Z = 1.2816                      # ~80% two-sided normal quantile
-HISTORY_DAYS = 900             # ~2.5 years
-TOP_DEPARTMENTS = 6
+# ── Tuning knobs ──────────────────────────────────────────────────────────────
+HORIZON_WEEKS = 8       # how many weeks ahead each forecast projects
+BACKTEST_FOLDS = 5      # rolling-origin folds used to score/select models
+SEASON_WEEKS = 52       # seasonal period for weekly data (annual cycle)
+CONFIDENCE = 0.80       # prediction-interval coverage (→ 10th/90th pctile bands)
+Z = 1.2816              # ~80% two-sided normal quantile (for the stat models' bands)
+HISTORY_DAYS = 900      # how far back to pull history (~2.5 years)
+TOP_DEPARTMENTS = 6     # model the N busiest titles individually; rest → "Other"
 
+# US federal holidays 2024–2026. Used as a calendar feature for LightGBM and kept
+# in sync with the respread script so the modelled dips line up with the data.
 US_HOLIDAYS = {
     date(2024,1,1),date(2024,1,15),date(2024,2,19),date(2024,5,27),date(2024,6,19),
     date(2024,7,4),date(2024,9,2),date(2024,11,11),date(2024,11,28),date(2024,11,29),date(2024,12,25),
@@ -71,6 +73,9 @@ US_HOLIDAYS = {
 # ── DB ──────────────────────────────────────────────────────────────────────────
 
 def get_db_connection():
+    """Open an Azure SQL connection from env vars (same convention as the other
+    stages). The DB is already awake by the time this runs — run_job.py calls
+    wake_database() before any stage."""
     return pyodbc.connect(
         f"DRIVER={{ODBC Driver 18 for SQL Server}};"
         f"SERVER={os.getenv('SQL_SERVER')};"
@@ -82,12 +87,18 @@ def get_db_connection():
 
 
 def get_tenants(conn) -> list:
+    """Return [(TenantId, TenantName), ...] — we forecast each tenant separately."""
     df = pd.read_sql("SELECT TenantId, TenantName FROM dbo.Tenants ORDER BY TenantId", conn)
     return list(df.itertuples(index=False, name=None))
 
 
 def load_nominations(conn, tenant_id: int) -> pd.DataFrame:
-    """Per-record NominationDate, Amount, Title for the tenant's window."""
+    """One row per nomination (ds, amount, title) within the last HISTORY_DAYS.
+
+    Tenant scoping is via the *beneficiary's* Title/TenantId (the recipient's
+    department) — matching how Spending Trends groups departments. Returns the
+    raw per-record rows; aggregation into daily/weekly series happens upstream.
+    """
     q = """
         SELECT n.NominationDate AS ds, n.Amount AS amount, u.Title AS title
         FROM dbo.Nominations n
@@ -101,76 +112,153 @@ def load_nominations(conn, tenant_id: int) -> pd.DataFrame:
 # ── Aggregation ─────────────────────────────────────────────────────────────────
 
 def daily_frame(ds_series, value_series, start, end) -> pd.DataFrame:
+    """Collapse per-nomination rows into a dense daily series [ds, y].
+
+    Sums value_series per calendar day, then reindexes onto a *contiguous*
+    day-by-day range start..end so that days with no nominations show up as 0
+    (instead of being missing). Pass value_series = ones for a count series, or
+    the Amount column for a spend series.
+    """
     s = pd.Series(np.asarray(value_series, dtype=float),
                   index=pd.to_datetime(pd.Series(ds_series).dt.date))
     daily = s.groupby(s.index).sum()
     idx = pd.date_range(pd.Timestamp(start), pd.Timestamp(end), freq="D")
-    daily = daily.reindex(idx, fill_value=0.0)
+    daily = daily.reindex(idx, fill_value=0.0)   # fill zero-activity days
     return pd.DataFrame({"ds": idx, "y": daily.values})
 
 
 def to_weekly(df: pd.DataFrame) -> pd.DataFrame:
+    """Resample a daily [ds, y] frame into Monday-anchored weekly sums.
+
+    The statistical models run on weekly data (the annual cycle is learnable at
+    52 weeks; daily would be mostly day-of-week noise we didn't model). The final
+    bucket is dropped if it's a partial week (< 7 observed days) so an in-progress
+    current week doesn't read as a sudden volume collapse.
+    """
     g = df.set_index("ds")["y"].resample("W-MON", label="left", closed="left")
     s, counts = g.sum(), g.count()
-    if len(counts) and counts.iloc[-1] < 7:
+    if len(counts) and counts.iloc[-1] < 7:      # drop a partial trailing week
         s = s.iloc[:-1]
     return pd.DataFrame({"ds": s.index, "y": s.values})
 
 
 # ── Metrics ─────────────────────────────────────────────────────────────────────
+# All three compare a forecast (y_pred) against what actually happened (y_true)
+# on a held-out slice of history. They are the scores the rolling backtest uses to
+# rank the candidate models; the lowest-MASE model is the one we keep per series.
 
 def mase(y_true, y_pred, y_train, m):
+    """Mean Absolute Scaled Error — the primary model-selection metric.
+
+    MASE = (mean absolute error of the forecast)
+           ──────────────────────────────────────────────────────────
+           (mean absolute error of a naive 'repeat one season ago' forecast)
+
+    The denominator is computed on the TRAINING data, so the metric is
+    *scale-free*: a MASE of 1.0 means "no better than the seasonal-naive
+    baseline", < 1.0 means "better than naive", > 1.0 means "worse than naive".
+    Being unit-independent lets us compare across series with different scales
+    (e.g. nomination counts vs. dollar spend) and it is robust to zero-activity
+    weeks that would make a percentage error (MAPE) blow up.
+
+    Args:
+        y_true:  actual values over the forecast window.
+        y_pred:  forecasted values over the same window.
+        y_train: the training history (used only to scale the error).
+        m:       seasonal period (52 for weekly data with an annual cycle).
+    """
     y_true, y_pred, y_train = map(lambda a: np.asarray(a, float), (y_true, y_pred, y_train))
+    # Denominator: average week-over-season change in the training data — i.e. the
+    # error a "same week last cycle" naive forecast would have made in-sample.
     denom = np.mean(np.abs(y_train[m:] - y_train[:-m])) if len(y_train) > m else 0
+    # Fallback when there isn't a full season of history: use the lag-1 naive
+    # difference instead (and guard against a divide-by-zero with 1e-9).
     if not denom:
         denom = np.mean(np.abs(np.diff(y_train))) or 1e-9
     return float(np.mean(np.abs(y_true - y_pred)) / denom)
 
 
 def smape(y_true, y_pred):
+    """Symmetric Mean Absolute Percentage Error, as a percentage (0–200%).
+
+    Like MAPE but symmetric: the error is divided by the average of the actual
+    and the forecast, so over- and under-prediction are penalised evenly and it
+    doesn't explode toward infinity when an actual is near zero. Reported for
+    human readability ("~11% off") alongside MASE, which drives selection.
+    """
     y_true, y_pred = np.asarray(y_true, float), np.asarray(y_pred, float)
+    # Denominator |actual| + |forecast|; clamp exact zeros to 1e-9 to avoid 0/0.
     d = np.abs(y_true) + np.abs(y_pred); d[d == 0] = 1e-9
     return float(100 * np.mean(2 * np.abs(y_pred - y_true) / d))
 
 
 def rmse(y_true, y_pred):
+    """Root Mean Squared Error — average error in the series' own units.
+
+    Squaring penalises large misses more than small ones, so RMSE is sensitive
+    to occasional big errors. Kept for context (it's in the original units, e.g.
+    "off by ~22 nominations/week"); it is not used to choose the model.
+    """
     return float(np.sqrt(np.mean((np.asarray(y_true, float) - np.asarray(y_pred, float)) ** 2)))
 
 
 # ── Models ──────────────────────────────────────────────────────────────────────
 
 def seasonal_naive(train, h, m, z=Z):
+    """Baseline model: forecast = the value one full season (m steps) ago.
+
+    For weekly data with m=52 this is "same week last year". It's the yardstick
+    every other model has to beat (and the basis MASE is scaled against). Returns
+    (point, lower, upper); the interval comes from the spread of in-sample
+    seasonal differences, widened with the horizon. Falls back to last-value
+    naive when there isn't a full season of history yet.
+    """
     train = np.asarray(train, float)
     if len(train) >= m:
-        base = train[-m:]
-        point = np.array([base[i % m] for i in range(h)]); resid = train[m:] - train[:-m]
+        base = train[-m:]                                   # last full season
+        point = np.array([base[i % m] for i in range(h)])   # tile it forward
+        resid = train[m:] - train[:-m]                      # in-sample seasonal errors
     else:
-        point = np.full(h, train[-1] if len(train) else 0.0)
+        point = np.full(h, train[-1] if len(train) else 0.0)  # repeat last value
         resid = np.diff(train) if len(train) > 1 else np.array([0.0])
     sigma = np.std(resid) if len(resid) else 0.0
-    sd = sigma * np.sqrt(np.arange(1, h + 1) / max(m, 1) + 1)
+    sd = sigma * np.sqrt(np.arange(1, h + 1) / max(m, 1) + 1)  # band grows with horizon
     return np.maximum(point, 0), np.maximum(point - z * sd, 0), point + z * sd
 
 
 def ets(train, h, m, z=Z):
+    """ETS / Holt-Winters exponential smoothing (the usual winner on this data).
+
+    Models the series as level + trend + (optionally) an additive seasonal cycle,
+    where recent observations are weighted more heavily than older ones. Uses an
+    additive annual season when there are at least two full cycles of history
+    (>= 2*m weeks); otherwise it drops the seasonal term (Holt's linear trend) so
+    statsmodels has enough data to fit. Any fitting failure degrades gracefully to
+    seasonal_naive so one bad series never crashes the run.
+
+    Returns (point, lower, upper); the interval is built from the residual spread
+    and widens as sqrt(horizon).
+    """
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
     train = np.asarray(train, float)
     try:
-        if len(train) >= 2 * m:
+        if len(train) >= 2 * m:                 # >= 2 seasonal cycles → fit seasonality
             fit = ExponentialSmoothing(train, trend="add", seasonal="add",
                                        seasonal_periods=m, initialization_method="estimated").fit()
-        else:
+        else:                                    # too little history → trend only (Holt)
             fit = ExponentialSmoothing(train, trend="add",
                                        initialization_method="estimated").fit()
         point = np.asarray(fit.forecast(h), float)
-        sigma = np.std(train - fit.fittedvalues)
+        sigma = np.std(train - fit.fittedvalues)   # one-step residual spread
     except Exception:
-        return seasonal_naive(train, h, m, z)
+        return seasonal_naive(train, h, m, z)      # graceful fallback
     sd = sigma * np.sqrt(np.arange(1, h + 1))
     return np.maximum(point, 0), np.maximum(point - z * sd, 0), point + z * sd
 
 
 def _calendar(ds: pd.Timestamp) -> dict:
+    """Calendar features for a date — these give LightGBM its seasonality signal
+    (it has no built-in notion of time; month/quarter/week/holiday encode it)."""
     return {"month": ds.month, "quarter": ds.quarter,
             "weekofyear": int(ds.isocalendar().week), "dayofyear": ds.dayofyear,
             "is_quarter_end_month": int(ds.month in (3, 6, 9, 12)),
@@ -178,12 +266,19 @@ def _calendar(ds: pd.Timestamp) -> dict:
 
 
 def _supervised(df, lags, group_col=None):
+    """Turn a time series into a supervised (X, y) table for LightGBM.
+
+    Trees can't read a sequence directly, so we hand them the recent past as
+    columns: lagged values (y shifted by each L in `lags`), a 4-period rolling
+    mean, and calendar features. With group_col set (department Title), lags are
+    computed *within each group* so series don't bleed into each other.
+    """
     frames = []
     for g in (df[group_col].unique() if group_col else [None]):
         sub = (df[df[group_col] == g] if group_col else df).sort_values("ds").copy()
         for L in lags:
-            sub[f"lag{L}"] = sub["y"].shift(L)
-        sub["roll4"] = sub["y"].shift(1).rolling(4).mean()
+            sub[f"lag{L}"] = sub["y"].shift(L)               # value L periods ago
+        sub["roll4"] = sub["y"].shift(1).rolling(4).mean()   # recent local average
         sub = pd.concat([sub, sub["ds"].apply(_calendar).apply(pd.Series)], axis=1)
         if group_col:
             sub[group_col] = g
@@ -192,30 +287,47 @@ def _supervised(df, lags, group_col=None):
 
 
 def lgbm_forecast(history, h, freq, lags, group_col=None, confidence=CONFIDENCE, seed=42):
+    """Gradient-boosted-tree forecaster over lag + calendar features.
+
+    Fits THREE LightGBM models on the same features: a point model (regression)
+    plus two quantile models for the lower/upper edges of the prediction band.
+    When group_col is given it's a single *global* model across all departments,
+    with Title as a categorical — this pools learning so sparse departments
+    borrow strength from busy ones. Forecasts are produced *recursively*: each
+    predicted step is appended to the history so it can feed the next step's lags.
+
+    Returns (point, lower, upper) arrays — or, for a panel, a dict keyed by group.
+    """
     import lightgbm as lgb
+    # 80% interval → predict the 10th and 90th percentiles for the band edges.
     lo_q, hi_q = (1 - confidence) / 2, 1 - (1 - confidence) / 2
     feat = [f"lag{L}" for L in lags] + ["roll4", "month", "quarter", "weekofyear",
             "dayofyear", "is_quarter_end_month", "is_holiday"]
     cats = [group_col] if group_col else []
     if group_col:
         feat = feat + [group_col]
+    # Build the training table; drop early rows that lack the longest lag.
     sup = _supervised(history, lags, group_col).dropna(subset=[f"lag{max(lags)}"])
     if group_col:
         sup[group_col] = sup[group_col].astype("category")
     X, y = sup[feat], sup["y"]
     p = dict(n_estimators=300, learning_rate=0.05, num_leaves=31, min_child_samples=20,
              subsample=0.9, colsample_bytree=0.9, random_state=seed, verbose=-1)
-    mp = lgb.LGBMRegressor(objective="regression", **p).fit(X, y, categorical_feature=cats or "auto")
-    ml = lgb.LGBMRegressor(objective="quantile", alpha=lo_q, **p).fit(X, y, categorical_feature=cats or "auto")
-    mh = lgb.LGBMRegressor(objective="quantile", alpha=hi_q, **p).fit(X, y, categorical_feature=cats or "auto")
+    mp = lgb.LGBMRegressor(objective="regression", **p).fit(X, y, categorical_feature=cats or "auto")          # point
+    ml = lgb.LGBMRegressor(objective="quantile", alpha=lo_q, **p).fit(X, y, categorical_feature=cats or "auto")  # lower band
+    mh = lgb.LGBMRegressor(objective="quantile", alpha=hi_q, **p).fit(X, y, categorical_feature=cats or "auto")  # upper band
     step = pd.Timedelta(days=1) if freq == "D" else pd.Timedelta(weeks=1)
     out = {}
+    # Forecast each series (one, or one per group) recursively, h steps ahead.
     for g in (history[group_col].unique() if group_col else [None]):
         hist = (history[history[group_col] == g] if group_col else history).sort_values("ds")
-        yh = list(hist["y"].values); last = hist["ds"].max()
+        yh = list(hist["y"].values)   # running history; predictions get appended
+        last = hist["ds"].max()
         pt, lo, up = [], [], []
         for i in range(h):
-            nds = last + step * (i + 1)
+            nds = last + step * (i + 1)                      # date of this step
+            # Assemble the same feature row used in training, reading lags off the
+            # running history (which now includes our own earlier predictions).
             row = {f"lag{L}": (yh[-L] if len(yh) >= L else np.nan) for L in lags}
             row["roll4"] = np.mean(yh[-4:]) if len(yh) >= 4 else np.nan
             row.update(_calendar(nds))
@@ -224,26 +336,45 @@ def lgbm_forecast(history, h, freq, lags, group_col=None, confidence=CONFIDENCE,
             Xr = pd.DataFrame([row])[feat]
             if group_col:
                 Xr[group_col] = Xr[group_col].astype("category")
-            pv = max(float(mp.predict(Xr)[0]), 0.0)
-            pt.append(pv); lo.append(min(max(float(ml.predict(Xr)[0]), 0.0), pv))
-            up.append(max(float(mh.predict(Xr)[0]), pv)); yh.append(pv)
+            pv = max(float(mp.predict(Xr)[0]), 0.0)          # point (floored at 0)
+            # Keep band edges sane: lower <= point <= upper.
+            pt.append(pv)
+            lo.append(min(max(float(ml.predict(Xr)[0]), 0.0), pv))
+            up.append(max(float(mh.predict(Xr)[0]), pv))
+            yh.append(pv)                                     # feed forward
         out[g] = (np.array(pt), np.array(lo), np.array(up))
     return out if group_col else out[None]
 
 
 def rolling_backtest(y, model_fn, folds, h, m):
+    """Rolling-origin (expanding-window) backtest of a single model.
+
+    Walks the origin backward `folds` times. At each fold, train on everything up
+    to a cut point, forecast the next h steps, and score those forecasts against
+    the actuals that were held out. Averaging across folds estimates real
+    out-of-sample accuracy (not in-sample fit). Returns the mean of each metric
+    plus how many folds actually ran.
+
+        train ──────────────►| forecast h →|   (fold k)
+        train ───────────►| forecast h →|       (fold k-1)  … etc.
+
+    A fold is skipped when there isn't enough history left of the cut (cut <= m)
+    for MASE's seasonal denominator, so short series simply yield fewer folds.
+    """
     y = np.asarray(y, float); n = len(y)
     mae, sm, rm, ma, cov = [], [], [], [], []
     for k in range(folds, 0, -1):
-        cut = n - k * h
-        if cut <= m:
+        cut = n - k * h                 # origin for this fold
+        if cut <= m:                    # need > one season behind the cut
             continue
         train, test = y[:cut], y[cut:cut + h]
-        if len(test) < h:
+        if len(test) < h:               # not a full horizon left to score
             continue
         pt, lo, up = model_fn(train, h); pt = pt[:len(test)]
         mae.append(float(np.mean(np.abs(test - pt)))); sm.append(smape(test, pt))
         rm.append(rmse(test, pt)); ma.append(mase(test, pt, train, m))
+        # coverage = fraction of actuals that fell inside the prediction band
+        # (a calibrated 80% interval should land near 0.80).
         cov.append(float(np.mean((test >= lo[:len(test)]) & (test <= up[:len(test)]))))
     agg = lambda a: round(float(np.mean(a)), 4) if a else None
     return {"MASE": agg(ma), "sMAPE": agg(sm), "RMSE": agg(rm),
@@ -253,7 +384,14 @@ def rolling_backtest(y, model_fn, folds, h, m):
 # ── Per-tenant pipeline ─────────────────────────────────────────────────────────
 
 def _model_fns(series_for_lgbm_end):
-    """Return weekly model callables; LightGBM wraps a synthetic weekly index."""
+    """Build the three competing models as uniform ``fn(train, h) -> (pt, lo, up)``
+    callables so the backtest can treat them interchangeably.
+
+    The backtest passes only a bare numpy training array, but LightGBM needs a
+    dated DataFrame to derive calendar features — so f_lgbm reconstructs a
+    plausible weekly date index ending at the series' last week. (Only the
+    calendar *pattern* matters here, not the absolute dates.)
+    """
     def f_snaive(tr, h): return seasonal_naive(tr, h, SEASON_WEEKS)
     def f_ets(tr, h):    return ets(tr, h, SEASON_WEEKS)
     def f_lgbm(tr, h):
@@ -264,50 +402,69 @@ def _model_fns(series_for_lgbm_end):
 
 
 def _bakeoff(weekly: pd.DataFrame):
-    """Backtest the three models; return (metrics_dict, chosen_name, final_forecast)."""
+    """The model contest for one weekly series.
+
+    Backtests all three models, picks the one with the lowest MASE, then refits
+    that winner on the *full* history to produce the actual forward forecast.
+    Returns (metrics_per_model, chosen_name, final_forecast). ``metrics`` also
+    carries a "chosen" key and is stored verbatim in ForecastRuns.Metrics so the
+    UI's model-comparison table can show the head-to-head.
+    """
     y = weekly["y"].values
     end = weekly["ds"].max()
     fns = _model_fns(end)
+    # Score every model on the same rolling backtest.
     metrics = {name: rolling_backtest(y, fn, BACKTEST_FOLDS, HORIZON_WEEKS, SEASON_WEEKS)
                for name, fn in fns.items()}
+    # Pick the lowest-MASE model that actually produced folds; default to ETS if
+    # the series was too short for any backtest fold to run.
     ranked = [n for n in metrics if metrics[n]["MASE"] is not None]
     chosen = min(ranked, key=lambda n: metrics[n]["MASE"]) if ranked else "ETS"
     metrics["chosen"] = chosen
-    final = fns[chosen](y, HORIZON_WEEKS)
+    final = fns[chosen](y, HORIZON_WEEKS)   # winner refit on all history
     return metrics, chosen, final
 
 
 def forecast_tenant(conn, tenant_id: int) -> int:
-    """Run the bake-off for one tenant and persist a run. Returns rows written."""
+    """End-to-end forecast for one tenant; writes one run and returns rows written.
+
+    Pipeline: load nominations → aggregate to daily then weekly → bake off the
+    total nominations and total spend series → add a daily LightGBM view → model
+    every department (nominations and spend) → persist a ForecastRun plus all the
+    Forecasts rows. Tenants with very little data are skipped.
+    """
     df = load_nominations(conn, tenant_id)
-    if df.empty or len(df) < 30:
+    if df.empty or len(df) < 30:        # not enough signal to forecast meaningfully
         logger.info("[Tenant %s] too few nominations (%d) — skipping", tenant_id, len(df))
         return 0
     df["ds"] = pd.to_datetime(df["ds"])
     start = df["ds"].min().date()
     end = date.today()
 
+    # Build daily series (count via ones, spend via Amount), then weekly versions.
     daily_cnt = daily_frame(df["ds"], np.ones(len(df)), start, end)
     daily_spd = daily_frame(df["ds"], df["amount"].fillna(0), start, end)
     wk_cnt, wk_spd = to_weekly(daily_cnt), to_weekly(daily_spd)
 
-    run_id = str(uuid.uuid4())
-    rows = []   # (Series, Level, Dept, Grain, TargetDate, Horizon, Model, point, lo, up)
+    run_id = str(uuid.uuid4())             # one RunId groups every row from this run
+    rows = []   # accumulator: (Series, Level, Dept, Grain, TargetDate, Horizon, Model, point, lo, up)
 
     def add_weekly(series_name, weekly_df, point, lo, up, model, level="total", dept=None):
+        """Append H weekly forecast rows, dating each step from the last observed week."""
         last = weekly_df["ds"].max()
         for i in range(len(point)):
-            td = (last + pd.Timedelta(weeks=i + 1)).date()
+            td = (last + pd.Timedelta(weeks=i + 1)).date()   # week-start of step i+1
             rows.append((series_name, level, dept, "weekly", td, i + 1, model,
                          float(point[i]), float(lo[i]), float(up[i])))
 
-    # total weekly nominations + spend
+    # ── Totals: bake off nominations and spend at the weekly level ────────────
     m_cnt, chosen_cnt, (p, lo, up) = _bakeoff(wk_cnt)
     add_weekly("nominations", wk_cnt, p, lo, up, chosen_cnt)
     m_spd, chosen_spd, (p, lo, up) = _bakeoff(wk_spd)
     add_weekly("spend", wk_spd, p, lo, up, chosen_spd)
 
-    # total daily nominations via LightGBM (production granularity)
+    # ── Daily nominations via LightGBM (finer granularity for the daily view) ──
+    # Daily lags include 7/28/364 to capture weekly/monthly/annual structure.
     dp, dl, du = lgbm_forecast(daily_cnt, HORIZON_WEEKS * 7, "D", lags=[1, 7, 14, 28, 364])
     last_d = daily_cnt["ds"].max()
     for i in range(len(dp)):
@@ -370,12 +527,20 @@ def forecast_tenant(conn, tenant_id: int) -> int:
 
 
 def _persist(conn, run_id, tenant_id, start, end, metrics, rows):
+    """Write one ForecastRuns header row + all Forecasts detail rows for this run.
+
+    The header carries the model-comparison metrics as JSON (the UI reads it);
+    the detail rows are bulk-inserted with fast_executemany. The API serves the
+    most recent run per tenant, so old runs are simply left in place as history.
+    """
     cur = conn.cursor()
+    # Header: one row per run, with the full per-model metrics blob.
     cur.execute("""
         INSERT INTO dbo.ForecastRuns
             (RunId, TenantId, GeneratedAt, HorizonWeeks, HistoryStart, HistoryEnd, Confidence, Metrics, Status)
         VALUES (?, ?, GETDATE(), ?, ?, ?, ?, ?, 'complete')
     """, run_id, tenant_id, HORIZON_WEEKS, start, end, CONFIDENCE, json.dumps(metrics))
+    # Detail: every forecast point (all series/levels/departments/grains) in one batch.
     cur.fast_executemany = True
     cur.executemany("""
         INSERT INTO dbo.Forecasts

@@ -784,76 +784,18 @@ export const AnalyticsDashboard: React.FC = () => {
 
           {!forecastLoading && forecast && (
             <>
-              {/* Header + model honesty note */}
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div>
-                    <h2 className="text-lg font-semibold flex items-center gap-2">
-                      <LineChart size={20} className="text-blue-600" />
-                      HRBP Review-Load Forecast
-                    </h2>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Projected HRBP reviews per week for the next {forecast.horizonWeeks} weeks,
-                      with {Math.round(forecast.confidence * 100)}% prediction intervals.
-                    </p>
-                    <span className={`inline-block mt-2 text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                      forecast.source === 'stored_run' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      {forecast.source === 'stored_run'
-                        ? `weekly model run · ${forecast.runId?.slice(0, 8)}`
-                        : 'live fallback (Holt) · weekly run pending'}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => fetchForecast(appliedBudget)}
-                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-                  >
-                    <RefreshCw size={14} /> Refresh
-                  </button>
-                </div>
-
-                {/* Inputs / assumptions */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs text-gray-500">Flag / review rate</p>
-                    <p className="text-xl font-bold">{(forecast.inputs.reviewRate * 100).toFixed(1)}%</p>
-                    <p className="text-[11px] text-gray-400">
-                      {forecast.inputs.reviewRateIsDefault
-                        ? 'default (no history)'
-                        : `${forecast.inputs.flaggedNominations}/${forecast.inputs.totalNominationsWindow} nominations`}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs text-gray-500">Avg days to approval (SLA)</p>
-                    <p className="text-xl font-bold">{forecast.inputs.avgDaysToApproval.toFixed(1)}</p>
-                    <p className="text-[11px] text-gray-400">used for queue depth</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs text-gray-500">History learned from</p>
-                    <p className="text-xl font-bold">{forecast.inputs.weeklyObservations} wks</p>
-                    <p className="text-[11px] text-gray-400">{forecast.historyDays}-day window</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs text-gray-500">Chosen model</p>
-                    <p className="text-xl font-bold">
-                      {forecast.forecasts?.nominationsWeekly?.[0]?.model || 'Holt linear'}
-                    </p>
-                    <p className="text-[11px] text-gray-400">
-                      {forecast.source === 'stored_run' ? 'selected by backtest MASE' : 'live fallback'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex items-start gap-2 text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg p-3">
-                  <AlertCircle size={14} className="text-blue-500 mt-0.5 shrink-0" />
-                  <span>{forecast.inputs.note}</span>
-                </div>
-              </div>
-
               {/* Model comparison (bake-off) */}
               {forecast.modelComparison && (
                 <div className="bg-white rounded-lg border border-gray-200 p-6">
-                  <h3 className="text-base font-semibold mb-1">Model comparison (backtest)</h3>
+                  <div className="flex items-start justify-between gap-4">
+                    <h3 className="text-base font-semibold mb-1">Model comparison (backtest)</h3>
+                    <button
+                      onClick={() => fetchForecast(appliedBudget)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors shrink-0"
+                    >
+                      <RefreshCw size={14} /> Refresh
+                    </button>
+                  </div>
                   <p className="text-xs text-gray-500 mb-4">
                     Rolling-origin backtest error per model; lowest MASE wins (★). Seasonal-Naive
                     and ETS run weekly; LightGBM uses lag + calendar features.
@@ -984,6 +926,67 @@ export const AnalyticsDashboard: React.FC = () => {
                   />
                 </div>
               )}
+
+              {/* HRBP Review-Load header: assumptions + model note. Sits here
+                  because its review-rate / SLA tiles feed the queue-depth calc below. */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
+                      <LineChart size={20} className="text-blue-600" />
+                      HRBP Review-Load Forecast
+                    </h2>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Projected HRBP reviews per week for the next {forecast.horizonWeeks} weeks,
+                      with {Math.round(forecast.confidence * 100)}% prediction intervals.
+                    </p>
+                    <span className={`inline-block mt-2 text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                      forecast.source === 'stored_run' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {forecast.source === 'stored_run'
+                        ? `weekly model run · ${forecast.runId?.slice(0, 8)}`
+                        : 'live fallback (Holt) · weekly run pending'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Inputs / assumptions */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Flag / review rate</p>
+                    <p className="text-xl font-bold">{(forecast.inputs.reviewRate * 100).toFixed(1)}%</p>
+                    <p className="text-[11px] text-gray-400">
+                      {forecast.inputs.reviewRateIsDefault
+                        ? 'default (no history)'
+                        : `${forecast.inputs.flaggedNominations}/${forecast.inputs.totalNominationsWindow} nominations`}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Avg days to approval (SLA)</p>
+                    <p className="text-xl font-bold">{forecast.inputs.avgDaysToApproval.toFixed(1)}</p>
+                    <p className="text-[11px] text-gray-400">used for queue depth</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">History learned from</p>
+                    <p className="text-xl font-bold">{forecast.inputs.weeklyObservations} wks</p>
+                    <p className="text-[11px] text-gray-400">{forecast.historyDays}-day window</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Chosen model</p>
+                    <p className="text-xl font-bold">
+                      {forecast.forecasts?.nominationsWeekly?.[0]?.model || 'Holt linear'}
+                    </p>
+                    <p className="text-[11px] text-gray-400">
+                      {forecast.source === 'stored_run' ? 'selected by backtest MASE' : 'live fallback'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-start gap-2 text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg p-3">
+                  <AlertCircle size={14} className="text-blue-500 mt-0.5 shrink-0" />
+                  <span>{forecast.inputs.note}</span>
+                </div>
+              </div>
 
               {/* Queue-depth table */}
               <div className="bg-white rounded-lg border border-gray-200 p-6">
