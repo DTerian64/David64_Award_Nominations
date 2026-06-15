@@ -11,6 +11,11 @@ numpy>=1.24.0
 scikit-learn==1.8.0
 matplotlib>=3.8.0
 
+# ── Forecasting (forecast_models.py stage) ───────────────────────────────────
+# statsmodels → ETS / Holt-Winters; lightgbm → gradient-boosted lag-feature model
+statsmodels>=0.14.0
+lightgbm>=4.0.0
+
 # ── Graph analytics ───────────────────────────────────────────────────────────
 networkx>=3.2.0
 

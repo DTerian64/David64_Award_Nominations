@@ -249,6 +249,15 @@ def main() -> None:
         module_path = "graph_pattern_detector",
     )
 
+    # ── Stage 3: Forecast models ─────────────────────────────────────────────
+    # Independent of the fraud/graph stages — bakes off Seasonal-Naive / ETS /
+    # LightGBM per tenant and writes dbo.ForecastRuns + dbo.Forecasts, which the
+    # analytics API serves on the Forecasting tab.
+    results["Forecast models"] = run_stage(
+        name        = "Forecast models  (forecast_models)",
+        module_path = "forecast_models",
+    )
+
     # ── Summary ───────────────────────────────────────────────────────────────
     logger.info("")
     logger.info("╔══════════════════════════════════════════════════╗")

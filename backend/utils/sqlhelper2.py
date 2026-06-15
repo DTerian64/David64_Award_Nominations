@@ -1412,6 +1412,69 @@ def get_review_rate(tenant_id: int, days: int = 180) -> dict:
         }
 
 
+def get_latest_forecast_run(tenant_id: int) -> dict | None:
+    """
+    Most recent completed forecast run for a tenant (written by the weekly
+    forecast_models job stage). Returns run metadata incl. the model-comparison
+    Metrics JSON, or None if the job has not produced a run yet.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT TOP (1)
+                    RunId, TenantId, GeneratedAt, HorizonWeeks,
+                    HistoryStart, HistoryEnd, Confidence, Metrics
+                FROM dbo.ForecastRuns
+                WHERE TenantId = :tenant_id AND Status = 'complete'
+                ORDER BY GeneratedAt DESC
+            """),
+            {"tenant_id": tenant_id},
+        ).fetchone()
+        if not row:
+            return None
+        import json as _json
+        return {
+            "runId":        row[0],
+            "tenantId":     row[1],
+            "generatedAt":  row[2].isoformat() if row[2] else None,
+            "horizonWeeks": row[3],
+            "historyStart": row[4].isoformat() if row[4] else None,
+            "historyEnd":   row[5].isoformat() if row[5] else None,
+            "confidence":   row[6],
+            "metrics":      _json.loads(row[7]) if row[7] else {},
+        }
+
+
+def get_forecasts(run_id: str) -> list[dict]:
+    """All forecast rows for a run, ordered for charting."""
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT Series, Level, DepartmentTitle, Grain, TargetDate,
+                       Horizon, Model, PointForecast, Lower, Upper
+                FROM dbo.Forecasts
+                WHERE RunId = :run_id
+                ORDER BY Series, Level, DepartmentTitle, Grain, Horizon
+            """),
+            {"run_id": run_id},
+        ).fetchall()
+        return [
+            {
+                "series":     r[0],
+                "level":      r[1],
+                "department": r[2],
+                "grain":      r[3],
+                "targetDate": r[4].isoformat() if r[4] else None,
+                "horizon":    r[5],
+                "model":      r[6],
+                "point":      r[7],
+                "lower":      r[8],
+                "upper":      r[9],
+            }
+            for r in rows
+        ]
+
+
 def get_department_spending(tenant_id: int) -> List[Tuple]:
     """Get spending by department for a tenant."""
     with get_db_context() as session:

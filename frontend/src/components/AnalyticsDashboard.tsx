@@ -124,11 +124,27 @@ interface BudgetCumulativePoint {
   lower: number | null;
   upper: number | null;
 }
+interface ForecastSeriesPoint { weekStart?: string; date?: string; point: number; lower: number; upper: number; model?: string; }
+interface DepartmentForecast { title: string; model: string; forecast: ForecastSeriesPoint[]; }
+interface ModelMetric { MASE: number | null; sMAPE: number | null; RMSE: number | null; coverage: number | null; folds: number; }
 interface ForecastResponse {
   generatedAt: string;
   horizonWeeks: number;
   historyDays: number;
   confidence: number;
+  source?: string;
+  runId?: string | null;
+  modelComparison?: {
+    nominations_total?: Record<string, ModelMetric | string>;
+    spend_total?: Record<string, ModelMetric | string>;
+    departments?: Record<string, Record<string, number>>;
+  } | null;
+  forecasts?: {
+    nominationsWeekly: ForecastSeriesPoint[];
+    spendWeekly: ForecastSeriesPoint[];
+    nominationsDaily: ForecastSeriesPoint[];
+    departments: DepartmentForecast[];
+  } | null;
   inputs: {
     reviewRate: number;
     reviewRateIsDefault: boolean;
@@ -772,6 +788,13 @@ export const AnalyticsDashboard: React.FC = () => {
                       Projected HRBP reviews per week for the next {forecast.horizonWeeks} weeks,
                       with {Math.round(forecast.confidence * 100)}% prediction intervals.
                     </p>
+                    <span className={`inline-block mt-2 text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                      forecast.source === 'stored_run' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {forecast.source === 'stored_run'
+                        ? `weekly model run · ${forecast.runId?.slice(0, 8)}`
+                        : 'live fallback (Holt) · weekly run pending'}
+                    </span>
                   </div>
                   <button
                     onClick={() => fetchForecast(appliedBudget)}
@@ -803,10 +826,12 @@ export const AnalyticsDashboard: React.FC = () => {
                     <p className="text-[11px] text-gray-400">{forecast.historyDays}-day window</p>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs text-gray-500">Model</p>
-                    <p className="text-xl font-bold">Holt linear</p>
+                    <p className="text-xs text-gray-500">Chosen model</p>
+                    <p className="text-xl font-bold">
+                      {forecast.forecasts?.nominationsWeekly?.[0]?.model || 'Holt linear'}
+                    </p>
                     <p className="text-[11px] text-gray-400">
-                      {forecast.inputs.seasonalityUsed ? 'with seasonality' : 'no seasonal term'}
+                      {forecast.source === 'stored_run' ? 'selected by backtest MASE' : 'live fallback'}
                     </p>
                   </div>
                 </div>
@@ -816,6 +841,94 @@ export const AnalyticsDashboard: React.FC = () => {
                   <span>{forecast.inputs.note}</span>
                 </div>
               </div>
+
+              {/* Model comparison (bake-off) */}
+              {forecast.modelComparison && (
+                <div className="bg-white rounded-lg border border-gray-200 p-6">
+                  <h3 className="text-base font-semibold mb-1">Model comparison (backtest)</h3>
+                  <p className="text-xs text-gray-500 mb-4">
+                    Rolling-origin backtest error per model; lowest MASE wins (★). Seasonal-Naive
+                    and ETS run weekly; LightGBM uses lag + calendar features.
+                  </p>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {(['nominations_total', 'spend_total'] as const).map(seriesKey => {
+                      const block = forecast.modelComparison?.[seriesKey];
+                      if (!block) return null;
+                      const chosen = block['chosen'] as string;
+                      const models = Object.keys(block).filter(k => k !== 'chosen');
+                      return (
+                        <div key={seriesKey}>
+                          <p className="text-sm font-medium mb-2">
+                            {seriesKey === 'nominations_total' ? 'Nominations / week' : 'Spend / week'}
+                          </p>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-gray-500 border-b">
+                                <th className="py-1.5 pr-3">Model</th>
+                                <th className="py-1.5 pr-3">MASE</th>
+                                <th className="py-1.5 pr-3">sMAPE</th>
+                                <th className="py-1.5">Coverage</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {models.map(mName => {
+                                const mm = block[mName] as ModelMetric;
+                                const isBest = mName === chosen;
+                                return (
+                                  <tr key={mName} className={`border-b border-gray-100 ${isBest ? 'font-semibold text-green-700' : ''}`}>
+                                    <td className="py-1.5 pr-3">{mName}{isBest ? ' ★' : ''}</td>
+                                    <td className="py-1.5 pr-3">{mm?.MASE != null ? mm.MASE.toFixed(3) : '—'}</td>
+                                    <td className="py-1.5 pr-3">{mm?.sMAPE != null ? mm.sMAPE.toFixed(1) : '—'}</td>
+                                    <td className="py-1.5">{mm?.coverage != null ? `${(mm.coverage * 100).toFixed(0)}%` : '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Department forecasts */}
+              {forecast.forecasts?.departments && forecast.forecasts.departments.length > 0 && (
+                <div className="bg-white rounded-lg border border-gray-200 p-6">
+                  <h3 className="text-base font-semibold mb-1">Department forecast (next {forecast.horizonWeeks} weeks)</h3>
+                  <p className="text-xs text-gray-500 mb-4">
+                    Per-department nominations, projected by the model that backtests best for each
+                    (global LightGBM pools across departments; dense ones may pick ETS).
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-gray-500 border-b">
+                          <th className="py-2 pr-4">Department</th>
+                          <th className="py-2 pr-4">Model</th>
+                          <th className="py-2 pr-4">Next {forecast.horizonWeeks}w total</th>
+                          <th className="py-2">Range</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {forecast.forecasts.departments.map(d => {
+                          const sum = d.forecast.reduce((a, p) => a + p.point, 0);
+                          const lo = d.forecast.reduce((a, p) => a + p.lower, 0);
+                          const up = d.forecast.reduce((a, p) => a + p.upper, 0);
+                          return (
+                            <tr key={d.title} className="border-b border-gray-100">
+                              <td className="py-2 pr-4 font-medium">{d.title}</td>
+                              <td className="py-2 pr-4 text-gray-500">{d.model}</td>
+                              <td className="py-2 pr-4 font-semibold">{sum.toFixed(0)}</td>
+                              <td className="py-2 text-gray-500">{lo.toFixed(0)} – {up.toFixed(0)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Review-load chart */}
               <div className="bg-white rounded-lg border border-gray-200 p-6">

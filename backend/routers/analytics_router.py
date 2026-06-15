@@ -325,38 +325,77 @@ async def get_forecast(
         if avg_days_is_default:
             avg_days = _DEFAULT_AVG_DAYS_TO_APPROVAL
 
-        # ── Build the two products ───────────────────────────────────────────
-        review_load = forecasting.forecast_review_load(
-            daily_counts=daily_counts,
-            horizon_weeks=weeks,
-            review_rate=review_rate,
-            avg_days_to_approval=avg_days,
-            confidence=confidence,
-        )
-        budget_pacing = forecasting.forecast_budget_pacing(
-            daily_amounts=daily_amounts,
-            annual_budget=annual_budget,
-            horizon_weeks=weeks,
-            confidence=confidence,
-        )
+        # ── Prefer the latest stored run (weekly job); fall back to live Holt ─
+        run = sqlhelper.get_latest_forecast_run(tenant_id)
+        source = "live_fallback"
+        run_id = None
+        run_generated_at = None
+        model_comparison = None
+        forecasts_payload = None
+
+        nom_weekly_rows = []
+        if run:
+            rows = sqlhelper.get_forecasts(run["runId"])
+            nom_weekly_rows  = [r for r in rows if r["series"] == "nominations" and r["level"] == "total" and r["grain"] == "weekly"]
+            spend_weekly_rows = [r for r in rows if r["series"] == "spend" and r["level"] == "total" and r["grain"] == "weekly"]
+            nom_daily_rows   = [r for r in rows if r["series"] == "nominations" and r["level"] == "total" and r["grain"] == "daily"]
+            dept_rows        = [r for r in rows if r["level"] == "department"]
+
+        if run and nom_weekly_rows:
+            source = "stored_run"
+            run_id = run["runId"]
+            run_generated_at = run["generatedAt"]
+            model_comparison = run.get("metrics")
+            review_load = forecasting.review_load_from_weekly(
+                daily_counts, nom_weekly_rows, review_rate, avg_days)
+            budget_pacing = forecasting.budget_pacing_from_weekly(
+                daily_amounts, spend_weekly_rows, annual_budget, confidence=confidence)
+
+            depts: dict = {}
+            for r in dept_rows:
+                d = depts.setdefault(r["department"], {"title": r["department"],
+                                                       "model": r["model"], "forecast": []})
+                d["forecast"].append({"weekStart": r["targetDate"], "point": r["point"],
+                                      "lower": r["lower"], "upper": r["upper"]})
+            forecasts_payload = {
+                "nominationsWeekly": [{"weekStart": r["targetDate"], "point": r["point"],
+                                       "lower": r["lower"], "upper": r["upper"], "model": r["model"]}
+                                      for r in nom_weekly_rows],
+                "spendWeekly": [{"weekStart": r["targetDate"], "point": r["point"],
+                                 "lower": r["lower"], "upper": r["upper"], "model": r["model"]}
+                                for r in spend_weekly_rows],
+                "nominationsDaily": [{"date": r["targetDate"], "point": r["point"],
+                                      "lower": r["lower"], "upper": r["upper"]}
+                                     for r in nom_daily_rows],
+                "departments": list(depts.values()),
+            }
+            degraded = False
+            note = (f"Served from weekly model run {run_id[:8]} "
+                    f"(generated {run_generated_at}). Per-series model chosen by backtest MASE.")
+        else:
+            review_load = forecasting.forecast_review_load(
+                daily_counts=daily_counts, horizon_weeks=weeks, review_rate=review_rate,
+                avg_days_to_approval=avg_days, confidence=confidence)
+            budget_pacing = forecasting.forecast_budget_pacing(
+                daily_amounts=daily_amounts, annual_budget=annual_budget,
+                horizon_weeks=weeks, confidence=confidence)
+            degraded = review_load["model"]["degradedToFlat"]
+            note = ("Live fallback (Holt linear) — the weekly model run is not available "
+                    "yet. " + ("Limited history; intervals widened honestly."
+                               if degraded else "Intervals widen with the horizon."))
 
         weekly_obs = review_load["model"]["weeklyObservations"]
-        degraded = review_load["model"]["degradedToFlat"]
-        if degraded:
-            note = ("Limited history — projecting a flat trend with wide "
-                    "prediction intervals rather than a fitted slope. Forecast "
-                    "confidence improves as more weeks accrue.")
-        else:
-            note = ("Holt linear trend, no seasonal component. Prediction "
-                    "intervals widen with the horizon to reflect compounding "
-                    "uncertainty.")
 
         return {
-            "generatedAt":   datetime.utcnow().isoformat() + "Z",
+            "generatedAt":   run_generated_at or (datetime.utcnow().isoformat() + "Z"),
             "tenantId":      tenant_id,
             "horizonWeeks":  weeks,
             "historyDays":   history_days,
             "confidence":    confidence,
+            "source":        source,
+            "runId":         run_id,
+            "modelComparison": model_comparison,
+            "forecasts":     forecasts_payload,
             "inputs": {
                 "reviewRate":              round(review_rate, 4),
                 "reviewRateIsDefault":     review_rate_is_default,

@@ -452,3 +452,127 @@ def forecast_budget_pacing(
         "exhaustionDateLatest": exhaustion["lower"],     # lower spend → latest exhaustion
         "cumulative": cumulative,
     }
+
+
+# ── Assemble UI shapes from stored weekly forecast rows ──────────────────────────
+# These let the endpoint serve the weekly job's chosen-model forecast through the
+# exact same reviewLoad / budgetPacing shapes the live Holt path produces, so the
+# frontend contract is unchanged whether the source is the stored run or the
+# live fallback.
+
+def review_load_from_weekly(
+    daily_counts: list[tuple[date, float]],
+    weekly_rows: list[dict],
+    review_rate: float,
+    avg_days_to_approval: float,
+    today: Optional[date] = None,
+) -> dict:
+    """Build the reviewLoad block from stored weekly nomination forecast rows.
+
+    weekly_rows: ordered dicts with keys point/lower/upper/targetDate/model.
+    """
+    today = today or date.today()
+    review_rate = max(float(review_rate), 0.0)
+    sla_weeks = max(float(avg_days_to_approval), 0.0) / 7.0
+
+    dates, daily = build_contiguous_daily(daily_counts, end=today)
+    weeks, weekly = resample_weekly(dates, daily)
+    history = [
+        {"weekStart": w.isoformat(), "nominations": float(v),
+         "reviews": round(float(v) * review_rate, 2)}
+        for w, v in zip(weeks, weekly)
+    ]
+
+    forecast = []
+    for i, row in enumerate(weekly_rows):
+        vol = float(row["point"]); vlo = float(row["lower"]); vup = float(row["upper"])
+        rev, rlo, rup = vol * review_rate, vlo * review_rate, vup * review_rate
+        forecast.append({
+            "weekStart": row["targetDate"],
+            "weekIndex": i + 1,
+            "projectedNominations": round(vol, 2),
+            "projectedNominationsLower": round(vlo, 2),
+            "projectedNominationsUpper": round(vup, 2),
+            "projectedReviews": round(rev, 2),
+            "projectedReviewsLower": round(rlo, 2),
+            "projectedReviewsUpper": round(rup, 2),
+            "projectedQueueDepth": round(rev * sla_weeks, 2),
+            "projectedQueueDepthLower": round(rlo * sla_weeks, 2),
+            "projectedQueueDepthUpper": round(rup * sla_weeks, 2),
+        })
+
+    model_name = weekly_rows[0]["model"] if weekly_rows else "n/a"
+    return {
+        "history": history,
+        "forecast": forecast,
+        "model": {"name": model_name, "weeklyObservations": len(weeks),
+                  "degradedToFlat": False, "source": "stored_run"},
+    }
+
+
+def budget_pacing_from_weekly(
+    daily_amounts: list[tuple[date, float]],
+    weekly_spend_rows: list[dict],
+    annual_budget: Optional[float],
+    confidence: float = 0.80,
+    fiscal_year_start: Optional[date] = None,
+    today: Optional[date] = None,
+) -> Optional[dict]:
+    """Build the budgetPacing block from stored weekly spend forecast rows."""
+    if not annual_budget or annual_budget <= 0 or not weekly_spend_rows:
+        return None
+    today = today or date.today()
+    fy_start = fiscal_year_start or date(today.year, 1, 1)
+
+    dates, daily = build_contiguous_daily(daily_amounts, end=today)
+    weeks, weekly = resample_weekly(dates, daily)
+    spent_to_date = float(sum(v for w, v in zip(weeks, weekly) if w >= fy_start))
+
+    cumulative = []
+    run = 0.0
+    for w, v in zip(weeks, weekly):
+        if w >= fy_start:
+            run += float(v)
+            cumulative.append({"weekStart": w.isoformat(), "actual": round(run, 2),
+                               "projected": None, "lower": None, "upper": None})
+
+    cum_pt = spent_to_date
+    cum_lo = spent_to_date
+    cum_up = spent_to_date
+    exhaustion = {"date": None, "lower": None, "upper": None}
+    prev_pt, prev_lo, prev_up = spent_to_date, spent_to_date, spent_to_date
+
+    def _cross(prev, cur, prev_ws):
+        if prev < annual_budget <= cur and cur != prev:
+            frac = (annual_budget - prev) / (cur - prev)
+            d = date.fromisoformat(prev_ws) + timedelta(days=int(round(frac * 7)))
+            return d.isoformat()
+        return None
+
+    for row in weekly_spend_rows:
+        prev_ws = row["targetDate"]
+        cum_pt += float(row["point"]); cum_lo += float(row["lower"]); cum_up += float(row["upper"])
+        cumulative.append({"weekStart": row["targetDate"], "actual": None,
+                           "projected": round(cum_pt, 2),
+                           "lower": round(max(cum_lo, 0.0), 2), "upper": round(cum_up, 2)})
+        if exhaustion["date"] is None:
+            exhaustion["date"] = _cross(prev_pt, cum_pt, prev_ws)
+        if exhaustion["upper"] is None:
+            exhaustion["upper"] = _cross(prev_up, cum_up, prev_ws)
+        if exhaustion["lower"] is None:
+            exhaustion["lower"] = _cross(prev_lo, cum_lo, prev_ws)
+        prev_pt, prev_lo, prev_up = cum_pt, cum_lo, cum_up
+
+    return {
+        "annualBudget": round(float(annual_budget), 2),
+        "fiscalYearStart": fy_start.isoformat(),
+        "spentToDate": round(spent_to_date, 2),
+        "projectedHorizonSpend": round(cum_pt, 2),
+        "projectedHorizonLower": round(max(cum_lo, 0.0), 2),
+        "projectedHorizonUpper": round(cum_up, 2),
+        "budgetUtilizationAtHorizon": round(cum_pt / annual_budget, 4) if annual_budget else None,
+        "exhaustionDate": exhaustion["date"],
+        "exhaustionDateEarliest": exhaustion["upper"],
+        "exhaustionDateLatest": exhaustion["lower"],
+        "cumulative": cumulative,
+    }
