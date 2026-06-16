@@ -391,7 +391,7 @@ module "auxiliary" {
     { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
     { name = "CERTIFICATES_CONTAINER",          value = module.storage.certificates_container_name },
     # SMTP sender (Zoho) — non-secret config; SMTP_PASSWORD is a Key Vault secret below.
-    { name = "SMTP_USER",                       value = "sales@terian-services.com" },
+    { name = "SMTP_USER",                       value = "support@terian-services.com" },
     { name = "SMTP_HOST",                       value = "smtppro.zoho.com" },
   ]
 

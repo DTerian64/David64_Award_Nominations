@@ -51,7 +51,7 @@ async def send_email(to: str, subject: str, body: str) -> dict:
             "to":         "recipient@company.com",
             "subject":    "Fraud Investigation Summary",
             "body":       "Plain-text body...",
-            "from":       "system@terian-services.com"   ← FROM_EMAIL env var
+            "from":       "support@terian-services.com"   ← FROM_EMAIL env var
         }
     """
     from_email = os.getenv("FROM_EMAIL", os.getenv("SMTP_USER", ""))

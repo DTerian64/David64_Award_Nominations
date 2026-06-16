@@ -16,7 +16,7 @@ from email.mime.text import MIMEText
 logger = logging.getLogger("auxiliary.email")
 
 # ── Config (injected from Key Vault / env via ACA secret references) ──────────
-_SMTP_USER        = os.getenv("SMTP_USER", "sales@terian-services.com")
+_SMTP_USER        = os.getenv("SMTP_USER", "support@terian-services.com")
 _SMTP_PWD         = os.getenv("SMTP_PASSWORD")
 _SMTP_HOST        = os.getenv("SMTP_HOST", "smtppro.zoho.com")
 _SMTP_PORT        = int(os.getenv("SMTP_PORT", "587"))
