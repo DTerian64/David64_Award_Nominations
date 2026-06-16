@@ -54,7 +54,7 @@ async def send_email(to: str, subject: str, body: str) -> dict:
             "from":       "system@terian-services.com"   ← FROM_EMAIL env var
         }
     """
-    from_email = os.getenv("FROM_EMAIL", os.getenv("GMAIL_USER", ""))
+    from_email = os.getenv("FROM_EMAIL", os.getenv("SMTP_USER", ""))
 
     try:
         await publish_event(

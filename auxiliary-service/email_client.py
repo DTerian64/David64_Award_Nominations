@@ -2,7 +2,7 @@
 Email client for the auxiliary worker.
 
 Synchronous wrapper around smtplib — no async needed in a worker process.
-Uses Gmail SMTP. The HTML templates are defined below; the backend no longer
+Uses SMTP (Zoho by default). The HTML templates are defined below; the backend no longer
 renders emails — they are sent asynchronously by this worker.
 """
 
@@ -15,16 +15,16 @@ from email.mime.text import MIMEText
 
 logger = logging.getLogger("auxiliary.email")
 
-# ── Config (injected from Key Vault via ACA secret references) ────────────────
-_GMAIL_USER       = os.getenv("GMAIL_USER", "david.terian@gmail.com")
-_GMAIL_APP_PWD    = os.getenv("GMAIL_APP_PASSWORD")
-_FROM_EMAIL       = os.getenv("FROM_EMAIL", _GMAIL_USER)
+# ── Config (injected from Key Vault / env via ACA secret references) ──────────
+_SMTP_USER        = os.getenv("SMTP_USER", "sales@terian-services.com")
+_SMTP_PWD         = os.getenv("SMTP_PASSWORD")
+_SMTP_HOST        = os.getenv("SMTP_HOST", "smtppro.zoho.com")
+_SMTP_PORT        = int(os.getenv("SMTP_PORT", "587"))
+_FROM_EMAIL       = os.getenv("FROM_EMAIL", _SMTP_USER)
 _FROM_NAME        = os.getenv("FROM_NAME", "Award Nomination System")
-_SMTP_HOST        = "smtp.gmail.com"
-_SMTP_PORT        = 587
 
-if not _GMAIL_APP_PWD:
-    logger.warning("GMAIL_APP_PASSWORD not set — email sends will fail")
+if not _SMTP_PWD:
+    logger.warning("SMTP_PASSWORD not set — email sends will fail")
 
 
 def send_email(
@@ -34,7 +34,7 @@ def send_email(
     attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> None:
     """
-    Send an HTML email via Gmail SMTP.
+    Send an HTML email via SMTP.
 
     Args:
         attachments: optional list of (filename, data, content_type) tuples to
@@ -43,10 +43,10 @@ def send_email(
 
     Raises:
         smtplib.SMTPException: on SMTP-level failure (caller decides retry strategy)
-        RuntimeError: if GMAIL_APP_PASSWORD is not configured
+        RuntimeError: if SMTP_PASSWORD is not configured
     """
-    if not _GMAIL_APP_PWD:
-        raise RuntimeError("GMAIL_APP_PASSWORD is not configured")
+    if not _SMTP_PWD:
+        raise RuntimeError("SMTP_PASSWORD is not configured")
 
     if attachments:
         # "mixed" wraps the HTML body + binary attachments.
@@ -74,7 +74,7 @@ def send_email(
     try:
         with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
             server.starttls()
-            server.login(_GMAIL_USER, _GMAIL_APP_PWD)
+            server.login(_SMTP_USER, _SMTP_PWD)
             server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
     except Exception as exc:
         logger.error(
@@ -91,7 +91,7 @@ def send_email(
 
 def send_plain(to_email: str, subject: str, body: str, from_override: str | None = None) -> None:
     """
-    Send a plain-text email via Gmail SMTP.
+    Send a plain-text email via SMTP.
 
     Used by the notification.requested handler to deliver agent-composed
     messages that are not based on an HTML template.
@@ -99,15 +99,15 @@ def send_plain(to_email: str, subject: str, body: str, from_override: str | None
     from_override — optional sender address from the event payload.
                     Defaults to _FROM_EMAIL (system config) if not provided
                     or if the value does not match the authenticated account.
-                    Note: Gmail ignores From overrides that differ from the
+                    Note: most SMTP providers (incl. Zoho) ignore From overrides that differ from the
                     authenticated sender, so this is informational only.
 
     Raises:
         smtplib.SMTPException: on SMTP-level failure
-        RuntimeError: if GMAIL_APP_PASSWORD is not configured
+        RuntimeError: if SMTP_PASSWORD is not configured
     """
-    if not _GMAIL_APP_PWD:
-        raise RuntimeError("GMAIL_APP_PASSWORD is not configured")
+    if not _SMTP_PWD:
+        raise RuntimeError("SMTP_PASSWORD is not configured")
 
     from_display = from_override or _FROM_EMAIL
 
@@ -120,7 +120,7 @@ def send_plain(to_email: str, subject: str, body: str, from_override: str | None
     try:
         with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
             server.starttls()
-            server.login(_GMAIL_USER, _GMAIL_APP_PWD)
+            server.login(_SMTP_USER, _SMTP_PWD)
             server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
     except Exception as exc:
         logger.error(

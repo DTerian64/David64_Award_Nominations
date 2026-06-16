@@ -48,7 +48,7 @@ output "post_deploy_checklist" {
   Dev environment deployed. Complete these steps:
 
   1. KV secrets are auto-wired from module outputs (storage key, OpenAI key/endpoint,
-     SQL server/database). Remaining secrets (SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD,
+     SQL server/database). Remaining secrets (SQL-USER, SQL-PASSWORD, SMTP-PASSWORD,
      etc.) must be present in terraform.tfvars secrets map before apply.
 
   2. KV access policies are fully automated via User-Assigned Managed Identities —

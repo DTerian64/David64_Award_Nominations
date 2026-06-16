@@ -131,7 +131,7 @@ module "key_vault" {
   tags                       = local.tags
   depends_on                 = [azurerm_resource_group.rg, module.networking]
 
-  # var.secrets (from terraform.tfvars) supplies: SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD
+  # var.secrets (from terraform.tfvars) supplies: SQL-USER, SQL-PASSWORD, SMTP-PASSWORD
   # Remaining secrets are derived from other module outputs so they stay in sync automatically.
   secrets = merge(var.secrets, {
     AZURE-STORAGE-KEY                     = module.storage.primary_access_key
@@ -250,7 +250,6 @@ module "container_apps" {
     { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
     { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY",   kv_secret_name = "AZURE-STORAGE-KEY" },
-    { env_name = "GMAIL_APP_PASSWORD",  kv_secret_name = "GMAIL-APP-PASSWORD" },
     { env_name = "EMAIL_ACTION_SECRET_KEY",                  kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
     { env_name = "AZURE_OPENAI_KEY",                         kv_secret_name = "AZURE-OPENAI-KEY" },
     { env_name = "AZURE_OPENAI_ENDPOINT",                    kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
@@ -383,6 +382,9 @@ module "auxiliary" {
     # PDF from the certificates container to attach to the beneficiary email.
     { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
     { name = "CERTIFICATES_CONTAINER",          value = module.storage.certificates_container_name },
+    # SMTP sender (Zoho) — non-secret config; SMTP_PASSWORD is a Key Vault secret below.
+    { name = "SMTP_USER",                       value = "sales@terian-services.com" },
+    { name = "SMTP_HOST",                       value = "smtppro.zoho.com" },
   ]
 
   # Secrets from Key Vault — fetched at runtime via managed identity
@@ -392,7 +394,7 @@ module "auxiliary" {
     { env_name = "SQL_USER",                      kv_secret_name = "SQL-USER" },
     { env_name = "SQL_PASSWORD",                  kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY",             kv_secret_name = "AZURE-STORAGE-KEY" },
-    { env_name = "GMAIL_APP_PASSWORD",            kv_secret_name = "GMAIL-APP-PASSWORD" },
+    { env_name = "SMTP_PASSWORD",                 kv_secret_name = "SMTP-PASSWORD" },
     { env_name = "FROM_EMAIL",                    kv_secret_name = "FROM-EMAIL" },
     { env_name = "FROM_NAME",                     kv_secret_name = "FROM-NAME" },
     { env_name = "EMAIL_ACTION_SECRET_KEY",       kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
