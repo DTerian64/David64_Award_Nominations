@@ -15,6 +15,9 @@ azure-identity>=1.15.0,<2.0.0
 # Blob storage — download cached award certificates for email attachment
 azure-storage-blob>=12.19.0,<13.0.0
 
+# Templating — render per-tenant email/certificate templates from dbo.EmailTemplates
+jinja2>=3.1.0,<4.0.0
+
 # Database — SQL Server via ODBC Driver 18
 pyodbc>=5.0.0,<6.0.0
 

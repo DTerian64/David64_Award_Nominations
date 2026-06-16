@@ -615,6 +615,43 @@ def get_tenant_certificate_config(tenant_id: int) -> CertificateConfig:
 
 
 # ===========================================================================
+# EMAIL / CERTIFICATE TEMPLATES  (dbo.EmailTemplates)
+# ===========================================================================
+
+DEFAULT_TEMPLATE_TENANT_ID = 1   # canonical org holding the system default rows
+
+
+def get_tenant_lang(tenant_id: int) -> str:
+    """Tenant base language code ('en', 'ko', ...) from Config.locale; 'en' on any miss."""
+    raw = get_tenant_config(tenant_id)
+    if not raw:
+        return "en"
+    try:
+        locale = json.loads(raw).get("locale") or "en"
+    except (json.JSONDecodeError, TypeError):
+        return "en"
+    return (locale.split("-")[0].lower() or "en")
+
+
+def get_email_template_candidates(template_key: str, tenant_id: int, lang: str) -> List[Tuple]:
+    """Active template rows for the resolver to rank: this tenant + the default
+    tenant, in this language + English. Returns (TenantId, Lang, Subject, BodyTemplate)."""
+    with get_db_context() as session:
+        return session.execute(
+            text("""
+                SELECT TenantId, Lang, Subject, BodyTemplate
+                FROM dbo.EmailTemplates
+                WHERE TemplateKey = :key
+                  AND Active = 1
+                  AND TenantId IN (:tid, :default_tid)
+                  AND Lang     IN (:lang, 'en')
+            """),
+            {"key": template_key, "tid": tenant_id,
+             "default_tid": DEFAULT_TEMPLATE_TENANT_ID, "lang": lang},
+        ).fetchall()
+
+
+# ===========================================================================
 # USER QUERIES
 # ===========================================================================
 

@@ -209,6 +209,44 @@ def get_tenant_certificate_config(tenant_id: int) -> dict:
     }
 
 
+DEFAULT_TEMPLATE_TENANT_ID = 1   # canonical org holding the system default rows
+
+
+def get_tenant_lang(tenant_id: int) -> str:
+    """Tenant base language code ('en', 'ko', ...) from dbo.Tenants.Config.locale; 'en' on any miss."""
+    import json
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT Config FROM dbo.Tenants WHERE TenantId = ?", (tenant_id,))
+        row = cursor.fetchone()
+    raw = row[0] if row else None
+    if not raw:
+        return "en"
+    try:
+        locale = json.loads(raw).get("locale") or "en"
+    except (json.JSONDecodeError, TypeError):
+        return "en"
+    return (locale.split("-")[0].lower() or "en")
+
+
+def get_email_template_candidates(template_key: str, tenant_id: int, lang: str) -> list:
+    """Active template rows for the resolver to rank: this tenant + the default
+    tenant, in this language + English. Returns [(TenantId, Lang, Subject, BodyTemplate), ...]."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT TenantId, Lang, Subject, BodyTemplate
+            FROM dbo.EmailTemplates
+            WHERE TemplateKey = ? AND Active = 1
+              AND TenantId IN (?, ?) AND Lang IN (?, 'en')
+            """,
+            (template_key, tenant_id, DEFAULT_TEMPLATE_TENANT_ID, lang),
+        )
+        rows = cursor.fetchall()
+    return [(int(r[0]), r[1], r[2], r[3]) for r in rows]
+
+
 def get_tenant_fallback_admin(tenant_id: int) -> Optional[dict]:
     """
     Return the fallback admin contact for a tenant when no HRBP users are
