@@ -79,13 +79,19 @@ def send_email(
     except Exception as exc:
         logger.error(
             "Email send failed",
-            extra={"to": to_email, "subject": subject, "exception": str(exc)},
+            extra={
+                "to": to_email, "subject": subject, "exception": str(exc),
+                "from": _FROM_EMAIL, "envelope_from": _SMTP_USER, "smtp_host": _SMTP_HOST,
+            },
         )
         raise
 
     logger.info(
         "Email sent",
-        extra={"to": to_email, "subject": subject, "attachments": len(attachments or [])},
+        extra={
+            "to": to_email, "subject": subject, "attachments": len(attachments or []),
+            "from": _FROM_EMAIL, "envelope_from": _SMTP_USER, "smtp_host": _SMTP_HOST,
+        },
     )
 
 
@@ -125,11 +131,18 @@ def send_plain(to_email: str, subject: str, body: str, from_override: str | None
     except Exception as exc:
         logger.error(
             "Email send failed",
-            extra={"to": to_email, "subject": subject, "exception": str(exc)},
+            extra={
+                "to": to_email, "subject": subject, "exception": str(exc),
+                "from": from_display, "envelope_from": _SMTP_USER, "smtp_host": _SMTP_HOST,
+            },
         )
         raise
 
-    logger.info("Plain email sent", extra={"to": to_email, "subject": subject})
+    logger.info(
+        "Plain email sent",
+        extra={"to": to_email, "subject": subject,
+               "from": from_display, "envelope_from": _SMTP_USER, "smtp_host": _SMTP_HOST},
+    )
 
 
 # ── Currency formatting ───────────────────────────────────────────────────────

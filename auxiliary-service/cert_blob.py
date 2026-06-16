@@ -12,6 +12,7 @@ Blob naming MUST match backend utils/certificate.certificate_blob_name():
 
 import logging
 import os
+import time
 
 logger = logging.getLogger("auxiliary.cert_blob")
 
@@ -24,11 +25,19 @@ def _blob_name(tenant_id: int, nomination_id: int) -> str:
     return f"{tenant_id}/nomination_{nomination_id}.pdf"
 
 
-def download_certificate(tenant_id: int, nomination_id: int) -> bytes | None:
+def download_certificate(
+    tenant_id: int, nomination_id: int, attempts: int = 1, delay: float = 2.0
+) -> bytes | None:
     """
     Return the certificate PDF bytes, or None if the blob doesn't exist or
     storage isn't configured. Never raises — a missing certificate must not
     fail the beneficiary email.
+
+    attempts/delay: the backend generates the certificate at approval time, just
+    before publishing nomination.approved. If the worker consumes that event and
+    reads the blob within the small window before it's visible, the first check
+    can miss. Retrying a few times with a short delay closes that race without
+    risking duplicate emails (it all happens within one handler execution).
     """
     if not _ACCOUNT or not _KEY:
         logger.warning("AZURE_STORAGE_ACCOUNT/KEY not set — cannot download certificate")
@@ -48,13 +57,17 @@ def download_certificate(tenant_id: int, nomination_id: int) -> bytes | None:
             .get_container_client(_CONTAINER)
             .get_blob_client(_blob_name(tenant_id, nomination_id))
         )
-        if not blob.exists():
-            logger.warning(
-                "Certificate blob not found",
-                extra={"tenant_id": tenant_id, "nomination_id": nomination_id},
-            )
-            return None
-        return blob.download_blob().readall()
+        for attempt in range(1, max(1, attempts) + 1):
+            if blob.exists():
+                return blob.download_blob().readall()
+            if attempt < attempts:
+                time.sleep(delay)
+        logger.warning(
+            "Certificate blob not found after %d attempt(s)",
+            attempts,
+            extra={"tenant_id": tenant_id, "nomination_id": nomination_id},
+        )
+        return None
     except Exception as e:
         logger.warning(
             "Certificate download failed for nomination %d: %s", nomination_id, e

@@ -615,6 +615,10 @@ async def handle_email_action(token: str = Query(..., description="Action token 
         if action == "approve":
             sqlhelper.approve_nomination(nomination_id)
 
+            # Warm the certificate cache before the event fires (no-op unless
+            # this tenant attaches certificates to the beneficiary email).
+            _warm_certificate_if_attaching(nomination_id)
+
             try:
                 await publish_event("nomination.approved", nomination_id)
             except Exception as e:

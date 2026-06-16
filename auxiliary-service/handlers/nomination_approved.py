@@ -97,7 +97,9 @@ def handle(payload: dict) -> None:
         attachments = None
         cert_cfg = db.get_tenant_certificate_config(details["tenant_id"])
         if cert_cfg["enabled"] and cert_cfg["attach_to_beneficiary"]:
-            pdf = cert_blob.download_certificate(details["tenant_id"], nomination_id)
+            pdf = cert_blob.download_certificate(
+                details["tenant_id"], nomination_id, attempts=6, delay=1.0
+            )
             if pdf:
                 attachments = [(
                     f"Award_Certificate_{nomination_id}.pdf",
