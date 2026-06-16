@@ -75,7 +75,7 @@ def send_email(
         with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
             server.starttls()
             server.login(_SMTP_USER, _SMTP_PWD)
-            server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
+            server.sendmail(_SMTP_USER, [to_email], message.as_string())
     except Exception as exc:
         logger.error(
             "Email send failed",
@@ -121,7 +121,7 @@ def send_plain(to_email: str, subject: str, body: str, from_override: str | None
         with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
             server.starttls()
             server.login(_SMTP_USER, _SMTP_PWD)
-            server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
+            server.sendmail(_SMTP_USER, [to_email], message.as_string())
     except Exception as exc:
         logger.error(
             "Email send failed",
