@@ -18,6 +18,7 @@ import logging
 
 import db
 import email_client
+import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_hrbp_approved")
 
@@ -36,16 +37,19 @@ def handle(payload: dict) -> None:
         details["nominator_email"], nomination_id,
     )
 
-    body = email_client.render_hrbp_approved(
-        nominator_name=details["nominator_name"],
-        beneficiary_name=details["beneficiary_name"],
-        amount=details["amount"],
-        currency=details["currency"],
+    lang = db.get_tenant_lang(details["tenant_id"])
+    rendered = templating.render(
+        details["tenant_id"], "hrbp_approved", lang,
+        {
+            "nominator_name":   details["nominator_name"],
+            "beneficiary_name": details["beneficiary_name"],
+            "formatted_amount": email_client.format_amount(details["amount"], details["currency"]),
+        },
     )
     email_client.send_email(
         to_email=details["nominator_email"],
-        subject=f"Nomination Update — {details['beneficiary_name']}",
-        body=body,
+        subject=rendered["subject"],
+        body=rendered["body"],
     )
 
     logger.info(

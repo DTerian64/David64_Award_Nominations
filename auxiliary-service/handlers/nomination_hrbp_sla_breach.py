@@ -18,6 +18,7 @@ import logging
 
 import db
 import email_client
+import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_hrbp_sla_breach")
 
@@ -56,24 +57,29 @@ def handle(payload: dict) -> None:
         )
         return
 
+    lang = db.get_tenant_lang(effective_tenant_id)
     for recipient in recipients:
         logger.info(
             "Sending SLA breach alert to %s for nomination %d",
             recipient["email"], nomination_id,
         )
-        body = email_client.render_hrbp_sla_breach(
-            recipient_name=recipient["full_name"],
-            nomination_id=nomination_id,
-            nominator_name=details["nominator_name"],
-            beneficiary_name=details["beneficiary_name"],
-            risk_level=risk_level,
-            nomination_date=nomination_date,
-            sla_hours=sla_hours,
+        rendered = templating.render(
+            effective_tenant_id, "hrbp_sla_breach", lang,
+            {
+                "recipient_name":   recipient["full_name"],
+                "nomination_id":    nomination_id,
+                "nominator_name":   details["nominator_name"],
+                "beneficiary_name": details["beneficiary_name"],
+                "risk_level":       risk_level,
+                "risk_color":       email_client.risk_color(risk_level),
+                "nomination_date":  nomination_date,
+                "sla_hours":        sla_hours,
+            },
         )
         email_client.send_email(
             to_email=recipient["email"],
-            subject=f"🚨 SLA Breach — Nomination #{nomination_id} Awaiting HRBP Review",
-            body=body,
+            subject=rendered["subject"],
+            body=rendered["body"],
         )
 
     logger.info(

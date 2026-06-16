@@ -23,6 +23,7 @@ import logging
 
 import db
 import email_client
+import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_fraud_flagged")
 
@@ -41,6 +42,7 @@ def handle(payload: dict) -> None:
     hrbp_users  = db.get_hrbp_users(details["tenant_id"])
     fraud_flags = db.get_hrbp_fraud_flags(nomination_id)
     portal_url  = db.get_tenant_portal_url(details["tenant_id"])
+    lang        = db.get_tenant_lang(details["tenant_id"])
 
     # ── No HRBP configured — attempt fallback to tenant admin ────────────────
     if not hrbp_users:
@@ -54,25 +56,30 @@ def handle(payload: dict) -> None:
                     "fallback_email": fallback["email"],
                 },
             )
-            body = email_client.render_hrbp_review_request(
-                hrbp_name=fallback["full_name"],
-                nomination_id=nomination_id,
-                nominator_name=details["nominator_name"],
-                beneficiary_name=details["beneficiary_name"],
-                amount=details["amount"],
-                currency=details["currency"],
-                description=details["description"],
-                risk_level=risk_level,
-                fraud_score=fraud_flags["fraud_score"] if fraud_flags else None,
-                warning_flags=fraud_flags["warning_flags"].split(", ") if fraud_flags and fraud_flags["warning_flags"] else [],
+            rendered = templating.render(
+                details["tenant_id"], "hrbp_review_request", lang,
+                {
+                    "hrbp_name":        fallback["full_name"],
+                    "nomination_id":    nomination_id,
+                    "nominator_name":   details["nominator_name"],
+                    "beneficiary_name": details["beneficiary_name"],
+                    "formatted_amount": email_client.format_amount(details["amount"], details["currency"]),
+                    "description":      details["description"],
+                    "risk_level":       risk_level,
+                    "risk_color":       email_client.risk_color(risk_level),
+                    "fraud_score":      fraud_flags["fraud_score"] if fraud_flags else None,
+                    "warning_flags":    fraud_flags["warning_flags"].split(", ") if fraud_flags and fraud_flags["warning_flags"] else [],
+                    "portal_url":       None,
+                },
             )
+            # Fallback-admin path keeps its own distinct subject (no HRBP assigned).
             email_client.send_email(
                 to_email=fallback["email"],
                 subject=(
                     f"⚠️ [No HRBP Assigned] Fraud Review Required — "
                     f"Nomination #{nomination_id} ({risk_level} Risk)"
                 ),
-                body=body,
+                body=rendered["body"],
             )
         else:
             logger.warning(
@@ -96,23 +103,26 @@ def handle(payload: dict) -> None:
                 "hrbp_email":    hrbp["email"],
             },
         )
-        body = email_client.render_hrbp_review_request(
-            hrbp_name=hrbp["full_name"],
-            nomination_id=nomination_id,
-            nominator_name=details["nominator_name"],
-            beneficiary_name=details["beneficiary_name"],
-            amount=details["amount"],
-            currency=details["currency"],
-            description=details["description"],
-            risk_level=risk_level,
-            fraud_score=fraud_flags["fraud_score"] if fraud_flags else None,
-            warning_flags=fraud_flags["warning_flags"].split(", ") if fraud_flags and fraud_flags["warning_flags"] else [],
-            portal_url=portal_url,
+        rendered = templating.render(
+            details["tenant_id"], "hrbp_review_request", lang,
+            {
+                "hrbp_name":        hrbp["full_name"],
+                "nomination_id":    nomination_id,
+                "nominator_name":   details["nominator_name"],
+                "beneficiary_name": details["beneficiary_name"],
+                "formatted_amount": email_client.format_amount(details["amount"], details["currency"]),
+                "description":      details["description"],
+                "risk_level":       risk_level,
+                "risk_color":       email_client.risk_color(risk_level),
+                "fraud_score":      fraud_flags["fraud_score"] if fraud_flags else None,
+                "warning_flags":    fraud_flags["warning_flags"].split(", ") if fraud_flags and fraud_flags["warning_flags"] else [],
+                "portal_url":       portal_url,
+            },
         )
         email_client.send_email(
             to_email=hrbp["email"],
-            subject=f"⚠️ HRBP Review Required — Nomination #{nomination_id} ({risk_level} Risk)",
-            body=body,
+            subject=rendered["subject"],
+            body=rendered["body"],
         )
 
     logger.info(

@@ -29,6 +29,7 @@ import jwt
 
 import db
 import email_client
+import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_created")
 
@@ -83,23 +84,26 @@ def handle(payload: dict) -> None:
     approve_url = _make_action_url(nomination_id, "approve", details["approver_id"])
     reject_url  = _make_action_url(nomination_id, "reject",  details["approver_id"])
 
-    # ── 3. Send email to approver ─────────────────────────────────────────────
-    body = email_client.render_nomination_pending(
-        manager_name=details["approver_name"],
-        nominator_name=details["nominator_name"],
-        beneficiary_name=details["beneficiary_name"],
-        dollar_amount=details["amount"],
-        currency=details["currency"],
-        description=details["description"],
-        approve_url=approve_url,
-        reject_url=reject_url,
-        category=details.get("category_description"),
+    # ── 3. Send email to approver (template resolved from dbo.EmailTemplates) ──
+    lang = db.get_tenant_lang(details["tenant_id"])
+    rendered = templating.render(
+        details["tenant_id"], "nomination_pending", lang,
+        {
+            "manager_name":     details["approver_name"],
+            "nominator_name":   details["nominator_name"],
+            "beneficiary_name": details["beneficiary_name"],
+            "formatted_amount": email_client.format_amount(details["amount"], details["currency"]),
+            "description":      details["description"],
+            "approve_url":      approve_url,
+            "reject_url":       reject_url,
+            "category":         details.get("category_description"),
+        },
     )
 
     email_client.send_email(
         to_email=details["approver_email"],
-        subject=f"Award Nomination Pending Approval — {details['beneficiary_name']}",
-        body=body,
+        subject=rendered["subject"],
+        body=rendered["body"],
     )
 
     # ── 4. Stamp ApproverNotifiedAt (business lifecycle) ─────────────────────

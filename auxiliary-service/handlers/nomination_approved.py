@@ -24,6 +24,7 @@ import logging
 import cert_blob
 import db
 import email_client
+import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_approved")
 
@@ -70,28 +71,21 @@ def handle(payload: dict) -> None:
         }
     )
 
-    # ── 2. Send outcome email to nominator ────────────────────────────────────
-    if status in APPROVED_STATUSES:
-        body = email_client.render_nomination_approved(
-            beneficiary_name=details["beneficiary_name"],
-            dollar_amount=details["amount"],
-            currency=details["currency"],
-            category=details.get("category_description"),
-        )
-        subject = f"✅ Nomination Approved — {details['beneficiary_name']}"
-    else:  # Rejected (status in REJECTED_STATUSES)
-        body = email_client.render_nomination_rejected(
-            beneficiary_name=details["beneficiary_name"],
-            dollar_amount=details["amount"],
-            currency=details["currency"],
-            category=details.get("category_description"),
-        )
-        subject = f"Nomination Status — {details['beneficiary_name']}"
-
+    # ── 2. Send outcome email to nominator (template from dbo.EmailTemplates) ──
+    lang = db.get_tenant_lang(details["tenant_id"])
+    nominator_key = "nomination_approved" if status in APPROVED_STATUSES else "nomination_rejected"
+    nominator_rendered = templating.render(
+        details["tenant_id"], nominator_key, lang,
+        {
+            "beneficiary_name": details["beneficiary_name"],
+            "formatted_amount": email_client.format_amount(details["amount"], details["currency"]),
+            "category":         details.get("category_description"),
+        },
+    )
     email_client.send_email(
         to_email=details["nominator_email"],
-        subject=subject,
-        body=body,
+        subject=nominator_rendered["subject"],
+        body=nominator_rendered["body"],
     )
 
     # ── 3. Notify the beneficiary (approved/paid only) ────────────────────────
@@ -117,17 +111,19 @@ def handle(payload: dict) -> None:
                     extra={"nomination_id": nomination_id},
                 )
 
-        beneficiary_body = email_client.render_beneficiary_award(
-            beneficiary_name=details["beneficiary_name"],
-            dollar_amount=details["amount"],
-            currency=details["currency"],
-            nominator_name=details.get("nominator_name"),
-            category=details.get("category_description"),
+        beneficiary_rendered = templating.render(
+            details["tenant_id"], "beneficiary_award", lang,
+            {
+                "beneficiary_name": details["beneficiary_name"],
+                "formatted_amount": email_client.format_amount(details["amount"], details["currency"]),
+                "nominator_name":   details.get("nominator_name"),
+                "category":         details.get("category_description"),
+            },
         )
         email_client.send_email(
             to_email=details["beneficiary_email"],
-            subject=f"🏆 You've received an award — congratulations, {details['beneficiary_name']}!",
-            body=beneficiary_body,
+            subject=beneficiary_rendered["subject"],
+            body=beneficiary_rendered["body"],
             attachments=attachments,
         )
 

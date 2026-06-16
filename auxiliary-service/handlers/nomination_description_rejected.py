@@ -16,6 +16,7 @@ import logging
 
 import db
 import email_client
+import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_description_rejected")
 
@@ -37,23 +38,26 @@ def handle(payload: dict) -> None:
         details["nominator_email"], nomination_id,
     )
 
-    body = email_client.render_description_rejected(
-        nominator_name=details["nominator_name"],
-        beneficiary_name=details["beneficiary_name"],
-        amount=details["amount"],
-        currency=details["currency"],
-        check=check,
-        reason=reason,
-        category_description=details.get("category_description"),
-        nomination_description=details.get("description"),
+    check_label = {
+        "category_alignment": "Description does not match category",
+    }.get(check, "Description quality check failed")
+    lang = db.get_tenant_lang(details["tenant_id"])
+    rendered = templating.render(
+        details["tenant_id"], "description_rejected", lang,
+        {
+            "nominator_name":         details["nominator_name"],
+            "beneficiary_name":       details["beneficiary_name"],
+            "formatted_amount":       email_client.format_amount(details["amount"], details["currency"]),
+            "check_label":            check_label,
+            "reason":                 reason,
+            "category_description":   details.get("category_description"),
+            "nomination_description": details.get("description"),
+        },
     )
     email_client.send_email(
         to_email=details["nominator_email"],
-        subject=(
-            f"Action Required: Please Resubmit Your Nomination for "
-            f"{details['beneficiary_name']}"
-        ),
-        body=body,
+        subject=rendered["subject"],
+        body=rendered["body"],
     )
 
     logger.info(

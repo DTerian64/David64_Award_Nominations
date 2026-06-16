@@ -25,6 +25,7 @@ No DB lookup needed — all content is in the payload.
 import logging
 
 import email_client
+import templating
 
 logger = logging.getLogger("auxiliary.handlers.access_requested")
 
@@ -48,10 +49,15 @@ def handle(payload: dict) -> None:
         extra={"to": to},
     )
 
+    # Demo self-registration has no tenant context — use the default tenant / en.
+    rendered = templating.render(
+        templating.DEFAULT_TENANT_ID, "demo_access_invite", "en",
+        {"first_name": first_name, "redeem_url": redeem_url},
+    )
     email_client.send_email(
         to_email = to,
-        subject  = "Your Award Nominations demo access is ready",
-        body     = email_client.render_demo_access_invite(first_name, redeem_url),
+        subject  = rendered["subject"],
+        body     = rendered["body"],
     )
 
     logger.info(
