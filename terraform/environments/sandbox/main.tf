@@ -267,6 +267,8 @@ module "container_apps" {
     { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
     { name = "MODEL_CONTAINER",                 value = module.storage.ml_models_container_name },
     { name = "EXTRACTS_CONTAINER",              value = module.storage.extracts_container_name },
+    { name = "CERTIFICATES_CONTAINER",          value = module.storage.certificates_container_name },
+    { name = "CERT_TEMPLATES_CONTAINER",        value = module.storage.certificate_templates_container_name },
     { name = "AZURE_OPENAI_MODEL",              value = module.openai.model_deployment_name },
     { name = "KEY_VAULT_URL",                   value = module.key_vault.vault_uri },
     { name = "ENVIRONMENT",                     value = var.environment },
@@ -486,6 +488,10 @@ module "auxiliary" {
   environment_variables = [
     { name = "API_BASE_URL",                    value = var.api_base_url },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
+    # Certificate attachment (opt-in per tenant) — worker downloads the cached
+    # PDF from the certificates container to attach to the beneficiary email.
+    { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
+    { name = "CERTIFICATES_CONTAINER",          value = module.storage.certificates_container_name },
   ]
 
   # Secrets from Key Vault — fetched at runtime via managed identity
@@ -494,6 +500,7 @@ module "auxiliary" {
     { env_name = "SQL_DATABASE",                  kv_secret_name = "SQL-DATABASE" },
     { env_name = "SQL_USER",                      kv_secret_name = "SQL-USER" },
     { env_name = "SQL_PASSWORD",                  kv_secret_name = "SQL-PASSWORD" },
+    { env_name = "AZURE_STORAGE_KEY",             kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "GMAIL_APP_PASSWORD",            kv_secret_name = "GMAIL-APP-PASSWORD" },
     { env_name = "FROM_EMAIL",                    kv_secret_name = "FROM-EMAIL" },
     { env_name = "FROM_NAME",                     kv_secret_name = "FROM-NAME" },

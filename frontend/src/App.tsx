@@ -143,6 +143,9 @@ const AwardNominationApp: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [nominations, setNominations] = useState<Nomination[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<Nomination[]>([]);
+  const [decidedApprovals, setDecidedApprovals] = useState<Nomination[]>([]);
+  const [approvalsView, setApprovalsView] = useState<'pending' | 'decided'>('pending');
+  const [certLoadingId, setCertLoadingId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics'>('nominate');
   const [isHRBP, setIsHRBP] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -164,6 +167,13 @@ const AwardNominationApp: React.FC = () => {
       loadMe();
     }
   }, [accounts, isImpersonating]);
+
+  // Load decided approvals when the user opens the "Approved / Rejected" view.
+  useEffect(() => {
+    if (accounts.length > 0 && activeTab === 'approvals' && approvalsView === 'decided') {
+      loadDecidedApprovals();
+    }
+  }, [accounts, isImpersonating, activeTab, approvalsView]);
 
   const loadMe = async () => {
     try {
@@ -224,6 +234,35 @@ const AwardNominationApp: React.FC = () => {
       setPendingApprovals(pending);
     } catch (error) {
       console.error('Failed to load pending approvals:', error);
+    }
+  };
+
+  const loadDecidedApprovals = async () => {
+    try {
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      const decided = await apiFetch<Nomination[]>('/api/nominations/my-approvals', {}, impersonatedUPN);
+      setDecidedApprovals(decided);
+    } catch (error) {
+      console.error('Failed to load decided approvals:', error);
+    }
+  };
+
+  const handleViewCertificate = async (nominationId: number) => {
+    setCertLoadingId(nominationId);
+    try {
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      const { DownloadUrl } = await apiFetch<{ DownloadUrl: string; Cached: boolean }>(
+        `/api/nominations/${nominationId}/certificate`, {}, impersonatedUPN
+      );
+      // Open the short-lived SAS link to the PDF in a new tab.
+      window.open(DownloadUrl, '_blank', 'noopener');
+    } catch (error: any) {
+      setSubmitStatus({
+        type: 'error',
+        message: error.message || 'Failed to generate certificate. Please try again.',
+      });
+    } finally {
+      setCertLoadingId(null);
     }
   };
 
@@ -662,70 +701,147 @@ const AwardNominationApp: React.FC = () => {
           {/* ── Approvals tab ────────────────────────────────────────────── */}
           {activeTab === 'approvals' && (
             <div className="bg-white rounded-lg shadow-md p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('approvals.heading')}</h2>
+              {/* Heading dropdown: Pending Approvals vs Approved / Rejected */}
+              <div className="flex items-center justify-between mb-6">
+                <select
+                  value={approvalsView}
+                  onChange={(e) => setApprovalsView(e.target.value as 'pending' | 'decided')}
+                  className="text-2xl font-bold text-gray-900 bg-transparent border-0 border-b-2 border-gray-200 focus:outline-none focus:border-gray-400 cursor-pointer pr-8 -ml-1"
+                  style={{ accentColor: 'var(--color-primary)' }}
+                >
+                  <option value="pending">{t('approvals.viewPending')}</option>
+                  <option value="decided">{t('approvals.viewDecided')}</option>
+                </select>
+                {approvalsView === 'pending' && pendingApprovals.length > 0 && (
+                  <span className="bg-red-500 text-white text-sm rounded-full px-3 py-1">
+                    {pendingApprovals.length}
+                  </span>
+                )}
+              </div>
 
-              {pendingApprovals.length === 0 ? (
-                <div className="text-center py-12">
-                  <CheckCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-600">{t('approvals.empty')}</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {pendingApprovals.map(nom => (
-                    <div key={nom.NominationId} className="border border-gray-200 rounded-lg p-6">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <h3 className="text-lg font-semibold text-gray-900">
-                            {getUserName(nom.BeneficiaryId)}
-                          </h3>
-                          <p className="text-sm text-gray-600">
-                            {t('approvals.nominatedBy', {
-                              name: getUserName(nom.NominatorId),
-                              date: formatDate(nom.NominationDate),
-                            })}
+              {/* Pending view */}
+              {approvalsView === 'pending' && (
+                pendingApprovals.length === 0 ? (
+                  <div className="text-center py-12">
+                    <CheckCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-600">{t('approvals.empty')}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {pendingApprovals.map(nom => (
+                      <div key={nom.NominationId} className="border border-gray-200 rounded-lg p-6">
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">
+                              {getUserName(nom.BeneficiaryId)}
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                              {t('approvals.nominatedBy', {
+                                name: getUserName(nom.NominatorId),
+                                date: formatDate(nom.NominationDate),
+                              })}
+                            </p>
+                          </div>
+                          <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
+                            {formatCurrency(nom.Amount)}
                           </p>
                         </div>
-                        <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
-                          {formatCurrency(nom.Amount)}
-                        </p>
-                      </div>
-                      <p className="text-gray-700 mb-2">{nom.NominationDescription}</p>
-                      <div className="flex items-end justify-between mb-4">
-                        {nom.CategoryDescription ? (
-                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
-                                style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
-                            {nom.CategoryDescription}
-                          </span>
-                        ) : <span />}
-                        {isAdmin && (
-                          <p
-                            style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', cursor: 'pointer' }}
-                            onClick={() => setLogsNominationId(nom.NominationId)}
-                            title="View logs for this nomination"
+                        <p className="text-gray-700 mb-2">{nom.NominationDescription}</p>
+                        <div className="flex items-end justify-between mb-4">
+                          {nom.CategoryDescription ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                                  style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                              {nom.CategoryDescription}
+                            </span>
+                          ) : <span />}
+                          {isAdmin && (
+                            <p
+                              style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', cursor: 'pointer' }}
+                              onClick={() => setLogsNominationId(nom.NominationId)}
+                              title="View logs for this nomination"
+                            >
+                              #{nom.NominationId}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex space-x-3">
+                          <button
+                            onClick={() => handleApproval(nom.NominationId, true)}
+                            disabled={loading}
+                            className="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:bg-gray-400"
                           >
-                            #{nom.NominationId}
-                          </p>
-                        )}
+                            {t('approvals.approve')}
+                          </button>
+                          <button
+                            onClick={() => handleApproval(nom.NominationId, false)}
+                            disabled={loading}
+                            className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition-colors disabled:bg-gray-400"
+                          >
+                            {t('approvals.reject')}
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex space-x-3">
-                        <button
-                          onClick={() => handleApproval(nom.NominationId, true)}
-                          disabled={loading}
-                          className="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:bg-gray-400"
-                        >
-                          {t('approvals.approve')}
-                        </button>
-                        <button
-                          onClick={() => handleApproval(nom.NominationId, false)}
-                          disabled={loading}
-                          className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition-colors disabled:bg-gray-400"
-                        >
-                          {t('approvals.reject')}
-                        </button>
+                    ))}
+                  </div>
+                )
+              )}
+
+              {/* Approved / Rejected view */}
+              {approvalsView === 'decided' && (
+                decidedApprovals.length === 0 ? (
+                  <div className="text-center py-12">
+                    <CheckCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-600">{t('approvals.emptyDecided')}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {decidedApprovals.map(nom => (
+                      <div key={nom.NominationId} className="border border-gray-200 rounded-lg p-6">
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">
+                              {getUserName(nom.BeneficiaryId)}
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                              {t('approvals.nominatedBy', {
+                                name: getUserName(nom.NominatorId),
+                                date: formatDate(nom.NominationDate),
+                              })}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
+                              {formatCurrency(nom.Amount)}
+                            </p>
+                            <StatusBadge status={nom.Status} />
+                          </div>
+                        </div>
+                        <p className="text-gray-700 mb-3">{nom.NominationDescription}</p>
+                        <div className="flex items-center justify-between">
+                          {nom.CategoryDescription ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                                  style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                              {nom.CategoryDescription}
+                            </span>
+                          ) : <span />}
+                          {(nom.Status === 'Approved' || nom.Status === 'Paid') && (
+                            <button
+                              onClick={() => handleViewCertificate(nom.NominationId)}
+                              disabled={certLoadingId === nom.NominationId}
+                              className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border transition-colors hover:bg-gray-50 disabled:opacity-60"
+                              style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
+                            >
+                              <Award className="w-4 h-4" />
+                              {certLoadingId === nom.NominationId
+                                ? t('approvals.generatingCertificate')
+                                : t('approvals.certificate')}
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )
               )}
             </div>
           )}

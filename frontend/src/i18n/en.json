@@ -6,7 +6,7 @@
   "nav": {
     "nominate": "Nominate Employee",
     "history": "My Nominations",
-    "approvals": "Pending Approvals",
+    "approvals": "My Approvals",
     "analytics": "Analytics",
     "hrbp": "HRBP Review"
   },
@@ -33,7 +33,13 @@
     "empty": "No pending approvals",
     "nominatedBy": "Nominated by {{name}} on {{date}}",
     "approve": "Approve",
-    "reject": "Reject"
+    "reject": "Reject",
+    "viewPending": "Pending Approvals",
+    "viewDecided": "Approved / Rejected",
+    "emptyDecided": "No approved or rejected nominations yet",
+    "decidedOn": "Decided on {{date}}",
+    "certificate": "Certificate",
+    "generatingCertificate": "Generating…"
   },
   "analytics": {
     "heading": "Analytics & Reporting",

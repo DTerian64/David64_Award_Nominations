@@ -1,5 +1,5 @@
 import { apiCall } from './api';
-import type { User, Nomination, NominationCreate, NominationApproval } from '../types/api.types';
+import type { User, Nomination, NominationCreate, NominationApproval, CertificateResponse } from '../types/api.types';
 
 /**
  * All API functions now accept an optional impersonatedUserUPN parameter
@@ -20,6 +20,15 @@ export const createNomination = (
 
 export const getPendingNominations = (impersonatedUserUPN?: string): Promise<Nomination[]> =>
   apiCall<Nomination[]>('/api/nominations/pending', {}, impersonatedUserUPN);
+
+export const getMyApprovals = (impersonatedUserUPN?: string): Promise<Nomination[]> =>
+  apiCall<Nomination[]>('/api/nominations/my-approvals', {}, impersonatedUserUPN);
+
+export const getNominationCertificate = (
+  nominationId: number,
+  impersonatedUserUPN?: string
+): Promise<CertificateResponse> =>
+  apiCall<CertificateResponse>(`/api/nominations/${nominationId}/certificate`, {}, impersonatedUserUPN);
 
 export const getNominationHistory = (impersonatedUserUPN?: string): Promise<Nomination[]> =>
   apiCall<Nomination[]>('/api/nominations/history', {}, impersonatedUserUPN);

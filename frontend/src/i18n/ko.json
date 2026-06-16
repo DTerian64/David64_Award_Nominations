@@ -6,7 +6,7 @@
   "nav": {
     "nominate": "직원 추천",
     "history": "내 추천 내역",
-    "approvals": "대기 중인 승인",
+    "approvals": "내 승인",
     "analytics": "분석",
     "hrbp": "HRBP 검토"
   },
@@ -33,7 +33,13 @@
     "empty": "대기 중인 승인이 없습니다",
     "nominatedBy": "추천인: {{name}} · {{date}}",
     "approve": "승인",
-    "reject": "반려"
+    "reject": "반려",
+    "viewPending": "대기 중인 승인",
+    "viewDecided": "승인/반려됨",
+    "emptyDecided": "승인 또는 반려된 추천이 없습니다",
+    "decidedOn": "결정일: {{date}}",
+    "certificate": "증명서",
+    "generatingCertificate": "생성 중…"
   },
   "analytics": {
     "heading": "분석 및 보고",

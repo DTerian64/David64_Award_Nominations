@@ -8,6 +8,7 @@ Uses the same Gmail SMTP config and HTML templates as the backend's email_utils.
 import logging
 import os
 import smtplib
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -25,9 +26,19 @@ if not _GMAIL_APP_PWD:
     logger.warning("GMAIL_APP_PASSWORD not set — email sends will fail")
 
 
-def send_email(to_email: str, subject: str, body: str) -> None:
+def send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
     """
     Send an HTML email via Gmail SMTP.
+
+    Args:
+        attachments: optional list of (filename, data, content_type) tuples to
+                     attach (e.g. the award certificate PDF). When omitted the
+                     message is a plain HTML email as before.
 
     Raises:
         smtplib.SMTPException: on SMTP-level failure (caller decides retry strategy)
@@ -36,18 +47,38 @@ def send_email(to_email: str, subject: str, body: str) -> None:
     if not _GMAIL_APP_PWD:
         raise RuntimeError("GMAIL_APP_PASSWORD is not configured")
 
-    message = MIMEMultipart("alternative")
-    message["Subject"] = subject
-    message["From"]    = f"{_FROM_NAME} <{_FROM_EMAIL}>"
-    message["To"]      = to_email
-    message.attach(MIMEText(body, "html"))
+    if attachments:
+        # "mixed" wraps the HTML body + binary attachments.
+        message = MIMEMultipart("mixed")
+        message["Subject"] = subject
+        message["From"]    = f"{_FROM_NAME} <{_FROM_EMAIL}>"
+        message["To"]      = to_email
+
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(body, "html"))
+        message.attach(alt)
+
+        for filename, data, content_type in attachments:
+            subtype = content_type.split("/", 1)[1] if "/" in content_type else "octet-stream"
+            part = MIMEApplication(data, _subtype=subtype)
+            part.add_header("Content-Disposition", "attachment", filename=filename)
+            message.attach(part)
+    else:
+        message = MIMEMultipart("alternative")
+        message["Subject"] = subject
+        message["From"]    = f"{_FROM_NAME} <{_FROM_EMAIL}>"
+        message["To"]      = to_email
+        message.attach(MIMEText(body, "html"))
 
     with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
         server.starttls()
         server.login(_GMAIL_USER, _GMAIL_APP_PWD)
         server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
 
-    logger.info("Email sent", extra={"to": to_email, "subject": subject})
+    logger.info(
+        "Email sent",
+        extra={"to": to_email, "subject": subject, "attachments": len(attachments or [])},
+    )
 
 
 def send_plain(to_email: str, subject: str, body: str, from_override: str | None = None) -> None:
@@ -214,6 +245,66 @@ def render_nomination_approved(
         <hr style="margin: 20px 0;">
         <p style="color: #7f8c8d; font-size: 12px;">
             This is an automated message from the Award Nomination System.
+        </p>
+    </body>
+    </html>
+    """
+
+
+def render_beneficiary_award(
+    beneficiary_name: str,
+    dollar_amount: float,
+    currency: str,
+    nominator_name: str | None = None,
+    category: str | None = None,
+) -> str:
+    """Beneficiary notification — they have received a monetary award.
+
+    Sent only when a nomination is approved (or paid). Shows the award amount.
+    """
+    formatted_amount = _fmt(dollar_amount, currency)
+    nominator_html = (
+        f'<li><strong>Recognised by:</strong> {nominator_name}</li>'
+        if nominator_name else ""
+    )
+    category_item = f"<li><strong>Category:</strong> {category}</li>" if category else ""
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    </head>
+    <body style="font-family:Arial,sans-serif;line-height:1.6;color:#333;
+                 max-width:600px;margin:0 auto;padding:20px;">
+        <div style="background:#f0fff4;border-radius:10px;padding:30px;margin-bottom:20px;
+                    border:1px solid #c6f6d5;">
+            <h2 style="color:#27ae60;margin-top:0;">🏆 Congratulations, {beneficiary_name}!</h2>
+            <p style="font-size:16px;">
+                You have been recognised with a monetary award of
+                <strong>{formatted_amount}</strong> for your outstanding contribution.
+            </p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;
+                    padding:20px;margin-bottom:20px;">
+            <h3 style="color:#2c3e50;margin-top:0;">🎁 Award Details</h3>
+            <ul style="padding-left:20px;">
+                <li><strong>Award:</strong> Monetary Award ({formatted_amount})</li>
+                {category_item}
+                {nominator_html}
+            </ul>
+        </div>
+
+        <p style="font-size:15px;">
+            Thank you for the great work that earned this recognition. Your
+            manager will be in touch and may present you with an award certificate.
+        </p>
+
+        <hr style="border:none;border-top:1px solid #e0e0e0;margin:30px 0;">
+        <p style="color:#7f8c8d;font-size:12px;text-align:center;">
+            This is an automated message from the Award Nomination System.<br>
+            Please do not reply to this email.
         </p>
     </body>
     </html>

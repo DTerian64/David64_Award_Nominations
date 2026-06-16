@@ -77,6 +77,7 @@ class TenantORM(Base):
     Domain               = Column(String(253),  nullable=True, unique=True)
     fallback_admin_email = Column(String(256),  nullable=True)             # emailed when no HRBP is configured
     Site_URL             = Column(String(256),  nullable=True)             # frontend portal URL for email hyperlinks
+    certificate_config   = Column(Unicode(None), nullable=True)            # NVARCHAR(MAX) JSON, NULL = feature off
 
     # Reverse relationship — rarely needed directly, but handy for admin queries
     users = relationship("UserORM", back_populates="tenant")
@@ -555,6 +556,64 @@ def get_tenant_desc_check_config(tenant_id: int) -> DescCheckConfig:
     )
 
 
+@dataclass
+class CertificateConfig:
+    """
+    Per-tenant award-certificate configuration, read from
+    dbo.Tenants.certificate_config (NVARCHAR(MAX) JSON).
+
+    NULL column → all defaults → feature OFF.  Existing tenants are unaffected
+    until they explicitly opt in, so every default here is the safe/off value.
+
+    enabled               — master switch for the whole certificate feature
+                            (the My Approvals certificate link AND the email
+                            attachment).  False = no certificate anywhere.
+    attach_to_beneficiary — when True, the beneficiary's approval email carries
+                            the certificate PDF as an attachment.  Requires
+                            enabled=True to have any effect.
+    template_blob         — blob name (in the certificate-templates container)
+                            of the background template to overlay.
+    """
+    enabled:               bool = False
+    attach_to_beneficiary: bool = False
+    template_blob:         str  = "default_certificate.png"
+
+
+def get_tenant_certificate_config(tenant_id: int) -> CertificateConfig:
+    """
+    Load certificate_config JSON from dbo.Tenants and return a CertificateConfig.
+
+    Missing keys fall back to dataclass defaults.  A NULL column or any JSON
+    parse error returns a fully-defaulted (feature-off) config — never raises.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT certificate_config FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+
+    raw = row[0] if row else None
+    if not raw:
+        return CertificateConfig()
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Invalid JSON in certificate_config for tenant %d — using defaults",
+            tenant_id,
+        )
+        return CertificateConfig()
+
+    return CertificateConfig(
+        enabled=bool(data.get("enabled", CertificateConfig.enabled)),
+        attach_to_beneficiary=bool(
+            data.get("attach_to_beneficiary", CertificateConfig.attach_to_beneficiary)
+        ),
+        template_blob=str(data.get("template_blob", CertificateConfig.template_blob)),
+    )
+
+
 # ===========================================================================
 # USER QUERIES
 # ===========================================================================
@@ -764,6 +823,84 @@ def get_pending_nominations_for_approver(approver_id: int, tenant_id: int) -> Li
             """),
             {"approver_id": approver_id, "tenant_id": tenant_id},
         ).fetchall()
+
+
+def get_decided_nominations_for_approver(approver_id: int, tenant_id: int) -> List[Tuple]:
+    """
+    Get nominations this approver has already decided (Approved or Rejected),
+    scoped to the tenant. Powers the "Approved / Rejected" view of the
+    My Approvals tab.
+
+    Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
+                      Amount, Currency, NominationDescription, NominationDate,
+                      ApprovedDate, PayedDate, Status, CategoryDescription)
+    """
+    with get_db_context() as session:
+        return session.execute(
+            text("""
+                SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
+                       n.Amount, n.Currency, n.NominationDescription, n.NominationDate,
+                       n.ApprovedDate, n.PayedDate, n.Status,
+                       nc.category_description AS CategoryDescription
+                FROM Nominations n
+                JOIN Users u ON n.NominatorId = u.UserId
+                LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
+                WHERE n.ApproverId = :approver_id
+                  AND n.Status IN ('Approved', 'Paid', 'Rejected')
+                  AND u.TenantId   = :tenant_id
+                ORDER BY n.ApprovedDate DESC, n.NominationDate DESC
+            """),
+            {"approver_id": approver_id, "tenant_id": tenant_id},
+        ).fetchall()
+
+
+def get_nomination_for_certificate(nomination_id: int) -> Optional[dict]:
+    """
+    Fetch the fields needed to render an award certificate.
+
+    Returns a dict (or None if the nomination does not exist) with:
+      nomination_id, beneficiary_name, nominator_name, approver_name,
+      amount, currency, category_description, status, approved_date, tenant_id
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT
+                    n.NominationId,
+                    beneficiary.FirstName + ' ' + beneficiary.LastName AS BeneficiaryName,
+                    nominator.FirstName   + ' ' + nominator.LastName   AS NominatorName,
+                    approver.FirstName    + ' ' + approver.LastName    AS ApproverName,
+                    n.Amount,
+                    n.Currency,
+                    nc.category_description                            AS CategoryDescription,
+                    n.Status,
+                    n.ApprovedDate,
+                    nominator.TenantId                                 AS TenantId
+                FROM dbo.Nominations n
+                INNER JOIN dbo.Users nominator   ON n.NominatorId   = nominator.UserId
+                INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
+                INNER JOIN dbo.Users approver    ON n.ApproverId    = approver.UserId
+                LEFT JOIN  dbo.nomination_categories nc ON nc.id    = n.CategoryId
+                WHERE n.NominationId = :nomination_id
+            """),
+            {"nomination_id": nomination_id},
+        ).fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "nomination_id":        int(row[0]),
+        "beneficiary_name":     row[1],
+        "nominator_name":       row[2],
+        "approver_name":        row[3],
+        "amount":               float(row[4]),
+        "currency":             row[5],
+        "category_description": row[6],
+        "status":               row[7],
+        "approved_date":        row[8],
+        "tenant_id":            int(row[9]),
+    }
 
 
 def get_nomination_approver(nomination_id: int, tenant_id: Optional[int] = None) -> Optional[int]:

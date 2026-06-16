@@ -63,6 +63,17 @@ class StatusResponse(BaseModel):
     Message: str
 
 
+class CertificateResponse(BaseModel):
+    """Award certificate link returned by the certificate endpoint.
+
+    DownloadUrl is a short-lived, read-only SAS URL to the PDF in blob storage —
+    the PDF bytes never stream through the API. Cached is True when an existing
+    certificate was reused rather than freshly generated.
+    """
+    DownloadUrl: str
+    Cached: bool
+
+
 class HealthResponse(BaseModel):
     status: str
 

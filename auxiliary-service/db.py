@@ -169,6 +169,46 @@ def get_tenant_portal_url(tenant_id: int) -> str:
     return row[0] if row and row[0] else None
 
 
+def get_tenant_certificate_config(tenant_id: int) -> dict:
+    """
+    Read per-tenant award-certificate settings from dbo.Tenants.certificate_config.
+
+    Returns a dict with keys {enabled, attach_to_beneficiary, template_blob}.
+    A NULL column or invalid JSON yields all-defaults → feature OFF, so the
+    worker never attaches a certificate unless the tenant has opted in.
+
+    Kept in sync with the backend's CertificateConfig (utils/sqlhelper2.py).
+    """
+    import json
+
+    defaults = {"enabled": False, "attach_to_beneficiary": False,
+                "template_blob": "default_certificate.png"}
+
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT certificate_config FROM dbo.Tenants WHERE TenantId = ?",
+            (tenant_id,)
+        )
+        row = cursor.fetchone()
+
+    raw = row[0] if row else None
+    if not raw:
+        return defaults
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Invalid certificate_config JSON for tenant %d — using defaults", tenant_id)
+        return defaults
+
+    return {
+        "enabled":               bool(data.get("enabled", defaults["enabled"])),
+        "attach_to_beneficiary": bool(data.get("attach_to_beneficiary", defaults["attach_to_beneficiary"])),
+        "template_blob":         str(data.get("template_blob", defaults["template_blob"])),
+    }
+
+
 def get_tenant_fallback_admin(tenant_id: int) -> Optional[dict]:
     """
     Return the fallback admin contact for a tenant when no HRBP users are

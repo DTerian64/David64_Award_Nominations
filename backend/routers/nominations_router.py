@@ -23,7 +23,11 @@ from typing import List
 
 import utils.sqlhelper2 as sqlhelper
 from auth import get_current_user_with_impersonation, log_action_if_impersonating
-from routers.schemas import Nomination, NominationApproval, NominationCreate, StatusResponse, User
+from routers.schemas import (
+    CertificateResponse, Nomination, NominationApproval, NominationCreate,
+    StatusResponse, User,
+)
+from utils.certificate import get_or_create_certificate
 from utils.service_bus_publisher import publish_event
 from utils.token_utils import verify_action_token
 
@@ -129,6 +133,32 @@ async def generate_payroll_extract(nomination_id: int):
         logger.info(f"Payroll extract generated: {extract_filename}")
 
         # In production, upload to Azure Blob Storage or SFTP to payroll system
+
+
+def _warm_certificate_if_attaching(nomination_id: int) -> None:
+    """
+    When a tenant has opted into attaching the certificate to the beneficiary
+    email, pre-generate (warm the cache for) the certificate at approval time so
+    the auxiliary worker finds the PDF already in blob storage when it sends the
+    email. No-op (and never raises) for tenants with the feature off — those
+    certificates are generated lazily on the manager's first link click instead.
+    """
+    try:
+        data = sqlhelper.get_nomination_for_certificate(nomination_id)
+        if not data:
+            return
+        cfg = sqlhelper.get_tenant_certificate_config(data["tenant_id"])
+        if not (cfg.enabled and cfg.attach_to_beneficiary):
+            return
+        result = get_or_create_certificate(nomination_id, template_blob=cfg.template_blob)
+        if result.get("status") != "success":
+            logger.warning(
+                "Certificate warm-up for nomination %d returned: %s",
+                nomination_id, result.get("message"),
+            )
+    except Exception as e:
+        # Never let certificate generation block or fail the approval.
+        logger.warning("Certificate warm-up failed for nomination %d: %s", nomination_id, e)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -336,6 +366,37 @@ async def get_pending_nominations(user_context: dict = Depends(get_current_user_
     return nominations
 
 
+@router.get("/api/nominations/my-approvals", response_model=List[Nomination])
+async def get_my_approvals(user_context: dict = Depends(get_current_user_with_impersonation)):
+    """Nominations the current user (as approver) has already decided — the
+    Approved / Rejected view of the My Approvals tab."""
+    effective_user = user_context["effective_user"]
+    tenant_id      = effective_user["TenantId"]
+
+    rows = sqlhelper.get_decided_nominations_for_approver(effective_user["UserId"], tenant_id)
+
+    nominations = [
+        Nomination(
+            NominationId=row[0],
+            NominatorId=row[1],
+            BeneficiaryId=row[2],
+            ApproverId=row[3],
+            Amount=row[4],
+            Currency=row[5],
+            NominationDescription=row[6],
+            NominationDate=row[7],
+            ApprovedDate=row[8],
+            PayedDate=row[9],
+            Status=row[10],
+            CategoryDescription=row[11],
+        )
+        for row in rows
+    ]
+
+    await log_action_if_impersonating(user_context, "viewed_my_approvals")
+    return nominations
+
+
 @router.post("/api/nominations/approve", response_model=StatusResponse)
 async def approve_nomination(
     approval: NominationApproval,
@@ -361,6 +422,10 @@ async def approve_nomination(
 
     if approval.Approved:
         sqlhelper.approve_nomination(approval.NominationId)
+
+        # Warm the certificate cache before the event fires, so the worker can
+        # attach the PDF if this tenant has opted in (no-op otherwise).
+        _warm_certificate_if_attaching(approval.NominationId)
 
         try:
             await publish_event("nomination.approved", approval.NominationId)
@@ -430,6 +495,60 @@ async def get_nomination_history(user_context: dict = Depends(get_current_user_w
 
     await log_action_if_impersonating(user_context, "viewed_nomination_history")
     return nominations
+
+
+@router.get("/api/nominations/{nomination_id}/certificate", response_model=CertificateResponse)
+async def get_nomination_certificate(
+    nomination_id: int,
+    user_context: dict = Depends(get_current_user_with_impersonation),
+):
+    """
+    Return a SAS link to the award certificate for an approved nomination.
+
+    Authorization: only the nomination's approver may request its certificate.
+    Gated on the tenant's certificate_config.enabled flag (feature is off by
+    default). The PDF is generated lazily on first request and cached, so
+    repeated calls reuse the same blob.
+    """
+    effective_user = user_context["effective_user"]
+    tenant_id      = effective_user["TenantId"]
+
+    # Tenant-scoped approver check (prevents cross-tenant probing).
+    approver_id = sqlhelper.get_nomination_approver(nomination_id, tenant_id)
+    if approver_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nomination not found")
+    if approver_id != effective_user["UserId"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this certificate",
+        )
+
+    cfg = sqlhelper.get_tenant_certificate_config(tenant_id)
+    if not cfg.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Award certificates are not enabled for this organisation",
+        )
+
+    # Certificates only exist for approved nominations.
+    nomination_status = sqlhelper.get_nomination_status(nomination_id)
+    if nomination_status not in ("Approved", "Paid"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A certificate is only available for approved nominations",
+        )
+
+    result = get_or_create_certificate(nomination_id, template_blob=cfg.template_blob)
+    if result.get("status") != "success":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not generate certificate: {result.get('message', 'unknown error')}",
+        )
+
+    await log_action_if_impersonating(
+        user_context, "generated_certificate", f"NominationId: {nomination_id}"
+    )
+    return CertificateResponse(DownloadUrl=result["download_url"], Cached=result["cached"])
 
 
 @router.get("/api/nominations/email-action", response_class=HTMLResponse)

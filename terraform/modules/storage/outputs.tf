@@ -37,6 +37,16 @@ output "ml_models_container_name" {
   value       = azurerm_storage_container.ml_models.name
 }
 
+output "certificate_templates_container_name" {
+  description = "Name of the award certificate templates container"
+  value       = azurerm_storage_container.certificate_templates.name
+}
+
+output "certificates_container_name" {
+  description = "Name of the generated award certificates container"
+  value       = azurerm_storage_container.certificates.name
+}
+
 output "tfstate_container_name" {
   description = "Name of the Terraform state container"
   value       = azurerm_storage_container.tfstate.name

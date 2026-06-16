@@ -33,3 +33,8 @@ export interface NominationApproval {
   Approved: boolean;
   Comments?: string;
 }
+
+export interface CertificateResponse {
+  DownloadUrl: string;
+  Cached: boolean;
+}
