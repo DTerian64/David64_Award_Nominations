@@ -10,7 +10,7 @@ No authentication required.
 Flow:
   1. Visitor submits First Name, Last Name, Email, Is Admin?
   2. Backend calls Graph POST /invitations (sendInvitationMessage=False)
-  3. Backend sends its own branded invitation email via SMTP (email_utils)
+  3. Backend publishes a notification event; the auxiliary worker sends the branded invitation email via SMTP
   4. If Is Admin: assigns AWard_Nomination_Admin role to the new guest object
   5. Creates a dbo.Users row (UPN = email) so auth.py can resolve them on first sign-in
   6. Logs the request to dbo.DemoRegistrationRequests for audit / rate-limit

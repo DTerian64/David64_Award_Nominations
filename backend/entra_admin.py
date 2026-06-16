@@ -162,7 +162,7 @@ def invite_external_user(
     Create a B2B invitation for an external email address.
 
     sendInvitationMessage is False — we send our own branded email from
-    our SMTP server (email_utils.send_email) so the message arrives from
+    our own SMTP path (sent asynchronously by the auxiliary worker) so the message arrives from
     a trusted domain rather than Microsoft's unverified onmicrosoft.com tenant.
 
     Returns:

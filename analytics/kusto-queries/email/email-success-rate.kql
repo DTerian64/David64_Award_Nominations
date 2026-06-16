@@ -6,15 +6,15 @@
 
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(24h)
-| where ContainerAppName_s in ("award-api-eastus", "award-api-westus")
+| where ContainerAppName_s startswith "award-auxiliary"
 | extend LogData = parse_json(Log_s)
-| where tostring(LogData.logger) == "email_utils"
+| where tostring(LogData.logger) == "auxiliary.email"
 | extend 
     Message = tostring(LogData.message),
     LogLevel = tostring(LogData.level)
 | summarize 
     Total = count(),
-    Success = countif(Message contains "successfully" or Message contains "sent successfully"),
+    Success = countif(Message contains "sent"),
     Failed = countif(LogLevel in ("ERROR", "WARNING"))
     by Region = ContainerAppName_s
 | extend 

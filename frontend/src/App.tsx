@@ -706,7 +706,7 @@ const AwardNominationApp: React.FC = () => {
                 <select
                   value={approvalsView}
                   onChange={(e) => setApprovalsView(e.target.value as 'pending' | 'decided')}
-                  className="text-2xl font-bold text-gray-900 bg-transparent border-0 border-b-2 border-gray-200 focus:outline-none focus:border-gray-400 cursor-pointer pr-8 -ml-1"
+                  className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none cursor-pointer text-gray-900 font-medium"
                   style={{ accentColor: 'var(--color-primary)' }}
                 >
                   <option value="pending">{t('approvals.viewPending')}</option>
@@ -828,7 +828,7 @@ const AwardNominationApp: React.FC = () => {
                             <button
                               onClick={() => handleViewCertificate(nom.NominationId)}
                               disabled={certLoadingId === nom.NominationId}
-                              className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border transition-colors hover:bg-gray-50 disabled:opacity-60"
+                              className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border transition-colors cursor-pointer hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed"
                               style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
                             >
                               <Award className="w-4 h-4" />

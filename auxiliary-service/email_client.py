@@ -2,7 +2,8 @@
 Email client for the auxiliary worker.
 
 Synchronous wrapper around smtplib — no async needed in a worker process.
-Uses the same Gmail SMTP config and HTML templates as the backend's email_utils.py.
+Uses Gmail SMTP. The HTML templates are defined below; the backend no longer
+renders emails — they are sent asynchronously by this worker.
 """
 
 import logging
@@ -70,10 +71,17 @@ def send_email(
         message["To"]      = to_email
         message.attach(MIMEText(body, "html"))
 
-    with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
-        server.starttls()
-        server.login(_GMAIL_USER, _GMAIL_APP_PWD)
-        server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
+    try:
+        with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
+            server.starttls()
+            server.login(_GMAIL_USER, _GMAIL_APP_PWD)
+            server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
+    except Exception as exc:
+        logger.error(
+            "Email send failed",
+            extra={"to": to_email, "subject": subject, "exception": str(exc)},
+        )
+        raise
 
     logger.info(
         "Email sent",
@@ -109,10 +117,17 @@ def send_plain(to_email: str, subject: str, body: str, from_override: str | None
     message["To"]      = to_email
     message.attach(MIMEText(body, "plain"))
 
-    with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
-        server.starttls()
-        server.login(_GMAIL_USER, _GMAIL_APP_PWD)
-        server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
+    try:
+        with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT) as server:
+            server.starttls()
+            server.login(_GMAIL_USER, _GMAIL_APP_PWD)
+            server.sendmail(_FROM_EMAIL, [to_email], message.as_string())
+    except Exception as exc:
+        logger.error(
+            "Email send failed",
+            extra={"to": to_email, "subject": subject, "exception": str(exc)},
+        )
+        raise
 
     logger.info("Plain email sent", extra={"to": to_email, "subject": subject})
 
@@ -137,8 +152,8 @@ def _fmt(amount: float, currency: str) -> str:
 
 
 # ── HTML templates ────────────────────────────────────────────────────────────
-# Kept in sync with backend/email_utils.py. If the template changes in the
-# backend, update here too (Phase 5 will consolidate into a shared library).
+# These templates are the single source of truth for outbound email; the backend
+# no longer renders emails. A future phase moves them to dbo.EmailTemplates.
 
 def render_nomination_pending(
     manager_name: str,
