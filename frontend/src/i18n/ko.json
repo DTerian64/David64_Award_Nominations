@@ -54,7 +54,9 @@
     }
   },
   "status": {
+    "Submitted": "제출됨",
     "Pending": "대기 중",
+    "PendingHRBPReview": "HR 검토 대기",
     "Approved": "승인됨",
     "Paid": "지급 완료",
     "Rejected": "반려됨",

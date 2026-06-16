@@ -54,7 +54,9 @@
     }
   },
   "status": {
+    "Submitted": "Submitted",
     "Pending": "Pending",
+    "PendingHRBPReview": "Pending HR Review",
     "Approved": "Approved",
     "Paid": "Paid",
     "Rejected": "Rejected",
