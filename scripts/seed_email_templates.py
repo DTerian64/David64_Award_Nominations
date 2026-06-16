@@ -1,21 +1,23 @@
 """
 seed_email_templates.py
 =======================
-Idempotently upsert the default (TenantId=1, Lang='en') email templates into
-dbo.EmailTemplates from scripts/email_templates_seed_data.py.
+Idempotently upsert email templates into dbo.EmailTemplates from the seed-data
+modules, over a parameterized pyodbc connection (so NVARCHAR/Unicode is sent
+correctly — no literal/codepage games).
 
-Re-runnable: each run MERGEs by (TenantId, TemplateKey, Lang), updating the
-Subject/BodyTemplate and bumping Version. Tenants override by inserting their
-own rows; this script never touches non-default rows.
+Seed sets:
+    (TenantId=1, Lang='en')  ← EN_TEMPLATES  (system defaults / fallback)
+    (TenantId=2, Lang='ko')  ← KO_TEMPLATES  (Korean overrides for tenant 2)
 
-Requires SQL_SERVER / SQL_DATABASE / SQL_USER / SQL_PASSWORD in the environment
-(or a .env file). Run AFTER `alembic upgrade head` (migration 0025) and BEFORE
-deploying the handler rewiring.
+Re-runnable: MERGE by (TenantId, TemplateKey, Lang). Tenant rows are independent,
+so seeding 'ko' never touches the 'en' defaults. Run AFTER `alembic upgrade head`
+(migration 0025) and BEFORE deploying the handler rewiring.
 
 Usage
 -----
-  python scripts/seed_email_templates.py            # upsert defaults
-  python scripts/seed_email_templates.py --dry-run  # show what would change
+  python scripts/seed_email_templates.py              # seed en + ko
+  python scripts/seed_email_templates.py --only ko    # only Korean (tenant 2)
+  python scripts/seed_email_templates.py --dry-run
 """
 
 import argparse
@@ -28,10 +30,17 @@ _DOTENV = find_dotenv(usecwd=True)
 load_dotenv(_DOTENV)
 
 sys.path.insert(0, os.path.dirname(__file__))
-from email_templates_seed_data import EN_TEMPLATES  # noqa: E402
+from email_templates_seed_data import EN_TEMPLATES        # noqa: E402
+from email_templates_seed_data_ko import KO_TEMPLATES     # noqa: E402
+from certificate_labels_seed_data import CERT_EN, CERT_KO  # noqa: E402
 
-DEFAULT_TENANT_ID = 1
-LANG = "en"
+# (tenant_id, lang, templates)
+SEED_SETS = [
+    (1, "en", EN_TEMPLATES),
+    (2, "ko", KO_TEMPLATES),
+    (1, "en", CERT_EN),   # certificate labels (default)
+    (2, "ko", CERT_KO),   # certificate labels (Korean)
+]
 
 _MERGE = """
 MERGE dbo.EmailTemplates AS tgt
@@ -47,33 +56,34 @@ WHEN NOT MATCHED THEN INSERT
 
 
 def _conn_string() -> str:
-    server   = os.environ["SQL_SERVER"]
-    database = os.environ["SQL_DATABASE"]
-    user     = os.environ["SQL_USER"]
-    password = os.environ["SQL_PASSWORD"]
-    driver   = os.getenv("DB_DRIVER", "{ODBC Driver 18 for SQL Server}")
     return (
-        f"Driver={driver};Server={server};Database={database};"
-        f"UID={user};PWD={password};Encrypt=yes;TrustServerCertificate=no;"
+        f"Driver={os.getenv('DB_DRIVER', '{ODBC Driver 18 for SQL Server}')};"
+        f"Server={os.environ['SQL_SERVER']};Database={os.environ['SQL_DATABASE']};"
+        f"UID={os.environ['SQL_USER']};PWD={os.environ['SQL_PASSWORD']};"
+        f"Encrypt=yes;TrustServerCertificate=no;"
     )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Seed default email templates.")
+    ap = argparse.ArgumentParser(description="Seed email templates (en + ko).")
+    ap.add_argument("--only", choices=["en", "ko"], help="Seed only this language.")
     ap.add_argument("--dry-run", action="store_true", help="List actions without writing.")
     args = ap.parse_args()
+
+    sets = [s for s in SEED_SETS if not args.only or s[1] == args.only]
 
     print("── email template seed ──────────────────────────────────────")
     print(f"  .env loaded from : {_DOTENV or '(process env)'}")
     print(f"  SQL_SERVER       : {os.getenv('SQL_SERVER', '(unset)')}")
     print(f"  SQL_DATABASE     : {os.getenv('SQL_DATABASE', '(unset)')}")
-    print(f"  default tenant   : {DEFAULT_TENANT_ID}  lang : {LANG}")
-    print(f"  templates        : {', '.join(EN_TEMPLATES)}")
+    for tid, lang, tpls in sets:
+        print(f"  set              : tenant={tid} lang={lang}  ({len(tpls)} templates)")
     print("─────────────────────────────────────────────────────────────")
 
     if args.dry_run:
-        for key in EN_TEMPLATES:
-            print(f"  would upsert ({DEFAULT_TENANT_ID}, {key!r}, {LANG!r})")
+        for tid, lang, tpls in sets:
+            for key in tpls:
+                print(f"  would upsert ({tid}, {key!r}, {lang!r})")
         print("dry-run: no changes written")
         return
 
@@ -89,19 +99,22 @@ def main() -> None:
         print(f"\nERROR: could not connect to SQL ({e.__class__.__name__}: {e})", file=sys.stderr)
         sys.exit(1)
 
+    total = 0
     try:
         cur = conn.cursor()
-        for key, tpl in EN_TEMPLATES.items():
-            subject, body = tpl["subject"], tpl["body"]
-            cur.execute(
-                _MERGE,
-                (DEFAULT_TENANT_ID, key, LANG,        # USING src
-                 subject, body,                        # WHEN MATCHED update
-                 DEFAULT_TENANT_ID, key, LANG, subject, body),  # WHEN NOT MATCHED insert
-            )
-            print(f"  upserted ({DEFAULT_TENANT_ID}, {key!r}, {LANG!r})")
+        for tid, lang, tpls in sets:
+            for key, tpl in tpls.items():
+                subject, body = tpl["subject"], tpl["body"]
+                cur.execute(
+                    _MERGE,
+                    (tid, key, lang,                 # USING src
+                     subject, body,                  # WHEN MATCHED
+                     tid, key, lang, subject, body), # WHEN NOT MATCHED
+                )
+                print(f"  upserted ({tid}, {key!r}, {lang!r})")
+                total += 1
         conn.commit()
-        print(f"\nOK: {len(EN_TEMPLATES)} default templates seeded.")
+        print(f"\nOK: {total} template rows seeded across {len(sets)} set(s).")
     finally:
         conn.close()
 

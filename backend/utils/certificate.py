@@ -25,6 +25,7 @@ plus:
 """
 
 import io
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -35,9 +36,12 @@ from azure.storage.blob import (
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
 
 import utils.sqlhelper2 as sqlhelper
+import utils.templating as templating
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,64 @@ def _fmt_amount(amount: float, currency: str) -> str:
     if (currency or "").upper() in ("JPY", "KRW"):
         return f"{symbol}{amount:,.0f}"
     return f"{symbol}{amount:,.2f}"
+
+
+def _fmt_amount_for(amount: float, currency: str, lang: str) -> str:
+    """Language-aware amount for the certificate. Korean KRW uses the native
+    '원' suffix (the CID font lacks the ₩ glyph, and '원' is idiomatic)."""
+    if (lang or "").lower().startswith("ko") and (currency or "").upper() == "KRW":
+        return f"{amount:,.0f}원"
+    return _fmt_amount(amount, currency)
+
+
+# ── Localized labels + fonts ──────────────────────────────────────────────────
+
+_DEFAULT_LABELS = {
+    "title":           "Certificate of Excellence",
+    "presented_to":    "This certificate is proudly presented to",
+    "recognition":     "in recognition of an outstanding contribution, with a monetary award of {amount}.",
+    "category_label":  "Category",
+    "date_label":      "Date",
+    "signatory_label": "Approving Manager",
+}
+
+_KO_FONT = "HYSMyeongJo-Medium"   # reportlab-bundled Korean CID font (Adobe CMaps)
+_registered_fonts: set = set()
+
+
+def _fonts_for(lang: str) -> dict:
+    """Pick reportlab fonts by language. Korean needs a CJK-capable CID font;
+    Latin scripts use Helvetica. Falls back to Helvetica if the CID font (or its
+    CMap resources) cannot be registered."""
+    if (lang or "").lower().startswith("ko"):
+        try:
+            if _KO_FONT not in _registered_fonts:
+                pdfmetrics.registerFont(UnicodeCIDFont(_KO_FONT))
+                _registered_fonts.add(_KO_FONT)
+            return {"heading": _KO_FONT, "body": _KO_FONT, "italic": _KO_FONT}
+        except Exception as e:
+            logger.warning("Could not register Korean font %s (%s) — falling back to Helvetica", _KO_FONT, e)
+    return {"heading": "Helvetica-Bold", "body": "Helvetica", "italic": "Helvetica-Oblique"}
+
+
+def _format_date(dt, lang: str) -> str:
+    if not isinstance(dt, datetime):
+        dt = datetime.now(timezone.utc)
+    if (lang or "").lower().startswith("ko"):
+        return f"{dt.year}년 {dt.month}월 {dt.day}일"
+    return dt.strftime("%B %d, %Y")
+
+
+def _labels_for(tenant_id: int, lang: str) -> dict:
+    """Localized certificate labels from the template store ('certificate' key),
+    merged over English defaults. Never raises — falls back to defaults."""
+    try:
+        row = templating.resolve_raw(tenant_id, "certificate", lang)
+        if row and row[1]:
+            return {**_DEFAULT_LABELS, **json.loads(row[1])}
+    except Exception as e:
+        logger.warning("Certificate labels resolve failed (%s) — using defaults", e)
+    return dict(_DEFAULT_LABELS)
 
 
 def certificate_blob_name(tenant_id: int, nomination_id: int) -> str:
@@ -113,8 +175,12 @@ def _fetch_template(template_blob: str) -> bytes | None:
 
 # ── PDF rendering ─────────────────────────────────────────────────────────────
 
-def _render_pdf(data: dict, template_bytes: bytes | None) -> bytes:
-    """Build the certificate PDF (landscape A4) and return its bytes."""
+def _render_pdf(data: dict, template_bytes: bytes | None, labels: dict, lang: str) -> bytes:
+    """Build the certificate PDF (landscape A4) and return its bytes.
+
+    Labels are localized (from the template store); fonts are chosen by language
+    so non-Latin scripts (e.g. Korean) render with a CJK-capable CID font."""
+    fonts = _fonts_for(lang)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(_PAGE_W, _PAGE_H))
 
@@ -132,44 +198,40 @@ def _render_pdf(data: dict, template_bytes: bytes | None) -> bytes:
         _draw_fallback_border(c)
 
     cx = _PAGE_W / 2
+    amount = _fmt_amount_for(data["amount"], data["currency"], lang)
 
     c.setFillColorRGB(0.17, 0.24, 0.31)
-    c.setFont("Helvetica-Bold", 34)
-    c.drawCentredString(cx, _PAGE_H - 60 * mm, "Certificate of Excellence")
+    c.setFont(fonts["heading"], 34)
+    c.drawCentredString(cx, _PAGE_H - 60 * mm, labels["title"])
 
-    c.setFont("Helvetica", 14)
-    c.drawCentredString(cx, _PAGE_H - 78 * mm, "This certificate is proudly presented to")
+    c.setFont(fonts["body"], 14)
+    c.drawCentredString(cx, _PAGE_H - 78 * mm, labels["presented_to"])
 
     c.setFillColorRGB(0.12, 0.39, 0.37)
-    c.setFont("Helvetica-Bold", 30)
+    c.setFont(fonts["heading"], 30)
     c.drawCentredString(cx, _PAGE_H - 98 * mm, data["beneficiary_name"])
 
     c.setFillColorRGB(0.20, 0.20, 0.20)
-    c.setFont("Helvetica", 14)
-    amount = _fmt_amount(data["amount"], data["currency"])
-    c.drawCentredString(
-        cx, _PAGE_H - 114 * mm,
-        f"in recognition of an outstanding contribution, with a monetary award of {amount}.",
-    )
+    c.setFont(fonts["body"], 14)
+    c.drawCentredString(cx, _PAGE_H - 114 * mm, labels["recognition"].replace("{amount}", amount))
 
     if data.get("category_description"):
-        c.setFont("Helvetica-Oblique", 12)
-        c.drawCentredString(cx, _PAGE_H - 126 * mm, f"Category: {data['category_description']}")
+        c.setFont(fonts["italic"], 12)
+        c.drawCentredString(cx, _PAGE_H - 126 * mm, f'{labels["category_label"]}: {data["category_description"]}')
 
     # Date + signatory footer
-    approved = data.get("approved_date")
-    date_str = approved.strftime("%B %d, %Y") if isinstance(approved, datetime) else datetime.now(timezone.utc).strftime("%B %d, %Y")
+    date_str = _format_date(data.get("approved_date"), lang)
 
     c.setFillColorRGB(0.30, 0.30, 0.30)
-    c.setFont("Helvetica", 11)
+    c.setFont(fonts["body"], 11)
     c.drawCentredString(_PAGE_W * 0.30, 38 * mm, date_str)
     c.drawCentredString(_PAGE_W * 0.70, 38 * mm, data.get("approver_name") or "")
     c.setLineWidth(0.6)
     c.line(_PAGE_W * 0.18, 46 * mm, _PAGE_W * 0.42, 46 * mm)
     c.line(_PAGE_W * 0.58, 46 * mm, _PAGE_W * 0.82, 46 * mm)
-    c.setFont("Helvetica-Oblique", 9)
-    c.drawCentredString(_PAGE_W * 0.30, 32 * mm, "Date")
-    c.drawCentredString(_PAGE_W * 0.70, 32 * mm, "Approving Manager")
+    c.setFont(fonts["italic"], 9)
+    c.drawCentredString(_PAGE_W * 0.30, 32 * mm, labels["date_label"])
+    c.drawCentredString(_PAGE_W * 0.70, 32 * mm, labels["signatory_label"])
 
     c.showPage()
     c.save()
@@ -231,7 +293,9 @@ def get_or_create_certificate(nomination_id: int, template_blob: str | None = No
             cfg = sqlhelper.get_tenant_certificate_config(data["tenant_id"])
             template_blob = cfg.template_blob
 
-        pdf_bytes = _render_pdf(data, _fetch_template(template_blob))
+        lang   = sqlhelper.get_tenant_lang(data["tenant_id"])
+        labels = _labels_for(data["tenant_id"], lang)
+        pdf_bytes = _render_pdf(data, _fetch_template(template_blob), labels, lang)
 
         blob_client.upload_blob(
             pdf_bytes,

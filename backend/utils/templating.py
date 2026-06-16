@@ -52,6 +52,15 @@ def _resolve_row(tenant_id: int, key: str, lang: str):
     return row
 
 
+def resolve_raw(tenant_id: int, key: str, lang: str):
+    """Return (subject, body) of the best-matching template UNRENDERED, or None.
+
+    Used for non-Jinja payloads — e.g. the certificate label JSON, which the
+    certificate generator parses directly rather than rendering as HTML."""
+    row = _resolve_row(tenant_id, key, lang)
+    return None if row is None else (row[2], row[3])
+
+
 def render(tenant_id: int, key: str, lang: str, context: dict) -> dict:
     """Return {'subject': str|None, 'body': str} for the resolved template."""
     row = _resolve_row(tenant_id, key, lang)
