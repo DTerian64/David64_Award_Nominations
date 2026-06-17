@@ -231,6 +231,41 @@ def set_nomination_status(nomination_id: int, new_status: str) -> None:
                     extra={"nomination_id": nomination_id, "new_status": new_status})
 
 
+def reject_nomination(nomination_id: int, reason: str, actor: str) -> None:
+    """
+    Reject a nomination and persist the rejection reason and actor.
+
+    Separate from set_nomination_status() because that function is also used
+    for non-rejection transitions (Pending, PendingHRBPReview).
+
+    Args:
+        nomination_id: The nomination to reject.
+        reason:        Human-readable explanation surfaced to the nominator.
+        actor:         "Fraud Detection" for auto-rejects from this service.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE dbo.Nominations
+            SET Status          = 'Rejected',
+                RejectionReason = ?,
+                RejectionActor  = ?
+            WHERE NominationId  = ?
+            """,
+            (reason.strip() or None, actor, nomination_id),
+        )
+        conn.commit()
+        logger.info(
+            "Nomination rejected",
+            extra={
+                "nomination_id": nomination_id,
+                "actor":         actor,
+                "reason":        reason,
+            },
+        )
+
+
 # ── Fraud history lookups ─────────────────────────────────────────────────────
 
 def get_nominator_history(nominator_id: int) -> list[tuple]:

@@ -138,7 +138,7 @@ async def hrbp_reject(
     if details["tenant_id"] != effective_user["TenantId"]:
         raise HTTPException(status_code=403, detail="Cross-tenant access denied")
 
-    sqlhelper.set_nomination_status(nomination_id, "Rejected")
+    sqlhelper.reject_nomination(nomination_id, reason=body.reason, actor="HRBP Review")
     logger.info(
         "HRBP rejected nomination %d (reviewer=%d reason=%r)",
         nomination_id, effective_user["UserId"], body.reason,

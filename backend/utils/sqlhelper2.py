@@ -870,7 +870,8 @@ def get_decided_nominations_for_approver(approver_id: int, tenant_id: int) -> Li
 
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
                       Amount, Currency, NominationDescription, NominationDate,
-                      ApprovedDate, PayedDate, Status, CategoryDescription)
+                      ApprovedDate, PayedDate, Status, CategoryDescription,
+                      RejectionReason, RejectionActor)
     """
     with get_db_context() as session:
         return session.execute(
@@ -878,7 +879,8 @@ def get_decided_nominations_for_approver(approver_id: int, tenant_id: int) -> Li
                 SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
                        n.Amount, n.Currency, n.NominationDescription, n.NominationDate,
                        n.ApprovedDate, n.PayedDate, n.Status,
-                       nc.category_description AS CategoryDescription
+                       nc.category_description AS CategoryDescription,
+                       n.RejectionReason, n.RejectionActor
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
                 LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
@@ -1010,19 +1012,39 @@ def approve_nomination(nomination_id: int) -> bool:
         return result.rowcount > 0
 
 
-def reject_nomination(nomination_id: int) -> bool:
+def reject_nomination(
+    nomination_id: int,
+    reason: str = "",
+    actor: str = "Manager",
+) -> bool:
     """
-    Reject a nomination by setting Status to 'Rejected'.
-    Returns: True if successful
+    Reject a nomination by setting Status to 'Rejected' and persisting the
+    rejection reason and actor.
+
+    Args:
+        nomination_id: The nomination to reject.
+        reason:        Free-text explanation shown to the nominator.
+                       Empty string is stored as NULL.
+        actor:         Who/what performed the rejection.
+                       Conventional values: "Manager", "HRBP Review",
+                       "Fraud Detection".
+
+    Returns: True if a row was updated, False if nomination not found.
     """
     with get_db_context() as session:
         result = session.execute(
             text("""
-                UPDATE Nominations
-                SET Status = 'Rejected'
-                WHERE NominationId = :nomination_id
+                UPDATE dbo.Nominations
+                SET Status          = 'Rejected',
+                    RejectionReason = :reason,
+                    RejectionActor  = :actor
+                WHERE NominationId  = :nomination_id
             """),
-            {"nomination_id": nomination_id},
+            {
+                "nomination_id": nomination_id,
+                "reason":        reason.strip() or None,
+                "actor":         actor,
+            },
         )
         session.commit()
         return result.rowcount > 0
@@ -1082,7 +1104,8 @@ def get_nomination_history(user_id: int, tenant_id: int) -> List[Tuple]:
     Get nomination history for a user (as nominator), scoped to the tenant.
     Returns: List of (NominationId, NominatorId, BeneficiaryId, ApproverId,
                       Amount, Currency, NominationDescription, NominationDate,
-                      ApprovedDate, PayedDate, Status, CategoryDescription)
+                      ApprovedDate, PayedDate, Status, CategoryDescription,
+                      RejectionReason, RejectionActor)
     """
     with get_db_context() as session:
         return session.execute(
@@ -1090,7 +1113,8 @@ def get_nomination_history(user_id: int, tenant_id: int) -> List[Tuple]:
                 SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
                        n.Amount, n.Currency, n.NominationDescription, n.NominationDate,
                        n.ApprovedDate, n.PayedDate, n.Status,
-                       nc.category_description AS CategoryDescription
+                       nc.category_description AS CategoryDescription,
+                       n.RejectionReason, n.RejectionActor
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
                 LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId

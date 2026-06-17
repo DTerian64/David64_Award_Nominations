@@ -87,7 +87,7 @@ def handle(message_id: str, payload: dict) -> None:
                 "reason":        desc_result.reason,
             },
         )
-        db.set_nomination_status(nomination_id, "Rejected")
+        db.reject_nomination(nomination_id, reason=desc_result.reason, actor="Fraud Detection")
         service_bus_publisher.publish_event(
             "nomination.description-rejected", nomination_id,
             extra={

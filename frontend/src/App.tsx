@@ -45,6 +45,8 @@ interface Nomination {
   PayedDate: string | null;
   Status: 'Pending' | 'Approved' | 'Paid' | 'Rejected';
   CategoryDescription?: string | null;
+  RejectionReason?: string | null;
+  RejectionActor?: string | null;
 }
 
 interface CurrentUser {
@@ -150,6 +152,10 @@ const AwardNominationApp: React.FC = () => {
   const [isHRBP, setIsHRBP] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logsNominationId, setLogsNominationId] = useState<number | null>(null);
+
+  // Reject reason dialog state
+  const [rejectDialogNomId, setRejectDialogNomId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   // Nomination form state
   const [selectedBeneficiary, setSelectedBeneficiary] = useState('');
@@ -325,7 +331,7 @@ const AwardNominationApp: React.FC = () => {
     }
   };
 
-  const handleApproval = async (nominationId: number, approved: boolean) => {
+  const handleApproval = async (nominationId: number, approved: boolean, reason: string = '') => {
     setLoading(true);
 
     try {
@@ -333,7 +339,7 @@ const AwardNominationApp: React.FC = () => {
 
       await apiFetch('/api/nominations/approve', {
         method: 'POST',
-        body: JSON.stringify({ NominationId: nominationId, Approved: approved }),
+        body: JSON.stringify({ NominationId: nominationId, Approved: approved, reason }),
       }, impersonatedUPN);
 
       await loadPendingApprovals();
@@ -674,6 +680,18 @@ const AwardNominationApp: React.FC = () => {
                         </div>
                       </div>
                       <p className="text-gray-700">{nom.NominationDescription}</p>
+                      {nom.Status === 'Rejected' && (nom.RejectionActor || nom.RejectionReason) && (
+                        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm">
+                          {nom.RejectionActor && (
+                            <p className="font-semibold text-red-700 mb-1">
+                              Rejected by: {nom.RejectionActor}
+                            </p>
+                          )}
+                          {nom.RejectionReason && (
+                            <p className="text-red-600">{nom.RejectionReason}</p>
+                          )}
+                        </div>
+                      )}
                       <div className="flex items-end justify-between mt-2">
                         {nom.CategoryDescription ? (
                           <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
@@ -773,7 +791,7 @@ const AwardNominationApp: React.FC = () => {
                             {t('approvals.approve')}
                           </button>
                           <button
-                            onClick={() => handleApproval(nom.NominationId, false)}
+                            onClick={() => { setRejectDialogNomId(nom.NominationId); setRejectReason(''); }}
                             disabled={loading}
                             className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition-colors disabled:bg-gray-400"
                           >
@@ -817,6 +835,18 @@ const AwardNominationApp: React.FC = () => {
                           </div>
                         </div>
                         <p className="text-gray-700 mb-3">{nom.NominationDescription}</p>
+                        {nom.Status === 'Rejected' && (nom.RejectionActor || nom.RejectionReason) && (
+                          <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm">
+                            {nom.RejectionActor && (
+                              <p className="font-semibold text-red-700 mb-1">
+                                Rejected by: {nom.RejectionActor}
+                              </p>
+                            )}
+                            {nom.RejectionReason && (
+                              <p className="text-red-600">{nom.RejectionReason}</p>
+                            )}
+                          </div>
+                        )}
                         <div className="flex items-center justify-between">
                           {nom.CategoryDescription ? (
                             <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
@@ -863,6 +893,47 @@ const AwardNominationApp: React.FC = () => {
           nominationId={logsNominationId}
           onClose={() => setLogsNominationId(null)}
         />
+
+        {/* ── Reject reason dialog ─────────────────────────────────────── */}
+        {rejectDialogNomId !== null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                {t('approvals.rejectDialogTitle', { defaultValue: 'Reject Nomination' })}
+              </h2>
+              <p className="text-sm text-gray-600 mb-4">
+                {t('approvals.rejectDialogSubtitle', { defaultValue: 'Please provide a reason. The nominator will be notified.' })}
+              </p>
+              <textarea
+                className="w-full border border-gray-300 rounded-lg p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-400"
+                rows={4}
+                placeholder={t('approvals.rejectReasonPlaceholder', { defaultValue: 'e.g. This nomination does not meet the award criteria because…' })}
+                value={rejectReason}
+                onChange={e => setRejectReason(e.target.value)}
+                autoFocus
+              />
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={() => {
+                    handleApproval(rejectDialogNomId, false, rejectReason);
+                    setRejectDialogNomId(null);
+                    setRejectReason('');
+                  }}
+                  disabled={loading || !rejectReason.trim()}
+                  className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition-colors disabled:bg-gray-400"
+                >
+                  {t('approvals.confirmReject', { defaultValue: 'Confirm Rejection' })}
+                </button>
+                <button
+                  onClick={() => { setRejectDialogNomId(null); setRejectReason(''); }}
+                  className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+                >
+                  {t('approvals.cancel', { defaultValue: 'Cancel' })}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </AuthenticatedTemplate>
     </div>
   );

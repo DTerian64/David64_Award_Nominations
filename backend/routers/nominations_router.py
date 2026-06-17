@@ -18,6 +18,7 @@ import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import Form as FastAPIForm
 from fastapi.responses import HTMLResponse
 from typing import List
 
@@ -389,6 +390,8 @@ async def get_my_approvals(user_context: dict = Depends(get_current_user_with_im
             PayedDate=row[9],
             Status=row[10],
             CategoryDescription=row[11],
+            RejectionReason=row[12],
+            RejectionActor=row[13],
         )
         for row in rows
     ]
@@ -446,7 +449,11 @@ async def approve_nomination(
             Message="Nomination approved successfully"
         )
     else:
-        sqlhelper.reject_nomination(approval.NominationId)
+        sqlhelper.reject_nomination(
+            approval.NominationId,
+            reason=approval.reason,
+            actor="Manager",
+        )
 
         try:
             await publish_event("nomination.approved", approval.NominationId)
@@ -491,6 +498,8 @@ async def get_nomination_history(user_context: dict = Depends(get_current_user_w
             PayedDate=row[9],
             Status=row[10],
             CategoryDescription=row[11],
+            RejectionReason=row[12],
+            RejectionActor=row[13],
         ))
 
     await log_action_if_impersonating(user_context, "viewed_nomination_history")
@@ -634,21 +643,10 @@ async def handle_email_action(token: str = Query(..., description="Action token 
             )
 
         else:  # action == "reject"
-            sqlhelper.reject_nomination(nomination_id)
-
-            try:
-                await publish_event("nomination.approved", nomination_id)
-            except Exception as e:
-                logger.warning(
-                    "⚠️ Failed to publish nomination.approved event for nomination %d: %s",
-                    nomination_id, e
-                )
-
-            return get_action_confirmation_page(dashboard_url=dashboard_url,
-                action="rejected",
-                success=True,
-                message="The nomination has been rejected. The nominator has been notified via email."
-            )
+            # Two-step flow: show a reason form instead of acting immediately.
+            # The manager submits the form → POST /api/nominations/email-action
+            # carries the same token + the typed reason and commits the rejection.
+            return _get_rejection_reason_page(token, dashboard_url)
 
     except Exception as e:
         logger.error(f"❌ Error processing email action: {e}")
@@ -656,4 +654,182 @@ async def handle_email_action(token: str = Query(..., description="Action token 
             action="",
             success=False,
             message=f"An error occurred while processing your request: {str(e)}"
+        )
+
+
+def _get_rejection_reason_page(token: str, dashboard_url: str | None = None) -> str:
+    """
+    HTML form page shown when a manager clicks the email 'Reject' link.
+    Submits to POST /api/nominations/email-action with the same token + reason.
+    """
+    dashboard_btn = (
+        f'<a href="{dashboard_url}" class="button secondary">Go to Dashboard</a>'
+        if dashboard_url else ""
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Reject Nomination</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }}
+            .container {{
+                background: white;
+                padding: 40px;
+                border-radius: 10px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                max-width: 500px;
+                width: 100%;
+            }}
+            .icon {{ font-size: 48px; margin-bottom: 16px; text-align: center; }}
+            h1 {{ color: #e74c3c; margin-bottom: 8px; text-align: center; }}
+            p {{ color: #666; margin-bottom: 20px; text-align: center; }}
+            label {{ display: block; font-weight: bold; color: #333; margin-bottom: 6px; }}
+            textarea {{
+                width: 100%;
+                min-height: 120px;
+                padding: 10px;
+                border: 1px solid #ccc;
+                border-radius: 6px;
+                font-size: 15px;
+                font-family: Arial, sans-serif;
+                resize: vertical;
+                box-sizing: border-box;
+            }}
+            textarea:focus {{ outline: none; border-color: #e74c3c; box-shadow: 0 0 0 2px rgba(231,76,60,0.2); }}
+            .buttons {{ display: flex; gap: 12px; margin-top: 20px; }}
+            .button {{
+                flex: 1;
+                padding: 12px;
+                border: none;
+                border-radius: 6px;
+                font-size: 15px;
+                font-weight: bold;
+                cursor: pointer;
+                text-align: center;
+                text-decoration: none;
+                display: inline-block;
+            }}
+            .button.primary {{ background: #e74c3c; color: white; }}
+            .button.primary:hover {{ background: #c0392b; }}
+            .button.secondary {{ background: #f0f0f0; color: #333; }}
+            .button.secondary:hover {{ background: #e0e0e0; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="icon">❌</div>
+            <h1>Reject Nomination</h1>
+            <p>Please provide a reason. The nominator will be notified.</p>
+            <form method="POST" action="/api/nominations/email-action">
+                <input type="hidden" name="token" value="{token}" />
+                <label for="reason">Reason for rejection</label>
+                <textarea id="reason" name="reason" placeholder="e.g. This nomination does not meet the award criteria because…" required></textarea>
+                <div class="buttons">
+                    <button type="submit" class="button primary">Confirm Rejection</button>
+                    {dashboard_btn}
+                </div>
+            </form>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@router.post("/api/nominations/email-action", response_class=HTMLResponse)
+async def handle_email_action_post(
+    token:  str = FastAPIForm(...),
+    reason: str = FastAPIForm(""),
+):
+    """
+    Step 2 of the email reject flow.
+
+    Receives the signed token (same JWT from the email link) and the typed
+    rejection reason from the HTML form, verifies the token, and commits the
+    rejection.  Approve actions never reach this endpoint.
+    """
+    payload = verify_action_token(token)
+    if not payload:
+        return get_action_confirmation_page(
+            action="",
+            success=False,
+            message="This link has expired or is invalid. Please log in to the Award Nomination System to reject this nomination.",
+        )
+
+    nomination_id        = payload["nomination_id"]
+    action               = payload["action"]
+    expected_approver_id = payload["approver_id"]
+    dashboard_url        = sqlhelper.get_site_url_by_user_id(expected_approver_id)
+
+    if action != "reject":
+        # Sanity guard — this endpoint should only receive reject tokens.
+        return get_action_confirmation_page(dashboard_url=dashboard_url,
+            action="", success=False,
+            message="Invalid action for this endpoint.",
+        )
+
+    try:
+        actual_approver_id = sqlhelper.get_nomination_approver(nomination_id)
+        if actual_approver_id is None:
+            return get_action_confirmation_page(dashboard_url=dashboard_url,
+                action="", success=False,
+                message="Nomination not found. It may have already been processed or deleted.",
+            )
+        if actual_approver_id != expected_approver_id:
+            return get_action_confirmation_page(dashboard_url=dashboard_url,
+                action="", success=False,
+                message="You are not authorized to reject this nomination.",
+            )
+
+        nomination_status = sqlhelper.get_nomination_status(nomination_id)
+    except Exception as e:
+        logger.error("❌ Error looking up nomination %d for email reject POST: %s", nomination_id, e)
+        return get_action_confirmation_page(dashboard_url=dashboard_url,
+            action="", success=False,
+            message="An error occurred while looking up the nomination. Please try again.",
+        )
+
+    if nomination_status in ["Approved", "Rejected"]:
+        return get_action_confirmation_page(dashboard_url=dashboard_url,
+            action=nomination_status.lower(),
+            success=True,
+            message=f"This nomination has already been {nomination_status.lower()}.",
+        )
+
+    try:
+        sqlhelper.reject_nomination(nomination_id, reason=reason, actor="Manager")
+
+        try:
+            await publish_event("nomination.approved", nomination_id)
+        except Exception as e:
+            logger.warning(
+                "⚠️ Failed to publish nomination.approved event for nomination %d: %s",
+                nomination_id, e,
+            )
+
+        logger.info(
+            "Manager rejected nomination %d via email action (reason=%r)",
+            nomination_id, reason,
+        )
+        return get_action_confirmation_page(dashboard_url=dashboard_url,
+            action="rejected",
+            success=True,
+            message="The nomination has been rejected. The nominator has been notified via email.",
+        )
+
+    except Exception as e:
+        logger.error("❌ Error processing email reject POST: %s", e)
+        return get_action_confirmation_page(dashboard_url=dashboard_url,
+            action="", success=False,
+            message=f"An error occurred while processing your request: {str(e)}",
         )

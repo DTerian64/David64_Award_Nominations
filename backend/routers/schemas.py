@@ -38,12 +38,15 @@ class Nomination(BaseModel):
     # request? Populated by the auxiliary worker after SMTP hand-off.
     # None = approver not yet notified (event in flight or worker pending).
     ApproverNotifiedAt: Optional[datetime] = None
+    # Rejection metadata — populated only when Status == 'Rejected'
+    RejectionReason: Optional[str] = None
+    RejectionActor:  Optional[str] = None
 
 
 class NominationApproval(BaseModel):
     NominationId: int
     Approved: bool
-    Comments: Optional[str] = None
+    reason: str = ""   # rejection reason; ignored when Approved=True
 
 
 class ProcessedEvent(BaseModel):
