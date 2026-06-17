@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ShieldAlert, ChevronDown, ChevronUp, CheckCircle, XCircle } from 'lucide-react';
+import { ShieldAlert, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -95,6 +95,7 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
   const [reason, setReason]         = useState<Record<number, string>>({});
   const [deciding, setDeciding]     = useState<number | null>(null);
   const [decisionStatus, setDecisionStatus] = useState<Record<number, 'approved' | 'rejected'>>({});
+  const [rejectHint, setRejectHint] = useState<Record<number, boolean>>({});
 
   const loadQueue = useCallback(async () => {
     try {
@@ -131,6 +132,13 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
   };
 
   const decide = async (nominationId: number, action: 'approve' | 'reject') => {
+    if (action === 'reject' && !(reason[nominationId]?.trim())) {
+      setRejectHint(prev => ({ ...prev, [nominationId]: true }));
+      window.setTimeout(() => setRejectHint(prev => {
+        const copy = { ...prev }; delete copy[nominationId]; return copy;
+      }), 4000);
+      return;
+    }
     setDeciding(nominationId);
     try {
       await apiFetch(`/api/hrbp/nominations/${nominationId}/${action}`, {
@@ -324,11 +332,22 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                     <div className="space-y-3">
                       <textarea
                         value={reason[nom.nomination_id] || ''}
-                        onChange={e => setReason(prev => ({ ...prev, [nom.nomination_id]: e.target.value }))}
+                        onChange={e => {
+                          setReason(prev => ({ ...prev, [nom.nomination_id]: e.target.value }));
+                          if (e.target.value.trim()) {
+                            setRejectHint(prev => { const c = { ...prev }; delete c[nom.nomination_id]; return c; });
+                          }
+                        }}
                         placeholder="Reason (required for rejection, optional for approval)…"
                         rows={2}
                         className="w-full text-sm px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
                       />
+                      {rejectHint[nom.nomination_id] && (
+                        <div className="flex items-center gap-2 text-sm bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+                          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                          Please add a reason before rejecting this nomination.
+                        </div>
+                      )}
                       <div className="flex gap-3">
                         <button
                           onClick={() => decide(nom.nomination_id, 'approve')}
@@ -340,18 +359,13 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                         </button>
                         <button
                           onClick={() => decide(nom.nomination_id, 'reject')}
-                          disabled={deciding === nom.nomination_id || !(reason[nom.nomination_id]?.trim())}
+                          disabled={deciding === nom.nomination_id}
                           className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
                         >
                           <XCircle className="w-4 h-4" />
                           Reject nomination
                         </button>
                       </div>
-                      {!(reason[nom.nomination_id]?.trim()) && (
-                        <p className="text-xs text-gray-400 text-center">
-                          A reason is required to reject.
-                        </p>
-                      )}
                     </div>
                   )}
                 </div>
