@@ -742,7 +742,7 @@ def get_all_users_except(user_id: int, tenant_id: int) -> List[Tuple]:
                 FROM Users
                 WHERE UserId    != :user_id
                   AND TenantId   = :tenant_id
-                ORDER BY LastName, FirstName
+                ORDER BY FirstName, LastName
             """),
             {"user_id": user_id, "tenant_id": tenant_id},
         ).fetchall()

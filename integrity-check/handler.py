@@ -113,14 +113,41 @@ def handle(message_id: str, payload: dict) -> None:
     result = fraud_check.assess(details, tenant_id)
 
     if not result["model_available"]:
-        # No trained model yet for this tenant — route as clean, preserve any
-        # description flags in the log but don't block the nomination.
-        logger.warning(
-            "No fraud model for tenant %d — routing as clean", tenant_id,
-            extra={"nomination_id": nomination_id, "pre_ml_flags": pre_ml_flags},
-        )
-        db.set_nomination_status(nomination_id, "Pending")
-        service_bus_publisher.publish_event("nomination.created", nomination_id)
+        # No trained model yet for this tenant.  Description flags are still
+        # actionable even without ML — route to HRBP review if any exist,
+        # otherwise pass through to manager approval as normal.
+        if pre_ml_flags:
+            logger.warning(
+                "No fraud model for tenant %d — routing to HRBP review due to description flags",
+                tenant_id,
+                extra={"nomination_id": nomination_id, "pre_ml_flags": pre_ml_flags},
+            )
+            db.save_hrbp_fraud_flags(
+                nomination_id=nomination_id,
+                fraud_score=0,
+                fraud_probability=0.0,
+                risk_level="UNKNOWN",
+                warning_flags=", ".join(pre_ml_flags),
+                top_features_json=None,
+                feature_summary_json=json.dumps({
+                    "fraud_score":       0,
+                    "fraud_probability": 0.0,
+                    "risk_level":        "UNKNOWN",
+                    "description_flags": pre_ml_flags,
+                }),
+            )
+            db.set_nomination_status(nomination_id, "PendingHRBPReview")
+            service_bus_publisher.publish_event(
+                "nomination.fraud-flagged", nomination_id,
+                extra={"risk_level": "UNKNOWN"},
+            )
+        else:
+            logger.warning(
+                "No fraud model for tenant %d — routing as clean", tenant_id,
+                extra={"nomination_id": nomination_id},
+            )
+            db.set_nomination_status(nomination_id, "Pending")
+            service_bus_publisher.publish_event("nomination.created", nomination_id)
         db.update_processed_event_result(message_id, "success")
         return
 
