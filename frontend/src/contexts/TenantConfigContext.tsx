@@ -45,7 +45,7 @@ export interface TenantConfig {
   locale:   string;        // BCP 47 tag, e.g. "en-US" | "ko-KR"
   currency: string;        // ISO 4217, e.g. "USD" | "KRW"
   theme:    TenantTheme;
-  domain?:  string;        // canonical public hostname, e.g. "acme-awards.terian-services.com"
+  domain?:  string;        // canonical public hostname, e.g. "acme-awards.terianix.ai"
   /** Tenant-specific award amount bounds (integer, denominated in tenant currency). */
   min_award?: number;
   max_award?: number;

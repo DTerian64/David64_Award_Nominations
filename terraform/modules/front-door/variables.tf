@@ -42,8 +42,8 @@ variable "legacy_redirect_map" {
   default     = {}
   # Example:
   # {
-  #   "sandbox-awards.terian-services.com" = "sandbox-awards.terianix.ai"
-  #   "acme-awards.terian-services.com"    = "acme-awards.terianix.ai"
-  #   "demo-awards.terian-services.com"    = "demo-awards.terianix.ai"
+  #   "sandbox-awards.terianix.ai" = "sandbox-awards.terianix.ai"
+  #   "acme-awards.terianix.ai"    = "acme-awards.terianix.ai"
+  #   "demo-awards.terianix.ai"    = "demo-awards.terianix.ai"
   # }
 }

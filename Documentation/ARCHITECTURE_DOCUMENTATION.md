@@ -27,7 +27,7 @@ The entire infrastructure is defined in **Terraform** (modular, multi-environmen
 
 Each organisation (tenant) is provisioned with:
 
-- A dedicated subdomain: `acme-awards.terian-services.com`, `sandbox-awards.terian-services.com`, `dev-awards.terian-services.com`
+- A dedicated subdomain: `acme-awards.terianix.ai`, `sandbox-awards.terianix.ai`, `dev-awards.terianix.ai`
 - A CNAME DNS record pointing to the Azure Front Door endpoint, managed in the Azure DNS Zone by Terraform
 - A row in the `dbo.Tenants` SQL table containing: `TenantId`, `Domain`, `AzureAdTenantId`, and a `Config` JSON blob (primary colour, locale, currency, logo URL)
 - An Azure AD tenant GUID mapped to the internal tenant record via the `tid` JWT claim
@@ -390,10 +390,10 @@ Used exclusively by the AI Analytics Agent to answer natural language questions 
 
 ```
 1.  New tenant record inserted: dbo.Tenants (TenantId, Domain, AzureAdTenantId, Config)
-2.  Terraform: azurerm_dns_cname_record for <subdomain>.terian-services.com
+2.  Terraform: azurerm_dns_cname_record for <subdomain>.terianix.ai
 3.  Terraform: azurerm_static_web_app_custom_domain for SWA
 4.  Entra ID: App registration configured with new tenant's redirect URIs
-5.  Users access https://<tenant>.terian-services.com
+5.  Users access https://<tenant>.terianix.ai
 6.  Frontend fetches /api/tenant/config → applies theme, locale, currency
 ```
 

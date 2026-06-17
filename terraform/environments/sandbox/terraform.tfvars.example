@@ -57,9 +57,9 @@ afd_endpoint_name = "award-nomination-api-sandbox"
 # Static Web App
 swa_name = "award-nomination-frontend-sandbox"
 swa_custom_domains = [
-  "sandbox-awards.terian-services.com",
-  "acme-awards.terian-services.com",
-  "demo-awards.terian-services.com",
+  "sandbox-awards.terianix.ai",
+  "acme-awards.terianix.ai",
+  "demo-awards.terianix.ai",
 ]
 
 # Grafana

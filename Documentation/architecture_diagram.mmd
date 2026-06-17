@@ -2,13 +2,13 @@ graph TB
 
     %% ── Public Internet ───────────────────────────────────────────────────────
     subgraph PUB["🌐 Public Internet"]
-        TENANTS["👥 Tenant Users<br/>acme-awards.terian-services.com<br/>sandbox-awards.terian-services.com<br/>dev-awards.terian-services.com"]
+        TENANTS["👥 Tenant Users<br/>acme-awards.terianix.ai<br/>sandbox-awards.terianix.ai<br/>dev-awards.terianix.ai"]
         GH["⚙️ GitHub Actions<br/>CI/CD Pipelines"]
     end
 
     %% ── Azure Edge — the only public-facing ingress ───────────────────────────
     subgraph EDGE["☁️ Azure Edge Network — PUBLIC INGRESS ONLY"]
-        DNS_Z["🌐 Azure DNS Zone<br/>terian-services.com<br/>Per-tenant CNAME records<br/>Managed by Terraform"]
+        DNS_Z["🌐 Azure DNS Zone<br/>terianix.ai<br/>Per-tenant CNAME records<br/>Managed by Terraform"]
         SWA["📄 Azure Static Web Apps<br/>React SPA<br/>Per-tenant custom domains<br/>GitHub Actions deploy"]
         AFD["🔀 Azure Front Door Standard<br/>◀ SOLE PUBLIC API INGRESS ▶<br/>WAF · SSL/TLS Termination<br/>50/50 weighted · Auto-failover"]
     end

@@ -6,7 +6,7 @@ Create Date: 2026-05-31
 
 Context
 -------
-Stores the tenant's frontend portal URL (e.g. https://awards.terian-services.com).
+Stores the tenant's frontend portal URL (e.g. https://awards.terianix.ai).
 Used by the auxiliary service to embed a correct per-tenant hyperlink in
 outbound emails (e.g. the HRBP review request email).
 

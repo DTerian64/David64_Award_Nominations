@@ -109,12 +109,12 @@ async def publish_event(
             async with client.get_topic_sender(_TOPIC) as sender:
                 await sender.send_messages(msg)
         logger.info(
-            "Published event type=%s nomination_id=%d message_id=%s",
+            "Published event type=%s nomination_id=%s message_id=%s",
             event_type, nomination_id, msg.message_id,
         )
     except Exception:
         logger.exception(
-            "Failed to publish event type=%s nomination_id=%d",
+            "Failed to publish event type=%s nomination_id=%s",
             event_type, nomination_id,
         )
         raise

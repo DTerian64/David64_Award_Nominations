@@ -57,11 +57,11 @@ afd_endpoint_name = "award-nomination-api-sandbox"
 # ── Static Web App ────────────────────────────────────────────────────────────
 swa_name                = "award-nomination-frontend-sandbox"
 swa_custom_domains = [
-  "sandbox-awards.terian-services.com",   # main sandbox — existing tenants
-  "acme-awards.terian-services.com",      # ACME Corp tenant
-  "demo-awards.terian-services.com",      # public demo — self-registration
+  "sandbox-awards.terianix.ai",   # main sandbox — existing tenants
+  "acme-awards.terianix.ai",      # ACME Corp tenant
+  "demo-awards.terianix.ai",      # public demo — self-registration
 ]
-dns_zone_resource_group = "rg_platform"                         # RG holding terian-services.com DNS zone
+dns_zone_resource_group = "rg_platform"                         # RG holding terianix.ai DNS zone
 
 # ── Service Bus ───────────────────────────────────────────────────────────────
 service_bus_namespace_name = "sb-award-sandbox"

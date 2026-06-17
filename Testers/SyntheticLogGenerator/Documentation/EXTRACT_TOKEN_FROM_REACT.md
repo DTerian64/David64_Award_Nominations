@@ -2,7 +2,7 @@
 
 ## 🎯 This is the EASIEST Method!
 
-Your React app at `https://awards.terian-services.com` already has the authentication token! Let's grab it.
+Your React app at `https://awards.terianix.ai` already has the authentication token! Let's grab it.
 
 ---
 
@@ -10,7 +10,7 @@ Your React app at `https://awards.terian-services.com` already has the authentic
 
 ### Step 1: Open Your React App
 ```
-https://awards.terian-services.com
+https://awards.terianix.ai
 ```
 
 ### Step 2: Make Sure You're Logged In

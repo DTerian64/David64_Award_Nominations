@@ -175,7 +175,7 @@ resource "azurerm_cdn_frontdoor_security_policy" "waf" {
   }
 }
 
-# ── Legacy domain redirects (terian-services.com → terianix.ai) ───────────────
+# ── Legacy domain redirects (terianix.ai → terianix.ai) ───────────────
 # Each entry in var.legacy_redirect_map:
 #   1. Registers the old hostname as an AFD custom domain (managed TLS cert).
 #   2. Uses the AFD Rules Engine to issue a 301 redirect to the mapped new

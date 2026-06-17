@@ -2,7 +2,7 @@
 Handler: notification.access_requested
 
 Triggered when a visitor requests demo access via the self-registration form
-at demo-awards.terian-services.com/demo/request.
+at demo-awards.terianix.ai/demo/request.
 
 Published by: backend/demo_router.py → POST /api/demo/request
 

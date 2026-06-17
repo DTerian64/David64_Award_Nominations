@@ -1,7 +1,7 @@
 /**
  * DemoJoinPanel.tsx
  *
- * Shown only on demo-awards.terian-services.com (hostname check).
+ * Shown only on demo-awards.terianix.ai (hostname check).
  * Lets an external visitor create a demo account and sign in immediately.
  *
  * Flow:
@@ -19,7 +19,7 @@ import { useMsal } from '@azure/msal-react';
 import { loginRequest } from '../authConfig';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-export const IS_DEMO_SITE = window.location.hostname === 'demo-awards.terian-services.com';
+export const IS_DEMO_SITE = window.location.hostname === 'demo-awards.terianix.ai';
 
 interface JoinResult {
   upn:           string;

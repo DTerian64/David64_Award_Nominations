@@ -74,7 +74,7 @@ variable "swa_custom_domains" {
 }
 
 variable "dns_zone_resource_group" {
-  description = "Resource group containing the terian-services.com Azure DNS zone."
+  description = "Resource group containing the terianix.ai Azure DNS zone."
   type        = string
   default     = "rg_platform"
 }
@@ -284,13 +284,13 @@ variable "dns_zone_terianix_resource_group" {
 }
 
 variable "legacy_redirect_domains" {
-  description = "Map of old terian-services.com hostname → new terianix.ai hostname. CNAME records for old hosts are updated to point to the AFD endpoint; AFD Rules Engine issues a 301 redirect to the mapped new hostname."
+  description = "Map of old terianix.ai hostname → new terianix.ai hostname. CNAME records for old hosts are updated to point to the AFD endpoint; AFD Rules Engine issues a 301 redirect to the mapped new hostname."
   type        = map(string)
   default     = {}
   # Example:
   # {
-  #   "sandbox-awards.terian-services.com" = "sandbox-awards.terianix.ai"
-  #   "acme-awards.terian-services.com"    = "acme-awards.terianix.ai"
-  #   "demo-awards.terian-services.com"    = "demo-awards.terianix.ai"
+  #   "sandbox-awards.terianix.ai" = "sandbox-awards.terianix.ai"
+  #   "acme-awards.terianix.ai"    = "acme-awards.terianix.ai"
+  #   "demo-awards.terianix.ai"    = "demo-awards.terianix.ai"
   # }
 }

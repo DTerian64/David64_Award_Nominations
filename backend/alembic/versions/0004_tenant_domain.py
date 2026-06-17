@@ -9,17 +9,17 @@ Changes
 Adds a nullable, unique NVARCHAR(253) column ``Domain`` to dbo.Tenants.
 
   Domain — the canonical public hostname for this tenant's front-end
-  (e.g. "acme-awards.terian-services.com").  Used by the authentication
+  (e.g. "acme-awards.terianix.ai").  Used by the authentication
   layer to enforce that a tenant's users can only log in from their
   assigned domain.  NULL means no domain restriction is enforced for
   that tenant (useful while migrating / for internal tenants).
 
 After running this migration, populate the Domain values with:
 
-    UPDATE dbo.Tenants SET Domain = 'sandbox-awards.terian-services.com'
+    UPDATE dbo.Tenants SET Domain = 'sandbox-awards.terianix.ai'
     WHERE TenantName = 'sandbox';   -- adjust TenantName to match your row
 
-    UPDATE dbo.Tenants SET Domain = 'acme-awards.terian-services.com'
+    UPDATE dbo.Tenants SET Domain = 'acme-awards.terianix.ai'
     WHERE TenantName = 'acme';      -- adjust TenantName to match your row
 
 Do NOT hardcode TenantId values here — use TenantName or AzureAdTenantId

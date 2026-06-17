@@ -1,7 +1,7 @@
 /**
  * DemoRequestPage.tsx
  *
- * Standalone page at /demo/request (demo-awards.terian-services.com only).
+ * Standalone page at /demo/request (demo-awards.terianix.ai only).
  *
  * Visitor fills in Name + Email + Is Admin? and submits.
  * Backend sends a Microsoft B2B invitation email.

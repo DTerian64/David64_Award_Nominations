@@ -1,7 +1,7 @@
 """
 demo_router.py
 ==============
-Public self-registration endpoint for demo-awards.terian-services.com.
+Public self-registration endpoint for demo-awards.terianix.ai.
 
 POST /api/demo/request
 ----------------------
@@ -43,11 +43,10 @@ router = APIRouter(prefix="/api/demo", tags=["Demo"])
 # Config
 # ---------------------------------------------------------------------------
 
-_DEMO_ORIGIN = os.getenv("DEMO_ORIGIN", "https://demo-awards.terian-services.com")
-_INVITE_REDIRECT_BASE = f"{_DEMO_ORIGIN}/demo/welcome"
+_DEMO_ORIGIN_FALLBACK = os.getenv("DEMO_ORIGIN", "https://demo-awards.terianix.ai")
 
 
-def _build_invite_redirect_url(email: str) -> str:
+def _build_invite_redirect_url(email: str, origin: str) -> str:
     """
     Build the inviteRedirectUrl passed to Graph POST /invitations.
 
@@ -60,7 +59,7 @@ def _build_invite_redirect_url(email: str) -> str:
     so `?email=…` arrives intact at /demo/welcome after the user clicks
     "Activate my Demo Access" in their email.
     """
-    return f"{_INVITE_REDIRECT_BASE}?email={urllib.parse.quote(email, safe='')}"
+    return f"{origin}/demo/welcome?email={urllib.parse.quote(email, safe='')}"
 
 _RATE_LIMIT_PER_IP    = 3   # max invitations from one IP per hour
 _RATE_LIMIT_PER_EMAIL = 1   # max invitations to one email per hour
@@ -172,6 +171,10 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
 
     client_ip = (request.client.host if request.client else "unknown")[:64]
 
+    # Fetch the demo portal origin from dbo.Tenants (is_demo = 1).
+    # Falls back to the DEMO_ORIGIN env var if Site_URL is not yet configured.
+    demo_origin = sqlhelper.get_demo_site_url() or _DEMO_ORIGIN_FALLBACK
+
     # ── Rate limit by IP ──────────────────────────────────────────────────────
     if sqlhelper.count_demo_registrations_by_ip(client_ip) >= _RATE_LIMIT_PER_IP:
         # Return same generic message — don't reveal the limit type
@@ -207,7 +210,7 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
                 first_name=body.first_name,
                 last_name=body.last_name,
                 email=body.email,
-                invite_redirect_url=_build_invite_redirect_url(body.email),
+                invite_redirect_url=_build_invite_redirect_url(body.email, demo_origin),
             )
         except RuntimeError as e:
             logger.error("Resend: Graph invitation refresh failed for %s: %s", body.email, e)
@@ -270,7 +273,7 @@ async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRe
             first_name=body.first_name,
             last_name=body.last_name,
             email=body.email,
-            invite_redirect_url=_build_invite_redirect_url(body.email),
+            invite_redirect_url=_build_invite_redirect_url(body.email, demo_origin),
         )
     except RuntimeError as e:
         logger.error("B2B invitation failed for %s: %s", body.email, e)

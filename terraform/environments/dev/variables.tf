@@ -53,13 +53,13 @@ variable "afd_endpoint_name"    { type = string }
 variable "swa_name"             { type = string }
 
 variable "swa_custom_domain" {
-  description = "Optional custom domain for the SWA (e.g. dev-awards.terian-services.com). Leave empty to skip."
+  description = "Optional custom domain for the SWA (e.g. dev-awards.terianix.ai). Leave empty to skip."
   type        = string
   default     = ""
 }
 
 variable "dns_zone_resource_group" {
-  description = "Resource group containing the terian-services.com Azure DNS zone."
+  description = "Resource group containing the terianix.ai Azure DNS zone."
   type        = string
   default     = "rg_platform"
 }

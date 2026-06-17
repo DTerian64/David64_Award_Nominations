@@ -17,7 +17,7 @@ Usage
     python assign_admin_role.py
 
 Or to assign to a different UPN:
-    python assign_admin_role.py --upn someone@demo.terian-services.com
+    python assign_admin_role.py --upn someone@demo.terianix.ai
 """
 
 import sys
@@ -39,7 +39,7 @@ CLIENT_ID     = os.environ["DEMO_GRAPH_CLIENT_ID"]
 CLIENT_SECRET = os.environ["DEMO_GRAPH_CLIENT_SECRET"]
 
 # The UPN of the user to promote to admin in the Demo tenant
-DEFAULT_UPN = "david64.terian@demo.terian-services.com"
+DEFAULT_UPN = "david64.terian@demo.terianix.ai"
 
 # The app role value exactly as defined in the app manifest
 APP_ROLE_VALUE = "AWard_Nomination_Admin"

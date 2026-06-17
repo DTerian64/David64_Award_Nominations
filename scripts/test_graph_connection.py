@@ -71,7 +71,7 @@ for u in users:
 # ── 4. Test user creation (dry-run — immediately deletes) ────────────────────
 
 print("\n[3] Testing user create + delete (canary account)...")
-TEST_UPN = "seed.test.canary@demo.terian-services.com"
+TEST_UPN = "seed.test.canary@demo.terianix.ai"
 
 body = {
     "accountEnabled":    False,

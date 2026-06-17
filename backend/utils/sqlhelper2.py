@@ -2236,6 +2236,15 @@ def get_demo_aad_tenant_id() -> Optional[str]:
         return row[0] if row else None
 
 
+def get_demo_site_url() -> Optional[str]:
+    """Return Site_URL for the demo tenant, or None if the column is NULL or no demo tenant exists."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT Site_URL FROM dbo.Tenants WHERE is_demo = 1"),
+        ).fetchone()
+        return row[0] if row else None
+
+
 def demo_email_registered(email: str) -> bool:
     """
     Return True if this email address has already been registered as a demo user

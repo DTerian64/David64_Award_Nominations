@@ -7,7 +7,7 @@ Create Date: 2026-05-06
 Context
 -------
 Supports the demo self-registration flow where external visitors request
-access to demo-awards.terian-services.com.
+access to demo-awards.terianix.ai.
 
 Flow
 ----

@@ -7,10 +7,10 @@ for demonstrating the Award Nomination app to prospective SaaS customers.
 What it creates
 ---------------
   AAD     : 100 disabled user accounts in the "Terian Services Demo" Entra tenant
-             (demo.terian-services.com must be a verified custom domain in that tenant)
-  Tenant  : Terian Services Demo row in dbo.Tenants  (demo-awards.terian-services.com)
+             (demo.terianix.ai must be a verified custom domain in that tenant)
+  Tenant  : Terian Services Demo row in dbo.Tenants  (demo-awards.terianix.ai)
   Users   : 100 fictional employees across 6 departments in dbo.Users
-             UPNs   → firstname.lastname@demo.terian-services.com
+             UPNs   → firstname.lastname@demo.terianix.ai
              Emails → dterian64@outlook.com  (all notifications route to David)
   Nominations : 400 over 18 months with varied description text
   FraudScores : Pre-populated for every nomination (no need to wait for Monday run)
@@ -23,7 +23,7 @@ What it creates
 Prerequisites
 -------------
   1. Create a new Azure AD tenant: "Terian Services Demo"
-  2. Add demo.terian-services.com as a verified custom domain (DNS TXT record)
+  2. Add demo.terianix.ai as a verified custom domain (DNS TXT record)
   3. Register an app in that tenant with Microsoft Graph → User.ReadWrite.All
      (application permission, admin-consented)
   4. Create a client secret for the app registration
@@ -71,8 +71,8 @@ load_dotenv(Path(__file__).parent.parent / ".env")    # Award_Nomination_App/.en
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 DEMO_TENANT_NAME = "Terian Services Demo"
-DEMO_DOMAIN      = "demo-awards.terian-services.com"
-DEMO_UPN_SUFFIX  = "@demo.terian-services.com"
+DEMO_DOMAIN      = "demo-awards.terianix.ai"
+DEMO_UPN_SUFFIX  = "@demo.terianix.ai"
 DEMO_EMAIL       = "dterian64@outlook.com"   # all demo notifications route to David
 CURRENCY         = "USD"
 
@@ -1431,8 +1431,8 @@ def main() -> None:
         print("  Next steps:")
         print("  1. Assign yourself AWard_Nomination_Admin in the Demo AAD tenant")
         print(f"     Enterprise Apps → Award Nomination → Users and groups")
-        print("  2. Verify demo-awards.terian-services.com DNS + SWA custom domain")
-        print("  3. Log in at demo-awards.terian-services.com and test impersonation")
+        print("  2. Verify demo-awards.terianix.ai DNS + SWA custom domain")
+        print("  3. Log in at demo-awards.terianix.ai and test impersonation")
     print("=" * 60)
 
 

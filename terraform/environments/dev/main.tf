@@ -425,13 +425,13 @@ module "front_door" {
 }
 
 # ── DNS — CNAME for custom SWA domain ────────────────────────────────────────
-# terian-services.com is managed in Azure DNS (rg_award_nomination).
-# Creates dev-awards.terian-services.com → <swa-default-hostname> when
+# terianix.ai is managed in Azure DNS (rg_award_nomination).
+# Creates dev-awards.terianix.ai → <swa-default-hostname> when
 # swa_custom_domain is set. Validation is handled by the SWA custom domain
 # resource (cname-delegation) which reads this same record.
 data "azurerm_dns_zone" "terian_services" {
   count               = var.swa_custom_domain != "" ? 1 : 0
-  name                = "terian-services.com"
+  name                = "terianix.ai"
   resource_group_name = var.dns_zone_resource_group
 }
 

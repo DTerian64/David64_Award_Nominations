@@ -663,24 +663,24 @@ module "front_door" {
   afd_endpoint_name            = var.afd_endpoint_name
   container_app_primary_fqdn   = module.container_apps.primary_app_fqdn
   container_app_secondary_fqdn = module.container_apps.secondary_app_fqdn
-  # Old terian-services.com hostnames → AFD registers them as custom domains
+  # Old terianix.ai hostnames → AFD registers them as custom domains
   # and issues 301 redirects to their mapped terianix.ai counterparts.
   legacy_redirect_map = var.legacy_redirect_domains
   tags                = local.tags
   depends_on          = [azurerm_resource_group.rg, module.container_apps]
 }
 
-# ── DNS — terian-services.com zone ───────────────────────────────────────────
+# ── DNS — terianix.ai zone ───────────────────────────────────────────
 # Used for:
-#   (a) Any remaining swa_custom_domains under terian-services.com (if any).
+#   (a) Any remaining swa_custom_domains under terianix.ai (if any).
 #   (b) Legacy redirect CNAME records that now point to AFD (not the SWA).
 data "azurerm_dns_zone" "terian_services" {
   count               = (length(var.swa_custom_domains) > 0 || length(var.legacy_redirect_domains) > 0) ? 1 : 0
-  name                = "terian-services.com"
+  name                = "terianix.ai"
   resource_group_name = var.dns_zone_resource_group
 }
 
-# CNAME records for any swa_custom_domains still under terian-services.com.
+# CNAME records for any swa_custom_domains still under terianix.ai.
 # (After the migration this list is empty; kept for backward compatibility.)
 resource "azurerm_dns_cname_record" "swa_custom_domains" {
   for_each            = toset(var.swa_custom_domains)
@@ -693,7 +693,7 @@ resource "azurerm_dns_cname_record" "swa_custom_domains" {
   depends_on          = [module.static_web_app]
 }
 
-# ── DNS — legacy redirect CNAMEs (terian-services.com → AFD) ─────────────────
+# ── DNS — legacy redirect CNAMEs (terianix.ai → AFD) ─────────────────
 # Old subdomain CNAMEs now point to the AFD endpoint instead of the SWA.
 # AFD validates ownership via these CNAMEs and returns 301 → terianix.ai.
 # Low TTL (300 s) speeds up cut-over; raise to 3600 once migration is stable.
@@ -746,7 +746,7 @@ module "static_web_app" {
   depends_on                         = [azurerm_resource_group.rg]
 }
 
-# ── SWA custom domains — terian-services.com (legacy; kept until redirect is stable) ──
+# ── SWA custom domains — terianix.ai (legacy; kept until redirect is stable) ──
 # After the migration, swa_custom_domains should be empty and these resources
 # will no longer be created.  Remove this block once legacy CNAMEs are decommissioned.
 resource "azurerm_static_web_app_custom_domain" "swa_custom_domains" {

@@ -7,7 +7,7 @@
 | TenantName           | NVARCHAR(256)  | Human-readable organisation name                             |
 | AzureAdTenantId      | NVARCHAR(36)   | Azure AD / Entra ID tenant GUID                              |
 | Config               | NVARCHAR(MAX)  | JSON blob of tenant configuration; may be NULL               |
-| Domain               | NVARCHAR(253)  | Canonical public hostname, e.g. acme-awards.terian-services.com |
+| Domain               | NVARCHAR(253)  | Canonical public hostname, e.g. acme-awards.terianix.ai |
 | fallback_admin_email | NVARCHAR(256)  | Emailed when no HRBP is configured for the tenant            |
 | Site_URL             | NVARCHAR(256)  | Frontend portal URL used in outbound email hyperlinks        |
 
@@ -95,7 +95,7 @@ Note: same tenant isolation pattern as P2P_FraudScores — join through Nominati
 
 ## dbo.DemoRegistrationRequests
 Public self-registration audit log written by `POST /api/demo/request`
-(the form on https://demo-awards.terian-services.com/demo/request).
+(the form on https://demo-awards.terianix.ai/demo/request).
 One row per accepted demo-access request — used for audit, rate limiting
 (by email and by IP), and de-duplication. Contains PII.
 

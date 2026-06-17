@@ -57,8 +57,8 @@ afd_endpoint_name = "award-nomination-api-dev"
 
 # ── Static Web App ────────────────────────────────────────────────────────────
 swa_name               = "award-nomination-frontend-dev"
-swa_custom_domain      = "dev-awards.terian-services.com"  # leave empty "" to skip
-dns_zone_resource_group = "rg_platform"             # RG holding terian-services.com DNS zone
+swa_custom_domain      = "dev-awards.terianix.ai"  # leave empty "" to skip
+dns_zone_resource_group = "rg_platform"             # RG holding terianix.ai DNS zone
 
 # ── Log Analytics ─────────────────────────────────────────────────────────────
 workspace_name_primary   = "workspace-award-primary-dev"
