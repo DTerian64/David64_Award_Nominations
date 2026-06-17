@@ -559,7 +559,7 @@ def get_or_create_tenant(conn, dry_run: bool) -> int:
         print("  [dry-run] Would INSERT demo tenant → TenantId=<new>")
         return -1
 
-    # Check which optional columns exist (migrations 0002, 0004)
+    # Check which optional columns exist (migrations 0002, 0004, 0026)
     cur.execute(
         "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
         "WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='Tenants' AND COLUMN_NAME='Config'"
@@ -571,6 +571,12 @@ def get_or_create_tenant(conn, dry_run: bool) -> int:
         "WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='Tenants' AND COLUMN_NAME='Domain'"
     )
     has_domain = cur.fetchone() is not None
+
+    cur.execute(
+        "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='Tenants' AND COLUMN_NAME='is_demo'"
+    )
+    has_is_demo = cur.fetchone() is not None
 
     if has_config and has_domain:
         cur.execute(
@@ -601,6 +607,11 @@ def get_or_create_tenant(conn, dry_run: bool) -> int:
         )
 
     tid = int(cur.fetchone()[0])
+
+    # Flag this tenant as the demo tenant (migration 0026+)
+    if has_is_demo:
+        cur.execute("UPDATE dbo.Tenants SET is_demo = 1 WHERE TenantId = ?", (tid,))
+
     conn.commit()
     print(f"  Created demo tenant: TenantId={tid}")
     return tid

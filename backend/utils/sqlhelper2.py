@@ -2194,15 +2194,11 @@ def rename_conversation(
 # DEMO SELF-REGISTRATION HELPERS
 # ===========================================================================
 
-DEMO_TENANT_NAME = "Terian Services Demo"
-
-
 def get_demo_tenant_id() -> Optional[int]:
     """Return the internal TenantId for the Demo tenant, or None if not found."""
     with get_db_context() as session:
         row = session.execute(
-            text("SELECT TenantId FROM dbo.Tenants WHERE TenantName = :name"),
-            {"name": DEMO_TENANT_NAME},
+            text("SELECT TenantId FROM dbo.Tenants WHERE is_demo = 1"),
         ).fetchone()
         return row[0] if row else None
 
@@ -2211,8 +2207,7 @@ def get_demo_aad_tenant_id() -> Optional[str]:
     """Return the Azure AD tenant GUID for the Demo tenant."""
     with get_db_context() as session:
         row = session.execute(
-            text("SELECT AzureAdTenantId FROM dbo.Tenants WHERE TenantName = :name"),
-            {"name": DEMO_TENANT_NAME},
+            text("SELECT AzureAdTenantId FROM dbo.Tenants WHERE is_demo = 1"),
         ).fetchone()
         return row[0] if row else None
 
@@ -2230,9 +2225,9 @@ def demo_email_registered(email: str) -> bool:
             text(
                 "SELECT 1 FROM dbo.Users u "
                 "JOIN dbo.Tenants t ON u.TenantId = t.TenantId "
-                "WHERE u.userEmail = :email AND t.TenantName = :demo_name"
+                "WHERE u.userEmail = :email AND t.is_demo = 1"
             ),
-            {"email": email, "demo_name": DEMO_TENANT_NAME},
+            {"email": email},
         ).fetchone()
         return row is not None
 
