@@ -11,7 +11,8 @@ Context variables per key:
   nomination_pending   : manager_name, nominator_name, beneficiary_name,
                          formatted_amount, description, approve_url, reject_url, category
   nomination_approved  : beneficiary_name, formatted_amount, category
-  nomination_rejected  : beneficiary_name, formatted_amount, category
+  nomination_rejected  : beneficiary_name, formatted_amount, category,
+                         rejection_reason, rejection_actor
   beneficiary_award    : beneficiary_name, formatted_amount, nominator_name, category
   payment_confirmed    : beneficiary_name, formatted_amount, payment_ref
   demo_access_invite   : first_name, redeem_url
@@ -129,6 +130,15 @@ EN_TEMPLATES: dict[str, dict[str, str]] = {
             {% if category %}<li><strong>Category:</strong> {{ category }}</li>{% endif %}
             <li><strong>Outcome:</strong> Not approved at this time</li>
         </ul>
+        {% if rejection_reason %}
+        <div style="background-color: #fdf2f2; border-left: 4px solid #e74c3c;
+                    padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
+            {% if rejection_actor %}<p style="margin: 0 0 6px; font-weight: bold; color: #c0392b;">
+                Reviewed by: {{ rejection_actor }}
+            </p>{% endif %}
+            <p style="margin: 0; color: #c0392b;">{{ rejection_reason }}</p>
+        </div>
+        {% endif %}
         <p>
             Thank you for recognising your colleague. You are encouraged to
             continue nominating outstanding contributors.

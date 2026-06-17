@@ -93,7 +93,9 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
                 approver.FirstName + ' ' + approver.LastName AS ApproverName,
                 approver.userEmail        AS ApproverEmail,
                 nc.category_description   AS CategoryDescription,
-                nominator.TenantId        AS TenantId
+                nominator.TenantId        AS TenantId,
+                n.RejectionReason,
+                n.RejectionActor
             FROM  dbo.Nominations n
             INNER JOIN dbo.Users nominator   ON n.NominatorId   = nominator.UserId
             INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
@@ -123,6 +125,8 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
         "approver_email":       row[13],
         "category_description": row[14],       # None for tenants without categories
         "tenant_id":            int(row[15]),
+        "rejection_reason":     row[16],       # None unless nomination is Rejected
+        "rejection_actor":      row[17],
     }
 
 

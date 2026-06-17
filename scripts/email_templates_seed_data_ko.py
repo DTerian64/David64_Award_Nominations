@@ -110,6 +110,15 @@ KO_TEMPLATES: dict[str, dict[str, str]] = {
             {% if category %}<li><strong>분류:</strong> {{ category }}</li>{% endif %}
             <li><strong>결과:</strong> 현재로서는 승인되지 않음</li>
         </ul>
+        {% if rejection_reason %}
+        <div style="background-color: #fdf2f2; border-left: 4px solid #e74c3c;
+                    padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
+            {% if rejection_actor %}<p style="margin: 0 0 6px; font-weight: bold; color: #c0392b;">
+                검토자: {{ rejection_actor }}
+            </p>{% endif %}
+            <p style="margin: 0; color: #c0392b;">{{ rejection_reason }}</p>
+        </div>
+        {% endif %}
         <p>
             동료를 인정해 주셔서 감사합니다. 앞으로도 우수한 기여자를 계속
             추천해 주시기 바랍니다.

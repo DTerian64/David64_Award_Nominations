@@ -74,13 +74,16 @@ def handle(payload: dict) -> None:
     # ── 2. Send outcome email to nominator (template from dbo.EmailTemplates) ──
     lang = db.get_tenant_lang(details["tenant_id"])
     nominator_key = "nomination_approved" if status in APPROVED_STATUSES else "nomination_rejected"
+    nominator_context = {
+        "beneficiary_name": details["beneficiary_name"],
+        "formatted_amount": email_client.format_amount(details["amount"], details["currency"]),
+        "category":         details.get("category_description"),
+    }
+    if status in REJECTED_STATUSES:
+        nominator_context["rejection_reason"] = details.get("rejection_reason") or ""
+        nominator_context["rejection_actor"]  = details.get("rejection_actor") or ""
     nominator_rendered = templating.render(
-        details["tenant_id"], nominator_key, lang,
-        {
-            "beneficiary_name": details["beneficiary_name"],
-            "formatted_amount": email_client.format_amount(details["amount"], details["currency"]),
-            "category":         details.get("category_description"),
-        },
+        details["tenant_id"], nominator_key, lang, nominator_context,
     )
     email_client.send_email(
         to_email=details["nominator_email"],
