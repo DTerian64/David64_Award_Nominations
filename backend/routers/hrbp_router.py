@@ -101,6 +101,16 @@ async def hrbp_approve(
         nomination_id, effective_user["UserId"],
     )
 
+    # Write confirmed-legitimate label → feeds next RF retrain
+    try:
+        sqlhelper.upsert_p2p_fraud_label(
+            nomination_id=nomination_id,
+            is_fraud=False,
+            confirmed_by=f"HRBP:{effective_user['UserId']}",
+        )
+    except Exception as e:
+        logger.warning("upsert_p2p_fraud_label failed for nomination %d (approve): %s", nomination_id, e)
+
     try:
         await publish_event(
             "nomination.hrbp-approved",
@@ -143,6 +153,16 @@ async def hrbp_reject(
         "HRBP rejected nomination %d (reviewer=%d reason=%r)",
         nomination_id, effective_user["UserId"], body.reason,
     )
+
+    # Write confirmed-fraud label → feeds next RF retrain as CRITICAL
+    try:
+        sqlhelper.upsert_p2p_fraud_label(
+            nomination_id=nomination_id,
+            is_fraud=True,
+            confirmed_by=f"HRBP:{effective_user['UserId']}",
+        )
+    except Exception as e:
+        logger.warning("upsert_p2p_fraud_label failed for nomination %d (reject): %s", nomination_id, e)
 
     try:
         await publish_event(

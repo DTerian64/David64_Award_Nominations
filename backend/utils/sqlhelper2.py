@@ -1488,6 +1488,61 @@ def save_p2p_fraud_score(
         return result.rowcount > 0
 
 
+def upsert_p2p_fraud_label(
+    nomination_id: int,
+    is_fraud: bool,
+    confirmed_by: str = "HRBP",
+) -> None:
+    """
+    Write an HRBP-confirmed fraud/legitimate label into dbo.P2P_FraudScores.
+
+    Called in real-time when an HRBP reviews a PendingHRBPReview nomination:
+      • is_fraud=True  (HRBP rejected)  → FraudScore=100, RiskLevel='CRITICAL',
+                                          IsFraud=1, ConfirmedBy=confirmed_by
+      • is_fraud=False (HRBP approved)  → FraudScore=0,   RiskLevel='NONE',
+                                          IsFraud=0, ConfirmedBy=confirmed_by
+
+    The row is created if it doesn't exist yet (nomination skipped the ML
+    pipeline because no model was available at submission time).
+
+    These confirmed labels are picked up by load_data() in train_fraud_model.py
+    during the next weekly retrain:
+        WHERE RiskLevel IN ('HIGH', 'CRITICAL')  →  IsFraud = 1
+    so CRITICAL rows written here feed directly into supervised RF training.
+    """
+    fraud_score = 100  if is_fraud else 0
+    risk_level  = "CRITICAL" if is_fraud else "NONE"
+    is_fraud_int = 1 if is_fraud else 0
+
+    with get_db_context() as session:
+        session.execute(
+            text("""
+                MERGE dbo.P2P_FraudScores AS target
+                USING (SELECT :nomination_id AS NominationId) AS src
+                ON target.NominationId = src.NominationId
+                WHEN MATCHED THEN
+                    UPDATE SET FraudScore   = :fraud_score,
+                               RiskLevel    = :risk_level,
+                               IsFraud      = :is_fraud,
+                               ConfirmedBy  = :confirmed_by,
+                               ConfirmedAt  = SYSUTCDATETIME()
+                WHEN NOT MATCHED THEN
+                    INSERT (NominationId, FraudScore, RiskLevel, IsFraud,
+                            ConfirmedBy, ConfirmedAt)
+                    VALUES (:nomination_id, :fraud_score, :risk_level, :is_fraud,
+                            :confirmed_by, SYSUTCDATETIME());
+            """),
+            {
+                "nomination_id": nomination_id,
+                "fraud_score":   fraud_score,
+                "risk_level":    risk_level,
+                "is_fraud":      is_fraud_int,
+                "confirmed_by":  confirmed_by,
+            },
+        )
+        session.commit()
+
+
 # ===========================================================================
 # ANALYTICS QUERIES
 # ===========================================================================

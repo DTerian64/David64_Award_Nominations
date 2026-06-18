@@ -23,6 +23,7 @@ so fresh models propagate automatically within one TTL period of upload — no
 container restart required.
 """
 
+import json
 import os
 import pandas as pd
 import numpy as np
@@ -30,7 +31,7 @@ from datetime import datetime
 import pyodbc
 import pickle
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
@@ -212,7 +213,7 @@ def load_data(tenant_id: int) -> pd.DataFrame:
     FROM dbo.Nominations n
     JOIN dbo.Users u ON u.UserId = n.NominatorId
     LEFT JOIN dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
-    WHERE n.Status = 'Paid'
+    WHERE n.Status NOT IN ('Rejected', 'PendingHRBPReview')
       AND u.TenantId = ?
     ORDER BY n.NominationDate
     """
@@ -438,58 +439,102 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     """
-    Derive fraud labels from behavioural patterns when no FraudScores rows
-    exist yet (the typical cold-start situation after the first load test).
+    Derive pseudo-labels when no confirmed P2P_FraudScores exist yet (cold start).
 
-    This is the chicken-and-egg problem: the model needs scored nominations
-    to learn from, but scores only exist once a model is running.  Bootstrapping
-    breaks the deadlock by using the patterns that the load generator deliberately
-    embeds in the data:
+    Two-stage strategy:
 
-      Fraudulent (10% of load): 8-12 rapid nominations, same nominator → same
-          beneficiary, very short descriptions.  Signature: PairNominationCount > 7.
+    Stage 1 — Isolation Forest (primary):
+        Trains an IsolationForest on P2P_FEATURE_COLUMNS with no labels.
+        Anomalies are observations isolated in fewer random splits — exactly
+        the property that makes fraudulent nominations stand out (unusual
+        amounts, concentrated nominators, repeated pairs, copied descriptions).
+        contamination=0.10 flags the most anomalous ~10% as IsFraud=1.
+        These pseudo-labels bootstrap the first Random Forest regardless of
+        whether the data is synthetic or real-world.
 
-      Suspicious (20% of load): 3-5 nominations to a small pool.  Signature:
-          PairNominationCount in [3, 7] with high concentration ratio.
+    Stage 2 — Graph findings (supplementary):
+        Adds any nominations referenced by HIGH/CRITICAL GraphPatternFindings
+        as additional IsFraud=1 labels on top of the IF output.  Graph
+        findings capture structural patterns (rings, copy-paste clusters)
+        that the IF may score less confidently due to feature representation.
 
-      Normal (70% of load): single well-described nominations.
-
-    Labels assigned:
-      IsFraud = 1  →  PairNominationCount > 7   (clear fraudulent burst)
-      IsFraud = 1  →  NominatorConcentrationRatio > 8 AND
-                      NominatorTotalNominations  > 20  (concentrated + high volume)
-      IsFraud = 0  →  everything else
+    Returns None if fewer than MIN_FRAUD_BOOTSTRAP labels are found (the
+    dataset is too clean or too small to train a meaningful model).
     """
+    MIN_FRAUD_BOOTSTRAP = 5
+
     df = df.copy()
     df['IsFraud'] = 0
 
-    # Primary signal: repeated same-pair nominations (fraudulent burst pattern)
-    df.loc[df['PairNominationCount'] > 7, 'IsFraud'] = 1
+    # ── Stage 1: Isolation Forest ─────────────────────────────────────────────
+    X = df[P2P_FEATURE_COLUMNS].fillna(0)
 
-    # Secondary signal: highly concentrated nominator (few beneficiaries, many noms)
-    df.loc[
-        (df['NominatorConcentrationRatio'] > 8) &
-        (df['NominatorTotalNominations']   > 20),
-        'IsFraud'
-    ] = 1
+    iso = IsolationForest(
+        n_estimators=200,
+        contamination=0.10,   # assume ~10% anomaly rate as cold-start prior
+        random_state=42,
+        n_jobs=-1,
+    )
+    iso.fit(X)
 
-    fraud_n   = int(df['IsFraud'].sum())
-    legit_n   = int((df['IsFraud'] == 0).sum())
-    fraud_pct = fraud_n / len(df) * 100
+    # predict() returns -1 (anomaly) or +1 (inlier)
+    if_preds = iso.predict(X)
+    df.loc[if_preds == -1, 'IsFraud'] = 1
 
+    if_fraud_n = int(df['IsFraud'].sum())
     print(
-        f"[Tenant {tenant_id}] ⚡ Bootstrapped labels: "
-        f"{fraud_n} fraud ({fraud_pct:.1f}%), {legit_n} legitimate"
+        f"[Tenant {tenant_id}] ⚡ Isolation Forest pseudo-labels: "
+        f"{if_fraud_n} anomalies ({if_fraud_n / len(df) * 100:.1f}%) "
+        f"from {len(df)} nominations  (contamination=0.10)"
     )
 
-    if fraud_n == 0:
+    # ── Stage 2: graph findings supplement ────────────────────────────────────
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationIds
+            FROM   dbo.GraphPatternFindings
+            WHERE  TenantId     = ?
+              AND  Severity     IN ('Critical', 'High')
+              AND  NominationIds IS NOT NULL
+              AND  NominationIds != '[]'
+        """, tenant_id)
+        rows = cursor.fetchall()
+        conn.close()
+
+        graph_nom_ids: set[int] = set()
+        for row in rows:
+            graph_nom_ids.update(json.loads(row[0]))
+
+        if graph_nom_ids:
+            before = int(df['IsFraud'].sum())
+            df.loc[df['NominationId'].isin(graph_nom_ids), 'IsFraud'] = 1
+            added = int(df['IsFraud'].sum()) - before
+            if added:
+                print(
+                    f"[Tenant {tenant_id}]   Graph findings added {added} label(s) "
+                    f"from {len(rows)} HIGH/CRITICAL finding(s)"
+                )
+    except Exception as exc:
+        print(f"[Tenant {tenant_id}] ⚠  Graph findings query failed (non-fatal): {exc}")
+
+    fraud_n = int(df['IsFraud'].sum())
+    legit_n = len(df) - fraud_n
+
+    print(
+        f"[Tenant {tenant_id}] ⚡ Bootstrap total: "
+        f"{fraud_n} fraud ({fraud_n / len(df) * 100:.1f}%), {legit_n} legitimate"
+    )
+
+    if fraud_n < MIN_FRAUD_BOOTSTRAP:
         print(
-            f"[Tenant {tenant_id}] ⚠  Bootstrap found no fraud patterns — "
-            "all nominations look legitimate. Skipping training for this tenant. "
-            "The backend will return UNKNOWN/MANUAL_REVIEW until fraud patterns "
-            "emerge and a model can be trained."
+            f"[Tenant {tenant_id}] ⚠  Only {fraud_n} fraud pseudo-label(s) — "
+            f"need at least {MIN_FRAUD_BOOTSTRAP} for a meaningful model. "
+            "Skipping. The backend will return UNKNOWN/MANUAL_REVIEW until "
+            "more data accumulates."
         )
-        return None   # signals train_model to skip gracefully
+        return None
 
     return df
 
@@ -551,110 +596,193 @@ def score_and_save_historical(
     Score every nomination in df with both the P2P and Approver models
     and upsert results into dbo.P2P_FraudScores and dbo.Appr_FraudScores.
 
-    - P2P scores feed the analytics fraud dashboard and provide labels for
-      the next retrain cycle (progressive label improvement).
-    - Approver scores capture post-decision fraud patterns independently.
-    - Approver labels are derived from P2P: a nomination is approver-fraud
-      if the P2P model scored it HIGH/CRITICAL AND IsRapidApproval = 1.
+    Bulk-upsert strategy (temp table + single MERGE per table):
+      1. Vectorize all scoring and flag logic in numpy — no Python row loop.
+      2. Bulk-insert the full result set into a #staging temp table using
+         fast_executemany=True (one network round-trip for the whole batch).
+      3. Execute one MERGE statement per table against the staging data.
+      Total SQL round-trips: 3 per table (CREATE, INSERT, MERGE) regardless
+      of row count — vs. N round-trips in the old per-row approach.
     """
-    print(f"\n[Tenant {tenant_id}] Scoring {len(df)} historical nominations ...")
+    import time
+    t_total = time.perf_counter()
 
+    n = len(df)
+    print(f"\n[Tenant {tenant_id}] Scoring {n} historical nominations ...")
+
+    # ── DB connection ─────────────────────────────────────────────────────────
+    t0 = time.perf_counter()
     conn   = get_db_connection()
     cursor = conn.cursor()
+    cursor.fast_executemany = True   # batch driver calls in executemany
+    print(f"[Tenant {tenant_id}]   DB connect:             {time.perf_counter() - t0:.2f}s")
 
-    # ── P2P scoring ──────────────────────────────────────────────────────────
+    # ── P2P inference ─────────────────────────────────────────────────────────
     p2p_rf     = model_data['p2p_model']
     p2p_scaler = model_data['p2p_scaler']
     p2p_cols   = model_data['p2p_feature_columns']
 
+    t0 = time.perf_counter()
     p2p_probas = p2p_rf.predict_proba(p2p_scaler.transform(df[p2p_cols].fillna(0)))
+    print(f"[Tenant {tenant_id}]   P2P predict_proba:      {time.perf_counter() - t0:.2f}s  ({n} rows)")
     if p2p_probas.shape[1] < 2:
         print(f"[Tenant {tenant_id}] ⚠  P2P single-class model — skipping P2P score persistence.")
         p2p_fraud_probs = None
     else:
         p2p_fraud_probs = p2p_probas[:, 1]
 
-    # ── Approver scoring ─────────────────────────────────────────────────────
+    # ── Approver inference ────────────────────────────────────────────────────
     appr_rf     = model_data['appr_model']
     appr_scaler = model_data['appr_scaler']
     appr_cols   = model_data['appr_feature_columns']
 
+    t0 = time.perf_counter()
     appr_probas = appr_rf.predict_proba(appr_scaler.transform(df[appr_cols].fillna(0)))
+    print(f"[Tenant {tenant_id}]   Appr predict_proba:     {time.perf_counter() - t0:.2f}s  ({n} rows)")
     if appr_probas.shape[1] < 2:
         print(f"[Tenant {tenant_id}] ⚠  Approver single-class model — skipping approver score persistence.")
         appr_fraud_probs = None
     else:
         appr_fraud_probs = appr_probas[:, 1]
 
-    p2p_upserted = appr_upserted = 0
+    # ── Vectorized score + flag computation (no Python row loop) ─────────────
+    # np.select for risk levels; np.where string concat for flags.
+    # np.char.rstrip strips any trailing ", " left by absent flag slots.
+    t0 = time.perf_counter()
 
-    for i, (_, row) in enumerate(df.iterrows()):
-        nom_id = int(row['NominationId'])
+    def _risk_level_vec(scores: np.ndarray) -> np.ndarray:
+        return np.select(
+            [scores >= 80, scores >= 60, scores >= 40, scores >= 20],
+            ['CRITICAL',   'HIGH',       'MEDIUM',      'LOW'],
+            default='NONE',
+        )
 
-        # P2P
-        if p2p_fraud_probs is not None:
-            p2p_prob  = float(p2p_fraud_probs[i])
-            p2p_score = int(p2p_prob * 100)
-            p2p_level = _risk_level(p2p_score)
-            p2p_flags = []
-            if row.get('PairNominationCount', 0) > 5:
-                p2p_flags.append('Repeated beneficiary')
-            if row.get('HasReciprocalNomination', 0) == 1:
-                p2p_flags.append('Reciprocal nomination detected')
-            if row.get('NominatorConcentrationRatio', 0) > 5:
-                p2p_flags.append('Limited beneficiary diversity')
-            if row.get('IsHighAmount', 0) == 1:
-                p2p_flags.append('Unusually high amount')
-            cursor.execute(
-                """
-                MERGE dbo.P2P_FraudScores AS target
-                USING (SELECT ? AS NominationId) AS source
-                    ON target.NominationId = source.NominationId
-                WHEN MATCHED THEN
-                    UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
-                WHEN NOT MATCHED THEN
-                    INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
-                    VALUES (?,            ?,          ?,         ?);
-                """,
-                (nom_id, p2p_score, p2p_level, ', '.join(p2p_flags),
-                 nom_id, p2p_score, p2p_level, ', '.join(p2p_flags)),
+    nom_ids = df['NominationId'].astype(int).values
+
+    p2p_rows: list | None = None
+    if p2p_fraud_probs is not None:
+        p2p_scores = (p2p_fraud_probs * 100).astype(int)
+        p2p_levels = _risk_level_vec(p2p_scores)
+        p2p_flags = pd.Series(
+            np.where(df['PairNominationCount'].fillna(0).values > 5,
+                     'Repeated beneficiary, ', '').astype(object)
+            + np.where(df['HasReciprocalNomination'].fillna(0).values == 1,
+                       'Reciprocal nomination detected, ', '').astype(object)
+            + np.where(df['NominatorConcentrationRatio'].fillna(0).values > 5,
+                       'Limited beneficiary diversity, ', '').astype(object)
+            + np.where(df['IsHighAmount'].fillna(0).values == 1,
+                       'Unusually high amount', '').astype(object)
+        ).str.rstrip(', ')
+        p2p_rows = list(zip(
+            nom_ids.tolist(),
+            p2p_scores.tolist(),
+            p2p_levels.tolist(),
+            p2p_flags.tolist(),
+        ))
+
+    appr_rows: list | None = None
+    if appr_fraud_probs is not None:
+        appr_scores = (appr_fraud_probs * 100).astype(int)
+        appr_levels = _risk_level_vec(appr_scores)
+        hours_to_pay = df['HoursToPayment'].fillna(0).values
+        appr_flags = pd.Series(
+            np.where(df['IsRapidApproval'].fillna(0).values == 1,
+                     'Rapid approval, ', '').astype(object)
+            + np.where((hours_to_pay > 0) & (hours_to_pay < 24),
+                       'Fast payment', '').astype(object)
+        ).str.rstrip(', ')
+        appr_rows = list(zip(
+            nom_ids.tolist(),
+            appr_scores.tolist(),
+            appr_levels.tolist(),
+            appr_flags.tolist(),
+        ))
+
+    print(f"[Tenant {tenant_id}]   Vectorize scores/flags: {time.perf_counter() - t0:.2f}s")
+
+    # ── P2P bulk upsert: CREATE temp → bulk INSERT → single MERGE ─────────────
+    if p2p_rows:
+        t0 = time.perf_counter()
+        cursor.execute("""
+            CREATE TABLE #p2p_staging (
+                NominationId INT           NOT NULL,
+                FraudScore   INT           NOT NULL,
+                RiskLevel    NVARCHAR(20)  NOT NULL,
+                FraudFlags   NVARCHAR(500)     NULL
             )
-            p2p_upserted += 1
+        """)
+        cursor.executemany(
+            "INSERT INTO #p2p_staging (NominationId, FraudScore, RiskLevel, FraudFlags) "
+            "VALUES (?, ?, ?, ?)",
+            p2p_rows,
+        )
+        print(f"[Tenant {tenant_id}]   P2P temp insert:        {time.perf_counter() - t0:.2f}s  ({len(p2p_rows)} rows)")
 
-        # Approver
-        if appr_fraud_probs is not None:
-            appr_prob  = float(appr_fraud_probs[i])
-            appr_score = int(appr_prob * 100)
-            appr_level = _risk_level(appr_score)
-            appr_flags = []
-            if row.get('IsRapidApproval', 0) == 1:
-                appr_flags.append('Rapid approval')
-            if row.get('HoursToPayment', 0) < 24 and row.get('HoursToPayment', 0) > 0:
-                appr_flags.append('Fast payment')
-            cursor.execute(
-                """
-                MERGE dbo.Appr_FraudScores AS target
-                USING (SELECT ? AS NominationId) AS source
-                    ON target.NominationId = source.NominationId
-                WHEN MATCHED THEN
-                    UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
-                WHEN NOT MATCHED THEN
-                    INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
-                    VALUES (?,            ?,          ?,         ?);
-                """,
-                (nom_id, appr_score, appr_level, ', '.join(appr_flags),
-                 nom_id, appr_score, appr_level, ', '.join(appr_flags)),
+        t0 = time.perf_counter()
+        cursor.execute("""
+            MERGE dbo.P2P_FraudScores AS target
+            USING #p2p_staging AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN
+                UPDATE SET FraudScore = source.FraudScore,
+                           RiskLevel  = source.RiskLevel,
+                           FraudFlags = source.FraudFlags
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
+                VALUES (source.NominationId, source.FraudScore,
+                        source.RiskLevel,   source.FraudFlags);
+        """)
+        print(f"[Tenant {tenant_id}]   P2P MERGE:              {time.perf_counter() - t0:.2f}s")
+
+    # ── Approver bulk upsert: CREATE temp → bulk INSERT → single MERGE ────────
+    if appr_rows:
+        t0 = time.perf_counter()
+        cursor.execute("""
+            CREATE TABLE #appr_staging (
+                NominationId INT           NOT NULL,
+                FraudScore   INT           NOT NULL,
+                RiskLevel    NVARCHAR(20)  NOT NULL,
+                FraudFlags   NVARCHAR(500)     NULL
             )
-            appr_upserted += 1
+        """)
+        cursor.executemany(
+            "INSERT INTO #appr_staging (NominationId, FraudScore, RiskLevel, FraudFlags) "
+            "VALUES (?, ?, ?, ?)",
+            appr_rows,
+        )
+        print(f"[Tenant {tenant_id}]   Appr temp insert:       {time.perf_counter() - t0:.2f}s  ({len(appr_rows)} rows)")
 
+        t0 = time.perf_counter()
+        cursor.execute("""
+            MERGE dbo.Appr_FraudScores AS target
+            USING #appr_staging AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN
+                UPDATE SET FraudScore = source.FraudScore,
+                           RiskLevel  = source.RiskLevel,
+                           FraudFlags = source.FraudFlags
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
+                VALUES (source.NominationId, source.FraudScore,
+                        source.RiskLevel,   source.FraudFlags);
+        """)
+        print(f"[Tenant {tenant_id}]   Appr MERGE:             {time.perf_counter() - t0:.2f}s")
+
+    # ── Commit ────────────────────────────────────────────────────────────────
+    t0 = time.perf_counter()
     conn.commit()
+    print(f"[Tenant {tenant_id}]   commit():               {time.perf_counter() - t0:.2f}s")
+
     cursor.close()
     conn.close()
 
-    p2p_high = sum(1 for p in (p2p_fraud_probs if p2p_fraud_probs is not None else []) if int(p * 100) >= 60)
+    p2p_n    = len(p2p_rows)  if p2p_rows  else 0
+    appr_n   = len(appr_rows) if appr_rows else 0
+    p2p_high = int(np.sum(p2p_fraud_probs * 100 >= 60)) if p2p_fraud_probs is not None else 0
     print(
-        f"[Tenant {tenant_id}] ✓ P2P: {p2p_upserted} upserted ({p2p_high} HIGH/CRITICAL) | "
-        f"Approver: {appr_upserted} upserted"
+        f"[Tenant {tenant_id}] ✓ P2P: {p2p_n} upserted ({p2p_high} HIGH/CRITICAL) | "
+        f"Approver: {appr_n} upserted  |  "
+        f"Total: {time.perf_counter() - t_total:.2f}s"
     )
 
 
@@ -717,11 +845,12 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
 
     y = df_train['IsFraud']
 
-    def _train_rf(X: pd.DataFrame, label: str) -> tuple:
+    def _train_rf(X: pd.DataFrame, label: str, y_: pd.Series = None) -> tuple:
         """Train one RF, print evaluation, return (model, scaler, auc)."""
+        y_use = y_ if y_ is not None else y
         print(f"\n[Tenant {tenant_id}] Training {label} model — shape: {X.shape}")
         X_tr, X_te, y_tr, y_te = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
+            X, y_use, test_size=0.2, random_state=42, stratify=y_use
         )
         scaler_ = StandardScaler()
         X_tr_s  = scaler_.fit_transform(X_tr)
@@ -767,21 +896,25 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     )
 
     # ── Derive approver fraud labels from P2P scores ──────────────────────────
-    # An approver is suspicious when they fast-approve a nomination the P2P
-    # model already considers HIGH/CRITICAL risk.
-    p2p_probas_full = p2p_rf.predict_proba(
-        p2p_scaler.transform(df_train[P2P_FEATURE_COLUMNS].fillna(0))
+    # Restrict to Approved/Paid: HoursToApproval and HoursToPayment are only
+    # meaningful when both ApprovedDate and PayedDate are populated.  Pending
+    # nominations have NULL timestamps and would produce misleading zero values
+    # after fillna(0), skewing the approver model's rapid-approval signal.
+    df_appr = df_train[df_train['Status'].isin(['Approved', 'Paid'])].copy()
+
+    p2p_probas_appr = p2p_rf.predict_proba(
+        p2p_scaler.transform(df_appr[P2P_FEATURE_COLUMNS].fillna(0))
     )[:, 1]
-    df_train = df_train.copy()
-    df_train['IsApproverFraud'] = (
-        pd.Series((p2p_probas_full * 100 >= 60).astype(int), index=df_train.index)
-        & (df_train['IsRapidApproval'] == 1)
+    df_appr['IsApproverFraud'] = (
+        pd.Series((p2p_probas_appr * 100 >= 60).astype(int), index=df_appr.index)
+        & (df_appr['IsRapidApproval'] == 1)
     ).astype(int)
 
     appr_auc = None
-    if df_train['IsApproverFraud'].sum() > 0:
+    if df_appr['IsApproverFraud'].sum() > 0:
         appr_rf, appr_scaler, appr_auc = _train_rf(
-            df_train[APPR_FEATURE_COLUMNS].fillna(0), "Approver"
+            df_appr[APPR_FEATURE_COLUMNS].fillna(0), "Approver",
+            y_=df_appr['IsFraud'],
         )
     else:
         print(
