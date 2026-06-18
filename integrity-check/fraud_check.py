@@ -247,12 +247,19 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, float]
     X = np.array([[feature_vals.get(c, 0.0) for c in feature_cols]], dtype=float)
 
     logger.info(
-        "Feature vector nominator=%d → beneficiary=%d | "
-        "Amount=%.0f ZScore=%.3f PairCount=%d Reciprocal=%d "
-        "Concentration=%.3f CosineSim=%.4f EmbDist=%.4f",
-        nominator_id, beneficiary_id,
-        amount, amount_zscore, pair_count, int(has_reciprocal),
-        concentration_ratio, desc_cosine_sim, desc_emb_distance,
+        "Fraud feature vector",
+        extra={
+            "nomination_id":  details.get("nomination_id"),
+            "nominator_id":   nominator_id,
+            "beneficiary_id": beneficiary_id,
+            "amount":         amount,
+            "amount_zscore":  round(amount_zscore, 3),
+            "pair_count":     pair_count,
+            "reciprocal":     int(has_reciprocal),
+            "concentration":  round(float(concentration_ratio), 3),
+            "cosine_sim":     round(float(desc_cosine_sim), 4),
+            "emb_distance":   round(float(desc_emb_distance), 4),
+        },
     )
 
     return model_data["p2p_scaler"].transform(X), desc_cosine_sim

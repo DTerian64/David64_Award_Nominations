@@ -109,6 +109,11 @@ def handle(message_id: str, payload: dict) -> None:
             "Description check flagged nomination — continuing to ML",
             extra={"nomination_id": nomination_id, "check": desc_result.check},
         )
+    else:
+        logger.info(
+            "Description checks passed",
+            extra={"nomination_id": nomination_id},
+        )
 
     # ── ML fraud assessment ───────────────────────────────────────────────────
     result = fraud_check.assess(details, tenant_id)

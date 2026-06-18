@@ -167,6 +167,7 @@ def _check_category_alignment(
     description:          str,
     category_description: str,
     config:               DescCheckConfig,
+    nomination_id:        Optional[int] = None,
 ) -> CheckResult:
     """
     Returns "reject" if the description is semantically unrelated to the
@@ -179,9 +180,13 @@ def _check_category_alignment(
     embs    = _embed(model, [description, category_description])
     sim     = _cosine_sim(embs[0], embs[1])
 
-    logger.debug(
-        "Category alignment: sim=%.4f threshold=%.4f",
-        sim, config.category_alignment_threshold,
+    logger.info(
+        "Category Alignment check",
+        extra={
+            "nomination_id": nomination_id,
+            "sim":           round(float(sim), 4),
+            "threshold":     config.category_alignment_threshold,
+        },
     )
 
     if sim < config.category_alignment_threshold:
@@ -225,9 +230,14 @@ def _check_duplicate_description(
     max_sim     = max(sims)
     most_similar_idx = int(np.argmax(sims))
 
-    logger.debug(
-        "Duplicate check: max_sim=%.4f threshold=%.4f nominator=%d",
-        max_sim, config.duplicate_similarity_threshold, nominator_id,
+    logger.info(
+        "Duplicate Descriptions check",
+        extra={
+            "nomination_id": exclude_nomination_id,
+            "max_sim":       round(float(max_sim), 4),
+            "threshold":     config.duplicate_similarity_threshold,
+            "nominator_id":  nominator_id,
+        },
     )
 
     if max_sim >= config.duplicate_similarity_threshold:
@@ -323,6 +333,8 @@ def _check_llm_semantic(
     category_description: Optional[str],
     amount:               Optional[float],
     config:               DescCheckConfig,
+    nominator_id:         int = 0,
+    nomination_id:        Optional[int] = None,
 ) -> CheckResult:
     """
     Check C — LLM semantic evaluation.
@@ -372,7 +384,10 @@ def _check_llm_semantic(
             "Nomination description appears incoherent or contains gibberish. "
             + (reasoning if reasoning and reasoning != "No concerns." else "")
         ).strip()
-        logger.info("Check C: is_coherent=false — reason: %s", reasoning)
+        logger.info(
+            "LLM Semantic check: is_coherent=false",
+            extra={"nomination_id": nomination_id, "reason": reasoning},
+        )
         return CheckResult(action="reject", reason=reason, check="llm_semantic")
 
     # Collect semantic flags
@@ -398,12 +413,15 @@ def _check_llm_semantic(
             parts.append(reasoning)
 
         reason = " | ".join(parts)
-        logger.info("Check C flagged: %s", reason)
+        logger.info(
+            "LLM Semantic check flagged",
+            extra={"nomination_id": nomination_id, "reason": reason},
+        )
         return CheckResult(action="flag", reason=reason, check="llm_semantic")
 
-    logger.debug(
-        "Check C passed: fit_score=%.2f flags=%s reasoning=%s",
-        fit_score, llm_flags, reasoning,
+    logger.info(
+        "LLM Semantic check passed",
+        extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
     )
     return _PASS
 
@@ -456,10 +474,11 @@ def check(
 
     # ── Check A: category alignment (hard reject) ─────────────────────────────
     if category_description:
-        result_a = _check_category_alignment(desc, category_description, config)
+        result_a = _check_category_alignment(desc, category_description, config, nomination_id)
         if result_a.action == "reject":
             logger.info(
-                "Check A rejected (category_alignment) nominator=%d", nominator_id
+                "Category Alignment check rejected",
+                extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
             )
             return result_a
 
@@ -470,22 +489,25 @@ def check(
     result_b = _check_duplicate_description(desc, nominator_id, config, nomination_id)
     if result_b.action == "flag":
         logger.info(
-            "Check B flagged (duplicate_description) nominator=%d", nominator_id
+            "Duplicate Descriptions check flagged",
+            extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
         )
         accumulated.append(result_b)
 
     # ── Check C: LLM semantic evaluation ─────────────────────────────────────
     if config.llm_category_check_enabled:
-        result_c = _check_llm_semantic(desc, category_description, amount, config)
+        result_c = _check_llm_semantic(desc, category_description, amount, config, nominator_id, nomination_id)
         if result_c.action == "reject":
             # is_coherent = false → hard reject, same as Check A
             logger.info(
-                "Check C rejected (llm_semantic) nominator=%d", nominator_id
+                "LLM Semantic check rejected",
+                extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
             )
             return result_c
         if result_c.action == "flag":
             logger.info(
-                "Check C flagged (llm_semantic) nominator=%d", nominator_id
+                "LLM Semantic check flagged",
+                extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
             )
             accumulated.append(result_c)
 
