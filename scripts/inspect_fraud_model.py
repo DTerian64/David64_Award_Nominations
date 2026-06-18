@@ -81,6 +81,10 @@ def _print_model_section(label: str, rf, scaler, cols: list) -> None:
     print("=" * 60)
     print(f"{label} — RANDOM FOREST")
     print("=" * 60)
+    if rf is None:
+        print("  (no model trained yet — insufficient labelled data)")
+        print()
+        return
     print(f"  n_estimators   : {rf.n_estimators}")
     print(f"  max_depth      : {rf.max_depth}")
     print(f"  n_features_in_ : {rf.n_features_in_}")

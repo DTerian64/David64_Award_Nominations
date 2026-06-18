@@ -138,7 +138,7 @@ def sync_country(conn, cc: str, years: list[int]) -> int:
     return len(by_date)
 
 
-def main() -> None:
+def main(tenants_to_process: list | None = None) -> None:  # noqa: ARG001 — not tenant-scoped
     logger.info("Holiday sync stage starting")
     cy = date.today().year
     years = list(range(cy - YEARS_BACK, cy + YEARS_AHEAD + 1))

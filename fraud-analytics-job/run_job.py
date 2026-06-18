@@ -201,10 +201,12 @@ def notify_api_refresh() -> None:
         )
 
 
-def run_stage(name: str, module_path: str) -> bool:
+def run_stage(name: str, module_path: str, tenants_to_process: list | None = None) -> bool:
     """
     Import and execute the main() function of a pipeline stage.
     Returns True on success, False on any exception.
+    tenants_to_process is forwarded to mod.main() — stages that are not
+    tenant-scoped (e.g. sync_holidays) accept but ignore it.
     """
     logger.info("=" * 60)
     logger.info("STAGE: %s", name)
@@ -213,7 +215,7 @@ def run_stage(name: str, module_path: str) -> bool:
     try:
         import importlib
         mod = importlib.import_module(module_path)
-        mod.main()
+        mod.main(tenants_to_process=tenants_to_process)
         elapsed = time.monotonic() - t0
         logger.info("✓  %s completed in %.1f s", name, elapsed)
         return True
@@ -243,12 +245,16 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--only", "--stage", dest="only", choices=_STAGE_KEYS, default=None,
                     metavar="STAGE",
                     help="run only this stage: " + ", ".join(_STAGE_KEYS))
+    ap.add_argument("--tenant", dest="tenant", type=int, default=None,
+                    metavar="TENANT_ID",
+                    help="restrict all stages to a single tenant ID (local analysis only)")
     return ap.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
     selected = [s for s in STAGES if args.only is None or s["key"] == args.only]
+    tenants_to_process = [args.tenant] if args.tenant is not None else None
 
     logger.info("╔══════════════════════════════════════════════════╗")
     logger.info("║        WEEKLY ANALYTICS JOB — START              ║")
@@ -257,6 +263,7 @@ def main() -> None:
     logger.info("SQL Server  : %s", os.getenv("SQL_SERVER", "(not set)"))
     logger.info("Storage acct: %s", os.getenv("AZURE_STORAGE_ACCOUNT", "(not set)"))
     logger.info("Stages      : %s", args.only or "ALL (%s)" % ", ".join(_STAGE_KEYS))
+    logger.info("Tenant      : %s", args.tenant or "ALL")
 
     # ── DB wake-up — must succeed before any stage runs ──────────────────────
     # Serverless SQL auto-pauses after 60 min; resuming takes 60–90 s. Every
@@ -270,8 +277,9 @@ def main() -> None:
     results: dict[str, bool] = {}
     for stage in selected:
         ok = run_stage(
-            name        = f"{stage['label']}  ({stage['module']})",
-            module_path = stage["module"],
+            name                = f"{stage['label']}  ({stage['module']})",
+            module_path         = stage["module"],
+            tenants_to_process  = tenants_to_process,
         )
         results[stage["label"]] = ok
         # Stage-specific post-hook, only on success.

@@ -179,8 +179,15 @@ def get_tenant_embed_model(tenant_id: int) -> str:
 
 def load_data(tenant_id: int) -> pd.DataFrame:
     """
-    Load all Paid nominations for a single tenant together with their
-    fraud scores (if any have been labelled).
+    Load nominations for a single tenant together with their fraud scores.
+
+    Inclusion rules:
+      • PendingHRBPReview — excluded (no confirmed label yet; don't train on ambiguous cases)
+      • Rejected by 'Fraud Detection' (auto-reject, Check A) — excluded (description quality
+        gate, not a fraud signal; would corrupt IsFraud labels)
+      • Rejected by 'HRBP Review' — INCLUDED; these have a confirmed IsFraud=1 label written
+        by upsert_p2p_fraud_label and are the most valuable training examples
+      • All other statuses (Pending, Approved, Paid, Submitted) — included
 
     Tenant isolation is achieved by joining through Users, which carries
     the TenantId foreign key.
@@ -213,7 +220,8 @@ def load_data(tenant_id: int) -> pd.DataFrame:
     FROM dbo.Nominations n
     JOIN dbo.Users u ON u.UserId = n.NominatorId
     LEFT JOIN dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
-    WHERE n.Status NOT IN ('Rejected', 'PendingHRBPReview')
+    WHERE n.Status NOT IN ('PendingHRBPReview')
+      AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection')
       AND u.TenantId = ?
     ORDER BY n.NominationDate
     """
@@ -636,14 +644,18 @@ def score_and_save_historical(
     appr_scaler = model_data['appr_scaler']
     appr_cols   = model_data['appr_feature_columns']
 
-    t0 = time.perf_counter()
-    appr_probas = appr_rf.predict_proba(appr_scaler.transform(df[appr_cols].fillna(0)))
-    print(f"[Tenant {tenant_id}]   Appr predict_proba:     {time.perf_counter() - t0:.2f}s  ({n} rows)")
-    if appr_probas.shape[1] < 2:
-        print(f"[Tenant {tenant_id}] ⚠  Approver single-class model — skipping approver score persistence.")
+    if appr_rf is None:
+        print(f"[Tenant {tenant_id}] ⚠  No approver model — skipping approver score persistence.")
         appr_fraud_probs = None
     else:
-        appr_fraud_probs = appr_probas[:, 1]
+        t0 = time.perf_counter()
+        appr_probas = appr_rf.predict_proba(appr_scaler.transform(df[appr_cols].fillna(0)))
+        print(f"[Tenant {tenant_id}]   Appr predict_proba:     {time.perf_counter() - t0:.2f}s  ({n} rows)")
+        if appr_probas.shape[1] < 2:
+            print(f"[Tenant {tenant_id}] ⚠  Approver single-class model — skipping approver score persistence.")
+            appr_fraud_probs = None
+        else:
+            appr_fraud_probs = appr_probas[:, 1]
 
     # ── Vectorized score + flag computation (no Python row loop) ─────────────
     # np.select for risk levels; np.where string concat for flags.
@@ -922,9 +934,8 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
             "skipping approver model training. "
             "Need HIGH/CRITICAL P2P nominations with IsRapidApproval=1."
         )
-        # Placeholder: reuse P2P model as fallback so pkl is always complete.
-        appr_rf     = p2p_rf
-        appr_scaler = p2p_scaler
+        appr_rf     = None
+        appr_scaler = None
 
     # ── Persist pkl ───────────────────────────────────────────────────────────
     model_data = {
@@ -962,9 +973,12 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     p2p_probs_viz = p2p_rf.predict_proba(
         p2p_scaler.transform(df[P2P_FEATURE_COLUMNS].fillna(0))
     )[:, 1]
-    appr_probs_viz = appr_rf.predict_proba(
-        appr_scaler.transform(df[APPR_FEATURE_COLUMNS].fillna(0))
-    )[:, 1]
+    appr_probs_viz = (
+        appr_rf.predict_proba(
+            appr_scaler.transform(df[APPR_FEATURE_COLUMNS].fillna(0))
+        )[:, 1]
+        if appr_rf is not None else None
+    )
     create_visualizations(df, p2p_probs_viz, appr_probs_viz, tenant_id)
 
     return model_data, {
@@ -999,6 +1013,13 @@ def create_visualizations(
         (p2p_probs,  'P2P'),
         (appr_probs, 'Approver'),
     ]):
+        if probs is None:
+            ax.text(0.5, 0.5, 'No approver model\n(insufficient labelled data)',
+                    ha='center', va='center', transform=ax.transAxes,
+                    fontsize=11, color='grey')
+            ax.set_title(f'{label} Score Distribution')
+            ax.axis('off')
+            continue
         scores = (probs * 100).astype(int)
         legit  = scores[is_fraud == 0]
         fraud  = scores[is_fraud == 1]
@@ -1020,7 +1041,7 @@ def create_visualizations(
 # MAIN — iterate over all tenants
 # ============================================================================
 
-def main() -> None:
+def main(tenants_to_process: list | None = None) -> None:
     """Entry point called by run_job.py (Stage 1)."""
     print("=" * 60)
     print("FRAUD DETECTION MODEL TRAINING  —  Multi-Tenant")
@@ -1029,6 +1050,12 @@ def main() -> None:
     conn = get_db_connection()
     tenants = get_tenants(conn)
     conn.close()
+
+    if tenants_to_process is not None:
+        tenants = [t for t in tenants if t[0] in tenants_to_process]
+        if not tenants:
+            print(f"⚠  Tenant(s) {tenants_to_process} not found in database. Exiting.")
+            return
 
     print(f"\nFound {len(tenants)} tenant(s): {[t[0] for t in tenants]}")
 

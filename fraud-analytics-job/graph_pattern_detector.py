@@ -976,7 +976,7 @@ def detect_hidden_candidate(
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def main(tenants_to_process: list | None = None) -> None:
     log_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
     logging.basicConfig(
         level=log_level,
@@ -1007,6 +1007,11 @@ def main() -> None:
     _evict_stale_embeddings(conn, window_days)
 
     tenants = _load_tenants(conn)
+    if tenants_to_process is not None:
+        tenants = [t for t in tenants if t in tenants_to_process]
+        if not tenants:
+            logger.warning("Tenant(s) %s not found in database. Exiting.", tenants_to_process)
+            return
     logger.info("Tenants to process: %s", tenants)
 
     total_findings = 0

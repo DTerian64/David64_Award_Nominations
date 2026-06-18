@@ -608,11 +608,16 @@ def _persist(conn, run_id, tenant_id, start, end, metrics, rows):
 
 # ── Entrypoint (called by run_job) ──────────────────────────────────────────────
 
-def main() -> None:
+def main(tenants_to_process: list | None = None) -> None:
     logger.info("Forecast models stage starting")
     conn = get_db_connection()
     try:
         tenants = get_tenants(conn)
+        if tenants_to_process is not None:
+            tenants = [t for t in tenants if t[0] in tenants_to_process]
+            if not tenants:
+                logger.warning("Tenant(s) %s not found in database. Exiting.", tenants_to_process)
+                return
         logger.info("Found %d tenant(s)", len(tenants))
         total = 0
         for tenant_id, name in tenants:
