@@ -113,6 +113,24 @@ class DescCheckConfig:
     duplicate_similarity_threshold: float     = 0.85
     boilerplate_phrases:            List[str] = field(default_factory=list)
 
+    # ── Check C: LLM semantic evaluation ─────────────────────────────────────
+    # llm_category_check_enabled
+    #     Master switch — when False, Check C is skipped entirely.
+    #
+    # llm_fit_threshold
+    #     Nominations whose LLM category_fit_score falls below this value are
+    #     flagged for HRBP review.  Does not cause an auto-reject on its own
+    #     (only is_coherent=false does that).
+    #
+    # llm_instructions
+    #     Free-text addendum injected into the LLM prompt after the base
+    #     evaluation criteria.  Lets each tenant override default behaviour —
+    #     e.g. "do not penalise Korean-language descriptions" or "ignore
+    #     low_specificity flags for awards under 200".
+    llm_category_check_enabled:     bool      = False
+    llm_fit_threshold:              float     = 0.40
+    llm_instructions:               Optional[str] = None
+
 
 def get_tenant_desc_check_config(tenant_id: int) -> DescCheckConfig:
     """
@@ -158,6 +176,13 @@ def get_tenant_desc_check_config(tenant_id: int) -> DescCheckConfig:
         boilerplate_phrases=[
             p.lower() for p in data.get("boilerplate_phrases", [])
         ],
+        llm_category_check_enabled=bool(
+            data.get("llm_category_check_enabled", False)
+        ),
+        llm_fit_threshold=float(
+            data.get("llm_fit_threshold", DescCheckConfig.llm_fit_threshold)
+        ),
+        llm_instructions=data.get("llm_instructions") or None,
     )
 
 

@@ -420,6 +420,16 @@ resource "azurerm_role_assignment" "integrity_check_sb_sender" {
   depends_on           = [azurerm_user_assigned_identity.integrity_check, module.service_bus]
 }
 
+# Cognitive Services OpenAI User — Integrity Check calls Azure OpenAI (Check C)
+# using DefaultAzureCredential + get_bearer_token_provider. No API key required;
+# this role grants token-based access to the /chat/completions endpoint.
+resource "azurerm_role_assignment" "integrity_check_openai_user" {
+  scope                = module.openai.openai_id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azurerm_user_assigned_identity.integrity_check.principal_id
+  depends_on           = [azurerm_user_assigned_identity.integrity_check, module.openai]
+}
+
 # ── 9. Service Bus ────────────────────────────────────────────────────────────
 module "service_bus" {
   source = "../../modules/service-bus"
@@ -564,8 +574,14 @@ module "integrity_check" {
   memory = "2Gi"
 
   environment_variables = [
-    { name = "AZURE_STORAGE_ACCOUNT", value = module.storage.storage_account_name },
-    { name = "MODEL_CONTAINER",       value = module.storage.ml_models_container_name },
+    { name = "AZURE_STORAGE_ACCOUNT",    value = module.storage.storage_account_name },
+    { name = "MODEL_CONTAINER",          value = module.storage.ml_models_container_name },
+    # Azure OpenAI — used by Check C (LLM semantic evaluation).
+    # Endpoint and deployment name are not sensitive; passed as plain env vars.
+    # Authentication uses DefaultAzureCredential (Cognitive Services OpenAI User role above).
+    { name = "AZURE_OPENAI_ENDPOINT",    value = module.openai.endpoint },
+    { name = "AZURE_OPENAI_DEPLOYMENT",  value = module.openai.model_deployment_name },
+    { name = "AZURE_OPENAI_API_VERSION", value = var.openai_api_version },
   ]
 
   kv_secret_references = [
@@ -581,6 +597,7 @@ module "integrity_check" {
     azurerm_key_vault_access_policy.integrity_check,
     azurerm_role_assignment.integrity_check_blob_reader,
     azurerm_role_assignment.integrity_check_sb_sender,
+    azurerm_role_assignment.integrity_check_openai_user,
     module.service_bus,
     module.container_apps,
   ]
@@ -676,7 +693,7 @@ module "front_door" {
 #   (b) Legacy redirect CNAME records that now point to AFD (not the SWA).
 data "azurerm_dns_zone" "terian_services" {
   count               = (length(var.swa_custom_domains) > 0 || length(var.legacy_redirect_domains) > 0) ? 1 : 0
-  name                = "terianix.ai"
+  name                = "terian-services.com"
   resource_group_name = var.dns_zone_resource_group
 }
 

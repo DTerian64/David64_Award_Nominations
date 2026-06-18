@@ -75,6 +75,7 @@ def handle(message_id: str, payload: dict) -> None:
         nominator_id=details["nominator_id"],
         config=desc_config,
         nomination_id=nomination_id,
+        amount=details.get("amount"),       # passed to Check C for amount justification
     )
 
     if desc_result.action == "reject":
