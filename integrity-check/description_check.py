@@ -350,6 +350,10 @@ def _check_llm_semantic(
     """
     client = _get_llm_client()
     if client is None:
+        logger.warning(
+            "LLM Semantic check skipped — client not initialized",
+            extra={"nomination_id": nomination_id},
+        )
         return _PASS
 
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
@@ -370,7 +374,8 @@ def _check_llm_semantic(
 
     except Exception as exc:
         logger.error(
-            "LLM semantic check failed — skipping (fail-open): %s", exc,
+            "LLM Semantic check failed — skipping (fail-open)",
+            extra={"nomination_id": nomination_id, "error": str(exc)},
             exc_info=True,
         )
         return _PASS
@@ -497,6 +502,11 @@ def check(
     # ── Check C: LLM semantic evaluation ─────────────────────────────────────
     if config.llm_category_check_enabled:
         result_c = _check_llm_semantic(desc, category_description, amount, config, nominator_id, nomination_id)
+    else:
+        logger.info(
+            "LLM Semantic check skipped — llm_category_check_enabled=false",
+            extra={"nomination_id": nomination_id},
+        )
         if result_c.action == "reject":
             # is_coherent = false → hard reject, same as Check A
             logger.info(
