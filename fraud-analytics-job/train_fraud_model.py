@@ -568,7 +568,7 @@ P2P_FEATURE_COLUMNS = [
 ]
 
 # ── Approver feature columns ──────────────────────────────────────────────────
-# Post-decision measurements — only available after a nomination is Paid.
+# Post-decision measurements — only available after a nomination is Paid. 
 # Used by the batch job to detect approver-side fraud patterns.
 APPR_FEATURE_COLUMNS = [
     'ApproverTotalApproved',
