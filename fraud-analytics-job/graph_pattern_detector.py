@@ -339,6 +339,7 @@ def _save_findings(
 
 def detect_rings(
     nominations: list[dict],
+    users: list[dict],
     tenant_id: int,
     run_id: str,
     max_cluster_size: int = 0,
@@ -391,6 +392,9 @@ def detect_rings(
             (nom["NominationId"], nom["Amount"] or 0)
         )
 
+    # Build user ID → display name lookup so ring descriptions are human-readable
+    user_name: dict[int, str] = {u["UserId"]: u["FullName"] for u in users}
+
     findings:       list[dict]        = []
     seen_user_sets: set[frozenset]    = set()
 
@@ -431,12 +435,15 @@ def detect_rings(
             else:
                 severity = "Low"
 
+            member_names = [user_name.get(u, str(u)) for u in cycle]
             findings.append(_finding(
                 tenant_id, run_id, "Ring", severity,
                 members, sorted(set(nom_ids)),
-                f"Nomination ring of {size} users: "
-                f"{' → '.join(str(u) for u in cycle)} → {cycle[0]} "
-                f"(total approved/paid: ${total_amount:,})",
+                f"{size}-person directed nomination ring detected. "
+                f"Members: {' → '.join(member_names)} → {member_names[0]}. "
+                f"Each member nominates the next in a closed cycle, consistent with "
+                f"coordinated reciprocal recognition. "
+                f"(Total approved/paid: ${total_amount:,})",
                 total_amount=total_amount,
             ))
 
@@ -1042,7 +1049,7 @@ def main(tenants_to_process: list | None = None) -> None:
 
         tenant_findings: list[dict] = []
 
-        tenant_findings.extend(detect_rings(nominations, tenant_id, run_id, ring_max_cluster))
+        tenant_findings.extend(detect_rings(nominations, users, tenant_id, run_id, ring_max_cluster))
         tenant_findings.extend(detect_super_nominators(nominations, tenant_id, run_id))
         tenant_findings.extend(detect_deserts(ever_active_ids, users, tenant_id, run_id))
         tenant_findings.extend(detect_approver_affinity(nominations, tenant_id, run_id))
