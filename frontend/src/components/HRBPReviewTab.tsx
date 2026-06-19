@@ -6,7 +6,7 @@
  * For each nomination in PendingHRBPReview the HRBP reviewer can see:
  *   - Nominator → Beneficiary, amount, category, description
  *   - Fraud score, risk level, and warning flags from the P2P model
- *   - Full prior nomination history between this pair (expandable)
+ *   - All other nominations between these two people in either direction (expandable)
  *   - Approve / Reject buttons with optional reason text
  */
 
@@ -42,8 +42,9 @@ interface PairHistoryItem {
   description:      string;
   nomination_date:  string;
   status:           string;
-  fraud_score:      number | null;
   risk_level:       string | null;
+  nominator_name:   string;
+  beneficiary_name: string;
 }
 
 interface PairHistory {
@@ -273,17 +274,20 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                       ) : pairHistory[nom.nomination_id] ? (
                         <>
                           <p className="text-sm font-semibold text-gray-700 mb-2">
-                            {pairHistory[nom.nomination_id].pair_count} prior nomination(s) from{' '}
-                            {pairHistory[nom.nomination_id].nominator_name} →{' '}
+                            {pairHistory[nom.nomination_id].pair_count} other nomination(s) between{' '}
+                            {pairHistory[nom.nomination_id].nominator_name} and{' '}
                             {pairHistory[nom.nomination_id].beneficiary_name}
                           </p>
                           {pairHistory[nom.nomination_id].history.length === 0 ? (
-                            <p className="text-sm text-gray-500">No prior nominations between this pair.</p>
+                            <p className="text-sm text-gray-500">
+                              No other nominations between {pairHistory[nom.nomination_id].nominator_name} and {pairHistory[nom.nomination_id].beneficiary_name}.
+                            </p>
                           ) : (
                             <table className="w-full text-xs text-left">
                               <thead>
                                 <tr className="text-gray-500 border-b border-gray-200">
                                   <th className="pb-1 pr-3">Date</th>
+                                  <th className="pb-1 pr-3">Direction</th>
                                   <th className="pb-1 pr-3">Amount</th>
                                   <th className="pb-1 pr-3">Status</th>
                                   <th className="pb-1 pr-3">Risk</th>
@@ -295,6 +299,9 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                                   <tr key={h.nomination_id} className="border-b border-gray-100 last:border-0">
                                     <td className="py-1.5 pr-3 whitespace-nowrap text-gray-600">
                                       {new Date(h.nomination_date).toLocaleDateString()}
+                                    </td>
+                                    <td className="py-1.5 pr-3 whitespace-nowrap text-gray-700">
+                                      {h.nominator_name} → {h.beneficiary_name}
                                     </td>
                                     <td className="py-1.5 pr-3 font-medium">{formatCurrency(h.amount)}</td>
                                     <td className="py-1.5 pr-3">

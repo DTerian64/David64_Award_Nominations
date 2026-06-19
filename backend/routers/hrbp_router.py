@@ -205,6 +205,6 @@ async def get_pair_history(
     return {
         "nominator_name":   details["nominator_name"],
         "beneficiary_name": details["beneficiary_name"],
-        "pair_count":       len(history),
-        "history":          history,
+        "pair_count":       len(history),   # both directions, excl. current nomination
+        "history":          history,        # each row has nominator_name + beneficiary_name
     }

@@ -1381,11 +1381,13 @@ def get_pair_nomination_history(
     exclude_nomination_id: int,
 ) -> list[dict]:
     """
-    Return all nominations from *nominator_id* to *beneficiary_id* within
-    *tenant_id*, excluding the nomination currently under HRBP review.
+    Return all nominations between *nominator_id* and *beneficiary_id* in
+    either direction, within *tenant_id*, excluding the nomination currently
+    under HRBP review.
 
-    Used by GET /api/hrbp/nominations/{id}/pair-history so the reviewer can
-    see the full relationship history between this nominator/beneficiary pair.
+    Both A→B and B→A nominations are included so the HRBP reviewer sees the
+    full relationship history between the two people.  Each row carries
+    nominator_name and beneficiary_name so the frontend can render direction.
 
     Returns list of dicts ordered newest-first.
     """
@@ -1399,16 +1401,21 @@ def get_pair_nomination_history(
                     n.NominationDescription,
                     n.NominationDate,
                     n.Status,
-                    nc.category_description AS CategoryDescription,
-                    ff.RiskLevel
+                    nc.category_description          AS CategoryDescription,
+                    ff.RiskLevel,
+                    nom.FirstName + ' ' + nom.LastName  AS NominatorName,
+                    ben.FirstName + ' ' + ben.LastName  AS BeneficiaryName
                 FROM  dbo.Nominations n
-                JOIN  dbo.Users u ON u.UserId = n.NominatorId
+                JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
+                JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
                 LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
                 LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
-                WHERE n.NominatorId   = :nominator_id
-                  AND n.BeneficiaryId = :beneficiary_id
-                  AND u.TenantId      = :tenant_id
+                WHERE nom.TenantId = :tenant_id
                   AND n.NominationId != :exclude_id
+                  AND (
+                      (n.NominatorId = :nominator_id   AND n.BeneficiaryId = :beneficiary_id)
+                   OR (n.NominatorId = :beneficiary_id AND n.BeneficiaryId = :nominator_id)
+                  )
                 ORDER BY n.NominationDate DESC
             """),
             {
@@ -1420,14 +1427,16 @@ def get_pair_nomination_history(
         ).fetchall()
         return [
             {
-                "nomination_id":   r[0],
-                "amount":          r[1],
-                "currency":        r[2],
-                "description":     r[3],
-                "nomination_date": str(r[4]),
-                "status":          r[5],
-                "category":        r[6],
-                "risk_level":      r[7],
+                "nomination_id":    r[0],
+                "amount":           r[1],
+                "currency":         r[2],
+                "description":      r[3],
+                "nomination_date":  str(r[4]),
+                "status":           r[5],
+                "category":         r[6],
+                "risk_level":       r[7],
+                "nominator_name":   r[8],
+                "beneficiary_name": r[9],
             }
             for r in rows
         ]
