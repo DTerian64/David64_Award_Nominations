@@ -502,11 +502,6 @@ def check(
     # ── Check C: LLM semantic evaluation ─────────────────────────────────────
     if config.llm_category_check_enabled:
         result_c = _check_llm_semantic(desc, category_description, amount, config, nominator_id, nomination_id)
-    else:
-        logger.info(
-            "LLM Semantic check skipped — llm_category_check_enabled=false",
-            extra={"nomination_id": nomination_id},
-        )
         if result_c.action == "reject":
             # is_coherent = false → hard reject, same as Check A
             logger.info(
@@ -520,6 +515,11 @@ def check(
                 extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
             )
             accumulated.append(result_c)
+    else:
+        logger.info(
+            "LLM Semantic check skipped — llm_category_check_enabled=false",
+            extra={"nomination_id": nomination_id},
+        )
 
     if not accumulated:
         return _PASS
