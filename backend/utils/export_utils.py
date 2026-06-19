@@ -11,7 +11,6 @@ build_finding_workbook(data: dict) -> io.BytesIO
 """
 
 import io
-import re
 from collections import defaultdict
 
 import openpyxl
@@ -41,32 +40,32 @@ PATTERN_DESC = {
     "HiddenCandidate":       "Named in descriptions but never nominated",
 }
 
-# Three colors — sufficient to color any cycle (graph map theorem)
+# Three colors for ring members (nominator / beneficiary) — sufficient to
+# color any cycle without adjacent same-color nodes (graph map theorem).
 _USER_PALETTE = [
     "BDD7EE",  # 🔵 blue
     "FFEB9C",  # 🟡 yellow
     "C6EFCE",  # 🟢 green
 ]
 
+# Separate palette for approvers — visually distinct from ring-member colors
+# so the reader can immediately tell approvers apart from participants.
+_APPROVER_PALETTE = [
+    "FCE4D6",  # 🟠 salmon / light orange
+    "E2D9F3",  # 🟣 lavender
+    "D9EAD3",  # 🫚 sage (distinct from the brighter _USER_PALETTE green)
+]
+
 
 # ── Nomination ordering ───────────────────────────────────────────────────────
-
-def _parse_ring_start_user(detail: str) -> int | None:
-    """
-    Extract the first user ID from the ring detail string.
-    Expected format: "Nomination ring of N users: 3 → 45 → … → 3 (total…)"
-    Returns the integer ID, or None if parsing fails.
-    """
-    m = re.search(r":\s*(\d+)\s*→", detail or "")
-    return int(m.group(1)) if m else None
-
 
 def _order_nominations(pattern: str, nominations: list[dict], detail: str = "") -> list[dict]:
     """
     For Ring findings: group nominations by directed edge (nominator→beneficiary),
-    walk the unique edges in cycle order starting from the first user named in
-    the Detail string, and emit all nominations for each edge together (sorted
-    by date).  Multiple nominations between the same pair are kept consecutively.
+    walk the unique edges in cycle order starting from the nominator of the
+    earliest-dated nomination, and emit all nominations for each edge together
+    (sorted by date).  Multiple nominations between the same pair are kept
+    consecutively.
 
     For all other patterns: sort by nomination date.
     """
@@ -82,9 +81,10 @@ def _order_nominations(pattern: str, nominations: list[dict], detail: str = "") 
     unique_edges      = list(edge_groups.keys())
     edge_by_nominator = {edge[0]: edge for edge in unique_edges}
 
-    # Anchor the walk at the first user mentioned in the detail text so the
-    # spreadsheet order matches the "A → B → C → … → A" description exactly.
-    anchor_uid = _parse_ring_start_user(detail)
+    # Anchor the walk at the nominator of the earliest nomination in the ring —
+    # makes the spreadsheet order deterministic and chronologically grounded.
+    earliest   = min(nominations, key=lambda n: n["nominationDate"])
+    anchor_uid = earliest["nominatorId"]
     start_edge = edge_by_nominator.get(anchor_uid, unique_edges[0])
 
     ordered_edges = [start_edge]
@@ -124,27 +124,44 @@ def build_finding_workbook(data: dict) -> io.BytesIO:
     nominations = _order_nominations(pattern, data["nominations"], data.get("detail", ""))
 
     # ── Per-user color assignment ─────────────────────────────────────────────
-    user_color_index: dict[int, int] = {}
+    # Ring members (nominator / beneficiary) and approvers use separate palettes
+    # so the two roles are immediately visually distinguishable.
+    member_color_index:   dict[int, int] = {}
+    approver_color_index: dict[int, int] = {}
 
     def color_for(uid: int | None) -> str | None:
         if uid is None:
             return None
-        if uid not in user_color_index:
-            user_color_index[uid] = len(user_color_index) % len(_USER_PALETTE)
-        return _USER_PALETTE[user_color_index[uid]]
+        if uid not in member_color_index:
+            member_color_index[uid] = len(member_color_index) % len(_USER_PALETTE)
+        return _USER_PALETTE[member_color_index[uid]]
+
+    def approver_color_for(uid: int | None) -> str | None:
+        if uid is None:
+            return None
+        if uid not in approver_color_index:
+            approver_color_index[uid] = len(approver_color_index) % len(_APPROVER_PALETTE)
+        return _APPROVER_PALETTE[approver_color_index[uid]]
 
     def user_fill(uid: int | None) -> PatternFill | None:
         hex_color = color_for(uid)
         return PatternFill("solid", start_color=hex_color, end_color=hex_color) if hex_color else None
 
+    def approver_fill(uid: int | None) -> PatternFill | None:
+        hex_color = approver_color_for(uid)
+        return PatternFill("solid", start_color=hex_color, end_color=hex_color) if hex_color else None
+
     def fmt_name(name: str, uid: int | None) -> str:
         return f"{name} ({uid})" if uid is not None else name
 
-    # Pre-scan in display order so colors are stable across all columns
+    # Pre-scan so palette slots are stable regardless of column order.
+    # Members first (guarantees 3 distinct slots for the ring cycle),
+    # then approvers into their own independent palette.
     for nom in nominations:
         color_for(nom["nominatorId"])
         color_for(nom["beneficiaryId"])
-        color_for(nom.get("approverId"))
+    for nom in nominations:
+        approver_color_for(nom.get("approverId"))
 
     # ── Styles ────────────────────────────────────────────────────────────────
     HEADER_FILL = PatternFill("solid", start_color="2F5496", end_color="2F5496")
@@ -181,7 +198,7 @@ def build_finding_workbook(data: dict) -> io.BytesIO:
     # ── Column headers ────────────────────────────────────────────────────────
     headers = [
         "Nomination Id", "Nominator", "Beneficiary", "Approver",
-        "Amount", "Currency", "Description", "Status", "Date",
+        "Date", "Status", "Amount", "Currency", "Description",
     ]
     for col, h in enumerate(headers, start=1):
         c = ws.cell(row=6, column=col, value=h)
@@ -199,12 +216,12 @@ def build_finding_workbook(data: dict) -> io.BytesIO:
             (nom["nominationId"],                                          neutral),
             (fmt_name(nom["nominatorName"],   nom["nominatorId"]),         user_fill(nom["nominatorId"])),
             (fmt_name(nom["beneficiaryName"], nom["beneficiaryId"]),       user_fill(nom["beneficiaryId"])),
-            (fmt_name(nom["approverName"],    nom.get("approverId")),      user_fill(nom.get("approverId"))),
+            (fmt_name(nom["approverName"],    nom.get("approverId")),      approver_fill(nom.get("approverId"))),
+            (nom["nominationDate"],                                        neutral),
+            (nom["status"],                                                neutral),
             (nom["amount"],                                                neutral),
             (nom["currency"],                                              neutral),
             (nom["description"],                                           neutral),
-            (nom["status"],                                                neutral),
-            (nom["nominationDate"],                                        neutral),
         ]
         for col, (val, fill) in enumerate(row_data, start=1):
             c = ws.cell(row=r, column=col, value=val)
@@ -212,10 +229,10 @@ def build_finding_workbook(data: dict) -> io.BytesIO:
             c.border = BORDER
             if fill:
                 c.fill = fill
-        ws.cell(row=r, column=5).number_format = "#,##0.00"
+        ws.cell(row=r, column=7).number_format = "#,##0.00"  # Amount is now col 7
 
     # ── Column widths & freeze ────────────────────────────────────────────────
-    for col, w in enumerate([14, 26, 26, 26, 12, 10, 50, 14, 13], start=1):
+    for col, w in enumerate([14, 26, 26, 26, 13, 14, 12, 10, 50], start=1):
         ws.column_dimensions[get_column_letter(col)].width = w
     ws.freeze_panes = "A7"
 
