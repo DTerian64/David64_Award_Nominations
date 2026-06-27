@@ -16,6 +16,12 @@ import { useImpersonation } from '../contexts/ImpersonationContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface ShapContribution {
+  feature:      string;
+  raw_value:    number;
+  contribution: number;
+}
+
 interface HRBPQueueItem {
   nomination_id:      number;
   status:             string;
@@ -53,6 +59,82 @@ interface PairHistory {
   pair_count:       number;
   history:          PairHistoryItem[];
 }
+
+// ── SHAP feature label map ────────────────────────────────────────────────
+
+const FEATURE_LABELS: Record<string, string> = {
+  PairNominationCount:          'Same nominator → beneficiary pair count',
+  AmountZScore:                 'Amount deviation from tenant average (σ)',
+  NominatorConcentrationRatio:  'Nominator concentration ratio',
+  HasReciprocalNomination:      'Reciprocal nomination exists',
+  NominatorTotalNominations:    'Nominator total nominations',
+  IsHighAmount:                 'Amount statistically high',
+  BeneficiaryTotalReceived:     'Beneficiary total awards received',
+  BeneficiaryAvgAmountReceived: 'Beneficiary avg award amount',
+  DescriptionCosineSim:         'Description similarity to prior nominations',
+  DescriptionEmbDistance:       'Description semantic distance',
+  CategoryFraudRate:            'Category historical fraud rate',
+  NominatorAvgAmount:           'Nominator avg award amount',
+  NominatorStdAmount:           'Nominator amount variability',
+  NominatorUniqueBeneficiaries: 'Nominator unique beneficiaries',
+};
+
+// ── ShapPanel component ───────────────────────────────────────────────────
+
+const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFeaturesJson }) => {
+  if (!topFeaturesJson) return null;
+
+  let contributions: ShapContribution[] = [];
+  try {
+    contributions = JSON.parse(topFeaturesJson);
+  } catch {
+    return null;
+  }
+  if (!contributions.length) return null;
+
+  const maxAbs = Math.max(...contributions.map(c => Math.abs(c.contribution)), 0.001);
+
+  return (
+    <div className="mt-3 mb-3 bg-slate-50 border border-slate-200 rounded-lg p-4">
+      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">
+        Model signal breakdown (top contributing factors)
+      </p>
+      <div className="space-y-2">
+        {contributions.map((c, i) => {
+          const pct     = Math.round((Math.abs(c.contribution) / maxAbs) * 100);
+          const isRisk  = c.contribution > 0;
+          const barColour = isRisk ? 'bg-orange-400' : 'bg-emerald-400';
+          const label   = FEATURE_LABELS[c.feature] ?? c.feature;
+          const sign    = isRisk ? '+' : '';
+
+          return (
+            <div key={i} className="flex items-center gap-3">
+              {/* Label + value */}
+              <div className="w-56 flex-shrink-0">
+                <p className="text-xs text-slate-700 leading-tight">{label}</p>
+                <p className="text-xs text-slate-400">{c.raw_value}</p>
+              </div>
+              {/* Bar */}
+              <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+                <div
+                  className={`h-2 rounded-full ${barColour}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              {/* Contribution */}
+              <span className={`text-xs font-mono w-14 text-right flex-shrink-0 ${isRisk ? 'text-orange-600' : 'text-emerald-600'}`}>
+                {sign}{c.contribution.toFixed(3)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-xs text-slate-400 mt-3">
+        Orange bars push toward fraud · Green bars push away · Width = relative strength
+      </p>
+    </div>
+  );
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -254,6 +336,9 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                       ))}
                     </div>
                   )}
+
+                  {/* SHAP model signal breakdown */}
+                  <ShapPanel topFeaturesJson={nom.top_features} />
 
                   {/* Pair history toggle */}
                   <button

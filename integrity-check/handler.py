@@ -134,7 +134,7 @@ def handle(message_id: str, payload: dict) -> None:
                 fraud_probability=0.0,
                 risk_level="UNKNOWN",
                 warning_flags=", ".join(pre_ml_flags),
-                top_features_json=None,
+                shap_explanations_json=None,
                 feature_summary_json=json.dumps({
                     "fraud_score":       0,
                     "fraud_probability": 0.0,
@@ -163,10 +163,11 @@ def handle(message_id: str, payload: dict) -> None:
     logger.info(
         "Fraud assessment complete",
         extra={
-            "nomination_id": nomination_id,
-            "fraud_score":   result["fraud_score"],
-            "risk_level":    result["risk_level"],
-            "warning_flags": all_flags,
+            "nomination_id":   nomination_id,
+            "fraud_score":     result["fraud_score"],
+            "risk_level":      result["risk_level"],
+            "warning_flags":   all_flags,
+            "shap_available":  bool(result["shap_explanations"]),
         },
     )
 
@@ -179,39 +180,76 @@ def handle(message_id: str, payload: dict) -> None:
     )
 
     # ── Route ─────────────────────────────────────────────────────────────────
-    # A Check B flag alone (no ML flag) still routes to HRBP review so a human
-    # can judge whether it is a team nomination or a copy-paste scheme.
-    flagged = result["flagged"] or bool(pre_ml_flags)
+    # CRITICAL  → auto-reject immediately; LLM-generated explanation goes into
+    #             RejectionReason so the nominator sees it in My Nominations.
+    #             No HRBP queue entry — score is too high to warrant manual review.
+    #
+    # MEDIUM / HIGH (or any description flag) → PendingHRBPReview with full
+    #             SHAP breakdown stored for the reviewer.
+    #
+    # LOW / NONE → pass through to manager approval as normal.
 
-    if flagged:
+    risk_level = result["risk_level"]
+    shap_json  = json.dumps(result["shap_explanations"]) if result["shap_explanations"] else None
+    feature_summary = json.dumps({
+        "fraud_score":       result["fraud_score"],
+        "fraud_probability": result["fraud_prob"],
+        "risk_level":        risk_level,
+        "description_flags": pre_ml_flags,
+    })
+
+    if risk_level == "CRITICAL":
+        explanation = (
+            result["fraud_explanation"]
+            or "Your nomination was automatically declined because our fraud prevention "
+               "system detected unusual patterns in this submission. Please contact your "
+               "HR administrator if you believe this is an error."
+        )
+        db.reject_nomination(
+            nomination_id, reason=explanation, actor="Fraud Detection"
+        )
+        service_bus_publisher.publish_event(
+            "nomination.fraud-flagged", nomination_id,
+            extra={"risk_level": risk_level, "auto_rejected": True},
+        )
+        logger.info(
+            "Nomination auto-rejected (CRITICAL fraud score)",
+            extra={
+                "nomination_id": nomination_id,
+                "fraud_score":   result["fraud_score"],
+            },
+        )
+
+    elif result["flagged"] or bool(pre_ml_flags):
         db.save_hrbp_fraud_flags(
             nomination_id=nomination_id,
             fraud_score=result["fraud_score"],
             fraud_probability=result["fraud_prob"],
-            risk_level=result["risk_level"],
+            risk_level=risk_level,
             warning_flags=", ".join(all_flags),
-            top_features_json=None,
-            feature_summary_json=json.dumps({
-                "fraud_score":       result["fraud_score"],
-                "fraud_probability": result["fraud_prob"],
-                "risk_level":        result["risk_level"],
-                "description_flags": pre_ml_flags,
-            }),
+            shap_explanations_json=shap_json,
+            feature_summary_json=feature_summary,
         )
         db.set_nomination_status(nomination_id, "PendingHRBPReview")
         service_bus_publisher.publish_event(
             "nomination.fraud-flagged", nomination_id,
-            extra={"risk_level": result["risk_level"]},
+            extra={"risk_level": risk_level},
         )
-        logger.info("Nomination flagged for HRBP review",
-                    extra={"nomination_id": nomination_id,
-                           "risk_level": result["risk_level"],
-                           "pre_ml_flags": pre_ml_flags})
+        logger.info(
+            "Nomination flagged for HRBP review",
+            extra={
+                "nomination_id": nomination_id,
+                "risk_level":    risk_level,
+                "pre_ml_flags":  pre_ml_flags,
+            },
+        )
+
     else:
         db.set_nomination_status(nomination_id, "Pending")
         service_bus_publisher.publish_event("nomination.created", nomination_id)
-        logger.info("Nomination routed to manager for approval",
-                    extra={"nomination_id": nomination_id,
-                           "fraud_score": result["fraud_score"]})
+        logger.info(
+            "Nomination routed to manager for approval",
+            extra={"nomination_id": nomination_id, "fraud_score": result["fraud_score"]},
+        )
 
     db.update_processed_event_result(message_id, "success")

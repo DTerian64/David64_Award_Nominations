@@ -439,7 +439,7 @@ def save_hrbp_fraud_flags(
     fraud_probability:    float,
     risk_level:           str,
     warning_flags:        str,
-    top_features_json:    Optional[str],
+    shap_explanations_json: Optional[str],  # JSON list of top-5 SHAP contributions
     feature_summary_json: Optional[str],
 ) -> None:
     with _get_conn() as conn:
@@ -451,7 +451,7 @@ def save_hrbp_fraud_flags(
             VALUES (?, ?, ?, ?, ?, ?, ?, GETUTCDATE())
         """, (
             nomination_id, fraud_score, fraud_probability, risk_level,
-            warning_flags, top_features_json, feature_summary_json,
+            warning_flags, shap_explanations_json, feature_summary_json,
         ))
         conn.commit()
 

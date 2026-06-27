@@ -4,23 +4,28 @@ fraud_check.py — Async fraud assessment engine for the auxiliary service.
 
 Owns the full fraud detection pipeline:
   • Per-tenant RF model cache (blob-direct, lazy-loaded, process-lifetime)
+  • Per-tenant SHAP TreeExplainer cache (lazy-created alongside model)
   • Sentence-transformer embedding cache (module singleton)
   • Feature engineering — behavioural + semantic, mirrors train_fraud_model.py
   • RF inference — predict_proba → fraud_score / risk_level / warning_flags
+  • SHAP attribution — top-5 feature contributions for flagged nominations
+  • LLM explanation — human-readable rejection reason (CRITICAL auto-rejects)
 
-Public API 
+Public API
 ----------
     result = assess(nomination_details, tenant_id)
 
     result is a dict:
-        fraud_score      int       0–100
-        fraud_prob       float     0.0–1.0
-        risk_level       str       NONE | LOW | MEDIUM | HIGH | CRITICAL
-        warning_flags    list[str]
-        flagged          bool      True when risk_level in MEDIUM/HIGH/CRITICAL
-        model_available  bool      False when no pkl exists yet for the tenant
+        fraud_score         int         0–100
+        fraud_prob          float       0.0–1.0
+        risk_level          str         NONE | LOW | MEDIUM | HIGH | CRITICAL
+        warning_flags       list[str]
+        flagged             bool        True when risk_level in MEDIUM/HIGH/CRITICAL
+        model_available     bool        False when no pkl exists yet for the tenant
+        shap_explanations   list[dict]  Top-5 SHAP contributions (flagged only, else [])
+        fraud_explanation   str | None  LLM-generated human text (CRITICAL only, else None)
 
-Called exclusively by handlers/nomination_submitted.py.
+Called exclusively by handler.py.
 """
 
 from __future__ import annotations
@@ -130,14 +135,16 @@ def _get_embed_model(model_name: str = "all-MiniLM-L6-v2"):
 
 # ── Feature engineering ───────────────────────────────────────────────────────
 
-def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, float]:
+def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, float]:
     """
     Build and scale the feature vector from nomination details + DB lookups.
     Mirrors train_fraud_model.py extract_features() so training and inference
     stay aligned.
 
-    Returns (X_scaled, desc_cosine_sim) — the cosine sim is also returned
-    separately so warning flag generation doesn't need to re-index into X_scaled.
+    Returns (X_scaled, feature_vals, desc_cosine_sim).
+      X_scaled     — scaler-transformed array fed to the RF model
+      feature_vals — raw unscaled dict (used for SHAP display values)
+      desc_cosine_sim — returned separately so _warning_flags doesn't re-index
     """
     nominator_id    = details["nominator_id"]
     beneficiary_id  = details["beneficiary_id"]
@@ -262,7 +269,7 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, float]
         },
     )
 
-    return model_data["p2p_scaler"].transform(X), desc_cosine_sim
+    return model_data["p2p_scaler"].transform(X), feature_vals, desc_cosine_sim
 
 
 # ── Scoring helpers ───────────────────────────────────────────────────────────
@@ -294,6 +301,141 @@ def _warning_flags(model_data: dict, X_scaled: np.ndarray,
     return flags
 
 
+# ── SHAP attribution ──────────────────────────────────────────────────────────
+
+# Human-readable labels for each feature name used in prompts and UI.
+_FEATURE_LABELS: dict[str, str] = {
+    "PairNominationCount":          "number of times this nominator has nominated this beneficiary",
+    "AmountZScore":                 "how far the award amount deviates from the tenant average",
+    "NominatorConcentrationRatio":  "degree to which the nominator's awards are concentrated on few people",
+    "HasReciprocalNomination":      "whether the beneficiary has also nominated the nominator",
+    "NominatorTotalNominations":    "total nominations submitted by this nominator",
+    "IsHighAmount":                 "whether the award amount is statistically high",
+    "BeneficiaryTotalReceived":     "total awards this person has received",
+    "BeneficiaryAvgAmountReceived": "average award amount this person typically receives",
+    "DescriptionCosineSim":         "similarity of this description to past nominations for this beneficiary",
+    "DescriptionEmbDistance":       "semantic distance of this description from prior nominations",
+    "CategoryFraudRate":            "historical fraud rate for this award category",
+    "NominatorAvgAmount":           "this nominator's typical award amount",
+    "NominatorStdAmount":           "variability in this nominator's award amounts",
+    "NominatorUniqueBeneficiaries": "number of distinct people this nominator has nominated",
+}
+
+
+def _get_explainer(model_data: dict):
+    """
+    Lazily create a SHAP TreeExplainer for the tenant's RF model and cache it
+    inside model_data so it is built at most once per process lifetime per tenant.
+    """
+    if "shap_explainer" not in model_data:
+        import shap
+        logger.info("Building SHAP TreeExplainer for RF model …")
+        model_data["shap_explainer"] = shap.TreeExplainer(model_data["p2p_model"])
+        logger.info("SHAP TreeExplainer ready.")
+    return model_data["shap_explainer"]
+
+
+def _compute_shap(
+    model_data: dict,
+    X_scaled: np.ndarray,
+    feature_vals: dict,
+    top_n: int = 5,
+) -> list[dict]:
+    """
+    Run SHAP on the scaled feature vector and return the top_n features by
+    absolute contribution to the fraud class probability.
+
+    Returns a list of dicts ordered by |contribution| descending:
+        [{"feature": str, "raw_value": float, "contribution": float}, ...]
+
+    raw_value is the original unscaled value so the LLM and UI can show
+    meaningful numbers ("nominated 7 times") rather than scaled floats.
+    """
+    explainer    = _get_explainer(model_data)
+    feature_cols = model_data["p2p_feature_columns"]
+
+    shap_vals = explainer.shap_values(X_scaled)
+    # sklearn RF binary classification: list of two arrays [class0, class1]
+    # each shaped (n_samples, n_features).  We want class 1 (fraud), sample 0.
+    fraud_shap = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
+
+    contributions = [
+        {
+            "feature":      feature_cols[i],
+            "raw_value":    round(float(feature_vals.get(feature_cols[i], 0.0)), 4),
+            "contribution": round(float(fraud_shap[i]), 4),
+        }
+        for i in range(len(feature_cols))
+    ]
+    contributions.sort(key=lambda x: abs(x["contribution"]), reverse=True)
+    return contributions[:top_n]
+
+
+# ── LLM explanation ───────────────────────────────────────────────────────────
+
+_FALLBACK_EXPLANATION = (
+    "Your nomination was automatically declined because our fraud prevention "
+    "system detected unusual patterns in this submission. If you believe this "
+    "is an error, please contact your HR administrator for further information."
+)
+
+
+def _generate_explanation(shap_contributions: list[dict], fraud_score: int) -> str:
+    """
+    Call Azure OpenAI to convert SHAP feature contributions into a concise,
+    non-accusatory rejection explanation suitable for the nominator.
+
+    Falls back to _FALLBACK_EXPLANATION on any error so the caller is never
+    blocked by an LLM failure.
+    """
+    import os
+    from openai import AzureOpenAI
+
+    try:
+        client = AzureOpenAI(
+            api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        )
+
+        # Build a readable summary of the top contributing signals.
+        signal_lines = []
+        for c in shap_contributions:
+            label  = _FEATURE_LABELS.get(c["feature"], c["feature"])
+            direction = "elevated" if c["contribution"] > 0 else "low"
+            signal_lines.append(f"- {label}: {direction} (raw value: {c['raw_value']})")
+        signals_text = "\n".join(signal_lines)
+
+        prompt = (
+            "You are an HR compliance system writing a brief, professional explanation "
+            "for why an award nomination was automatically declined by a fraud detection model "
+            f"(confidence score: {fraud_score}/100).\n\n"
+            "The top signals that contributed to this decision are:\n"
+            f"{signals_text}\n\n"
+            "Write 2–3 sentences for the nominator. Rules:\n"
+            "- Use plain English — no ML terminology, no feature names, no scores\n"
+            "- Describe the pattern in neutral, factual language (e.g. 'multiple nominations "
+            "to the same recipient' not 'you are committing fraud')\n"
+            "- Do not be accusatory — the person may have acted in good faith\n"
+            "- End with: 'If you believe this is an error, please contact your HR administrator.'\n"
+            "- Start with: 'Your nomination was automatically declined because'"
+        )
+
+        response = client.chat.completions.create(
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0.2,
+        )
+        explanation = response.choices[0].message.content.strip()
+        logger.info("LLM fraud explanation generated (%d chars)", len(explanation))
+        return explanation
+
+    except Exception as exc:
+        logger.warning("LLM explanation failed — using fallback: %s", exc)
+        return _FALLBACK_EXPLANATION
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def assess(details: dict, tenant_id: int) -> dict:
@@ -306,30 +448,35 @@ def assess(details: dict, tenant_id: int) -> dict:
 
     Returns:
         {
-            model_available: bool,
-            fraud_score:     int,
-            fraud_prob:      float,
-            risk_level:      str,
-            warning_flags:   list[str],
-            flagged:         bool,
+            model_available:   bool,
+            fraud_score:       int,
+            fraud_prob:        float,
+            risk_level:        str,
+            warning_flags:     list[str],
+            flagged:           bool,
+            shap_explanations: list[dict],   # top-5 SHAP contributions; [] if not flagged
+            fraud_explanation: str | None,   # LLM text; only set for CRITICAL auto-rejects
         }
 
-    Never raises — on model load failure, returns model_available=False and
+    Never raises — on model load failure returns model_available=False and
     the caller routes the nomination as clean.
+    SHAP / LLM errors are caught internally; the result always has both keys.
     """
     model_data = _get_model(tenant_id)
 
     if model_data is None:
         return {
-            "model_available": False,
-            "fraud_score":     0,
-            "fraud_prob":      0.0,
-            "risk_level":      "NONE",
-            "warning_flags":   [],
-            "flagged":         False,
+            "model_available":   False,
+            "fraud_score":       0,
+            "fraud_prob":        0.0,
+            "risk_level":        "NONE",
+            "warning_flags":     [],
+            "flagged":           False,
+            "shap_explanations": [],
+            "fraud_explanation": None,
         }
 
-    X_scaled, desc_cosine_sim = _build_features(details, model_data)
+    X_scaled, feature_vals, desc_cosine_sim = _build_features(details, model_data)
 
     rf    = model_data["p2p_model"]
     proba = rf.predict_proba(X_scaled)
@@ -337,12 +484,34 @@ def assess(details: dict, tenant_id: int) -> dict:
     fraud_score = int(fraud_prob * 100)
     risk        = _risk_level(fraud_score)
     flags       = _warning_flags(model_data, X_scaled, desc_cosine_sim)
+    flagged     = risk in ("MEDIUM", "HIGH", "CRITICAL")
+
+    # ── SHAP attribution (flagged nominations only) ───────────────────────────
+    shap_explanations: list[dict] = []
+    if flagged:
+        try:
+            shap_explanations = _compute_shap(model_data, X_scaled, feature_vals)
+        except Exception as exc:
+            logger.warning(
+                "SHAP computation failed for nomination %s: %s",
+                details.get("nomination_id"), exc,
+            )
+
+    # ── LLM explanation (CRITICAL auto-rejects only) ──────────────────────────
+    # MEDIUM / HIGH go to HRBP review — the reviewer writes their own reason.
+    # CRITICAL bypasses HRBP, so we need a human-readable explanation for the
+    # nominator's rejection notice.
+    fraud_explanation: str | None = None
+    if risk == "CRITICAL" and shap_explanations:
+        fraud_explanation = _generate_explanation(shap_explanations, fraud_score)
 
     return {
-        "model_available": True,
-        "fraud_score":     fraud_score,
-        "fraud_prob":      round(fraud_prob, 4),
-        "risk_level":      risk,
-        "warning_flags":   flags,
-        "flagged":         risk in ("MEDIUM", "HIGH", "CRITICAL"),
+        "model_available":   True,
+        "fraud_score":       fraud_score,
+        "fraud_prob":        round(fraud_prob, 4),
+        "risk_level":        risk,
+        "warning_flags":     flags,
+        "flagged":           flagged,
+        "shap_explanations": shap_explanations,
+        "fraud_explanation": fraud_explanation,
     }
