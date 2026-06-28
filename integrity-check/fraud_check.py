@@ -57,6 +57,45 @@ _MI_CLIENT_ID     = os.getenv("MI_CLIENT_ID") or None
 _model_cache: dict[int, dict | None] = {}
 _model_cache_lock = threading.Lock()
 
+# ── Per-tenant integrity config cache ─────────────────────────────────────────
+# Loaded from dbo.Tenants on first assess() call per tenant, held for the
+# process lifetime. Config changes require a container restart — acceptable
+# operational behaviour agreed with the team.
+
+_integrity_config_cache: dict[int, dict] = {}
+_integrity_config_cache_lock = threading.Lock()
+
+
+def _get_integrity_config(tenant_id: int) -> dict:
+    """Return cached integrity_config for the tenant, loading from DB on first access."""
+    with _integrity_config_cache_lock:
+        if tenant_id in _integrity_config_cache:
+            return _integrity_config_cache[tenant_id]
+
+    config = db.get_tenant_integrity_config(tenant_id)
+
+    with _integrity_config_cache_lock:
+        _integrity_config_cache[tenant_id] = config
+
+    return config
+
+
+def _score_routing_thresholds(tenant_id: int) -> dict:
+    """
+    Return score routing thresholds for the tenant.
+
+    Reads from integrity_config.score_routing; falls back to system defaults
+    for any missing key.  The returned dict is ready for _risk_level().
+    """
+    config      = _get_integrity_config(tenant_id)
+    routing     = config.get("score_routing", {})
+    return {
+        "critical": int(routing.get("critical_threshold", 80)),
+        "high":     int(routing.get("high_threshold",     60)),
+        "medium":   int(routing.get("medium_threshold",   40)),
+        "low":      int(routing.get("low_threshold",      20)),
+    }
+
 
 def _get_model(tenant_id: int) -> dict | None:
     """Return cached model, streaming from blob on first access."""
@@ -288,11 +327,17 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
 
 # ── Scoring helpers ───────────────────────────────────────────────────────────
 
-def _risk_level(score: int) -> str:
-    if score >= 80: return "CRITICAL"
-    if score >= 60: return "HIGH"
-    if score >= 40: return "MEDIUM"
-    if score >= 20: return "LOW"
+def _risk_level(score: int, thresholds: dict) -> str:
+    """
+    Map a 0–100 fraud score to a risk level using per-tenant thresholds.
+
+    thresholds must contain keys: critical, high, medium, low.
+    Use _score_routing_thresholds(tenant_id) to build the dict.
+    """
+    if score >= thresholds["critical"]: return "CRITICAL"
+    if score >= thresholds["high"]:     return "HIGH"
+    if score >= thresholds["medium"]:   return "MEDIUM"
+    if score >= thresholds["low"]:      return "LOW"
     return "NONE"
 
 
@@ -519,7 +564,8 @@ def assess(details: dict, tenant_id: int) -> dict:
     proba = rf.predict_proba(X_scaled)
     fraud_prob  = float(proba[0][1]) if proba.shape[1] >= 2 else 0.0
     fraud_score = int(fraud_prob * 100)
-    risk        = _risk_level(fraud_score)
+    thresholds  = _score_routing_thresholds(tenant_id)
+    risk        = _risk_level(fraud_score, thresholds)
     flags       = _warning_flags(model_data, X_scaled, desc_cosine_sim, feature_vals)
     flagged     = risk in ("MEDIUM", "HIGH", "CRITICAL")
 

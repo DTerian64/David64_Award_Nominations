@@ -54,6 +54,32 @@ logger = logging.getLogger(__name__)
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
+def _load_tenant_integrity_config(conn: pyodbc.Connection, tenant_id: int) -> dict:
+    """
+    Load and parse integrity_config JSON from dbo.Tenants for this tenant.
+
+    Returns the parsed dict, or {} if the column is NULL, missing, or invalid.
+    Callers access keys via .get() with explicit defaults so partial configs
+    are safe (e.g. a tenant that only sets score_routing still gets the
+    correct detection window from the env-var default).
+    """
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT integrity_config FROM dbo.Tenants WHERE TenantId = ?", tenant_id
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return {}
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Invalid JSON in integrity_config for tenant %d — using defaults",
+            tenant_id,
+        )
+        return {}
+
+
 def _get_connection() -> pyodbc.Connection:
     """Connect to Azure SQL.
 
@@ -1224,13 +1250,13 @@ def main(tenants_to_process: list | None = None) -> None:
     )
     logger.info("graph_pattern_detector — starting")
 
-    findings_table    = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
-    window_days       = int(os.getenv("DETECTION_WINDOW_DAYS", "180"))
-    ring_max_cluster  = int(os.getenv("RING_MAX_CLUSTER_SIZE", "0"))
-    run_id            = str(uuid.uuid4())
+    findings_table      = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
+    default_window_days = int(os.getenv("DETECTION_WINDOW_DAYS", "180"))
+    ring_max_cluster    = int(os.getenv("RING_MAX_CLUSTER_SIZE", "0"))
+    run_id              = str(uuid.uuid4())
     logger.info("RunId: %s", run_id)
     logger.info("Target table: %s", findings_table)
-    logger.info("Detection window: %d days", window_days)
+    logger.info("Default detection window: %d days (DETECTION_WINDOW_DAYS env var)", default_window_days)
     logger.info(
         "Ring max cluster size: %s",
         str(ring_max_cluster) if ring_max_cluster > 0 else "unlimited",
@@ -1242,8 +1268,9 @@ def main(tenants_to_process: list | None = None) -> None:
     sync_graph_tables(conn)
 
     # Evict embeddings that have aged out of the detection window.
-    # Done once per run (before tenant loop) — window is tenant-agnostic.
-    _evict_stale_embeddings(conn, window_days)
+    # Uses the global default window — conservative (keeps more rather than
+    # fewer) so tenants with longer per-tenant windows are not penalised.
+    _evict_stale_embeddings(conn, default_window_days)
 
     tenants = _load_tenants(conn)
     if tenants_to_process is not None:
@@ -1257,6 +1284,18 @@ def main(tenants_to_process: list | None = None) -> None:
 
     for tenant_id in tenants:
         logger.info("── Tenant %d ──────────────────────────────────────", tenant_id)
+
+        # Per-tenant detection window — falls back to global default if not set
+        # in integrity_config.graph_pattern.detection_window_days.
+        tenant_config = _load_tenant_integrity_config(conn, tenant_id)
+        window_days = int(
+            tenant_config.get("graph_pattern", {})
+                         .get("detection_window_days", default_window_days)
+        )
+        if tenant_config.get("graph_pattern", {}).get("detection_window_days"):
+            logger.info("  Detection window: %d days (tenant config)", window_days)
+        else:
+            logger.info("  Detection window: %d days (default)", window_days)
 
         # Windowed nominations for all detectors except deserts
         nominations = _load_nominations(conn, tenant_id, window_days)

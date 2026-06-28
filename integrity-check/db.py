@@ -13,6 +13,7 @@ Focused subset of queries needed by handler.py and fraud_check.py:
 
   Tenant config:
     get_tenant_desc_check_config()  — per-tenant description check thresholds
+    get_tenant_integrity_config()   — per-tenant fraud pipeline config (windows, thresholds)
 
   Fraud history lookups (called by fraud_check.py):
     get_nominator_history()         — past nominations sent by a user
@@ -188,6 +189,51 @@ def get_tenant_desc_check_config(tenant_id: int) -> DescCheckConfig:
         ),
         llm_instructions=data.get("llm_instructions") or None,
     )
+
+
+# ── Per-tenant integrity config ───────────────────────────────────────────────
+
+def get_tenant_integrity_config(tenant_id: int) -> dict:
+    """
+    Load and parse integrity_config JSON from dbo.Tenants for this tenant.
+
+    Returns the parsed dict, or {} if the column is NULL or absent.
+    Callers use .get() with explicit defaults so partial configs are safe.
+
+    Schema (all keys optional — missing keys fall back to system defaults):
+    {
+      "graph_pattern": { "detection_window_days": 365 },
+      "score_routing": {
+          "critical_threshold": 80,
+          "high_threshold":     60,
+          "medium_threshold":   40,
+          "low_threshold":      20
+      }
+    }
+
+    The cache lifetime is the container process lifetime — config changes
+    require a container restart (acceptable operational behaviour).
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT integrity_config FROM dbo.Tenants WHERE TenantId = ?",
+            (tenant_id,),
+        )
+        row = cursor.fetchone()
+
+    raw = row[0] if row else None
+    if not raw:
+        return {}
+
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Invalid JSON in integrity_config for tenant %d — using defaults",
+            tenant_id,
+        )
+        return {}
 
 
 # ── Nomination details ────────────────────────────────────────────────────────
