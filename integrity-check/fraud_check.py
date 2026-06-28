@@ -228,6 +228,10 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
         desc_cosine_sim   = 0.0
         desc_emb_distance = 1.0
 
+    # ── Graph pattern features (UserGraphFlags latest snapshot) ──────────────
+    tenant_id = details["tenant_id"]
+    graph_flags = db.get_user_graph_flags(tenant_id, nominator_id, beneficiary_id)
+
     # ── Assemble + scale ──────────────────────────────────────────────────────
     feature_cols = model_data["p2p_feature_columns"]
     feature_vals = {
@@ -249,6 +253,12 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
         "CategoryFraudRate":            category_fraud_rate,
         "DescriptionCosineSim":         desc_cosine_sim,
         "DescriptionEmbDistance":       desc_emb_distance,
+        # Graph pattern features
+        "GraphCycleFlag":            graph_flags["GraphCycleFlag"],
+        "GraphReciprocalFlag":       1 if has_reciprocal else 0,
+        "GraphClusterSize":          graph_flags["GraphClusterSize"],
+        "SuperNominatorFlag":        graph_flags["SuperNominatorFlag"],
+        "TransactionalLanguageFlag": graph_flags["TransactionalLanguageFlag"],
     }
 
     X = np.array([[feature_vals.get(c, 0.0) for c in feature_cols]], dtype=float)
@@ -256,16 +266,20 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
     logger.info(
         "Fraud feature vector",
         extra={
-            "nomination_id":  details.get("nomination_id"),
-            "nominator_id":   nominator_id,
-            "beneficiary_id": beneficiary_id,
-            "amount":         amount,
-            "amount_zscore":  round(amount_zscore, 3),
-            "pair_count":     pair_count,
-            "reciprocal":     int(has_reciprocal),
-            "concentration":  round(float(concentration_ratio), 3),
-            "cosine_sim":     round(float(desc_cosine_sim), 4),
-            "emb_distance":   round(float(desc_emb_distance), 4),
+            "nomination_id":          details.get("nomination_id"),
+            "nominator_id":           nominator_id,
+            "beneficiary_id":         beneficiary_id,
+            "amount":                 amount,
+            "amount_zscore":          round(amount_zscore, 3),
+            "pair_count":             pair_count,
+            "reciprocal":             int(has_reciprocal),
+            "concentration":          round(float(concentration_ratio), 3),
+            "cosine_sim":             round(float(desc_cosine_sim), 4),
+            "emb_distance":           round(float(desc_emb_distance), 4),
+            "graph_cycle":            graph_flags["GraphCycleFlag"],
+            "graph_cluster_size":     graph_flags["GraphClusterSize"],
+            "super_nominator":        graph_flags["SuperNominatorFlag"],
+            "transactional_language": graph_flags["TransactionalLanguageFlag"],
         },
     )
 
@@ -282,22 +296,39 @@ def _risk_level(score: int) -> str:
     return "NONE"
 
 
-def _warning_flags(model_data: dict, X_scaled: np.ndarray,
-                   desc_cosine_sim: float) -> list[str]:
+def _warning_flags(
+    model_data:    dict,
+    X_scaled:      np.ndarray,
+    desc_cosine_sim: float,
+    feature_vals:  dict,
+) -> list[str]:
     feat  = dict(zip(model_data["p2p_feature_columns"], X_scaled[0]))
     flags = []
-    if feat.get("NominatorTotalNominations", 0) > 50:
+    # Behavioural flags (thresholds applied to raw feature_vals for readability)
+    if feature_vals.get("NominatorTotalNominations", 0) > 50:
         flags.append("High frequency nominator")
-    if feat.get("PairNominationCount", 0) > 5:
+    if feature_vals.get("PairNominationCount", 0) > 5:
         flags.append("Repeated beneficiary")
-    if feat.get("HasReciprocalNomination", 0) == 1:
+    if feature_vals.get("HasReciprocalNomination", 0) == 1:
         flags.append("Reciprocal nomination detected")
-    if feat.get("IsHighAmount", 0) == 1:
+    if feature_vals.get("IsHighAmount", 0) == 1:
         flags.append("Unusually high amount")
-    if feat.get("NominatorConcentrationRatio", 0) > 5:
+    if feature_vals.get("NominatorConcentrationRatio", 0) > 5:
         flags.append("Limited beneficiary diversity")
     if desc_cosine_sim > 0.85:
         flags.append("Nomination descriptions suspiciously similar")
+    # Graph pattern flags
+    if feature_vals.get("GraphCycleFlag", 0) == 1:
+        flags.append("Nominator or beneficiary is part of a known nomination ring")
+    if feature_vals.get("SuperNominatorFlag", 0) == 1:
+        flags.append("Nominator is a statistical outlier in nomination volume")
+    if feature_vals.get("GraphClusterSize", 0) > 0:
+        flags.append(
+            f"Nomination belongs to a copy-paste cluster "
+            f"(size: {feature_vals['GraphClusterSize']})"
+        )
+    if feature_vals.get("TransactionalLanguageFlag", 0) == 1:
+        flags.append("Transactional or quid-pro-quo language detected")
     return flags
 
 
@@ -319,6 +350,12 @@ _FEATURE_LABELS: dict[str, str] = {
     "NominatorAvgAmount":           "this nominator's typical award amount",
     "NominatorStdAmount":           "variability in this nominator's award amounts",
     "NominatorUniqueBeneficiaries": "number of distinct people this nominator has nominated",
+    # Graph pattern features
+    "GraphCycleFlag":            "whether this nominator or beneficiary is part of a known nomination ring",
+    "GraphReciprocalFlag":       "whether the beneficiary has also nominated the nominator back",
+    "GraphClusterSize":          "size of the copy-paste description cluster this nomination belongs to",
+    "SuperNominatorFlag":        "whether the nominator is a statistical outlier in nomination volume",
+    "TransactionalLanguageFlag": "whether transactional or quid-pro-quo language was detected in related nominations",
 }
 
 
@@ -483,7 +520,7 @@ def assess(details: dict, tenant_id: int) -> dict:
     fraud_prob  = float(proba[0][1]) if proba.shape[1] >= 2 else 0.0
     fraud_score = int(fraud_prob * 100)
     risk        = _risk_level(fraud_score)
-    flags       = _warning_flags(model_data, X_scaled, desc_cosine_sim)
+    flags       = _warning_flags(model_data, X_scaled, desc_cosine_sim, feature_vals)
     flagged     = risk in ("MEDIUM", "HIGH", "CRITICAL")
 
     # ── SHAP attribution (flagged nominations only) ───────────────────────────

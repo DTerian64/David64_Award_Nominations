@@ -1,19 +1,26 @@
 """
 run_job.py — Fraud Analytics Job entrypoint
 ============================================
-Orchestrates the two-stage weekly fraud analytics pipeline:
+Orchestrates the weekly fraud analytics pipeline in dependency order:
 
-  Stage 1: train_fraud_model.py
-      Per-tenant Random Forest retrain on the Nominations + FraudScores tables.
-      Upserts updated fraud scores into dbo.FraudScores.
-      Uploads the retrained .pkl model to Azure Blob Storage.
-
-  Stage 2: graph_pattern_detector.py
+  Stage 1: graph_pattern_detector.py
       Syncs the Azure SQL Graph tables (NomGraph_Person, NomGraph_Nominated).
       Runs MATCH queries for ring detection and approver affinity.
       Runs networkx analysis for super-nominators and nomination deserts.
       Runs sentence-transformers for copy-paste and transactional language.
       Upserts findings into dbo.GraphPatternFindings.
+      Materialises per-user graph flag snapshots into dbo.UserGraphFlags
+      and dbo.ApproverPairFlags — required by Stage 2 for RF feature engineering.
+
+  Stage 2: train_fraud_model.py
+      Per-tenant Random Forest retrain on Nominations + FraudScores tables.
+      Point-in-time joins dbo.UserGraphFlags and dbo.ApproverPairFlags to
+      include graph pattern features without data leakage.
+      Upserts updated fraud scores into dbo.P2P_FraudScores / dbo.Appr_FraudScores.
+      Uploads the retrained .pkl model to Azure Blob Storage.
+
+  IMPORTANT: graph_pattern_detector must run before train_fraud_model so that
+  the UserGraphFlags / ApproverPairFlags snapshots are current before training.
 
 Exit codes:
   0  — both stages succeeded
@@ -229,8 +236,8 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
 # Single source of truth. `key` is what --only accepts (and the module name);
 # `post` is an optional hook run only if the stage succeeded.
 STAGES = [
-    {"key": "train_fraud_model",      "label": "RF model training",        "module": "train_fraud_model",      "post": notify_api_refresh},
     {"key": "graph_pattern_detector", "label": "Graph pattern detection",  "module": "graph_pattern_detector", "post": None},
+    {"key": "train_fraud_model",      "label": "RF model training",        "module": "train_fraud_model",      "post": notify_api_refresh},
     {"key": "sync_holidays",          "label": "Holiday sync",             "module": "sync_holidays",          "post": None},
     {"key": "forecast_models",        "label": "Forecast models",          "module": "forecast_models",        "post": None},
 ]

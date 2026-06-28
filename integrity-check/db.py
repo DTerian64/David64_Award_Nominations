@@ -23,6 +23,10 @@ Focused subset of queries needed by handler.py and fraud_check.py:
     get_beneficiary_descriptions()  — past descriptions written BY the beneficiary
     get_nominator_descriptions()    — past descriptions written BY the nominator
 
+  Graph flag lookups (called by fraud_check.py):
+    get_user_graph_flags()          — latest UserGraphFlags for nominator + beneficiary
+    get_approver_graph_flags()      — latest UserGraphFlags + ApproverPairFlags for approver
+
   Fraud score persistence:
     save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
     save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
@@ -404,6 +408,107 @@ def get_nominator_descriptions(
                 ORDER  BY NominationDate DESC
             """, (nominator_id,))
         return [row[0] for row in cursor.fetchall()]
+
+
+# ── Graph flag lookups ───────────────────────────────────────────────────────
+
+def get_user_graph_flags(
+    tenant_id:     int,
+    nominator_id:  int,
+    beneficiary_id: int,
+) -> dict:
+    """
+    Return the latest UserGraphFlags snapshot for the nominator and beneficiary.
+
+    Queries the two rows separately (nominator + beneficiary) and returns a
+    single dict of composite features ready for the P2P RF feature builder:
+
+      GraphCycleFlag              — 1 if either user is in a Ring finding
+      GraphClusterSize            — max CopyPaste cluster size across both users
+      SuperNominatorFlag          — 1 if nominator is a SuperNominator outlier
+      TransactionalLanguageFlag   — 1 if either user is in a TransactionalLanguage finding
+
+    Returns all-zero dict when no snapshot exists for either user (new users
+    with no graph history are treated as having no graph risk signal).
+    """
+    sql = """
+        SELECT TOP 1
+               IsInRing, IsSuperNominator,
+               IsInCopyPasteCluster, CopyPasteClusterSize,
+               HasTransactionalLanguage
+        FROM   dbo.UserGraphFlags
+        WHERE  TenantId = ? AND UserId = ?
+        ORDER  BY AsOfDate DESC
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(sql, (tenant_id, nominator_id))
+        n_row = cursor.fetchone()
+
+        cursor.execute(sql, (tenant_id, beneficiary_id))
+        b_row = cursor.fetchone()
+
+    n_ring  = bool(n_row[0]) if n_row else False
+    n_super = bool(n_row[1]) if n_row else False
+    n_copy  = int(n_row[3])  if n_row and n_row[2] else 0
+    n_trans = bool(n_row[4]) if n_row else False
+
+    b_ring  = bool(b_row[0]) if b_row else False
+    b_copy  = int(b_row[3])  if b_row and b_row[2] else 0
+    b_trans = bool(b_row[4]) if b_row else False
+
+    return {
+        "GraphCycleFlag":            int(n_ring or b_ring),
+        "GraphClusterSize":          max(n_copy, b_copy),
+        "SuperNominatorFlag":        int(n_super),
+        "TransactionalLanguageFlag": int(n_trans or b_trans),
+    }
+
+
+def get_approver_graph_flags(
+    tenant_id:     int,
+    approver_id:   int,
+    nominator_id:  int,
+    beneficiary_id: int,
+) -> dict:
+    """
+    Return the latest graph flags for the approver role:
+
+      ApproverAffinityFlag    — approver is in an ApproverAffinity finding
+      GraphApproverPairCount  — how many times this approver has approved
+                                this exact nominator→beneficiary pair
+
+    Returns all-zero dict when no snapshot exists.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+
+        # ApproverAffinityFlag from UserGraphFlags
+        cursor.execute("""
+            SELECT TOP 1 IsApproverAffinity
+            FROM   dbo.UserGraphFlags
+            WHERE  TenantId = ? AND UserId = ?
+            ORDER  BY AsOfDate DESC
+        """, (tenant_id, approver_id))
+        a_row = cursor.fetchone()
+
+        # GraphApproverPairCount from ApproverPairFlags
+        cursor.execute("""
+            SELECT TOP 1 PairApprovalCount
+            FROM   dbo.ApproverPairFlags
+            WHERE  TenantId      = ?
+              AND  ApproverId    = ?
+              AND  NominatorId   = ?
+              AND  BeneficiaryId = ?
+            ORDER  BY AsOfDate DESC
+        """, (tenant_id, approver_id, nominator_id, beneficiary_id))
+        p_row = cursor.fetchone()
+
+    return {
+        "ApproverAffinityFlag":   int(bool(a_row[0])) if a_row else 0,
+        "GraphApproverPairCount": int(p_row[0])        if p_row else 0,
+    }
 
 
 # ── Fraud score persistence ───────────────────────────────────────────────────

@@ -981,6 +981,195 @@ def detect_hidden_candidate(
     return findings
 
 
+# ── UserGraphFlags / ApproverPairFlags snapshot ───────────────────────────────
+
+def _populate_graph_flag_snapshots(
+    conn: pyodbc.Connection,
+    tenant_id: int,
+    findings: list[dict],
+    nominations: list[dict],
+    as_of_date: str,
+) -> None:
+    """
+    Materialise the current GraphPatternFindings for this tenant into the two
+    denormalised snapshot tables used by the RF at both training and inference time.
+
+    Called once per tenant after _save_findings() so the snapshots are always
+    consistent with what was just written.
+
+    UserGraphFlags — one row per (TenantId, UserId, AsOfDate).
+      Each row is built by scanning the in-memory `findings` list (already
+      filtered to this tenant and this run), so no extra DB round-trip is needed.
+      Rows are upserted with MERGE so reruns on the same AsOfDate are idempotent.
+
+    ApproverPairFlags — one row per (TenantId, ApproverId, NominatorId,
+      BeneficiaryId, AsOfDate).
+      Computed from the approved/paid `nominations` list: count how many times
+      each (approver, nominator, beneficiary) triple appears.
+    """
+    cur = conn.cursor()
+
+    # ── Build per-user flag aggregates from in-memory findings ────────────────
+    # Each finding's AffectedUsers is a JSON list of user IDs.
+    # We accumulate flags per user across all pattern types.
+
+    from collections import defaultdict
+
+    _SEVERITY_RANK = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+
+    user_flags: dict[int, dict] = defaultdict(lambda: {
+        "IsInRing":                 0,
+        "RingMaxUserCount":         0,
+        "RingMaxNominationCount":   0,
+        "IsSuperNominator":         0,
+        "IsInCopyPasteCluster":     0,
+        "CopyPasteClusterSize":     0,
+        "HasTransactionalLanguage": 0,
+        "IsApproverAffinity":       0,
+        "HighestSeverity":          None,
+        "_severity_rank":           0,
+    })
+
+    def _update_severity(flags: dict, severity: str) -> None:
+        rank = _SEVERITY_RANK.get(severity, 0)
+        if rank > flags["_severity_rank"]:
+            flags["_severity_rank"] = rank
+            flags["HighestSeverity"] = severity
+
+    for f in findings:
+        ptype    = f["PatternType"]
+        severity = f["Severity"]
+        users    = json.loads(f["AffectedUsers"])
+        nom_ids  = json.loads(f.get("NominationIds") or "[]")
+
+        for uid in users:
+            uf = user_flags[uid]
+            _update_severity(uf, severity)
+
+            if ptype == "Ring":
+                uf["IsInRing"] = 1
+                uf["RingMaxUserCount"] = max(uf["RingMaxUserCount"], len(users))
+                uf["RingMaxNominationCount"] = max(
+                    uf["RingMaxNominationCount"], len(nom_ids)
+                )
+            elif ptype == "SuperNominator":
+                uf["IsSuperNominator"] = 1
+            elif ptype == "CopyPaste":
+                uf["IsInCopyPasteCluster"] = 1
+                uf["CopyPasteClusterSize"] = max(
+                    uf["CopyPasteClusterSize"], len(nom_ids)
+                )
+            elif ptype == "TransactionalLanguage":
+                uf["HasTransactionalLanguage"] = 1
+            elif ptype == "ApproverAffinity":
+                uf["IsApproverAffinity"] = 1
+
+    if user_flags:
+        rows_ugf = [
+            (
+                tenant_id,
+                uid,
+                as_of_date,
+                uf["IsInRing"],
+                uf["RingMaxUserCount"],
+                uf["RingMaxNominationCount"],
+                uf["IsSuperNominator"],
+                uf["IsInCopyPasteCluster"],
+                uf["CopyPasteClusterSize"],
+                uf["HasTransactionalLanguage"],
+                uf["IsApproverAffinity"],
+                uf["HighestSeverity"],
+            )
+            for uid, uf in user_flags.items()
+        ]
+
+        cur.executemany("""
+            MERGE dbo.UserGraphFlags AS target
+            USING (VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?))
+                  AS source (TenantId, UserId, AsOfDate,
+                             IsInRing, RingMaxUserCount, RingMaxNominationCount,
+                             IsSuperNominator,
+                             IsInCopyPasteCluster, CopyPasteClusterSize,
+                             HasTransactionalLanguage,
+                             IsApproverAffinity, HighestSeverity)
+            ON  target.TenantId = source.TenantId
+            AND target.UserId   = source.UserId
+            AND target.AsOfDate = source.AsOfDate
+            WHEN MATCHED THEN
+                UPDATE SET
+                    IsInRing                 = source.IsInRing,
+                    RingMaxUserCount         = source.RingMaxUserCount,
+                    RingMaxNominationCount   = source.RingMaxNominationCount,
+                    IsSuperNominator         = source.IsSuperNominator,
+                    IsInCopyPasteCluster     = source.IsInCopyPasteCluster,
+                    CopyPasteClusterSize     = source.CopyPasteClusterSize,
+                    HasTransactionalLanguage = source.HasTransactionalLanguage,
+                    IsApproverAffinity       = source.IsApproverAffinity,
+                    HighestSeverity          = source.HighestSeverity,
+                    LastUpdatedUtc           = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN
+                INSERT (TenantId, UserId, AsOfDate,
+                        IsInRing, RingMaxUserCount, RingMaxNominationCount,
+                        IsSuperNominator,
+                        IsInCopyPasteCluster, CopyPasteClusterSize,
+                        HasTransactionalLanguage,
+                        IsApproverAffinity, HighestSeverity)
+                VALUES (source.TenantId, source.UserId, source.AsOfDate,
+                        source.IsInRing, source.RingMaxUserCount,
+                        source.RingMaxNominationCount,
+                        source.IsSuperNominator,
+                        source.IsInCopyPasteCluster, source.CopyPasteClusterSize,
+                        source.HasTransactionalLanguage,
+                        source.IsApproverAffinity, source.HighestSeverity);
+        """, rows_ugf)
+
+        logger.info(
+            "  UserGraphFlags: upserted %d user snapshot(s) for AsOfDate=%s",
+            len(rows_ugf), as_of_date,
+        )
+
+    # ── Build ApproverPairFlags from nomination history ───────────────────────
+    # Count (approver, nominator, beneficiary) triples from Approved/Paid noms.
+    pair_counts: dict[tuple, int] = defaultdict(int)
+    for nom in nominations:
+        if nom.get("ApproverId") is not None:
+            key = (nom["ApproverId"], nom["NominatorId"], nom["BeneficiaryId"])
+            pair_counts[key] += 1
+
+    if pair_counts:
+        rows_apf = [
+            (tenant_id, approver_id, nominator_id, beneficiary_id, as_of_date, count)
+            for (approver_id, nominator_id, beneficiary_id), count in pair_counts.items()
+        ]
+
+        cur.executemany("""
+            MERGE dbo.ApproverPairFlags AS target
+            USING (VALUES (?, ?, ?, ?, ?, ?))
+                  AS source (TenantId, ApproverId, NominatorId, BeneficiaryId,
+                             AsOfDate, PairApprovalCount)
+            ON  target.TenantId      = source.TenantId
+            AND target.ApproverId    = source.ApproverId
+            AND target.NominatorId   = source.NominatorId
+            AND target.BeneficiaryId = source.BeneficiaryId
+            AND target.AsOfDate      = source.AsOfDate
+            WHEN MATCHED THEN
+                UPDATE SET PairApprovalCount = source.PairApprovalCount,
+                           LastUpdatedUtc    = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN
+                INSERT (TenantId, ApproverId, NominatorId, BeneficiaryId,
+                        AsOfDate, PairApprovalCount)
+                VALUES (source.TenantId, source.ApproverId, source.NominatorId,
+                        source.BeneficiaryId, source.AsOfDate, source.PairApprovalCount);
+        """, rows_apf)
+
+        logger.info(
+            "  ApproverPairFlags: upserted %d pair snapshot(s) for AsOfDate=%s",
+            len(rows_apf), as_of_date,
+        )
+
+    conn.commit()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main(tenants_to_process: list | None = None) -> None:
@@ -1061,6 +1250,15 @@ def main(tenants_to_process: list | None = None) -> None:
         _save_findings(conn, tenant_findings, findings_table, existing_hashes)
         total_findings += len(tenant_findings)
         logger.info("  Tenant %d total findings: %d", tenant_id, len(tenant_findings))
+
+        # Materialise graph flag snapshots for RF training and inference.
+        # Uses the in-memory findings (all patterns this run) and the loaded
+        # nominations (for ApproverPairFlags counts).  Called after
+        # _save_findings so snapshots reflect exactly what was just persisted.
+        as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _populate_graph_flag_snapshots(
+            conn, tenant_id, tenant_findings, nominations, as_of_date
+        )
 
         # Free all tenant-scoped data before loading the next tenant.
         # nominations and users can be large (11 K+ rows); tenant data is

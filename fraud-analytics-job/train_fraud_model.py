@@ -216,10 +216,83 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         CASE
             WHEN p2p.RiskLevel IN ('HIGH', 'CRITICAL') THEN 1
             ELSE 0
-        END AS IsFraud
+        END AS IsFraud,
+
+        -- ── Graph features: nominator snapshot (point-in-time) ──────────────
+        -- OUTER APPLY picks the closest UserGraphFlags snapshot whose AsOfDate
+        -- is ≤ the nomination date.  If no prior snapshot exists, all columns
+        -- are NULL and fillna(0) in the RF pipeline treats them as no-signal.
+        ISNULL(ugf_n.IsInRing,                 0) AS NominatorIsInRing,
+        ISNULL(ugf_n.IsSuperNominator,         0) AS SuperNominatorFlag,
+        ISNULL(ugf_n.IsInCopyPasteCluster,     0) AS NominatorInCopyPaste,
+        ISNULL(ugf_n.CopyPasteClusterSize,     0) AS NominatorClusterSize,
+        ISNULL(ugf_n.HasTransactionalLanguage, 0) AS NominatorTransactional,
+
+        -- ── Graph features: beneficiary snapshot (point-in-time) ────────────
+        ISNULL(ugf_b.IsInRing,                 0) AS BeneficiaryIsInRing,
+        ISNULL(ugf_b.IsInCopyPasteCluster,     0) AS BeneficiaryInCopyPaste,
+        ISNULL(ugf_b.CopyPasteClusterSize,     0) AS BeneficiaryClusterSize,
+        ISNULL(ugf_b.HasTransactionalLanguage, 0) AS BeneficiaryTransactional,
+
+        -- ── Graph features: approver snapshot (point-in-time) ───────────────
+        ISNULL(ugf_a.IsApproverAffinity,       0) AS ApproverAffinityFlag,
+
+        -- ── ApproverPairFlags: how many times has this approver approved
+        --    this exact nominator→beneficiary pair? (point-in-time) ──────────
+        ISNULL(apf.PairApprovalCount,          0) AS GraphApproverPairCount
+
     FROM dbo.Nominations n
     JOIN dbo.Users u ON u.UserId = n.NominatorId
     LEFT JOIN dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
+
+    -- Nominator graph flags as of nomination date
+    OUTER APPLY (
+        SELECT TOP 1
+               IsInRing, IsSuperNominator,
+               IsInCopyPasteCluster, CopyPasteClusterSize,
+               HasTransactionalLanguage
+        FROM   dbo.UserGraphFlags
+        WHERE  TenantId = u.TenantId
+          AND  UserId   = n.NominatorId
+          AND  AsOfDate <= CAST(n.NominationDate AS DATE)
+        ORDER  BY AsOfDate DESC
+    ) ugf_n
+
+    -- Beneficiary graph flags as of nomination date
+    OUTER APPLY (
+        SELECT TOP 1
+               IsInRing,
+               IsInCopyPasteCluster, CopyPasteClusterSize,
+               HasTransactionalLanguage
+        FROM   dbo.UserGraphFlags
+        WHERE  TenantId = u.TenantId
+          AND  UserId   = n.BeneficiaryId
+          AND  AsOfDate <= CAST(n.NominationDate AS DATE)
+        ORDER  BY AsOfDate DESC
+    ) ugf_b
+
+    -- Approver graph flags as of nomination date
+    OUTER APPLY (
+        SELECT TOP 1 IsApproverAffinity
+        FROM   dbo.UserGraphFlags
+        WHERE  TenantId = u.TenantId
+          AND  UserId   = n.ApproverId
+          AND  AsOfDate <= CAST(n.NominationDate AS DATE)
+        ORDER  BY AsOfDate DESC
+    ) ugf_a
+
+    -- Approver-pair count as of nomination date
+    OUTER APPLY (
+        SELECT TOP 1 PairApprovalCount
+        FROM   dbo.ApproverPairFlags
+        WHERE  TenantId      = u.TenantId
+          AND  ApproverId    = n.ApproverId
+          AND  NominatorId   = n.NominatorId
+          AND  BeneficiaryId = n.BeneficiaryId
+          AND  AsOfDate      <= CAST(n.NominationDate AS DATE)
+        ORDER  BY AsOfDate DESC
+    ) apf
+
     WHERE n.Status NOT IN ('PendingHRBPReview')
       AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection')
       AND u.TenantId = ?
@@ -418,6 +491,45 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
         df['NominatorTotalNominations'] / (df['NominatorUniqueBeneficiaries'] + 1)
     )
 
+    # ── Graph pattern features ───────────────────────────────────────────────
+    # Raw columns from load_data() are nominator/beneficiary split; compose
+    # them into the single features the RF sees.
+    #
+    # GraphCycleFlag — 1 if nominator OR beneficiary is in a Ring finding.
+    df['GraphCycleFlag'] = (
+        (df.get('NominatorIsInRing', 0).fillna(0).astype(int))
+        | (df.get('BeneficiaryIsInRing', 0).fillna(0).astype(int))
+    ).astype(int)
+
+    # GraphReciprocalFlag — HasReciprocalNomination already captures this at
+    # the nomination level from the training set.  The graph flag version is
+    # the same signal but sourced from UserGraphFlags at inference time.
+    # At training time we reuse HasReciprocalNomination (already computed
+    # above) so no duplicate column is needed; the RF column is aliased below.
+    df['GraphReciprocalFlag'] = df['HasReciprocalNomination'].fillna(0).astype(int)
+
+    # GraphClusterSize — take the maximum cluster size across nominator and
+    # beneficiary (if either is in a copy-paste cluster, the cluster size
+    # reflects their worst-case exposure).
+    df['GraphClusterSize'] = df[
+        ['NominatorClusterSize', 'BeneficiaryClusterSize']
+    ].fillna(0).max(axis=1).astype(int)
+
+    # SuperNominatorFlag — directly from nominator's snapshot.
+    df['SuperNominatorFlag'] = df.get('SuperNominatorFlag', 0).fillna(0).astype(int)
+
+    # TransactionalLanguageFlag — 1 if nominator OR beneficiary appears in a
+    # TransactionalLanguage finding.
+    df['TransactionalLanguageFlag'] = (
+        (df.get('NominatorTransactional', 0).fillna(0).astype(int))
+        | (df.get('BeneficiaryTransactional', 0).fillna(0).astype(int))
+    ).astype(int)
+
+    # ApproverAffinityFlag and GraphApproverPairCount come through directly
+    # from load_data() — ensure they're int with no NULLs.
+    df['ApproverAffinityFlag']   = df.get('ApproverAffinityFlag', 0).fillna(0).astype(int)
+    df['GraphApproverPairCount'] = df.get('GraphApproverPairCount', 0).fillna(0).astype(int)
+
     # ── Nomination category — target encoding ────────────────────────────────
     # Replace CategoryId with a single float: the mean fraud rate for that
     # category in the training set.  This is stable across category changes:
@@ -573,10 +685,16 @@ P2P_FEATURE_COLUMNS = [
     'CategoryFraudRate',
     'DescriptionCosineSim',
     'DescriptionEmbDistance',
+    # Graph pattern features (point-in-time joined from dbo.UserGraphFlags)
+    'GraphCycleFlag',               # nominator or beneficiary in a Ring finding
+    'GraphReciprocalFlag',          # beneficiary has nominated nominator back
+    'GraphClusterSize',             # CopyPaste cluster size (0 if not in cluster)
+    'SuperNominatorFlag',           # nominator is a SuperNominator outlier
+    'TransactionalLanguageFlag',    # nominator/beneficiary in TransactionalLanguage finding
 ]
 
 # ── Approver feature columns ──────────────────────────────────────────────────
-# Post-decision measurements — only available after a nomination is Paid. 
+# Post-decision measurements — only available after a nomination is Paid.
 # Used by the batch job to detect approver-side fraud patterns.
 APPR_FEATURE_COLUMNS = [
     'ApproverTotalApproved',
@@ -584,6 +702,10 @@ APPR_FEATURE_COLUMNS = [
     'HoursToApproval',
     'HoursToPayment',
     'IsRapidApproval',
+    # Graph pattern features (point-in-time joined from dbo.UserGraphFlags
+    # and dbo.ApproverPairFlags)
+    'ApproverAffinityFlag',         # approver is in an ApproverAffinity finding
+    'GraphApproverPairCount',       # times this approver approved this nominator→beneficiary pair
 ]
 
 

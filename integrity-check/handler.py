@@ -208,6 +208,17 @@ def handle(message_id: str, payload: dict) -> None:
         db.reject_nomination(
             nomination_id, reason=explanation, actor="Fraud Detection"
         )
+        # Persist SHAP data even though no HRBP will review this nomination —
+        # analytics and audit trails read from HRBP_FraudFlags for all risk levels.
+        db.save_hrbp_fraud_flags(
+            nomination_id=nomination_id,
+            fraud_score=result["fraud_score"],
+            fraud_probability=result["fraud_prob"],
+            risk_level=risk_level,
+            warning_flags=", ".join(all_flags),
+            shap_explanations_json=shap_json,
+            feature_summary_json=feature_summary,
+        )
         service_bus_publisher.publish_event(
             "nomination.fraud-flagged", nomination_id,
             extra={"risk_level": risk_level, "auto_rejected": True},
