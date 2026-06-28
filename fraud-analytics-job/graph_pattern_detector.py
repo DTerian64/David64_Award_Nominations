@@ -983,6 +983,47 @@ def detect_hidden_candidate(
 
 # ── UserGraphFlags / ApproverPairFlags snapshot ───────────────────────────────
 
+def _has_user_graph_flags(conn: pyodbc.Connection, tenant_id: int) -> bool:
+    """Return True if at least one UserGraphFlags snapshot already exists for this tenant."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT TOP 1 1 FROM dbo.UserGraphFlags WHERE TenantId = ?", tenant_id
+    )
+    return cur.fetchone() is not None
+
+
+def _load_all_findings_for_snapshot(
+    conn: pyodbc.Connection,
+    tenant_id: int,
+    table: str,
+) -> list[dict]:
+    """
+    Load all findings from GraphPatternFindings for this tenant.
+
+    Used ONCE as a bootstrap when UserGraphFlags has no rows for the tenant —
+    i.e. the first time graph_pattern_detector runs after migration 0028.
+    Subsequent runs use the in-memory detected_findings list (pre-dedup,
+    window-bounded) so the snapshot never needs a full table scan.
+    """
+    cur = conn.cursor()
+    cur.execute(f"""
+        SELECT PatternType, Severity, AffectedUsers, NominationIds
+        FROM   {table}
+        WHERE  TenantId      = ?
+          AND  AffectedUsers IS NOT NULL
+          AND  AffectedUsers <> '[]'
+    """, tenant_id)
+    return [
+        {
+            "PatternType":   row[0],
+            "Severity":      row[1],
+            "AffectedUsers": row[2],
+            "NominationIds": row[3] or "[]",
+        }
+        for row in cur.fetchall()
+    ]
+
+
 def _populate_graph_flag_snapshots(
     conn: pyodbc.Connection,
     tenant_id: int,
@@ -991,16 +1032,18 @@ def _populate_graph_flag_snapshots(
     as_of_date: str,
 ) -> None:
     """
-    Materialise the current GraphPatternFindings for this tenant into the two
-    denormalised snapshot tables used by the RF at both training and inference time.
+    Materialise graph flag snapshots into dbo.UserGraphFlags and
+    dbo.ApproverPairFlags for the RF to read at training and inference time.
 
-    Called once per tenant after _save_findings() so the snapshots are always
-    consistent with what was just written.
+    `findings` is the caller's choice of source:
+      • Bootstrap (first run after migration): all findings from GraphPatternFindings
+        loaded by _load_all_findings_for_snapshot() — covers full history.
+      • Normal weekly run: detected_findings (pre-dedup, window-bounded) — cost
+        stays proportional to the detection window, never grows with the table.
 
     UserGraphFlags — one row per (TenantId, UserId, AsOfDate).
-      Each row is built by scanning the in-memory `findings` list (already
-      filtered to this tenant and this run), so no extra DB round-trip is needed.
-      Rows are upserted with MERGE so reruns on the same AsOfDate are idempotent.
+      Built by scanning `findings` in memory. MERGE is idempotent if rerun on
+      the same AsOfDate.
 
     ApproverPairFlags — one row per (TenantId, ApproverId, NominatorId,
       BeneficiaryId, AsOfDate).
@@ -1236,34 +1279,58 @@ def main(tenants_to_process: list | None = None) -> None:
         existing_hashes = _load_existing_hashes(conn, tenant_id, findings_table)
         logger.info("  Existing hashes in table: %d", len(existing_hashes))
 
-        tenant_findings: list[dict] = []
+        # detected_findings — ALL patterns found this run (pre-dedup).
+        # This is what gets passed to _save_findings (which deduplicates
+        # internally) AND to _populate_graph_flag_snapshots on normal runs.
+        # Keeping it pre-dedup means the snapshot always reflects every pattern
+        # currently detectable in the window, not just ones new to the DB.
+        detected_findings: list[dict] = []
 
-        tenant_findings.extend(detect_rings(nominations, users, tenant_id, run_id, ring_max_cluster))
-        tenant_findings.extend(detect_super_nominators(nominations, tenant_id, run_id))
-        tenant_findings.extend(detect_deserts(ever_active_ids, users, tenant_id, run_id))
-        tenant_findings.extend(detect_approver_affinity(nominations, tenant_id, run_id))
-        tenant_findings.extend(detect_copy_paste(nominations, tenant_id, run_id, conn))
-        tenant_findings.extend(detect_transactional(nominations, tenant_id, run_id))
-        tenant_findings.extend(detect_hidden_candidate(nominations, users, tenant_id, run_id))
+        detected_findings.extend(detect_rings(nominations, users, tenant_id, run_id, ring_max_cluster))
+        detected_findings.extend(detect_super_nominators(nominations, tenant_id, run_id))
+        detected_findings.extend(detect_deserts(ever_active_ids, users, tenant_id, run_id))
+        detected_findings.extend(detect_approver_affinity(nominations, tenant_id, run_id))
+        detected_findings.extend(detect_copy_paste(nominations, tenant_id, run_id, conn))
+        detected_findings.extend(detect_transactional(nominations, tenant_id, run_id))
+        detected_findings.extend(detect_hidden_candidate(nominations, users, tenant_id, run_id))
 
         # Persist — dedup against existing_hashes before inserting
-        _save_findings(conn, tenant_findings, findings_table, existing_hashes)
-        total_findings += len(tenant_findings)
-        logger.info("  Tenant %d total findings: %d", tenant_id, len(tenant_findings))
+        _save_findings(conn, detected_findings, findings_table, existing_hashes)
+        total_findings += len(detected_findings)
+        logger.info("  Tenant %d total findings: %d", tenant_id, len(detected_findings))
 
-        # Materialise graph flag snapshots for RF training and inference.
-        # Uses the in-memory findings (all patterns this run) and the loaded
-        # nominations (for ApproverPairFlags counts).  Called after
-        # _save_findings so snapshots reflect exactly what was just persisted.
+        # ── Snapshot source selection ─────────────────────────────────────────
+        # Bootstrap (first run after migration 0028): UserGraphFlags is empty
+        #   for this tenant → load all historical findings from GraphPatternFindings
+        #   to capture patterns detected in previous runs / wider windows.
+        # Normal run: use detected_findings (pre-dedup, window-bounded) — cost
+        #   stays proportional to the detection window, never grows with the table.
         as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        if not _has_user_graph_flags(conn, tenant_id):
+            snapshot_source = _load_all_findings_for_snapshot(
+                conn, tenant_id, findings_table
+            )
+            logger.info(
+                "  Bootstrap: no prior UserGraphFlags for tenant %d — "
+                "loading %d finding(s) from %s",
+                tenant_id, len(snapshot_source), findings_table,
+            )
+        else:
+            snapshot_source = detected_findings
+            logger.info(
+                "  Snapshot source: %d detected finding(s) (pre-dedup, window-bounded)",
+                len(detected_findings),
+            )
+
         _populate_graph_flag_snapshots(
-            conn, tenant_id, tenant_findings, nominations, as_of_date
+            conn, tenant_id, snapshot_source, nominations, as_of_date
         )
 
         # Free all tenant-scoped data before loading the next tenant.
         # nominations and users can be large (11 K+ rows); tenant data is
         # never shared across tenants so there is no reason to keep it.
-        del nominations, users, tenant_findings
+        del nominations, users, detected_findings, snapshot_source
         gc.collect()
         logger.info("  Tenant %d memory freed.", tenant_id)
 
