@@ -437,9 +437,16 @@ def _compute_shap(
     feature_cols = model_data["p2p_feature_columns"]
 
     shap_vals = explainer.shap_values(X_scaled)
-    # sklearn RF binary classification: list of two arrays [class0, class1]
-    # each shaped (n_samples, n_features).  We want class 1 (fraud), sample 0.
-    fraud_shap = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
+    # SHAP output shape varies by version:
+    #   < 0.46  — list [class0_arr, class1_arr], each (n_samples, n_features)
+    #   >= 0.46 — ndarray (n_samples, n_features, n_classes)
+    # We want class-1 (fraud) contributions for sample 0 in all cases.
+    if isinstance(shap_vals, list):
+        fraud_shap = shap_vals[1][0]
+    elif isinstance(shap_vals, np.ndarray) and shap_vals.ndim == 3:
+        fraud_shap = shap_vals[0, :, 1]
+    else:
+        fraud_shap = shap_vals[0]
 
     contributions = [
         {
@@ -578,6 +585,7 @@ def assess(details: dict, tenant_id: int) -> dict:
             logger.warning(
                 "SHAP computation failed for nomination %s: %s",
                 details.get("nomination_id"), exc,
+                exc_info=True,
             )
 
     # ── LLM explanation (CRITICAL auto-rejects only) ──────────────────────────
