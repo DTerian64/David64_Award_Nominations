@@ -121,16 +121,16 @@ const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFeaturesJs
                   style={{ width: `${pct}%` }}
                 />
               </div>
-              {/* Contribution */}
-              <span className={`text-xs font-mono w-14 text-right flex-shrink-0 ${isRisk ? 'text-orange-600' : 'text-emerald-600'}`}>
-                {sign}{c.contribution.toFixed(3)}
+              {/* Contribution in percentage points */}
+              <span className={`text-xs font-mono w-16 text-right flex-shrink-0 ${isRisk ? 'text-orange-600' : 'text-emerald-600'}`}>
+                {sign}{(c.contribution * 100).toFixed(1)} pp
               </span>
             </div>
           );
         })}
       </div>
       <p className="text-xs text-slate-400 mt-3">
-        Orange bars push toward fraud · Green bars push away · Width = relative strength
+        pp = percentage points of fraud probability · Orange pushes up · Green pushes down · Width = relative strength
       </p>
     </div>
   );
