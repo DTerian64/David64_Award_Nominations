@@ -112,9 +112,10 @@ def refresh_access_token(refresh_token: str) -> dict:
 
 def _auth_headers(access_token: str) -> dict:
     return {
-        "Authorization": f"Bearer {access_token}",
-        "Accept":        "application/json",
-        "Content-Type":  "application/json",
+        "Authorization":       f"Bearer {access_token}",
+        "Accept":              "application/json",
+        "Content-Type":        "application/json",
+        "X-Gusto-API-Version": "2026-06-15",
     }
 
 
