@@ -101,6 +101,31 @@ resource "azurerm_servicebus_subscription_rule" "email_processor_filter" {
   sql_filter      = "event_type != 'nomination.submitted'"
 }
 
+# ── Subscription — payroll-processor ─────────────────────────────────────────
+# Consumed exclusively by the Payroll Broker ACA.
+# SQL filter passes only nomination.approved — the event that triggers a payout.
+# The Payroll Broker picks this up, calls the tenant's payroll provider (e.g.
+# Gusto), then publishes payroll.accepted or payroll.failed back to the topic.
+# Those result events flow naturally to email-processor (already unfiltered for
+# everything except nomination.submitted) so Auxiliary Services handles the
+# "payment processed" notification without any subscription topology changes.
+resource "azurerm_servicebus_subscription" "payroll_processor" {
+  name     = "payroll-processor"
+  topic_id = azurerm_servicebus_topic.award_events.id
+
+  max_delivery_count                   = var.max_delivery_count
+  lock_duration                        = "PT5M"
+  dead_lettering_on_message_expiration = true
+  default_message_ttl                  = "P7D"
+}
+
+resource "azurerm_servicebus_subscription_rule" "payroll_processor_filter" {
+  name            = "approved-only"
+  subscription_id = azurerm_servicebus_subscription.payroll_processor.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "event_type = 'nomination.approved'"
+}
+
 # ── Subscription — fraud-processor ────────────────────────────────────────────
 # Consumed exclusively by award-integrity-check-sandbox.
 # SQL filter ensures ONLY nomination.submitted events are delivered here.

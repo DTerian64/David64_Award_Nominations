@@ -35,6 +35,11 @@ output "fraud_processor_subscription_name" {
   value       = azurerm_servicebus_subscription.fraud_processor.name
 }
 
+output "payroll_processor_subscription_name" {
+  description = "Name of the payroll-processor subscription — used by award-payroll-broker KEDA scaler"
+  value       = azurerm_servicebus_subscription.payroll_processor.name
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # POST-DEPLOY NOTES
 # ─────────────────────────────────────────────────────────────────────────────

@@ -140,6 +140,18 @@ resource "azurerm_user_assigned_identity" "fraud_analytics_job" {
   depends_on          = [azurerm_resource_group.rg]
 }
 
+# Payroll Broker identity — pre-created so KV access policy and Service Bus
+# Sender + Receiver RBAC assignments can be granted before the Container App
+# is created. The broker needs BOTH roles: it consumes the payroll-processor
+# subscription (Receiver) and publishes payroll.accepted/failed (Sender).
+resource "azurerm_user_assigned_identity" "payroll_broker" {
+  name                = "id-award-payroll-broker-${var.environment}"
+  resource_group_name = var.resource_group_name
+  location            = var.location_primary
+  tags                = local.tags
+  depends_on          = [azurerm_resource_group.rg]
+}
+
 # Integrity Check identity — pre-created so KV access policy and Service Bus /
 # Blob RBAC assignments can be granted before the Container App is created.
 # This container runs fraud_check.py: streams pkl from Blob, writes to SQL,
@@ -180,6 +192,15 @@ module "key_vault" {
     # Shared secret — Award API validates this on inbound webhook calls from
     # Workday_Proxy (sandbox) or real Workday (prod). X-Api-Key header.
     # Same value must be in Workday_proxy/terraform/.../terraform.tfvars → workday_webhook_secret.
+    # Gusto OAuth credentials — used by the Payroll Broker to call the Gusto API.
+    # client_id is not sensitive per se but stored in KV for consistency and to
+    # avoid embedding provider-specific config in environment variables.
+    GUSTO-CLIENT-ID                       = var.gusto_client_id
+    GUSTO-CLIENT-SECRET                   = var.gusto_client_secret
+    # Shared webhook secret — Payroll Broker validates the X-Gusto-Signature
+    # header on every inbound Gusto callback to reject spoofed payroll events.
+    # Must match the webhook secret configured in the Gusto developer portal.
+    GUSTO-WEBHOOK-SECRET                  = var.gusto_webhook_secret
     WORKDAY-WEBHOOK-SECRET                = var.workday_webhook_secret
     # Shared secret — Award API validates this on the internal POST
     # /api/internal/refresh-fraud-model callback from the fraud-analytics-job.
@@ -430,6 +451,17 @@ resource "azurerm_role_assignment" "integrity_check_openai_user" {
   depends_on           = [azurerm_user_assigned_identity.integrity_check, module.openai]
 }
 
+# KV access policy — Payroll Broker
+resource "azurerm_key_vault_access_policy" "payroll_broker" {
+  key_vault_id = module.key_vault.key_vault_id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_user_assigned_identity.payroll_broker.principal_id
+
+  secret_permissions = ["Get", "List"]
+
+  depends_on = [module.key_vault, azurerm_user_assigned_identity.payroll_broker]
+}
+
 # ── 9. Service Bus ────────────────────────────────────────────────────────────
 module "service_bus" {
   source = "../../modules/service-bus"
@@ -443,8 +475,11 @@ module "service_bus" {
 
   # Static string keys let Terraform plan for_each even when principal IDs are unknown.
   sender_principal_ids = {
-    "aca-primary"   = azurerm_user_assigned_identity.aca_primary.principal_id
-    "aca-secondary" = azurerm_user_assigned_identity.aca_secondary.principal_id
+    "aca-primary"    = azurerm_user_assigned_identity.aca_primary.principal_id
+    "aca-secondary"  = azurerm_user_assigned_identity.aca_secondary.principal_id
+    # Payroll Broker publishes payroll.accepted / payroll.failed back to the topic
+    # after the Gusto webhook callback confirms the payout result.
+    "payroll-broker" = azurerm_user_assigned_identity.payroll_broker.principal_id
   }
 
   receiver_principal_ids = {
@@ -452,6 +487,8 @@ module "service_bus" {
     "auxiliary-function" = azurerm_user_assigned_identity.auxiliary_function.principal_id
     # integrity-check consumes nomination.submitted for async fraud detection.
     "integrity-check"    = azurerm_user_assigned_identity.integrity_check.principal_id
+    # Payroll Broker consumes nomination.approved from the payroll-processor subscription.
+    "payroll-broker"     = azurerm_user_assigned_identity.payroll_broker.principal_id
   }
 
   depends_on = [azurerm_resource_group.rg]
@@ -605,6 +642,71 @@ module "integrity_check" {
   tags = local.tags
 }
 
+# ── 10c. Payroll Broker Container App ────────────────────────────────────────
+# HTTP-capable ACA that bridges the award nomination workflow with external
+# payroll providers (Gusto in sandbox; extensible per tenant to other providers).
+#
+# Dual role:
+#   - Service Bus consumer (KEDA): picks up nomination.approved → calls Gusto API
+#   - HTTP server: receives Gusto webhook callbacks at /gusto/webhook and
+#     OAuth redirect at /gusto/callback, both routed via AFD from
+#     payroll-broker.terianix.ai
+#
+# min_replicas = 1 — enforced by the module variable validation. The HTTP
+# endpoint must remain live to receive Gusto callbacks between payroll events.
+module "payroll_broker" {
+  source = "../../modules/payroll-broker"
+
+  resource_group_name          = var.resource_group_name
+  location                     = var.location_primary
+  app_name                     = var.payroll_broker_container_app_name
+  environment                  = var.environment
+  container_app_environment_id = module.container_apps.cae_primary_id
+
+  identity_id        = azurerm_user_assigned_identity.payroll_broker.id
+  identity_client_id = azurerm_user_assigned_identity.payroll_broker.client_id
+
+  acr_login_server   = module.container_registry.login_server
+  acr_admin_username = module.container_registry.admin_username
+  acr_admin_password = module.container_registry.admin_password
+
+  service_bus_fqns              = module.service_bus.namespace_fqns
+  service_bus_topic_name        = module.service_bus.topic_name
+  service_bus_subscription_name = module.service_bus.payroll_processor_subscription_name
+
+  key_vault_uri = module.key_vault.vault_uri
+
+  min_replicas       = 1   # always-on — webhook endpoint must be live
+  max_replicas       = 2
+  keda_message_count = 5
+
+  environment_variables = [
+    { name = "GUSTO_API_BASE_URL",   value = "https://api.gusto-demo.com" },  # sandbox Gusto endpoint
+    { name = "GUSTO_OAUTH_BASE_URL", value = "https://api.gusto-demo.com" },
+    # Public URL of this broker — embedded in the OAuth redirect_uri sent to Gusto.
+    { name = "PAYROLL_BROKER_BASE_URL", value = "https://${var.payroll_broker_custom_domain}" },
+  ]
+
+  kv_secret_references = [
+    { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
+    { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
+    { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
+    { env_name = "GUSTO_CLIENT_ID",     kv_secret_name = "GUSTO-CLIENT-ID" },
+    { env_name = "GUSTO_CLIENT_SECRET", kv_secret_name = "GUSTO-CLIENT-SECRET" },
+    { env_name = "GUSTO_WEBHOOK_SECRET", kv_secret_name = "GUSTO-WEBHOOK-SECRET" },
+    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
+  ]
+
+  depends_on = [
+    azurerm_key_vault_access_policy.payroll_broker,
+    module.service_bus,
+    module.container_apps,
+  ]
+
+  tags = local.tags
+}
+
 # ── 11. Fraud Analytics Job ───────────────────────────────────────────────────
 # Scheduled Container Apps Job: weekly RF retrain + graph pattern detection.
 # Runs in the primary CAE alongside the auxiliary worker (same environment,
@@ -683,8 +785,13 @@ module "front_door" {
   # Old terianix.ai hostnames → AFD registers them as custom domains
   # and issues 301 redirects to their mapped terianix.ai counterparts.
   legacy_redirect_map = var.legacy_redirect_domains
-  tags                = local.tags
-  depends_on          = [azurerm_resource_group.rg, module.container_apps]
+  # Payroll Broker — second AFD route for payroll-broker.terianix.ai.
+  # DNS: CNAME payroll-broker.terianix.ai → module.front_door.afd_endpoint_hostname
+  # (created below in the DNS block).
+  payroll_broker_fqdn          = module.payroll_broker.fqdn
+  payroll_broker_custom_domain = var.payroll_broker_custom_domain
+  tags                         = local.tags
+  depends_on                   = [azurerm_resource_group.rg, module.container_apps, module.payroll_broker]
 }
 
 # ── DNS — terianix.ai zone ───────────────────────────────────────────
@@ -708,6 +815,21 @@ resource "azurerm_dns_cname_record" "swa_custom_domains" {
   record              = module.static_web_app.default_hostname
   tags                = local.tags
   depends_on          = [module.static_web_app]
+}
+
+# CNAME — payroll-broker.terianix.ai → AFD endpoint
+# AFD validates domain ownership via this CNAME before issuing the managed TLS cert.
+# Must exist before `terraform apply` creates the AFD custom domain resource.
+# TTL 300 s during rollout; raise to 3600 once the domain is stable.
+resource "azurerm_dns_cname_record" "payroll_broker" {
+  count               = var.payroll_broker_custom_domain != "" ? 1 : 0
+  name                = split(".", var.payroll_broker_custom_domain)[0]   # "payroll-broker"
+  zone_name           = data.azurerm_dns_zone.terianix[0].name
+  resource_group_name = var.dns_zone_terianix_resource_group
+  ttl                 = 300
+  record              = module.front_door.afd_endpoint_hostname
+  tags                = local.tags
+  depends_on          = [module.front_door]
 }
 
 # ── DNS — legacy redirect CNAMEs (terianix.ai → AFD) ─────────────────

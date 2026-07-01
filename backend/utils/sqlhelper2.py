@@ -79,6 +79,9 @@ class TenantORM(Base):
     Site_URL             = Column(String(256),  nullable=True)             # frontend portal URL for email hyperlinks
     certificate_config   = Column(Unicode(None), nullable=True)            # NVARCHAR(MAX) JSON, NULL = feature off
 
+    # Payroll provider configured for this tenant (NULL = no payroll integration)
+    payroll_provider_id  = Column(Integer, ForeignKey("payroll_providers.id"), nullable=True)
+
     # Reverse relationship — rarely needed directly, but handy for admin queries
     users = relationship("UserORM", back_populates="tenant")
 
@@ -2737,3 +2740,84 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
             "nominator_id":      row[15],
             "beneficiary_id":    row[16],
         }
+
+
+# ===========================================================================
+# Payroll ORM Models
+# Defined here so Alembic autogenerate can detect them alongside all other
+# tables.  The payroll-broker uses its own sqlhelper.py for runtime queries;
+# these models exist solely for migration generation.
+# ===========================================================================
+
+class PayrollProviderORM(Base):
+    """
+    dbo.payroll_providers — one row per configured payroll provider instance.
+
+    Two rows may share the same `name` (e.g. both "gusto") but differ in
+    `company_id_at_provider`.  The `name` column is the type discriminator:
+    the payroll broker switches on it to select the right API client.
+
+    company_id_at_provider — the identifier by which the provider knows this
+    company:
+        Gusto   → company UUID returned by GET /v1/me
+        Workday → tenant name (e.g. "acme_corp")
+        ADP     → company code
+
+    provider_config — JSON blob for provider-specific settings that cannot
+    live in api_base_url (e.g. Workday per-tenant host URL).
+    """
+    __tablename__ = "payroll_providers"
+
+    id                      = Column(Integer, primary_key=True, autoincrement=True)
+    name                    = Column(String(50),    nullable=False)        # "gusto", "workday", "adp"
+    display_name            = Column(String(100),   nullable=False)        # "Gusto – ACME Corp"
+    company_id_at_provider  = Column(String(100),   nullable=True)         # provider's company reference
+    provider_config         = Column(Unicode(None), nullable=True)         # NVARCHAR(MAX) JSON
+    api_base_url            = Column(String(255),   nullable=True)         # NULL = use hardcoded default
+    oauth_base_url          = Column(String(255),   nullable=True)
+
+
+class PayrollTokenORM(Base):
+    """
+    dbo.payroll_tokens — OAuth credentials for one provider instance.
+
+    Keyed by provider_id (UNIQUE) — one token row per provider row.
+    No tenant_id needed here: the tenant→provider link lives in
+    Tenants.payroll_provider_id.
+
+    Rotates on every token refresh (~2 hours for Gusto).
+    """
+    __tablename__ = "payroll_tokens"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    provider_id      = Column(Integer, ForeignKey("payroll_providers.id"), nullable=False)
+    access_token     = Column(Text,     nullable=False)
+    refresh_token    = Column(Text,     nullable=False)
+    token_expires_at = Column(DateTime, nullable=True)
+    created_at       = Column(DateTime, nullable=False, server_default=text("GETUTCDATE()"))
+    updated_at       = Column(DateTime, nullable=False, server_default=text("GETUTCDATE()"))
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", name="uq_payroll_tokens_provider"),
+    )
+
+
+class PayrollSubmissionORM(Base):
+    """
+    dbo.payroll_submissions — one row per payroll submission attempt.
+
+    Bridges the provider's external payroll reference (e.g. Gusto payroll
+    UUID) back to an internal nomination_id so the webhook handler can
+    resolve the nomination when the provider fires its callback.
+
+    status values: 'submitted' | 'completed' | 'failed'
+    """
+    __tablename__ = "payroll_submissions"
+
+    id                   = Column(Integer,  primary_key=True, autoincrement=True)
+    nomination_id        = Column(Integer,  ForeignKey("Nominations.NominationId"), nullable=False)
+    provider_id          = Column(Integer,  ForeignKey("payroll_providers.id"), nullable=False)
+    provider_payroll_ref = Column(String(100), nullable=True)   # Gusto payroll UUID / Workday ref
+    status               = Column(String(50),  nullable=False,  server_default="submitted")
+    submitted_at         = Column(DateTime, nullable=False, server_default=text("GETUTCDATE()"))
+    completed_at         = Column(DateTime, nullable=True)

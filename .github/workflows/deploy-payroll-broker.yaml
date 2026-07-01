@@ -1,0 +1,135 @@
+name: Deploy Payroll Broker to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main     # → production    (rg_award_nomination)
+      - sandbox  # → sandbox       (rg_award_nomination_sandbox)
+      - dev      # → development   (rg_award_nomination_dev)
+    paths:
+      - 'payroll-broker/**'
+  workflow_dispatch:
+
+# Single image name across all environments — the tag (latest/sandbox/dev)
+# and the target container app differ per GitHub Environment.
+env:
+  IMAGE_NAME: award-payroll-broker
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    # Selects the GitHub Environment, which determines which vars.* / secrets.*
+    # are injected. Same environments used by the backend and auxiliary workflows.
+    # main → production  |  sandbox → sandbox  |  dev → development
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'sandbox' && 'sandbox' || 'development' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Login to Azure Container Registry
+      run: |
+        az acr login --name ${{ vars.ACR_NAME }}
+
+    # ------------------------------------------------------------------
+    # Build & push
+    # Matches the project-wide tagging convention:
+    #   Prod tags:    latest   and  latest-<sha>
+    #   Sandbox tags: sandbox  and  sandbox-<sha>
+    #   Dev tags:     dev      and  dev-<sha>
+    # ------------------------------------------------------------------
+    - name: Build Docker image
+      run: |
+        cd payroll-broker
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker build -t ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} .
+        docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    - name: Push to Azure Container Registry
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    # ------------------------------------------------------------------
+    # Secrets — ACR password so the container app can pull the new image.
+    #
+    # All other secrets (SQL credentials, GUSTO_CLIENT_ID, GUSTO_CLIENT_SECRET,
+    # GUSTO_WEBHOOK_SECRET, APPLICATIONINSIGHTS_CONNECTION_STRING) are already
+    # wired by Terraform as Key Vault secret references and need no action here.
+    # ------------------------------------------------------------------
+    - name: Set Container App secrets
+      run: |
+        ACR_PASSWORD=$(az acr credential show \
+          --name ${{ vars.ACR_NAME }} \
+          --query "passwords[0].value" -o tsv)
+
+        az containerapp secret set \
+          --name ${{ vars.CONTAINER_APP_PAYROLL_BROKER }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --secrets \
+            "${{ vars.ACR_SECRET_NAME }}=${ACR_PASSWORD}"
+
+    # ------------------------------------------------------------------
+    # Environment variables — non-secret config set at deploy time.
+    #
+    # GUSTO_API_BASE_URL, GUSTO_OAUTH_BASE_URL, PAYROLL_BROKER_BASE_URL,
+    # SERVICE_BUS_FQNS, SERVICE_BUS_TOPIC_NAME, SERVICE_BUS_SUBSCRIPTION_NAME,
+    # MI_CLIENT_ID, LOGGING_LEVEL, and ENVIRONMENT are all set by Terraform.
+    # Only ENVIRONMENT is overridden here to keep it in sync with the branch.
+    # ------------------------------------------------------------------
+    - name: Set environment variables on Container App
+      run: |
+        az containerapp update \
+          --name ${{ vars.CONTAINER_APP_PAYROLL_BROKER }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --set-env-vars \
+            "ENVIRONMENT=${{ vars.ENVIRONMENT }}"
+
+    # ------------------------------------------------------------------
+    # Deploy — update the container app to the new SHA-tagged image.
+    # Terraform's lifecycle.ignore_changes on the image means subsequent
+    # terraform apply calls will never revert this back to the placeholder.
+    #
+    # The container app runs min_replicas=1 at all times so the AFD
+    # health probe never goes cold and Gusto webhook callbacks always land.
+    # The payroll worker background task starts automatically on container
+    # startup inside the same process (FastAPI lifespan).
+    # ------------------------------------------------------------------
+    - name: Deploy to Container App
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        az containerapp update \
+          --name ${{ vars.CONTAINER_APP_PAYROLL_BROKER }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --image ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    - name: Deployment summary
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        BROKER_URL="https://payroll-broker.terianix.ai"
+
+        echo "### Payroll Broker Deployed! :rocket:"                                                                     >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                                           >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ vars.ENVIRONMENT }}"                                                                  >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}"                                                                        >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"                                 >> $GITHUB_STEP_SUMMARY
+        echo "**Container App:** ${{ vars.CONTAINER_APP_PAYROLL_BROKER }}"                                               >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}"                                                                             >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                                           >> $GITHUB_STEP_SUMMARY
+        echo "**Endpoints (via AFD):**"                                                                                  >> $GITHUB_STEP_SUMMARY
+        echo "- Health:   \`GET  ${BROKER_URL}/health\`"                                                                 >> $GITHUB_STEP_SUMMARY
+        echo "- OAuth:    \`GET  ${BROKER_URL}/gusto/authorize?tenant_id=<id>\`"                                         >> $GITHUB_STEP_SUMMARY
+        echo "- Callback: \`GET  ${BROKER_URL}/gusto/callback\` (Gusto redirect URI)"                                    >> $GITHUB_STEP_SUMMARY
+        echo "- Webhook:  \`POST ${BROKER_URL}/gusto/webhook\` (Gusto webhook target)"                                   >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                                           >> $GITHUB_STEP_SUMMARY
+        echo "HTTP endpoint stays live (min_replicas=1). Service Bus worker starts automatically on container startup."  >> $GITHUB_STEP_SUMMARY

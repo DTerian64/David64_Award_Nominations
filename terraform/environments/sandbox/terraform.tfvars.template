@@ -73,6 +73,18 @@ auxiliary_container_app_name = "award-auxiliary-sandbox"
 payout_orchestrator_name                 = "award-payout-orchestrator-sandbox"
 payout_orchestrator_storage_account_name = "stpayorchestrsbx"  # 3-24 chars, lowercase alphanumeric
 
+# ── Payroll Broker ────────────────────────────────────────────────────────────
+payroll_broker_container_app_name = "award-payroll-broker-sandbox"
+payroll_broker_custom_domain      = "payroll-broker.terianix.ai"
+# Gusto OAuth credentials — obtain from dev.gusto.com after registering the app.
+# The redirect URI registered in Gusto must be:
+#   https://payroll-broker.terianix.ai/gusto/callback
+gusto_client_id     = "YOUR_GUSTO_CLIENT_ID"
+gusto_client_secret = "YOUR_GUSTO_CLIENT_SECRET"
+# Webhook secret — set this value in the Gusto developer portal webhook config AND here.
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+gusto_webhook_secret = "REPLACE_WITH_GENERATED_SECRET"
+
 # ── Workday Proxy ─────────────────────────────────────────────────────────────
 workday_proxy_name             = "workday-proxy-sandbox"
 workday_webhook_secret         = "REPLACE_WITH_GENERATED_SECRET"  # python -c "import secrets; print(secrets.token_urlsafe(32))"

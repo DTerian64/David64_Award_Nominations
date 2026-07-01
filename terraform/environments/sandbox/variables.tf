@@ -216,6 +216,39 @@ variable "fraud_analytics_detection_window_days" {
   default     = 180
 }
 
+# ── Payroll Broker ────────────────────────────────────────────────────────────
+variable "payroll_broker_container_app_name" {
+  description = "Payroll Broker Container App name. Convention: award-payroll-broker-{env}"
+  type        = string
+  default     = "award-payroll-broker-sandbox"
+}
+
+variable "payroll_broker_custom_domain" {
+  description = "Custom domain for the Payroll Broker routed via AFD. A CNAME record is created in the terianix.ai DNS zone pointing to the AFD endpoint. Must match the domain registered in Gusto's developer portal as the redirect/webhook base URL."
+  type        = string
+  default     = "payroll-broker.terianix.ai"
+}
+
+# Gusto OAuth credentials — stored in Key Vault; never appear in tfvars in plaintext.
+# Set via environment variable or a secrets.auto.tfvars (gitignored).
+variable "gusto_client_id" {
+  description = "Gusto OAuth application client ID — obtained from dev.gusto.com after registering the app. Not sensitive in Gusto's model but stored in KV for consistency."
+  type        = string
+  sensitive   = true
+}
+
+variable "gusto_client_secret" {
+  description = "Gusto OAuth application client secret — obtained from dev.gusto.com. Stored in Key Vault as GUSTO-CLIENT-SECRET."
+  type        = string
+  sensitive   = true
+}
+
+variable "gusto_webhook_secret" {
+  description = "Shared secret used to validate X-Gusto-Signature on inbound Gusto webhook callbacks. Set this in the Gusto developer portal webhook config AND here. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}
+
 # ── Workday Proxy ─────────────────────────────────────────────────────────────
 variable "workday_webhook_secret" {
   description = "Shared secret sent as X-Api-Key by Workday_Proxy when calling the Award API webhook. Must match WORKDAY_WEBHOOK_SECRET on the Workday_Proxy container. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
