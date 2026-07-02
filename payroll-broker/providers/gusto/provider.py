@@ -24,6 +24,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import utils.crypto as crypto
 import utils.sqlhelper as db
 from providers.base import PayrollProvider
 from providers.gusto import client
@@ -67,13 +68,17 @@ class GustoProvider(PayrollProvider):
         oauth_base_url = provider_row.oauth_base_url or "https://api.gusto-demo.com"
         api_base_url   = provider_row.api_base_url   or "https://api.gusto-demo.com"
 
+        # Decrypt stored ciphertext — plaintext only lives in memory from here
+        access_token  = crypto.decrypt(token_row.access_token)
+        refresh_token = crypto.decrypt(token_row.refresh_token)
+
         if self._token_needs_refresh(token_row):
             logger.info(
                 "Refreshing Gusto access token provider_id=%d", provider_row.id
             )
             try:
                 refreshed = client.refresh_access_token(
-                    token_row.refresh_token,
+                    refresh_token,
                     oauth_base_url=oauth_base_url,
                 )
             except Exception:
@@ -84,8 +89,8 @@ class GustoProvider(PayrollProvider):
 
             db.upsert_payroll_token(
                 provider_id=provider_row.id,
-                access_token=refreshed["access_token"],
-                refresh_token=refreshed["refresh_token"],
+                access_token=crypto.encrypt(refreshed["access_token"]),
+                refresh_token=crypto.encrypt(refreshed["refresh_token"]),
                 token_expires_at=refreshed["expires_at"],
             )
             return {
@@ -94,7 +99,7 @@ class GustoProvider(PayrollProvider):
             }
 
         return {
-            "access_token": token_row.access_token,
+            "access_token": access_token,
             "api_base_url": api_base_url,
         }
 

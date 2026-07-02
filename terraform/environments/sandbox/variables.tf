@@ -302,6 +302,12 @@ variable "demo_allowed_emails" {
   default     = ""
 }
 
+variable "payroll_token_encryption_key" {
+  description = "Base64-encoded 32-byte AES-256 key used to encrypt Gusto OAuth tokens stored in dbo.payroll_tokens. Generate once: python -c \"import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())\""
+  type        = string
+  sensitive   = true
+}
+
 variable "corporate_support_email" {
   description = "Fallback email address for payroll failure alerts when no Support-role users are configured for a tenant in dbo.UserRoles. Passed to the auxiliary service as CORPORATE_SUPPORT_EMAIL."
   type        = string

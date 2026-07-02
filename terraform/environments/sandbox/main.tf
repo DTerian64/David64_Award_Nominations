@@ -201,6 +201,9 @@ module "key_vault" {
     # header on every inbound Gusto callback to reject spoofed payroll events.
     # Must match the webhook secret configured in the Gusto developer portal.
     GUSTO-WEBHOOK-SECRET                  = var.gusto_webhook_secret
+    # AES-256 key for encrypting Gusto OAuth tokens at rest in dbo.payroll_tokens.
+    # Generate once: python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+    PAYROLL-TOKEN-ENCRYPTION-KEY          = var.payroll_token_encryption_key
     WORKDAY-WEBHOOK-SECRET                = var.workday_webhook_secret
     # Shared secret — Award API validates this on the internal POST
     # /api/internal/refresh-fraud-model callback from the fraud-analytics-job.
@@ -696,6 +699,7 @@ module "payroll_broker" {
     { env_name = "GUSTO_CLIENT_ID",     kv_secret_name = "GUSTO-CLIENT-ID" },
     { env_name = "GUSTO_CLIENT_SECRET", kv_secret_name = "GUSTO-CLIENT-SECRET" },
     { env_name = "GUSTO_WEBHOOK_SECRET", kv_secret_name = "GUSTO-WEBHOOK-SECRET" },
+    { env_name = "PAYROLL_TOKEN_ENCRYPTION_KEY", kv_secret_name = "PAYROLL-TOKEN-ENCRYPTION-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
   ]
 

@@ -21,6 +21,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
+import utils.crypto as crypto
 import utils.sqlhelper as db
 from providers.gusto import client
 from routers.schemas import GustoCallbackResponse
@@ -125,11 +126,11 @@ def gusto_callback(
     # 5. Persist company reference
     db.update_provider_company_ref(provider_row.id, company_id)
 
-    # 6. Upsert tokens
+    # 6. Upsert tokens (encrypted)
     db.upsert_payroll_token(
         provider_id=provider_row.id,
-        access_token=access_token,
-        refresh_token=refresh_token,
+        access_token=crypto.encrypt(access_token),
+        refresh_token=crypto.encrypt(refresh_token),
         token_expires_at=expires_at,
     )
 

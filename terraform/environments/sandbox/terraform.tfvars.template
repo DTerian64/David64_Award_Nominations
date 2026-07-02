@@ -84,6 +84,9 @@ gusto_client_secret = "YOUR_GUSTO_CLIENT_SECRET"
 # Webhook secret — set this value in the Gusto developer portal webhook config AND here.
 # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
 gusto_webhook_secret = "REPLACE_WITH_GENERATED_SECRET"
+# AES-256 key for encrypting Gusto OAuth tokens at rest in dbo.payroll_tokens.
+# Generate: python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+payroll_token_encryption_key = "REPLACE_WITH_GENERATED_KEY"
 
 # ── Workday Proxy ─────────────────────────────────────────────────────────────
 workday_proxy_name             = "workday-proxy-sandbox"

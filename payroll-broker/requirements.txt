@@ -19,6 +19,9 @@ aiohttp>=3.9.0,<4.0.0
 # Environment Variables
 python-dotenv>=1.0.0,<2.0.0
 
+# Cryptography — AES-256-GCM token encryption (payroll_tokens)
+cryptography>=42.0.0,<44.0.0
+
 # Azure SDK
 azure-identity>=1.15.0,<2.0.0
 azure-core>=1.29.0,<2.0.0

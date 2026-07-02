@@ -28,7 +28,7 @@ from typing import Optional, Tuple
 from urllib.parse import quote_plus
 
 from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, String, Text, Unicode,
+    Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, Unicode,
     UniqueConstraint, create_engine, text,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -86,8 +86,8 @@ class PayrollTokenORM(Base):
 
     id               = Column(Integer, primary_key=True, autoincrement=True)
     provider_id      = Column(Integer, ForeignKey("payroll_providers.id"), nullable=False)
-    access_token     = Column(Text,     nullable=False)
-    refresh_token    = Column(Text,     nullable=False)
+    access_token     = Column(LargeBinary, nullable=False)   # AES-256-GCM ciphertext
+    refresh_token    = Column(LargeBinary, nullable=False)   # AES-256-GCM ciphertext
     token_expires_at = Column(DateTime, nullable=True)
     created_at       = Column(DateTime, server_default=text("GETUTCDATE()"))
     updated_at       = Column(DateTime, server_default=text("GETUTCDATE()"),
@@ -269,16 +269,19 @@ def get_payroll_token_by_provider_id(provider_id: int) -> Optional[PayrollTokenO
 
 def upsert_payroll_token(
     provider_id:      int,
-    access_token:     str,
-    refresh_token:    str,
+    access_token:     bytes,
+    refresh_token:    bytes,
     token_expires_at: Optional[datetime],
 ) -> None:
     """
     Insert or update the OAuth token for the given provider.
 
+    access_token and refresh_token must be AES-256-GCM ciphertext produced
+    by utils.crypto.encrypt() — never pass plaintext strings here.
+
     Called by:
       • gusto_oauth_router.py — after initial OAuth code exchange
-      • payroll_worker.py — after each token refresh
+      • provider.py           — after each token refresh
     """
     with get_db_context() as session:
         existing = (
