@@ -294,6 +294,32 @@ def get_hrbp_users(tenant_id: int) -> list[dict]:
         ]
 
 
+def get_support_users(tenant_id: int) -> list[dict]:
+    """
+    Return all users with the Support role for a given tenant.
+
+    Uses the denormalised TenantId column on UserRoles (added in migration 0031)
+    to avoid a join, consistent with the fast-lookup pattern used for HRBP.
+    Returns an empty list if no Support users are configured — callers should
+    fall back to a corporate support address in that case.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT u.UserId,
+                   u.FirstName + ' ' + u.LastName AS FullName,
+                   u.userEmail
+            FROM   dbo.UserRoles ur
+            JOIN   dbo.Users u ON u.UserId = ur.UserId
+            WHERE  ur.Role     = 'Support'
+              AND  ur.TenantId = ?
+        """, (tenant_id,))
+        return [
+            {"user_id": row[0], "full_name": row[1], "email": row[2]}
+            for row in cursor.fetchall()
+        ]
+
+
 def get_hrbp_fraud_flags(nomination_id: int) -> Optional[dict]:
     """Return the HRBP_FraudFlags snapshot for a nomination, or None."""
     with _get_conn() as conn:

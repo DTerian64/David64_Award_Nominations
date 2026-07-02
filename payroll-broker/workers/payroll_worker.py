@@ -68,6 +68,7 @@ async def process_message(nomination_id: int) -> None:
     logger.info(
         "Processing payroll nomination_id=%d tenant_id=%d amount=%.2f %s beneficiary=%s",
         nomination_id, tenant_id, amount, currency, beneficiary_upn,
+        extra={"nomination_id": nomination_id},
     )
 
     # 2. Resolve provider row
@@ -121,6 +122,7 @@ async def process_message(nomination_id: int) -> None:
     logger.info(
         "Payroll submitted nomination_id=%d provider=%s provider_id=%d ref=%s",
         nomination_id, provider_row.name, provider_row.id, payroll_ref,
+        extra={"nomination_id": nomination_id},
     )
 
 
@@ -196,11 +198,15 @@ async def run_worker(stop_event: asyncio.Event) -> None:
                     try:
                         await process_message(nomination_id)
                         await receiver.complete_message(msg)
-                        logger.info("SB message completed nomination_id=%d", nomination_id)
+                        logger.info(
+                            "SB message completed nomination_id=%d", nomination_id,
+                            extra={"nomination_id": nomination_id},
+                        )
 
                     except Exception as exc:
                         logger.exception(
-                            "Payroll failed nomination_id=%d: %s", nomination_id, exc
+                            "Payroll failed nomination_id=%d: %s", nomination_id, exc,
+                            extra={"nomination_id": nomination_id},
                         )
                         try:
                             await publish_event(

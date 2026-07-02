@@ -534,6 +534,9 @@ module "auxiliary" {
   environment_variables = [
     { name = "API_BASE_URL",                    value = var.api_base_url },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
+    # Fallback recipient for payroll failure alerts when no Support-role users are
+    # configured for the tenant.  Support-role users in dbo.UserRoles take priority.
+    { name = "CORPORATE_SUPPORT_EMAIL",         value = var.corporate_support_email },
     # Certificate attachment (opt-in per tenant) — worker downloads the cached
     # PDF from the certificates container to attach to the beneficiary email.
     { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },

@@ -302,6 +302,12 @@ variable "demo_allowed_emails" {
   default     = ""
 }
 
+variable "corporate_support_email" {
+  description = "Fallback email address for payroll failure alerts when no Support-role users are configured for a tenant in dbo.UserRoles. Passed to the auxiliary service as CORPORATE_SUPPORT_EMAIL."
+  type        = string
+  default     = "support@terian-services.com"
+}
+
 # ── terianix.ai domain migration ──────────────────────────────────────────────
 
 variable "swa_terianix_domains" {

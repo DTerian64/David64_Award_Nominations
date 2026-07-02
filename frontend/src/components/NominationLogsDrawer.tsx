@@ -68,6 +68,7 @@ function shortService(service: string): string {
   if (service.includes('award-api'))         return 'backend';
   if (service.includes('integrity-check'))   return 'integrity-check';
   if (service.includes('auxiliary'))         return 'auxiliary';
+  if (service.includes('payroll-broker'))    return 'payroll-broker';
   return service;
 }
 
