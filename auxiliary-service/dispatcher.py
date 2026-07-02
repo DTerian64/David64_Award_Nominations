@@ -37,6 +37,7 @@ from handlers import (
     nomination_approved,
     payout_submit,
     payout_accepted,
+    payroll_accepted,
     payroll_failed,
     notification_requested,
     access_requested,
@@ -58,6 +59,8 @@ HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
     # nomination.approved triggers both the outcome email AND the payout submission.
     "nomination.approved":     [nomination_approved.handle, payout_submit.handle],
     "payout.accepted":         payout_accepted.handle,
+    # Payroll broker successfully submitted to the provider — mark nomination Paid.
+    "payroll.accepted":        payroll_accepted.handle,
     # Payroll broker failed to submit to the provider — notify Support users.
     "payroll.failed":          payroll_failed.handle,
     # Free-form email delivery requested by the Ask Analytics agent (or any backend service).

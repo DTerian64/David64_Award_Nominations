@@ -14,10 +14,12 @@ Flow per message:
   4. Look up provider object in PROVIDER_REGISTRY
   5. Call provider.get_credentials() — handles token refresh internally
   6. Call provider.find_employee()
-  7. Call provider.submit_payroll() → external ref
-  8. Record submission in payroll_submissions
-  9. Complete the SB message (provider webhook publishes payroll.accepted)
- 10. On failure: publish payroll.failed, dead-letter the message
+  7. Upsert payroll_submissions status='submitted'  (pre-submission record)
+  8. Call provider.submit_payroll() → external ref
+     a. On rejection: upsert status='rejected', reason=error → raise → step 10
+     b. On acceptance: upsert status='accepted', completed_at=utcnow()
+  9. Publish payroll.accepted → auxiliary-service marks nomination Paid
+ 10. On failure: upsert status='rejected', publish payroll.failed, dead-letter
 
 Environment variables:
     SERVICE_BUS_FQNS
@@ -30,6 +32,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 from azure.identity.aio import DefaultAzureCredential
 from azure.servicebus.aio import ServiceBusClient
@@ -102,27 +105,52 @@ async def process_message(nomination_id: int) -> None:
     # 5. Find employee
     employee = provider.find_employee(credentials, company_ref, beneficiary_upn)
 
-    # 6. Submit payroll
-    payroll_ref = provider.submit_payroll(
-        credentials=credentials,
-        company_ref=company_ref,
-        employee_id=employee["employee_id"],
-        job_id=employee.get("job_id"),
-        amount=amount,
-        currency=currency,
-    )
-
-    # 7. Record submission
-    db.create_payroll_submission(
+    # 6. Record pre-submission row so failures are always traceable
+    db.upsert_payroll_submission(
         nomination_id=nomination_id,
         provider_id=provider_row.id,
+        status="submitted",
+    )
+
+    # 7. Submit payroll to the provider
+    try:
+        payroll_ref = provider.submit_payroll(
+            credentials=credentials,
+            company_ref=company_ref,
+            employee_id=employee["employee_id"],
+            job_id=employee.get("job_id"),
+            amount=amount,
+            currency=currency,
+        )
+    except Exception as exc:
+        db.upsert_payroll_submission(
+            nomination_id=nomination_id,
+            provider_id=provider_row.id,
+            status="rejected",
+            reason=str(exc)[:1000],
+        )
+        raise
+
+    # 8. Provider accepted — stamp completed_at and record the ref
+    db.upsert_payroll_submission(
+        nomination_id=nomination_id,
+        provider_id=provider_row.id,
+        status="accepted",
         provider_payroll_ref=payroll_ref,
+        completed_at=datetime.now(timezone.utc),
     )
 
     logger.info(
         "Payroll submitted nomination_id=%d provider=%s provider_id=%d ref=%s",
         nomination_id, provider_row.name, provider_row.id, payroll_ref,
         extra={"nomination_id": nomination_id},
+    )
+
+    # 9. Publish payroll.accepted so auxiliary-service marks the nomination Paid
+    await publish_event(
+        "payroll.accepted",
+        nomination_id=nomination_id,
+        extra={"payroll_ref": payroll_ref},
     )
 
 

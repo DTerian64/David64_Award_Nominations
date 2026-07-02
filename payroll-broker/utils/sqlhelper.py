@@ -105,17 +105,21 @@ class PayrollSubmissionORM(Base):
     Bridges the provider's external reference (e.g. Gusto payroll UUID) back
     to nomination_id so the webhook handler can resolve the nomination.
 
-    status values: 'submitted' | 'completed' | 'failed'
+    Status lifecycle:
+      submitted — upserted before calling the provider
+      rejected  — provider returned an error; reason = provider error message
+      accepted  — provider accepted the payroll; completed_at = stamped
     """
     __tablename__ = "payroll_submissions"
 
-    id                   = Column(Integer,   primary_key=True, autoincrement=True)
-    nomination_id        = Column(Integer,   nullable=False)   # FK to dbo.Nominations enforced at DB level; omitted here because Nominations is owned by the backend service
-    provider_id          = Column(Integer,   ForeignKey("payroll_providers.id"), nullable=False)
+    id                   = Column(Integer,    primary_key=True, autoincrement=True)
+    nomination_id        = Column(Integer,    nullable=False)   # FK to dbo.Nominations enforced at DB level; omitted here because Nominations is owned by the backend service
+    provider_id          = Column(Integer,    ForeignKey("payroll_providers.id"), nullable=False)
     provider_payroll_ref = Column(String(100), nullable=True)
     status               = Column(String(50),  nullable=False, default="submitted")
-    submitted_at         = Column(DateTime, server_default=text("GETUTCDATE()"))
-    completed_at         = Column(DateTime, nullable=True)
+    reason               = Column(String(1000), nullable=True)
+    submitted_at         = Column(DateTime,   server_default=text("GETUTCDATE()"))
+    completed_at         = Column(DateTime,   nullable=True)
 
 
 # ===========================================================================
@@ -302,25 +306,45 @@ def upsert_payroll_token(
 # PAYROLL SUBMISSION QUERIES
 # ===========================================================================
 
-def create_payroll_submission(
-    nomination_id:       int,
-    provider_id:         int,
-    provider_payroll_ref: str,
+def upsert_payroll_submission(
+    nomination_id:        int,
+    provider_id:          int,
+    status:               str,
+    provider_payroll_ref: Optional[str] = None,
+    reason:               Optional[str] = None,
+    completed_at:         Optional[datetime] = None,
 ) -> int:
     """
-    Record a new payroll submission and return its local id.
+    Insert or update a payroll submission row keyed on nomination_id.
 
-    Called by the worker immediately after submitting the off-cycle payroll
-    so the webhook handler can resolve the nomination from the callback.
+    Call three times during the worker lifecycle:
+      1. Before calling the provider   — status='submitted'
+      2. On provider rejection         — status='rejected',  reason=<error msg>
+      3. On provider acceptance        — status='accepted',  completed_at=utcnow()
+
+    Returns the local submission id.
     """
     with get_db_context() as session:
-        sub = PayrollSubmissionORM(
-            nomination_id=nomination_id,
-            provider_id=provider_id,
-            provider_payroll_ref=provider_payroll_ref,
-            status="submitted",
+        sub = (
+            session.query(PayrollSubmissionORM)
+            .filter_by(nomination_id=nomination_id)
+            .first()
         )
-        session.add(sub)
+        if sub is None:
+            sub = PayrollSubmissionORM(
+                nomination_id=nomination_id,
+                provider_id=provider_id,
+            )
+            session.add(sub)
+
+        sub.status = status
+        if provider_payroll_ref is not None:
+            sub.provider_payroll_ref = provider_payroll_ref
+        if reason is not None:
+            sub.reason = reason
+        if completed_at is not None:
+            sub.completed_at = completed_at
+
         session.commit()
         session.refresh(sub)
         return sub.id
