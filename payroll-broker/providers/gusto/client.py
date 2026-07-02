@@ -232,6 +232,11 @@ def create_off_cycle_payroll(
         headers=_auth_headers(access_token),
         timeout=30,
     )
+    if not create_resp.is_success:
+        logger.error(
+            "Gusto payroll creation failed status=%d body=%s",
+            create_resp.status_code, create_resp.text,
+        )
     create_resp.raise_for_status()
     payroll_uuid = create_resp.json()["uuid"]
     logger.info("Gusto payroll created uuid=%s employee=%s amount=%.2f",
