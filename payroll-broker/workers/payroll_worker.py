@@ -143,10 +143,11 @@ async def run_worker(stop_event: asyncio.Event) -> None:
 
     # DefaultAzureCredential automatically picks up AZURE_CLIENT_ID set by Terraform,
     # which disambiguates the user-assigned MI when multiple identities are attached.
-    credential = DefaultAzureCredential()
-    logger.info("Payroll worker starting topic=%s subscription=%s", _TOPIC, _SUBSCRIPTION)
-
+    credential = None
     try:
+        credential = DefaultAzureCredential()
+        logger.info("Payroll worker starting topic=%s subscription=%s", _TOPIC, _SUBSCRIPTION)
+
         async with ServiceBusClient(_FQNS, credential) as sb_client:
             receiver = sb_client.get_subscription_receiver(
                 topic_name=_TOPIC,
@@ -222,5 +223,6 @@ async def run_worker(stop_event: asyncio.Event) -> None:
     except Exception:
         logger.exception("Payroll worker crashed unexpectedly")
     finally:
-        await credential.close()
+        if credential:
+            await credential.close()
         logger.info("Payroll worker stopped")

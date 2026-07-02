@@ -136,7 +136,7 @@ resource "azurerm_container_app" "payroll_broker" {
       }
 
       # ── Caller-supplied non-secret env vars ───────────────────────────────
-      # e.g. GUSTO_API_BASE_URL, GUSTO_OAUTH_BASE_URL
+      # e.g. PAYROLL_BROKER_BASE_URL — provider URLs now stored in payroll_providers DB row
       dynamic "env" {
         for_each = var.environment_variables
         content {

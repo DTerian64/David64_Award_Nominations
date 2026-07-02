@@ -38,7 +38,11 @@ def gusto_authorize(tenant_id: int = Query(..., description="Internal tenant ID"
     Redirect URI registered in the Gusto developer portal:
         https://payroll-broker.terianix.ai/gusto/callback
     """
-    auth_url = client.build_authorization_url(state=str(tenant_id))
+    provider_row = db.get_provider_for_tenant(tenant_id)
+    if not provider_row:
+        raise HTTPException(status_code=422, detail="No payroll provider configured for this tenant.")
+    oauth_base_url = provider_row.oauth_base_url or "https://api.gusto-demo.com"
+    auth_url = client.build_authorization_url(state=str(tenant_id), oauth_base_url=oauth_base_url)
     logger.info("Redirecting tenant_id=%d to Gusto OAuth", tenant_id)
     return RedirectResponse(url=auth_url, status_code=302)
 
@@ -88,9 +92,12 @@ def gusto_callback(
             ),
         )
 
+    oauth_base_url = provider_row.oauth_base_url or "https://api.gusto-demo.com"
+    api_base_url   = provider_row.api_base_url   or "https://api.gusto-demo.com"
+
     # 3. Exchange code for tokens
     try:
-        token_data = client.exchange_code_for_token(code)
+        token_data = client.exchange_code_for_token(code, oauth_base_url=oauth_base_url)
     except Exception as exc:
         logger.exception("Gusto token exchange failed tenant_id=%d", tenant_id)
         raise HTTPException(status_code=502, detail=f"Token exchange failed: {exc}")
@@ -101,7 +108,7 @@ def gusto_callback(
 
     # 4. Fetch Gusto company UUID
     try:
-        company_id = client.get_company_uuid_from_me(access_token)
+        company_id = client.get_company_uuid_from_me(access_token, api_base_url=api_base_url)
     except Exception as exc:
         logger.exception("Gusto /v1/me failed tenant_id=%d", tenant_id)
         raise HTTPException(status_code=502, detail=f"Failed to fetch Gusto company: {exc}")

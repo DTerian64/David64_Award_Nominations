@@ -4,9 +4,11 @@ client.py — Gusto Embedded API HTTP client
 Thin HTTP wrapper around the Gusto v1 API.  No business logic lives here —
 all decisions about when/how to call these functions belong in provider.py.
 
-Environment variables:
-    GUSTO_API_BASE_URL      e.g. https://api.gusto-demo.com
-    GUSTO_OAUTH_BASE_URL    e.g. https://api.gusto-demo.com  (may differ in prod)
+API and OAuth base URLs are passed as function arguments (sourced from the
+payroll_providers row), so they are per-provider-instance rather than
+hardcoded to a single environment.
+
+Environment variables (application-level, not per-provider):
     GUSTO_CLIENT_ID
     GUSTO_CLIENT_SECRET
     PAYROLL_BROKER_BASE_URL e.g. https://payroll-broker.terianix.ai
@@ -23,8 +25,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_API_BASE      = os.getenv("GUSTO_API_BASE_URL",    "https://api.gusto-demo.com")
-_OAUTH_BASE    = os.getenv("GUSTO_OAUTH_BASE_URL",   "https://api.gusto-demo.com")
 _CLIENT_ID     = os.getenv("GUSTO_CLIENT_ID",        "")
 _CLIENT_SECRET = os.getenv("GUSTO_CLIENT_SECRET",    "")
 _BROKER_BASE   = os.getenv("PAYROLL_BROKER_BASE_URL", "https://payroll-broker.terianix.ai")
@@ -37,7 +37,7 @@ OAUTH_SCOPES = "openid employees:read:sensitive payrolls:run companies:read"
 # OAuth helpers
 # ---------------------------------------------------------------------------
 
-def build_authorization_url(state: str) -> str:
+def build_authorization_url(state: str, oauth_base_url: str) -> str:
     """Build the Gusto OAuth authorize URL to redirect the tenant admin to."""
     params = {
         "response_type": "code",
@@ -46,10 +46,10 @@ def build_authorization_url(state: str) -> str:
         "scope":         OAUTH_SCOPES,
         "state":         state,
     }
-    return f"{_OAUTH_BASE}/oauth/authorize?{urlencode(params)}"
+    return f"{oauth_base_url.rstrip('/')}/oauth/authorize?{urlencode(params)}"
 
 
-def exchange_code_for_token(code: str) -> dict:
+def exchange_code_for_token(code: str, oauth_base_url: str) -> dict:
     """
     Exchange an authorization code for access + refresh tokens.
 
@@ -57,7 +57,7 @@ def exchange_code_for_token(code: str) -> dict:
     Raises:  httpx.HTTPStatusError on non-2xx response.
     """
     resp = httpx.post(
-        f"{_OAUTH_BASE}/oauth/token",
+        f"{oauth_base_url.rstrip('/')}/oauth/token",
         data={
             "grant_type":    "authorization_code",
             "code":          code,
@@ -78,7 +78,7 @@ def exchange_code_for_token(code: str) -> dict:
     }
 
 
-def refresh_access_token(refresh_token: str) -> dict:
+def refresh_access_token(refresh_token: str, oauth_base_url: str) -> dict:
     """
     Use a refresh token to obtain a new access token.
 
@@ -86,7 +86,7 @@ def refresh_access_token(refresh_token: str) -> dict:
     Raises httpx.HTTPStatusError on failure.
     """
     resp = httpx.post(
-        f"{_OAUTH_BASE}/oauth/token",
+        f"{oauth_base_url.rstrip('/')}/oauth/token",
         data={
             "grant_type":    "refresh_token",
             "refresh_token": refresh_token,
@@ -119,10 +119,10 @@ def _auth_headers(access_token: str) -> dict:
     }
 
 
-def get_current_user(access_token: str) -> dict:
+def get_current_user(access_token: str, api_base_url: str) -> dict:
     """GET /v1/me — returns the authenticated user's profile and companies."""
     resp = httpx.get(
-        f"{_API_BASE}/v1/me",
+        f"{api_base_url.rstrip('/')}/v1/me",
         headers=_auth_headers(access_token),
         timeout=30,
     )
@@ -130,20 +130,20 @@ def get_current_user(access_token: str) -> dict:
     return resp.json()
 
 
-def get_company_uuid_from_me(access_token: str) -> Optional[str]:
+def get_company_uuid_from_me(access_token: str, api_base_url: str) -> Optional[str]:
     """
     Return the first company UUID from /v1/me, or None if none exist.
     Gusto's embedded model scopes each OAuth token to one company.
     """
-    me = get_current_user(access_token)
+    me = get_current_user(access_token, api_base_url)
     companies = me.get("roles", {}).get("payroll_admin", {}).get("companies", [])
     return companies[0].get("uuid") if companies else None
 
 
-def get_employees(access_token: str, company_uuid: str) -> list[dict]:
+def get_employees(access_token: str, company_uuid: str, api_base_url: str) -> list[dict]:
     """GET /v1/companies/{uuid}/employees — full employee list for the company."""
     resp = httpx.get(
-        f"{_API_BASE}/v1/companies/{company_uuid}/employees",
+        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/employees",
         headers=_auth_headers(access_token),
         params={"include": "all_compensations"},
         timeout=30,
@@ -156,6 +156,7 @@ def find_employee_by_email(
     access_token:  str,
     company_uuid:  str,
     email:         str,
+    api_base_url:  str,
 ) -> Optional[dict]:
     """
     Search the company's employees for one matching the given email.
@@ -163,7 +164,7 @@ def find_employee_by_email(
     Returns {"employee_id": str, "job_id": str | None} or None if not found.
     Checks both work_email and personal email fields.
     """
-    employees  = get_employees(access_token, company_uuid)
+    employees   = get_employees(access_token, company_uuid, api_base_url)
     email_lower = email.lower()
 
     for emp in employees:
@@ -171,8 +172,8 @@ def find_employee_by_email(
             (emp.get("work_email") or "").lower(),
             (emp.get("email")      or "").lower(),
         ):
-            jobs    = emp.get("jobs", [])
-            job_id  = jobs[0]["uuid"] if jobs else None
+            jobs   = emp.get("jobs", [])
+            job_id = jobs[0]["uuid"] if jobs else None
             return {"employee_id": emp["uuid"], "job_id": job_id}
 
     logger.warning("Gusto employee not found email=%s company=%s", email, company_uuid)
@@ -190,6 +191,7 @@ def create_off_cycle_payroll(
     job_uuid:      str,
     amount:        float,
     currency:      str = "USD",
+    api_base_url:  str = "https://api.gusto-demo.com",
 ) -> str:
     """
     Create, calculate, and submit an off-cycle bonus payroll for one employee.
@@ -212,7 +214,7 @@ def create_off_cycle_payroll(
 
     # 1. Create draft
     create_resp = httpx.post(
-        f"{_API_BASE}/v1/companies/{company_uuid}/payrolls",
+        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls",
         json={
             "off_cycle":        True,
             "off_cycle_reason": "Bonus",
@@ -237,7 +239,7 @@ def create_off_cycle_payroll(
 
     # 2. Calculate
     httpx.post(
-        f"{_API_BASE}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/calculate",
+        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/calculate",
         headers=_auth_headers(access_token),
         timeout=30,
     ).raise_for_status()
@@ -245,7 +247,7 @@ def create_off_cycle_payroll(
 
     # 3. Submit
     httpx.post(
-        f"{_API_BASE}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/submit",
+        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/submit",
         headers=_auth_headers(access_token),
         timeout=30,
     ).raise_for_status()

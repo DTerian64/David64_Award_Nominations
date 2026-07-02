@@ -64,12 +64,18 @@ class GustoProvider(PayrollProvider):
                 "(/gusto/authorize?tenant_id=<id>)."
             )
 
+        oauth_base_url = provider_row.oauth_base_url or "https://api.gusto-demo.com"
+        api_base_url   = provider_row.api_base_url   or "https://api.gusto-demo.com"
+
         if self._token_needs_refresh(token_row):
             logger.info(
                 "Refreshing Gusto access token provider_id=%d", provider_row.id
             )
             try:
-                refreshed = client.refresh_access_token(token_row.refresh_token)
+                refreshed = client.refresh_access_token(
+                    token_row.refresh_token,
+                    oauth_base_url=oauth_base_url,
+                )
             except Exception:
                 logger.exception(
                     "Gusto token refresh failed provider_id=%d", provider_row.id
@@ -82,9 +88,15 @@ class GustoProvider(PayrollProvider):
                 refresh_token=refreshed["refresh_token"],
                 token_expires_at=refreshed["expires_at"],
             )
-            return {"access_token": refreshed["access_token"]}
+            return {
+                "access_token": refreshed["access_token"],
+                "api_base_url": api_base_url,
+            }
 
-        return {"access_token": token_row.access_token}
+        return {
+            "access_token": token_row.access_token,
+            "api_base_url": api_base_url,
+        }
 
     def _token_needs_refresh(self, token_row) -> bool:
         if not token_row.token_expires_at:
@@ -106,7 +118,8 @@ class GustoProvider(PayrollProvider):
         Raises RuntimeError if not found or if the employee has no jobs.
         """
         access_token = credentials["access_token"]
-        result = client.find_employee_by_email(access_token, company_ref, email)
+        api_base_url = credentials.get("api_base_url", "https://api.gusto-demo.com")
+        result = client.find_employee_by_email(access_token, company_ref, email, api_base_url)
 
         if not result:
             raise RuntimeError(
@@ -142,6 +155,7 @@ class GustoProvider(PayrollProvider):
             job_uuid=job_id,
             amount=amount,
             currency=currency,
+            api_base_url=credentials.get("api_base_url", "https://api.gusto-demo.com"),
         )
 
     # ── Webhook validation ────────────────────────────────────────────────────

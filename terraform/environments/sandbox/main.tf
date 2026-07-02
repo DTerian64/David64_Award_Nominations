@@ -681,8 +681,6 @@ module "payroll_broker" {
   keda_message_count = 5
 
   environment_variables = [
-    { name = "GUSTO_API_BASE_URL",   value = "https://api.gusto-demo.com" },  # sandbox Gusto endpoint
-    { name = "GUSTO_OAUTH_BASE_URL", value = "https://api.gusto-demo.com" },
     # Public URL of this broker — embedded in the OAuth redirect_uri sent to Gusto.
     { name = "PAYROLL_BROKER_BASE_URL", value = "https://${var.payroll_broker_custom_domain}" },
   ]
