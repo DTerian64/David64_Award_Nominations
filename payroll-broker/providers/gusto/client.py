@@ -244,7 +244,7 @@ def create_off_cycle_payroll(
                 payroll_uuid, employee_uuid, amount)
 
     # 2. Calculate
-    httpx.post(
+    httpx.put(
         f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/calculate",
         headers=_auth_headers(access_token),
         timeout=30,
