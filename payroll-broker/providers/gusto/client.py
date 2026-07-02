@@ -252,7 +252,7 @@ def create_off_cycle_payroll(
     logger.info("Gusto payroll calculated uuid=%s", payroll_uuid)
 
     # 3. Submit
-    httpx.post(
+    httpx.put(
         f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/submit",
         headers=_auth_headers(access_token),
         timeout=30,
