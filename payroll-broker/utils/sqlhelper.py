@@ -110,7 +110,7 @@ class PayrollSubmissionORM(Base):
     __tablename__ = "payroll_submissions"
 
     id                   = Column(Integer,   primary_key=True, autoincrement=True)
-    nomination_id        = Column(Integer,   ForeignKey("Nominations.NominationId"), nullable=False)
+    nomination_id        = Column(Integer,   nullable=False)   # FK to dbo.Nominations enforced at DB level; omitted here because Nominations is owned by the backend service
     provider_id          = Column(Integer,   ForeignKey("payroll_providers.id"), nullable=False)
     provider_payroll_ref = Column(String(100), nullable=True)
     status               = Column(String(50),  nullable=False, default="submitted")
