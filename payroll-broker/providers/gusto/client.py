@@ -220,6 +220,7 @@ def create_off_cycle_payroll(
             "off_cycle_reason": "Bonus",
             "start_date":       today,
             "end_date":         today,
+            "employee_uuids":   [employee_uuid],
             "employee_compensations": [{
                 "employee_uuid": employee_uuid,
                 "fixed_compensations": [{
