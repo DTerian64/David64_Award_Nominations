@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Clock, Award, BarChart3, ShieldAlert } from 'lucide-react';
+import { CheckCircle, Clock, Award, BarChart3, ShieldAlert, DollarSign } from 'lucide-react';
 import { Toast } from './components/Toast';
 import {
   AuthenticatedTemplate,
@@ -146,12 +146,21 @@ const AwardNominationApp: React.FC = () => {
   const [nominations, setNominations] = useState<Nomination[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<Nomination[]>([]);
   const [decidedApprovals, setDecidedApprovals] = useState<Nomination[]>([]);
-  const [approvalsView, setApprovalsView] = useState<'pending' | 'decided'>('pending');
+  const [approvalsView, setApprovalsView] = useState<'pending' | 'decided' | 'paid'>('pending');
   const [certLoadingId, setCertLoadingId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics'>('nominate');
+  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics' | 'payroll'>('nominate');
   const [isHRBP, setIsHRBP] = useState(false);
+  const [isPayrollBP, setIsPayrollBP] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logsNominationId, setLogsNominationId] = useState<number | null>(null);
+
+  // Payroll lookup state
+  const [payrollUserId, setPayrollUserId]       = useState<string>('');
+  const [payrollYear,   setPayrollYear]         = useState<number>(new Date().getFullYear());
+  const [payrollMonth,  setPayrollMonth]        = useState<number>(new Date().getMonth() + 1);
+  const [payrollResult, setPayrollResult]       = useState<{ entries: any[] } | null>(null);
+  const [payrollLoading, setPayrollLoading]     = useState(false);
+  const [payrollError,   setPayrollError]       = useState<string | null>(null);
 
   // Reject reason dialog state
   const [rejectDialogNomId, setRejectDialogNomId] = useState<number | null>(null);
@@ -176,7 +185,7 @@ const AwardNominationApp: React.FC = () => {
 
   // Load decided approvals when the user opens the "Approved / Rejected" view.
   useEffect(() => {
-    if (accounts.length > 0 && activeTab === 'approvals' && approvalsView === 'decided') {
+    if (accounts.length > 0 && activeTab === 'approvals' && (approvalsView === 'decided' || approvalsView === 'paid')) {
       loadDecidedApprovals();
     }
   }, [accounts, isImpersonating, activeTab, approvalsView]);
@@ -184,16 +193,39 @@ const AwardNominationApp: React.FC = () => {
   const loadMe = async () => {
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-      const me = await apiFetch<{ is_hrbp: boolean; is_admin: boolean }>('/api/me', {}, impersonatedUPN);
+      const me = await apiFetch<{ is_hrbp: boolean; is_payroll_bp: boolean; is_admin: boolean }>('/api/me', {}, impersonatedUPN);
       setIsHRBP(me.is_hrbp);
-      // If switching away from HRBP tab after impersonation change, reset to nominate
+      setIsPayrollBP(me.is_payroll_bp ?? false);
+      // If switching away from a role-gated tab after impersonation change, reset to nominate
       setActiveTab(prev => {
-        if (prev === 'hrbp' && !me.is_hrbp) return 'nominate';
-        if (prev === 'analytics' && !isAdmin) return 'nominate';
+        if (prev === 'hrbp'     && !me.is_hrbp)        return 'nominate';
+        if (prev === 'payroll'  && !me.is_payroll_bp)   return 'nominate';
+        if (prev === 'analytics' && !isAdmin)            return 'nominate';
         return prev;
       });
     } catch {
       setIsHRBP(false);
+      setIsPayrollBP(false);
+    }
+  };
+
+  const loadEmployeePay = async () => {
+    if (!payrollUserId || !payrollYear || !payrollMonth) return;
+    setPayrollLoading(true);
+    setPayrollError(null);
+    setPayrollResult(null);
+    try {
+      const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
+      const result = await apiFetch<{ entries: any[] }>(
+        `/api/payroll/employee-pay?user_id=${payrollUserId}&year=${payrollYear}&month=${payrollMonth}`,
+        {},
+        impersonatedUPN,
+      );
+      setPayrollResult(result);
+    } catch (err: any) {
+      setPayrollError(err.message || 'Failed to load payroll data');
+    } finally {
+      setPayrollLoading(false);
     }
   };
 
@@ -545,6 +577,22 @@ const AwardNominationApp: React.FC = () => {
                 {t('nav.analytics')}
               </button>
             )}
+            {/* Payroll tab — visible only to PayrollBP role */}
+            {isPayrollBP && (
+              <button
+                onClick={() => setActiveTab('payroll')}
+                style={activeTab === 'payroll' ? {
+                  backgroundColor: 'var(--color-primary)',
+                  color: 'var(--color-primary-text)',
+                } : {}}
+                className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
+                  activeTab === 'payroll' ? '' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <DollarSign className="w-5 h-5 inline-block mr-2" />
+                {t('payroll.heading')}
+              </button>
+            )}
           </div>
         </div>
 
@@ -723,12 +771,13 @@ const AwardNominationApp: React.FC = () => {
               <div className="flex items-center justify-between mb-6">
                 <select
                   value={approvalsView}
-                  onChange={(e) => setApprovalsView(e.target.value as 'pending' | 'decided')}
+                  onChange={(e) => setApprovalsView(e.target.value as 'pending' | 'decided' | 'paid')}
                   className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none cursor-pointer text-gray-900 font-medium"
                   style={{ accentColor: 'var(--color-primary)' }}
                 >
                   <option value="pending">{t('approvals.viewPending')}</option>
                   <option value="decided">{t('approvals.viewDecided')}</option>
+                  <option value="paid">{t('approvals.viewPaid')}</option>
                 </select>
                 {approvalsView === 'pending' && pendingApprovals.length > 0 && (
                   <span className="bg-red-500 text-white text-sm rounded-full px-3 py-1">
@@ -805,15 +854,16 @@ const AwardNominationApp: React.FC = () => {
               )}
 
               {/* Approved / Rejected view */}
-              {approvalsView === 'decided' && (
-                decidedApprovals.length === 0 ? (
+              {approvalsView === 'decided' && (() => {
+                const items = decidedApprovals.filter(n => n.Status === 'Approved' || n.Status === 'Rejected');
+                return items.length === 0 ? (
                   <div className="text-center py-12">
                     <CheckCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-600">{t('approvals.emptyDecided')}</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {decidedApprovals.map(nom => (
+                    {items.map(nom => (
                       <div key={nom.NominationId} className="border border-gray-200 rounded-lg p-6">
                         <div className="flex justify-between items-start mb-3">
                           <div>
@@ -871,8 +921,65 @@ const AwardNominationApp: React.FC = () => {
                       </div>
                     ))}
                   </div>
-                )
-              )}
+                );
+              })()}
+
+              {/* Paid view */}
+              {approvalsView === 'paid' && (() => {
+                const items = decidedApprovals.filter(n => n.Status === 'Paid');
+                return items.length === 0 ? (
+                  <div className="text-center py-12">
+                    <CheckCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-600">{t('approvals.emptyPaid')}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {items.map(nom => (
+                      <div key={nom.NominationId} className="border border-gray-200 rounded-lg p-6">
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">
+                              {getUserName(nom.BeneficiaryId)}
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                              {t('approvals.nominatedBy', {
+                                name: getUserName(nom.NominatorId),
+                                date: formatDate(nom.NominationDate),
+                              })}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
+                              {formatCurrency(nom.Amount)}
+                            </p>
+                            <StatusBadge status={nom.Status} />
+                          </div>
+                        </div>
+                        <p className="text-gray-700 mb-3">{nom.NominationDescription}</p>
+                        <div className="flex items-center justify-between">
+                          {nom.CategoryDescription ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                                  style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                              {nom.CategoryDescription}
+                            </span>
+                          ) : <span />}
+                          <button
+                            onClick={() => handleViewCertificate(nom.NominationId)}
+                            disabled={certLoadingId === nom.NominationId}
+                            className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border transition-colors cursor-pointer hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                            style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
+                          >
+                            <Award className="w-4 h-4" />
+                            {certLoadingId === nom.NominationId
+                              ? t('approvals.generatingCertificate')
+                              : t('approvals.certificate')}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -886,6 +993,144 @@ const AwardNominationApp: React.FC = () => {
             <div className="bg-white rounded-lg shadow-md p-8">
               <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('analytics.heading')}</h2>
               <AnalyticsDashboard />
+            </div>
+          )}
+
+          {/* ── Payroll tab ──────────────────────────────────────────────── */}
+          {activeTab === 'payroll' && isPayrollBP && (
+            <div className="bg-white rounded-lg shadow-md p-8">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('payroll.lookupHeading')}</h2>
+
+              {/* Lookup controls */}
+              <div className="flex flex-wrap gap-4 mb-6 items-end">
+                <div className="flex-1 min-w-48">
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    {t('payroll.selectEmployee')}
+                  </label>
+                  <select
+                    value={payrollUserId}
+                    onChange={e => setPayrollUserId(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none"
+                  >
+                    <option value="">-- {t('payroll.selectEmployee')} --</option>
+                    {users.map(u => (
+                      <option key={u.UserId} value={u.UserId}>
+                        {u.FirstName} {u.LastName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    {t('payroll.month')}
+                  </label>
+                  <select
+                    value={payrollMonth}
+                    onChange={e => setPayrollMonth(Number(e.target.value))}
+                    className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none"
+                  >
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                      <option key={m} value={m}>
+                        {new Date(2000, m - 1).toLocaleString(undefined, { month: 'long' })}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    {t('payroll.year')}
+                  </label>
+                  <select
+                    value={payrollYear}
+                    onChange={e => setPayrollYear(Number(e.target.value))}
+                    className="px-4 py-3 border border-gray-300 rounded-lg focus:outline-none"
+                  >
+                    {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  onClick={loadEmployeePay}
+                  disabled={payrollLoading || !payrollUserId}
+                  style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
+                  className="py-3 px-6 rounded-lg font-semibold transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {payrollLoading ? t('payroll.searching') : t('payroll.search')}
+                </button>
+              </div>
+
+              {/* Error */}
+              {payrollError && (
+                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {payrollError}
+                </div>
+              )}
+
+              {/* Prompt when nothing searched yet */}
+              {!payrollResult && !payrollError && !payrollLoading && (
+                <p className="text-gray-500 text-sm">{t('payroll.selectPrompt')}</p>
+              )}
+
+              {/* Results */}
+              {payrollResult && (() => {
+                const regular   = payrollResult.entries.filter(e => e.payroll_type === 'regular');
+                const offCycle  = payrollResult.entries.filter(e => e.payroll_type === 'off_cycle');
+
+                const PayTable: React.FC<{ rows: any[]; emptyKey: string }> = ({ rows, emptyKey }) =>
+                  rows.length === 0 ? (
+                    <p className="text-gray-500 text-sm py-2">{t(emptyKey)}</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-gray-200 text-gray-600">
+                            <th className="py-2 pr-4 font-semibold">{t('payroll.colPeriod')}</th>
+                            <th className="py-2 pr-4 font-semibold">{t('payroll.colCheckDate')}</th>
+                            <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colGross')}</th>
+                            <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colDeductions')}</th>
+                            <th className="py-2 font-semibold text-right">{t('payroll.colNet')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(r => (
+                            <tr key={r.payroll_uuid} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="py-2 pr-4 text-gray-700">
+                                {r.pay_period_start} – {r.pay_period_end}
+                              </td>
+                              <td className="py-2 pr-4 text-gray-700">{r.check_date ?? '—'}</td>
+                              <td className="py-2 pr-4 text-right text-gray-700">
+                                {formatCurrency(r.gross_pay)}
+                              </td>
+                              <td className="py-2 pr-4 text-right text-gray-700">
+                                {formatCurrency(r.total_deductions)}
+                              </td>
+                              <td className="py-2 text-right font-semibold" style={{ color: 'var(--color-primary)' }}>
+                                {formatCurrency(r.net_pay)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+
+                return (
+                  <div className="space-y-8">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 mb-3">{t('payroll.regularHeading')}</h3>
+                      <PayTable rows={regular} emptyKey="payroll.noRegular" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 mb-3">{t('payroll.offCycleHeading')}</h3>
+                      <PayTable rows={offCycle} emptyKey="payroll.noOffCycle" />
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>

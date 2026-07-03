@@ -81,6 +81,26 @@ class HealthResponse(BaseModel):
     status: str
 
 
+# ── Payroll pay-lookup ─────────────────────────────────────────────────────────
+
+class PayrollEntry(BaseModel):
+    payroll_uuid:     str
+    payroll_type:     Literal["regular", "off_cycle"]
+    pay_period_start: str   # YYYY-MM-DD
+    pay_period_end:   str   # YYYY-MM-DD
+    check_date:       Optional[str] = None  # YYYY-MM-DD
+    gross_pay:        float
+    net_pay:          float
+    total_deductions: float
+
+
+class EmployeePayResponse(BaseModel):
+    upn:     str
+    year:    int
+    month:   int
+    entries: List[PayrollEntry]
+
+
 class AuditLog(BaseModel):
     """Audit log entry for impersonation tracking"""
     AuditId: int

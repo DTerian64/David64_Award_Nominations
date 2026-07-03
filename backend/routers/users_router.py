@@ -79,12 +79,13 @@ async def get_me(user_context: dict = Depends(get_current_user_with_impersonatio
     app_roles = sqlhelper.get_user_roles(effective_user["UserId"])
 
     return {
-        "user_id":    effective_user["UserId"],
-        "upn":        effective_user["userPrincipalName"],
-        "tenant_id":  effective_user["TenantId"],
-        "app_roles":  app_roles,
-        "is_hrbp":    "HRBP" in app_roles,
-        "is_admin":   is_admin(actual_user),
+        "user_id":        effective_user["UserId"],
+        "upn":            effective_user["userPrincipalName"],
+        "tenant_id":      effective_user["TenantId"],
+        "app_roles":      app_roles,
+        "is_hrbp":        "HRBP"       in app_roles,
+        "is_payroll_bp":  "PayrollBP"  in app_roles,
+        "is_admin":       is_admin(actual_user),
     }
 
 

@@ -8,7 +8,8 @@
     "history": "My Nominations",
     "approvals": "My Approvals",
     "analytics": "Analytics",
-    "hrbp": "HRBP Review"
+    "hrbp": "HRBP Review",
+    "payroll": "Payroll"
   },
   "nominate": {
     "heading": "Submit Award Nomination",
@@ -36,7 +37,9 @@
     "reject": "Reject",
     "viewPending": "Pending Approvals",
     "viewDecided": "Approved / Rejected",
+    "viewPaid": "Paid",
     "emptyDecided": "No approved or rejected nominations yet",
+    "emptyPaid": "No paid nominations yet",
     "decidedOn": "Decided on {{date}}",
     "certificate": "Certificate",
     "generatingCertificate": "Generating…"
@@ -70,6 +73,26 @@
     "rejectSuccess": "Nomination rejection recorded.",
     "approvalError": "Failed to process approval. Please try again.",
     "submitError": "Failed to submit nomination. Please try again."
+  },
+  "payroll": {
+    "heading": "Payroll",
+    "lookupHeading": "Look Up Employee Pay",
+    "selectEmployee": "Select Employee",
+    "month": "Month",
+    "year": "Year",
+    "search": "Look Up",
+    "searching": "Looking up…",
+    "regularHeading": "Regular Payroll",
+    "offCycleHeading": "Off-Cycle Payroll",
+    "noRegular": "No regular payroll entries for this period",
+    "noOffCycle": "No off-cycle payroll entries for this period",
+    "colPeriod": "Pay Period",
+    "colCheckDate": "Check Date",
+    "colGross": "Gross Pay",
+    "colNet": "Net Pay",
+    "colDeductions": "Deductions",
+    "noProvider": "No payroll provider is configured for this tenant.",
+    "selectPrompt": "Select an employee and month, then click Look Up"
   },
   "auth": {
     "signIn": "Sign in with Microsoft",

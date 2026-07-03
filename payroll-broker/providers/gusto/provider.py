@@ -163,6 +163,72 @@ class GustoProvider(PayrollProvider):
             api_base_url=credentials.get("api_base_url", "https://api.gusto-demo.com"),
         )
 
+    def get_employee_pay(
+        self,
+        credentials: dict,
+        company_ref: str,
+        upn:         str,
+        year:        int,
+        month:       int,
+    ) -> list[dict]:
+        """
+        Fetch all payroll entries (regular + off-cycle) for an employee for
+        a given calendar month.
+
+        Steps:
+          1. Find employee_uuid by matching upn against work_email / email.
+          2. Fetch payrolls for the month with employee_compensations.
+          3. Filter compensation rows to this employee_uuid.
+          4. Return structured list.
+        """
+        access_token = credentials["access_token"]
+        api_base_url = credentials.get("api_base_url", "https://api.gusto-demo.com")
+
+        # 1. Resolve Gusto employee UUID from UPN
+        emp = client.find_employee_by_email(access_token, company_ref, upn, api_base_url)
+        if not emp:
+            raise RuntimeError(
+                f"Employee upn={upn} not found in Gusto company={company_ref}"
+            )
+        employee_uuid = emp["employee_id"]
+
+        # 2. Fetch payrolls for the month
+        payrolls = client.get_payrolls_for_month(
+            access_token, company_ref, year, month, api_base_url
+        )
+
+        # 3. Filter and shape
+        entries = []
+        for payroll in payrolls:
+            comps    = payroll.get("employee_compensations", [])
+            emp_comp = next(
+                (c for c in comps if c.get("employee_uuid") == employee_uuid),
+                None,
+            )
+            if not emp_comp:
+                continue
+
+            pay_period = payroll.get("pay_period", {})
+            gross      = float(emp_comp.get("gross_pay")  or 0)
+            net        = float(emp_comp.get("net_pay")    or 0)
+
+            entries.append({
+                "payroll_uuid":     payroll.get("uuid", ""),
+                "payroll_type":     "off_cycle" if payroll.get("off_cycle") else "regular",
+                "pay_period_start": pay_period.get("start_date", ""),
+                "pay_period_end":   pay_period.get("end_date",   ""),
+                "check_date":       payroll.get("check_date"),
+                "gross_pay":        gross,
+                "net_pay":          net,
+                "total_deductions": round(gross - net, 2),
+            })
+
+        logger.info(
+            "get_employee_pay upn=%s year=%d month=%d entries=%d",
+            upn, year, month, len(entries),
+        )
+        return entries
+
     # ── Webhook validation ────────────────────────────────────────────────────
 
     def validate_webhook(self, body: bytes, headers: dict) -> bool:

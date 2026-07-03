@@ -127,6 +127,40 @@ class PayrollProvider(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_employee_pay(
+        self,
+        credentials: dict,
+        company_ref: str,
+        upn:         str,
+        year:        int,
+        month:       int,
+    ) -> list[dict]:
+        """
+        Return payroll entries for an employee for a given calendar month.
+
+        Args:
+            credentials: Dict returned by get_credentials().
+            company_ref: Provider's company identifier.
+            upn:         Employee's userPrincipalName (work email in most providers).
+            year:        Calendar year  (e.g. 2026).
+            month:       Calendar month (1–12).
+
+        Returns:
+            List of dicts, each with:
+              payroll_uuid     str
+              payroll_type     "regular" | "off_cycle"
+              pay_period_start str  (YYYY-MM-DD)
+              pay_period_end   str  (YYYY-MM-DD)
+              check_date       str | None  (YYYY-MM-DD)
+              gross_pay        float
+              net_pay          float
+              total_deductions float
+
+        Raises RuntimeError if the employee is not found.
+        """
+        ...
+
     # ── Webhook validation ────────────────────────────────────────────────────
 
     def validate_webhook(self, body: bytes, headers: dict) -> bool:

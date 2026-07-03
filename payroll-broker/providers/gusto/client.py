@@ -181,6 +181,50 @@ def find_employee_by_email(
 
 
 # ---------------------------------------------------------------------------
+# Pay lookup
+# ---------------------------------------------------------------------------
+
+def get_payrolls_for_month(
+    access_token: str,
+    company_uuid: str,
+    year:         int,
+    month:        int,
+    api_base_url: str,
+) -> list[dict]:
+    """
+    Return all payrolls (regular + off-cycle) whose pay period overlaps the
+    given calendar month, with employee_compensations included.
+
+    GET /v1/companies/{uuid}/payrolls
+        ?start_date=YYYY-MM-01
+        &end_date=YYYY-MM-{last}
+        &include_off_cycle=true
+        &include[]=employee_compensations
+    """
+    import calendar as _cal
+    last_day   = _cal.monthrange(year, month)[1]
+    start_date = f"{year}-{month:02d}-01"
+    end_date   = f"{year}-{month:02d}-{last_day:02d}"
+
+    resp = httpx.get(
+        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls",
+        headers=_auth_headers(access_token),
+        # httpx encodes list params correctly when passed as a list of tuples
+        params=[
+            ("start_date",       start_date),
+            ("end_date",         end_date),
+            ("include_off_cycle","true"),
+            ("include[]",        "employee_compensations"),
+        ],
+        timeout=30,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    # Gusto may return a dict with a "payrolls" key or a bare list
+    return body if isinstance(body, list) else body.get("payrolls", [])
+
+
+# ---------------------------------------------------------------------------
 # Off-cycle payroll
 # ---------------------------------------------------------------------------
 

@@ -32,7 +32,8 @@ from fastapi.responses import JSONResponse
 from workers.payroll_worker import run_worker
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-from routers.health_router import router as health_router
+from routers.health_router        import router as health_router
+from routers.employee_pay_router  import router as employee_pay_router
 
 # Gusto
 from providers.gusto.oauth_router   import router as gusto_oauth_router
@@ -115,6 +116,7 @@ FastAPIInstrumentor.instrument_app(app)
 
 # ── Register routers ──────────────────────────────────────────────────────────
 app.include_router(health_router)
+app.include_router(employee_pay_router)
 app.include_router(gusto_oauth_router)
 app.include_router(gusto_webhook_router)
 # app.include_router(workday_oauth_router)
