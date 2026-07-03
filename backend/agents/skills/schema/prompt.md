@@ -13,17 +13,23 @@
 
 ## dbo.UserRoles
 Application-level role assignments managed within the app (not Azure AD).
-Used to assign the HRBP role to users who review flagged nominations.
+Used to assign elevated roles to users beyond the default employee view.
 
-| Column      | Type          | Notes                                                      |
-|-------------|---------------|------------------------------------------------------------|
-| UserRoleId  | INT IDENTITY  | Primary Key                                                |
-| UserId      | INT           | FK → Users.UserId                                          |
-| Role        | NVARCHAR(50)  | Exact values: HRBP                                         |
-| AssignedAt  | DATETIME      | When the role was assigned                                 |
-| AssignedBy  | INT           | FK → Users.UserId (who assigned the role); may be NULL     |
+| Column      | Type          | Notes                                                          |
+|-------------|---------------|----------------------------------------------------------------|
+| UserRoleId  | INT IDENTITY  | Primary Key                                                    |
+| UserId      | INT           | FK → Users.UserId                                              |
+| TenantId    | INT           | FK → Tenants.TenantId — denormalised for query convenience     |
+| Role        | NVARCHAR(50)  | Exact values: HRBP, Support, PayrollBP                         |
+| AssignedAt  | DATETIME      | When the role was assigned                                     |
+| AssignedBy  | INT           | FK → Users.UserId (who assigned the role); may be NULL         |
 
-Tenant isolation: join through Users to scope by TenantId.
+Role meanings:
+- **HRBP** — reviews nominations held in PendingHRBPReview by the fraud model
+- **Support** — receives payroll failure alert emails when the broker cannot submit to the provider
+- **PayrollBP** — may look up employee payroll data via the Payroll tab
+
+Tenant isolation: filter directly on TenantId (no Users join needed).
 
 Example — find all HRBP users for the current tenant:
 ```sql
@@ -31,7 +37,7 @@ SELECT u.FirstName, u.LastName, u.userEmail
 FROM   dbo.UserRoles ur
 JOIN   dbo.Users u ON u.UserId = ur.UserId
 WHERE  ur.Role     = 'HRBP'
-  AND  u.TenantId  = <TenantId>
+  AND  ur.TenantId = <TenantId>
 ```
 
 ## dbo.Users
@@ -121,3 +127,57 @@ must not be exposed to in-tenant users.
 If an admin-facing use case needs this data, add a dedicated tool that
 checks the caller's admin role before bypassing the tenant guard — do not
 relax the guard on `query_database`.
+
+## dbo.payroll_providers
+One row per configured payroll provider instance. The `name` column is the
+type discriminator used by the payroll broker to route to the correct API
+client. Multiple rows may share the same `name` (e.g. two tenants both on
+Gusto), each with a different `company_id_at_provider`.
+
+Linked to tenants via `dbo.Tenants.payroll_provider_id` (NULL = no payroll
+configured for that tenant).
+
+| Column                 | Type           | Notes                                                                                         |
+|------------------------|----------------|-----------------------------------------------------------------------------------------------|
+| id                     | INT IDENTITY   | Primary Key                                                                                   |
+| name                   | VARCHAR(50)    | Provider type discriminator: gusto, workday, adp, …                                           |
+| display_name           | NVARCHAR(100)  | Human-readable label, e.g. "Gusto – Sandbox Inc."                                            |
+| company_id_at_provider | VARCHAR(100)   | Provider's own company reference (Gusto UUID, Workday tenant name, ADP code); NULL until OAuth completes |
+| provider_config        | NVARCHAR(MAX)  | JSON blob for provider-specific extras (e.g. Workday per-tenant host URL); may be NULL        |
+| api_base_url           | VARCHAR(255)   | Override for the provider's API root; NULL = use hardcoded default                            |
+| oauth_base_url         | VARCHAR(255)   | Override for the provider's OAuth root; may be NULL                                           |
+
+Tenant isolation: join through Tenants.
+```sql
+SELECT pp.*
+FROM   dbo.payroll_providers pp
+JOIN   dbo.Tenants t ON t.payroll_provider_id = pp.id
+WHERE  t.TenantId = <TenantId>
+```
+
+## dbo.payroll_submissions
+One row per payroll submission attempt for a nomination. Created by the
+payroll broker when it submits an off-cycle bonus to the provider; updated
+when the provider webhook confirms acceptance or rejection.
+
+| Column               | Type            | Notes                                                                                           |
+|----------------------|-----------------|-------------------------------------------------------------------------------------------------|
+| id                   | INT IDENTITY    | Primary Key                                                                                     |
+| nomination_id        | INT             | FK → Nominations.NominationId                                                                   |
+| provider_id          | INT             | FK → payroll_providers.id                                                                       |
+| provider_payroll_ref | VARCHAR(100)    | Provider's reference for this payroll run (e.g. Gusto UUID); NULL if submission failed before a ref was assigned |
+| status               | VARCHAR(50)     | Exact values: submitted, accepted, rejected                                                     |
+| submitted_at         | DATETIME        | When the broker first attempted submission (UTC)                                                |
+| completed_at         | DATETIME        | When the provider confirmed acceptance; NULL if still pending or rejected                       |
+| reason               | NVARCHAR(1000)  | Provider-supplied rejection message; NULL on success                                            |
+
+Status lifecycle: submitted → accepted (completed_at set) or rejected (reason set).
+
+Tenant isolation: join through Nominations → Users.
+```sql
+SELECT ps.*
+FROM   dbo.payroll_submissions ps
+JOIN   dbo.Nominations n ON n.NominationId = ps.nomination_id
+JOIN   dbo.Users u       ON u.UserId = n.NominatorId
+WHERE  u.TenantId = <TenantId>
+```

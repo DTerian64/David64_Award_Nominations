@@ -322,10 +322,10 @@ module "container_apps" {
     # Log Analytics workspace GUID — used by the admin nomination-logs endpoint (azure-monitor-query).
     # Must be the customer/workspace GUID, NOT the ARM resource ID.
     { name = "LOG_ANALYTICS_WORKSPACE_ID",       value = module.log_analytics.workspace_primary_customer_id },
-    # Internal call from backend → payroll-broker for the PayrollBP employee-pay lookup.
-    # Uses the public custom domain (same as PAYROLL_BROKER_BASE_URL on the broker side)
-    # to avoid a circular Terraform dependency (payroll_broker module depends on container_apps for CAE ID).
-    { name = "PAYROLL_BROKER_INTERNAL_URL",      value = "https://${var.payroll_broker_custom_domain}" },
+    # Backend → payroll-broker for the PayrollBP employee-pay lookup.
+    # Same value as PAYROLL_BROKER_BASE_URL on the broker side; set separately here
+    # to avoid a circular Terraform dependency (payroll_broker depends on container_apps for CAE ID).
+    { name = "PAYROLL_BROKER_BASE_URL",          value = "https://${var.payroll_broker_custom_domain}" },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity

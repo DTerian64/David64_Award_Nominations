@@ -10,7 +10,7 @@ GET /api/payroll/employee-pay  — look up cycled + off-cycle pay for an employe
 
 The backend owns auth (AAD token) and tenant resolution; the payroll-broker
 owns provider routing (Gusto, Workday, …) and credential management.
-The broker URL is configured via PAYROLL_BROKER_INTERNAL_URL env var.
+The broker URL is configured via PAYROLL_BROKER_BASE_URL env var.
 """
 
 import logging
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["payroll"])
 
-_BROKER_URL = os.getenv("PAYROLL_BROKER_INTERNAL_URL", "").rstrip("/")
+_BROKER_URL = os.getenv("PAYROLL_BROKER_BASE_URL", "").rstrip("/")
 
 
 def _require_payroll_bp(user_context: dict) -> dict:
@@ -72,7 +72,7 @@ async def get_employee_pay(
     if not _BROKER_URL:
         raise HTTPException(
             status_code=503,
-            detail="Payroll broker not configured (PAYROLL_BROKER_INTERNAL_URL missing)",
+            detail="Payroll broker not configured (PAYROLL_BROKER_BASE_URL missing)",
         )
 
     broker_endpoint = f"{_BROKER_URL}/employee-pay"
