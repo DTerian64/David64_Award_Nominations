@@ -59,7 +59,7 @@ function parseMessage(raw: string): { text: string; extras: Record<string, unkno
     const extras = JSON.parse(stripped.slice(braceIdx).trim());
     return { text: stripped.slice(0, braceIdx).trim(), extras };
   } catch {
-    return { text: stripped.trim(), extras: {} };
+    return { text: stripped.trim(), extras: {} }; 
   }
 }
 
