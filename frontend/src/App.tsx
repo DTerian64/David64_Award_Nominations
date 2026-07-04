@@ -149,6 +149,7 @@ const AwardNominationApp: React.FC = () => {
   const [approvalsView, setApprovalsView] = useState<'pending' | 'decided' | 'paid'>('pending');
   const [certLoadingId, setCertLoadingId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics' | 'payroll'>('nominate');
+  const [historyView, setHistoryView] = useState<'pending' | 'decided'>('pending');
   const [isHRBP, setIsHRBP] = useState(false);
   const [isPayrollBP, setIsPayrollBP] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -700,67 +701,103 @@ const AwardNominationApp: React.FC = () => {
           {/* ── History tab ──────────────────────────────────────────────── */}
           {activeTab === 'history' && (
             <div className="bg-white rounded-lg shadow-md p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('history.heading')}</h2>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-gray-900">{t('history.heading')}</h2>
+                <select
+                  value={historyView}
+                  onChange={e => setHistoryView(e.target.value as 'pending' | 'decided')}
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none text-sm text-gray-700"
+                >
+                  <option value="pending">{t('approvals.viewPending')}</option>
+                  <option value="decided">{t('history.filterDecided', { defaultValue: 'Approved · Rejected · Paid' })}</option>
+                </select>
+              </div>
 
-              {nominations.length === 0 ? (
-                <div className="text-center py-12">
-                  <Award className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-600">{t('history.empty')}</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {nominations.map(nom => (
-                    <div key={nom.NominationId} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <h3 className="text-lg font-semibold text-gray-900">
-                            {getUserName(nom.BeneficiaryId)}
-                          </h3>
-                          <p className="text-sm text-gray-600">
-                            {t('history.nominatedOn', { date: formatDate(nom.NominationDate) })}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
-                            {formatCurrency(nom.Amount)}
-                          </p>
-                          <StatusBadge status={nom.Status} />
-                        </div>
-                      </div>
-                      <p className="text-gray-700">{nom.NominationDescription}</p>
-                      {nom.Status === 'Rejected' && (nom.RejectionActor || nom.RejectionReason) && (
-                        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm">
-                          {nom.RejectionActor && (
-                            <p className="font-semibold text-red-700 mb-1">
-                              Rejected by: {nom.RejectionActor}
-                            </p>
-                          )}
-                          {nom.RejectionReason && (
-                            <p className="text-red-600">{nom.RejectionReason}</p>
-                          )}
-                        </div>
-                      )}
-                      <div className="flex items-end justify-between mt-2">
-                        {nom.CategoryDescription ? (
-                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
-                                style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
-                            {nom.CategoryDescription}
-                          </span>
-                        ) : <span />}
-                        {isAdmin && (
-                          <p
-                            style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', cursor: 'pointer' }}
-                            onClick={() => setLogsNominationId(nom.NominationId)}
-                            title="View logs for this nomination"
-                          >
-                            #{nom.NominationId}
-                          </p>
-                        )}
-                      </div>
+              {(() => {
+                const filtered = nominations.filter(n => {
+                  if (historyView === 'pending') return n.Status === 'Pending';
+                  return n.Status === 'Approved' || n.Status === 'Rejected' || n.Status === 'Paid' || n.Status === 'Payed';
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="text-center py-12">
+                      <Award className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <p className="text-gray-600">{t('history.empty')}</p>
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                }
+
+                return (
+                  <div className="space-y-4">
+                    {filtered.map(nom => (
+                      <div key={nom.NominationId} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">
+                              {getUserName(nom.BeneficiaryId)}
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                              {t('history.nominatedOn', { date: formatDate(nom.NominationDate) })}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-2xl font-bold" style={{ color: 'var(--color-primary)' }}>
+                              {formatCurrency(nom.Amount)}
+                            </p>
+                            <StatusBadge status={nom.Status} />
+                          </div>
+                        </div>
+                        <p className="text-gray-700">{nom.NominationDescription}</p>
+                        {nom.Status === 'Rejected' && (nom.RejectionActor || nom.RejectionReason) && (
+                          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm">
+                            {nom.RejectionActor && (
+                              <p className="font-semibold text-red-700 mb-1">
+                                Rejected by: {nom.RejectionActor}
+                              </p>
+                            )}
+                            {nom.RejectionReason && (
+                              <p className="text-red-600">{nom.RejectionReason}</p>
+                            )}
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between mt-3">
+                          <div className="flex items-center gap-3">
+                            {nom.CategoryDescription ? (
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                                    style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                                {nom.CategoryDescription}
+                              </span>
+                            ) : <span />}
+                            {isAdmin && (
+                              <p
+                                style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', cursor: 'pointer' }}
+                                onClick={() => setLogsNominationId(nom.NominationId)}
+                                title="View logs for this nomination"
+                              >
+                                #{nom.NominationId}
+                              </p>
+                            )}
+                          </div>
+                          {(nom.Status === 'Approved' || nom.Status === 'Paid' || nom.Status === 'Payed') && (
+                            <button
+                              onClick={() => handleViewCertificate(nom.NominationId)}
+                              disabled={certLoadingId === nom.NominationId}
+                              className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border transition-colors cursor-pointer hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                              style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
+                            >
+                              <Award className="w-4 h-4" />
+                              {certLoadingId === nom.NominationId
+                                ? t('approvals.generatingCertificate')
+                                : t('approvals.certificate')}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
