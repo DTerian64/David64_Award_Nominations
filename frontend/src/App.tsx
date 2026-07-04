@@ -936,12 +936,23 @@ const AwardNominationApp: React.FC = () => {
                           </div>
                         )}
                         <div className="flex items-center justify-between">
-                          {nom.CategoryDescription ? (
-                            <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
-                                  style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
-                              {nom.CategoryDescription}
-                            </span>
-                          ) : <span />}
+                          <div className="flex items-center gap-3">
+                            {nom.CategoryDescription ? (
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                                    style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                                {nom.CategoryDescription}
+                              </span>
+                            ) : <span />}
+                            {isAdmin && (
+                              <p
+                                style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', cursor: 'pointer' }}
+                                onClick={() => setLogsNominationId(nom.NominationId)}
+                                title="View logs for this nomination"
+                              >
+                                #{nom.NominationId}
+                              </p>
+                            )}
+                          </div>
                           {(nom.Status === 'Approved' || nom.Status === 'Paid') && (
                             <button
                               onClick={() => handleViewCertificate(nom.NominationId)}
@@ -995,12 +1006,23 @@ const AwardNominationApp: React.FC = () => {
                         </div>
                         <p className="text-gray-700 mb-3">{nom.NominationDescription}</p>
                         <div className="flex items-center justify-between">
-                          {nom.CategoryDescription ? (
-                            <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
-                                  style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
-                              {nom.CategoryDescription}
-                            </span>
-                          ) : <span />}
+                          <div className="flex items-center gap-3">
+                            {nom.CategoryDescription ? (
+                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                                    style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>
+                                {nom.CategoryDescription}
+                              </span>
+                            ) : <span />}
+                            {isAdmin && (
+                              <p
+                                style={{ color: '#d1d5db', fontSize: '0.7rem', fontFamily: 'monospace', userSelect: 'all', cursor: 'pointer' }}
+                                onClick={() => setLogsNominationId(nom.NominationId)}
+                                title="View logs for this nomination"
+                              >
+                                #{nom.NominationId}
+                              </p>
+                            )}
+                          </div>
                           <button
                             onClick={() => handleViewCertificate(nom.NominationId)}
                             disabled={certLoadingId === nom.NominationId}
