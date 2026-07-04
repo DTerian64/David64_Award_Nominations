@@ -326,10 +326,15 @@ def create_off_cycle_payroll(
     Create, calculate, and submit an off-cycle bonus payroll for one employee.
     Returns the Gusto payroll UUID.
 
-    Gusto off-cycle flow (v1 API):
-      1. POST /v1/companies/{uuid}/payrolls           → creates draft
-      2. POST /v1/companies/{uuid}/payrolls/{uuid}/calculate
-      3. POST /v1/companies/{uuid}/payrolls/{uuid}/submit
+    Gusto off-cycle flow (v1 API) — four steps:
+      1. POST /v1/companies/{uuid}/payrolls
+             → creates draft; employee_compensations intentionally omitted
+               because Gusto silently ignores them on creation
+      2. PUT  /v1/companies/{uuid}/payrolls/{uuid}
+             → sets the bonus amount; requires version from step-1 response
+               for optimistic locking
+      3. PUT  /v1/companies/{uuid}/payrolls/{uuid}/calculate
+      4. PUT  /v1/companies/{uuid}/payrolls/{uuid}/submit
 
     Raises httpx.HTTPStatusError on any Gusto API failure.
     """
@@ -339,19 +344,57 @@ def create_off_cycle_payroll(
             amount, currency,
         )
 
+    base  = api_base_url.rstrip("/")
     today = datetime.utcnow().date().isoformat()
 
-    # 1. Create draft
+    # 1. Create draft — employee_compensations omitted intentionally;
+    #    Gusto ignores them on POST and requires a separate PUT (step 2).
     create_resp = httpx.post(
-        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls",
+        f"{base}/v1/companies/{company_uuid}/payrolls",
         json={
             "off_cycle":        True,
             "off_cycle_reason": "Bonus",
             "start_date":       today,
             "end_date":         today,
             "employee_uuids":   [employee_uuid],
+        },
+        headers=_auth_headers(access_token),
+        timeout=30,
+    )
+    if not create_resp.is_success:
+        logger.error(
+            "Gusto step1/create failed status=%d body=%s",
+            create_resp.status_code, create_resp.text,
+        )
+    create_resp.raise_for_status()
+    create_body  = create_resp.json()
+    payroll_uuid = create_body["uuid"]
+    logger.info(
+        "Gusto step1/create payroll_uuid=%s employee=%s amount=%.2f",
+        payroll_uuid, employee_uuid, amount,
+    )
+
+    # 2. Set compensation — extract version for optimistic locking, then PUT
+    comps    = create_body.get("employee_compensations", [])
+    emp_comp = next(
+        (c for c in comps if c.get("employee_uuid") == employee_uuid), None
+    )
+    if not emp_comp:
+        raise RuntimeError(
+            f"Gusto payroll {payroll_uuid} has no compensation entry for "
+            f"employee {employee_uuid} after creation — cannot set amount"
+        )
+    version = emp_comp["version"]
+    logger.info(
+        "Gusto step2/update payroll_uuid=%s version=%s amount=%.2f job_uuid=%s",
+        payroll_uuid, version, amount, job_uuid,
+    )
+    update_resp = httpx.put(
+        f"{base}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}",
+        json={
             "employee_compensations": [{
                 "employee_uuid": employee_uuid,
+                "version":       version,
                 "fixed_compensations": [{
                     "name":     "Bonus",
                     "amount":   f"{amount:.2f}",
@@ -362,30 +405,40 @@ def create_off_cycle_payroll(
         headers=_auth_headers(access_token),
         timeout=30,
     )
-    if not create_resp.is_success:
+    if not update_resp.is_success:
         logger.error(
-            "Gusto payroll creation failed status=%d body=%s",
-            create_resp.status_code, create_resp.text,
+            "Gusto step2/update failed payroll_uuid=%s status=%d body=%s",
+            payroll_uuid, update_resp.status_code, update_resp.text,
         )
-    create_resp.raise_for_status()
-    payroll_uuid = create_resp.json()["uuid"]
-    logger.info("Gusto payroll created uuid=%s employee=%s amount=%.2f",
-                payroll_uuid, employee_uuid, amount)
+    update_resp.raise_for_status()
+    logger.info("Gusto step2/update compensation set payroll_uuid=%s", payroll_uuid)
 
-    # 2. Calculate
-    httpx.put(
-        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/calculate",
+    # 3. Calculate
+    calc_resp = httpx.put(
+        f"{base}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/calculate",
         headers=_auth_headers(access_token),
         timeout=30,
-    ).raise_for_status()
-    logger.info("Gusto payroll calculated uuid=%s", payroll_uuid)
+    )
+    if not calc_resp.is_success:
+        logger.error(
+            "Gusto step3/calculate failed payroll_uuid=%s status=%d body=%s",
+            payroll_uuid, calc_resp.status_code, calc_resp.text,
+        )
+    calc_resp.raise_for_status()
+    logger.info("Gusto step3/calculate payroll_uuid=%s", payroll_uuid)
 
-    # 3. Submit
-    httpx.put(
-        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/submit",
+    # 4. Submit
+    submit_resp = httpx.put(
+        f"{base}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}/submit",
         headers=_auth_headers(access_token),
         timeout=30,
-    ).raise_for_status()
-    logger.info("Gusto payroll submitted uuid=%s", payroll_uuid)
+    )
+    if not submit_resp.is_success:
+        logger.error(
+            "Gusto step4/submit failed payroll_uuid=%s status=%d body=%s",
+            payroll_uuid, submit_resp.status_code, submit_resp.text,
+        )
+    submit_resp.raise_for_status()
+    logger.info("Gusto step4/submit payroll_uuid=%s", payroll_uuid)
 
     return payroll_uuid
