@@ -232,54 +232,79 @@ def get_payrolls_for_month(
     Return all payrolls (regular + off-cycle) whose pay period overlaps the
     given calendar month, with employee_compensations included.
 
-    GET /v1/companies/{uuid}/payrolls
-        ?start_date=YYYY-MM-01
-        &end_date=YYYY-MM-{last}
-        &include_off_cycle=true
-        &include[]=employee_compensations
+    Two-step approach — the list endpoint never returns employee_compensations
+    regardless of include params; the individual endpoint always does.
+
+      Step 1: GET /v1/companies/{uuid}/payrolls?start_date=...&end_date=...
+              → collect payroll UUIDs
+      Step 2: GET /v1/companies/{uuid}/payrolls/{payroll_uuid} per UUID
+              → returns full employee_compensations array
     """
     import calendar as _cal
     last_day   = _cal.monthrange(year, month)[1]
     start_date = f"{year}-{month:02d}-01"
     end_date   = f"{year}-{month:02d}-{last_day:02d}"
 
-    # Build the query string manually — httpx encodes [] as %5B%5D which Gusto
-    # does not recognise, causing the include param to be silently ignored.
-    # Try both bracket and non-bracket forms so at least one is accepted.
-    from urllib.parse import urlencode
+    base = api_base_url.rstrip("/")
+
+    # ── Step 1: list endpoint → UUIDs ────────────────────────────────────────
     qs = urlencode([
         ("start_date",        start_date),
         ("end_date",          end_date),
         ("include_off_cycle", "true"),
-        ("include",           "employee_compensations"),
     ])
-    url = f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls?{qs}"
+    list_url = f"{base}/v1/companies/{company_uuid}/payrolls?{qs}"
 
     logger.info(
-        "Gusto get_payrolls company=%s start=%s end=%s",
+        "Gusto step1/list company=%s start=%s end=%s",
         company_uuid, start_date, end_date,
     )
-    resp = httpx.get(url, headers=_auth_headers(access_token), timeout=30)
-    if not resp.is_success:
+    list_resp = httpx.get(list_url, headers=_auth_headers(access_token), timeout=30)
+    if not list_resp.is_success:
         logger.error(
-            "Gusto get_payrolls failed status=%d body=%s",
-            resp.status_code, resp.text,
+            "Gusto step1/list failed status=%d body=%s",
+            list_resp.status_code, list_resp.text,
         )
-    resp.raise_for_status()
-    body = resp.json()
-    # Gusto may return a dict with a "payrolls" key or a bare list
-    payrolls = body if isinstance(body, list) else body.get("payrolls", [])
-    for p in payrolls:
-        comps = p.get("employee_compensations")
-        logger.info(
-            "Gusto payroll uuid=%s processed=%s off_cycle=%s "
-            "compensations_key_present=%s compensations_count=%d",
-            p.get("uuid"), p.get("processed"), p.get("off_cycle"),
-            comps is not None, len(comps) if comps else 0,
-        )
+    list_resp.raise_for_status()
+
+    body  = list_resp.json()
+    stubs = body if isinstance(body, list) else body.get("payrolls", [])
+    uuids = [p["uuid"] for p in stubs if p.get("uuid")]
     logger.info(
-        "Gusto get_payrolls company=%s start=%s end=%s returned=%d",
-        company_uuid, start_date, end_date, len(payrolls),
+        "Gusto step1/list returned=%d payrolls uuids=%s",
+        len(stubs), uuids,
+    )
+
+    # ── Step 2: fetch each payroll individually to get employee_compensations ─
+    payrolls: list[dict] = []
+    for payroll_uuid in uuids:
+        detail_url = f"{base}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}"
+        logger.info(
+            "Gusto step2/detail fetching payroll_uuid=%s", payroll_uuid,
+        )
+        detail_resp = httpx.get(
+            detail_url, headers=_auth_headers(access_token), timeout=30,
+        )
+        if not detail_resp.is_success:
+            logger.error(
+                "Gusto step2/detail failed payroll_uuid=%s status=%d body=%s",
+                payroll_uuid, detail_resp.status_code, detail_resp.text,
+            )
+            detail_resp.raise_for_status()
+
+        p     = detail_resp.json()
+        comps = p.get("employee_compensations", [])
+        logger.info(
+            "Gusto step2/detail payroll_uuid=%s processed=%s off_cycle=%s "
+            "compensations_count=%d",
+            payroll_uuid, p.get("processed"), p.get("off_cycle"), len(comps),
+        )
+        payrolls.append(p)
+
+    logger.info(
+        "Gusto get_payrolls_for_month done company=%s year=%d month=%d "
+        "payrolls_fetched=%d",
+        company_uuid, year, month, len(payrolls),
     )
     return payrolls
 
