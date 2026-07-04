@@ -826,10 +826,12 @@ resource "azurerm_dns_cname_record" "swa_custom_domains" {
   depends_on          = [module.static_web_app]
 }
 
-# CNAME — payroll-broker.terianix.ai → AFD endpoint
-# AFD validates domain ownership via this CNAME before issuing the managed TLS cert.
-# Must exist before `terraform apply` creates the AFD custom domain resource.
-# TTL 300 s during rollout; raise to 3600 once the domain is stable.
+# NOTE: terianix.ai is delegated to Cloudflare (not Azure DNS).
+# The azurerm_dns records below write to the Azure DNS zone but are NOT publicly
+# visible. Kept for reference only. Authoritative records are cloudflare_record
+# resources further below.
+
+# CNAME — payroll-broker.terianix.ai → AFD endpoint (Azure DNS — non-authoritative)
 resource "azurerm_dns_cname_record" "payroll_broker" {
   count               = var.payroll_broker_custom_domain != "" ? 1 : 0
   name                = split(".", var.payroll_broker_custom_domain)[0]   # "payroll-broker"
@@ -839,6 +841,51 @@ resource "azurerm_dns_cname_record" "payroll_broker" {
   record              = module.front_door.afd_endpoint_hostname
   tags                = local.tags
   depends_on          = [module.front_door]
+}
+
+# TXT — _dnsauth.payroll-broker (Azure DNS — non-authoritative)
+resource "azurerm_dns_txt_record" "payroll_broker_validation" {
+  count               = var.payroll_broker_custom_domain != "" ? 1 : 0
+  name                = "_dnsauth.${split(".", var.payroll_broker_custom_domain)[0]}"
+  zone_name           = data.azurerm_dns_zone.terianix[0].name
+  resource_group_name = var.dns_zone_terianix_resource_group
+  ttl                 = 3600
+  record {
+    value = module.front_door.payroll_broker_validation_token
+  }
+  tags       = local.tags
+  depends_on = [module.front_door]
+}
+
+# ── Cloudflare DNS — terianix.ai (authoritative) ──────────────────────────────
+# terianix.ai NS is delegated to Cloudflare. All publicly visible DNS records
+# must be managed here. The azurerm_dns records above are non-authoritative.
+data "cloudflare_zone" "terianix" {
+  name = "terianix.ai"
+}
+
+# CNAME — payroll-broker.terianix.ai → AFD endpoint
+# proxied = false: Cloudflare must NOT proxy — AFD handles TLS and requires
+# the CNAME to resolve directly to the AFD hostname for domain validation.
+resource "cloudflare_record" "payroll_broker_cname" {
+  count   = var.payroll_broker_custom_domain != "" ? 1 : 0
+  zone_id = data.cloudflare_zone.terianix.id
+  name    = split(".", var.payroll_broker_custom_domain)[0]   # "payroll-broker"
+  type    = "CNAME"
+  content = module.front_door.afd_endpoint_hostname
+  proxied = false
+  ttl     = 300
+}
+
+# TXT — _dnsauth.payroll-broker → AFD managed-cert validation token
+resource "cloudflare_record" "payroll_broker_dnsauth" {
+  count   = var.payroll_broker_custom_domain != "" ? 1 : 0
+  zone_id = data.cloudflare_zone.terianix.id
+  name    = "_dnsauth.${split(".", var.payroll_broker_custom_domain)[0]}"
+  type    = "TXT"
+  content = module.front_door.payroll_broker_validation_token
+  proxied = false
+  ttl     = 3600
 }
 
 # ── DNS — legacy redirect CNAMEs (terianix.ai → AFD) ─────────────────

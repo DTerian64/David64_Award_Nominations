@@ -71,6 +71,11 @@ output "frontdoor_endpoint" {
   value       = var.afd_endpoint_name
 }
 
+output "payroll_broker_validation_token" {
+  description = "AFD TXT validation token for payroll-broker.terianix.ai — add as _dnsauth.payroll-broker TXT record if not already created by Terraform"
+  value       = module.front_door.payroll_broker_validation_token
+}
+
 output "sql_server_fqdn" {
   description = "SQL Server FQDN — GitHub Actions SQL_SERVER secret"
   value       = "${var.sql_server_name}.database.windows.net"

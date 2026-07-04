@@ -328,6 +328,12 @@ variable "dns_zone_terianix_resource_group" {
   default     = "rg_platform"
 }
 
+variable "cloudflare_api_token" {
+  description = "Cloudflare API token with Zone:DNS:Edit permission for terianix.ai. terianix.ai is delegated to Cloudflare (not Azure DNS), so all public DNS records must be managed here."
+  type        = string
+  sensitive   = true
+}
+
 variable "legacy_redirect_domains" {
   description = "Map of old terianix.ai hostname → new terianix.ai hostname. CNAME records for old hosts are updated to point to the AFD endpoint; AFD Rules Engine issues a 301 redirect to the mapped new hostname."
   type        = map(string)
