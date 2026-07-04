@@ -72,7 +72,7 @@ def get_employee_pay(
 
     # 4. Fetch pay data
     try:
-        entries = provider.get_employee_pay(
+        result = provider.get_employee_pay(
             credentials=credentials,
             company_ref=company_ref,
             upn=upn,
@@ -88,4 +88,4 @@ def get_employee_pay(
         )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
-    return {"entries": entries}
+    return {"profile": result.get("profile"), "entries": result.get("entries", [])}

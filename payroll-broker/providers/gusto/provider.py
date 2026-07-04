@@ -185,36 +185,72 @@ class GustoProvider(PayrollProvider):
         api_base_url = credentials.get("api_base_url", "https://api.gusto-demo.com")
 
         # 1. Resolve Gusto employee UUID from UPN
+        logger.info(
+            "get_employee_pay resolving employee upn=%s company=%s", upn, company_ref
+        )
         emp = client.find_employee_by_email(access_token, company_ref, upn, api_base_url)
         if not emp:
+            logger.warning(
+                "get_employee_pay employee not found upn=%s company=%s", upn, company_ref
+            )
             raise RuntimeError(
                 f"Employee upn={upn} not found in Gusto company={company_ref}"
             )
         employee_uuid = emp["employee_id"]
+        profile = {
+            "employee_uuid": employee_uuid,
+            "full_name":     emp.get("full_name", ""),
+            "work_email":    emp.get("work_email", ""),
+            "address":       emp.get("address", {}),
+            "payrate":       emp.get("payrate", {}),
+        }
+        logger.info(
+            "get_employee_pay employee resolved upn=%s employee_uuid=%s",
+            upn, employee_uuid,
+        )
 
         # 2. Fetch payrolls for the month
         payrolls = client.get_payrolls_for_month(
             access_token, company_ref, year, month, api_base_url
         )
+        logger.info(
+            "get_employee_pay payrolls_in_month=%d upn=%s year=%d month=%d",
+            len(payrolls), upn, year, month,
+        )
 
         # 3. Filter and shape
         entries = []
         for payroll in payrolls:
+            p_uuid   = payroll.get("uuid", "")
+            p_type   = "off_cycle" if payroll.get("off_cycle") else "regular"
             comps    = payroll.get("employee_compensations", [])
             emp_comp = next(
                 (c for c in comps if c.get("employee_uuid") == employee_uuid),
                 None,
             )
             if not emp_comp:
+                logger.debug(
+                    "get_employee_pay no compensation match payroll_uuid=%s type=%s "
+                    "employee_uuid=%s compensations_in_payroll=%d",
+                    p_uuid, p_type, employee_uuid, len(comps),
+                )
                 continue
 
             pay_period = payroll.get("pay_period", {})
             gross      = float(emp_comp.get("gross_pay")  or 0)
             net        = float(emp_comp.get("net_pay")    or 0)
+            logger.info(
+                "get_employee_pay match payroll_uuid=%s type=%s period=%s→%s "
+                "gross=%.2f net=%.2f",
+                p_uuid, p_type,
+                pay_period.get("start_date", ""),
+                pay_period.get("end_date",   ""),
+                gross, net,
+            )
 
             entries.append({
-                "payroll_uuid":     payroll.get("uuid", ""),
-                "payroll_type":     "off_cycle" if payroll.get("off_cycle") else "regular",
+                "payroll_uuid":     p_uuid,
+                "payroll_type":     p_type,
                 "pay_period_start": pay_period.get("start_date", ""),
                 "pay_period_end":   pay_period.get("end_date",   ""),
                 "check_date":       payroll.get("check_date"),
@@ -227,7 +263,7 @@ class GustoProvider(PayrollProvider):
             "get_employee_pay upn=%s year=%d month=%d entries=%d",
             upn, year, month, len(entries),
         )
-        return entries
+        return {"profile": profile, "entries": entries}
 
     # ── Webhook validation ────────────────────────────────────────────────────
 

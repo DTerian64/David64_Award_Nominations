@@ -21,7 +21,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 import utils.sqlhelper2 as sqlhelper
 from auth import get_current_user_with_impersonation
-from routers.schemas import EmployeePayResponse, PayrollEntry
+from routers.schemas import (
+    EmployeeAddress,
+    EmployeePayrate,
+    EmployeePayResponse,
+    EmployeeProfile,
+    PayrollEntry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +106,22 @@ async def get_employee_pay(
         raise HTTPException(status_code=502, detail="Payroll broker returned an error")
 
     data = resp.json()
+
+    profile = None
+    raw_profile = data.get("profile")
+    if raw_profile:
+        profile = EmployeeProfile(
+            employee_uuid=raw_profile.get("employee_uuid", ""),
+            full_name=raw_profile.get("full_name", ""),
+            work_email=raw_profile.get("work_email", ""),
+            address=EmployeeAddress(**raw_profile.get("address", {})),
+            payrate=EmployeePayrate(**raw_profile.get("payrate", {})),
+        )
+
     return EmployeePayResponse(
         upn=upn,
         year=year,
         month=month,
+        profile=profile,
         entries=[PayrollEntry(**e) for e in data.get("entries", [])],
     )

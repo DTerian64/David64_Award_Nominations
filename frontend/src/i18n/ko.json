@@ -92,7 +92,14 @@
     "colNet": "실수령액",
     "colDeductions": "공제액",
     "noProvider": "이 테넌트에 급여 제공자가 설정되어 있지 않습니다.",
-    "selectPrompt": "직원과 월을 선택한 후 조회 버튼을 클릭하세요"
+    "selectPrompt": "직원과 월을 선택한 후 조회 버튼을 클릭하세요",
+    "employeeCard": "직원",
+    "payrollCard": "급여",
+    "profileName": "성명",
+    "profileEmail": "회사 이메일",
+    "profileUUID": "직원 UUID",
+    "profilePayrate": "급여율",
+    "profileAddress": "자택 주소"
   },
   "auth": {
     "signIn": "Microsoft로 로그인",

@@ -94,10 +94,32 @@ class PayrollEntry(BaseModel):
     total_deductions: float
 
 
+class EmployeeAddress(BaseModel):
+    street_1: str = ""
+    street_2: str = ""
+    city:     str = ""
+    state:    str = ""
+    zip:      str = ""
+
+
+class EmployeePayrate(BaseModel):
+    rate:         str = ""   # e.g. "90000.00"
+    payment_unit: str = ""   # "Hour" | "Week" | "Month" | "Year"
+
+
+class EmployeeProfile(BaseModel):
+    employee_uuid: str
+    full_name:     str
+    work_email:    str
+    address:       EmployeeAddress
+    payrate:       EmployeePayrate
+
+
 class EmployeePayResponse(BaseModel):
     upn:     str
     year:    int
     month:   int
+    profile: Optional[EmployeeProfile] = None
     entries: List[PayrollEntry]
 
 

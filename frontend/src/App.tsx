@@ -158,7 +158,7 @@ const AwardNominationApp: React.FC = () => {
   const [payrollUserId, setPayrollUserId]       = useState<string>('');
   const [payrollYear,   setPayrollYear]         = useState<number>(new Date().getFullYear());
   const [payrollMonth,  setPayrollMonth]        = useState<number>(new Date().getMonth() + 1);
-  const [payrollResult, setPayrollResult]       = useState<{ entries: any[] } | null>(null);
+  const [payrollResult, setPayrollResult]       = useState<{ profile: any; entries: any[]; year: number; month: number } | null>(null);
   const [payrollLoading, setPayrollLoading]     = useState(false);
   const [payrollError,   setPayrollError]       = useState<string | null>(null);
 
@@ -216,12 +216,12 @@ const AwardNominationApp: React.FC = () => {
     setPayrollResult(null);
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-      const result = await apiFetch<{ entries: any[] }>(
+      const result = await apiFetch<{ profile: any; entries: any[]; year: number; month: number }>(
         `/api/payroll/employee-pay?user_id=${payrollUserId}&year=${payrollYear}&month=${payrollMonth}`,
         {},
         impersonatedUPN,
       );
-      setPayrollResult(result);
+      setPayrollResult({ ...result, year: payrollYear, month: payrollMonth });
     } catch (err: any) {
       setPayrollError(err.message || 'Failed to load payroll data');
     } finally {
@@ -1077,8 +1077,10 @@ const AwardNominationApp: React.FC = () => {
 
               {/* Results */}
               {payrollResult && (() => {
-                const regular   = payrollResult.entries.filter(e => e.payroll_type === 'regular');
-                const offCycle  = payrollResult.entries.filter(e => e.payroll_type === 'off_cycle');
+                const { profile, entries, year, month } = payrollResult;
+                const regular  = entries.filter(e => e.payroll_type === 'regular');
+                const offCycle = entries.filter(e => e.payroll_type === 'off_cycle');
+                const monthLabel = new Date(year, month - 1).toLocaleString(undefined, { month: 'long' });
 
                 const PayTable: React.FC<{ rows: any[]; emptyKey: string }> = ({ rows, emptyKey }) =>
                   rows.length === 0 ? (
@@ -1098,16 +1100,10 @@ const AwardNominationApp: React.FC = () => {
                         <tbody>
                           {rows.map(r => (
                             <tr key={r.payroll_uuid} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-2 pr-4 text-gray-700">
-                                {r.pay_period_start} – {r.pay_period_end}
-                              </td>
+                              <td className="py-2 pr-4 text-gray-700">{r.pay_period_start} – {r.pay_period_end}</td>
                               <td className="py-2 pr-4 text-gray-700">{r.check_date ?? '—'}</td>
-                              <td className="py-2 pr-4 text-right text-gray-700">
-                                {formatCurrency(r.gross_pay)}
-                              </td>
-                              <td className="py-2 pr-4 text-right text-gray-700">
-                                {formatCurrency(r.total_deductions)}
-                              </td>
+                              <td className="py-2 pr-4 text-right text-gray-700">{formatCurrency(r.gross_pay)}</td>
+                              <td className="py-2 pr-4 text-right text-gray-700">{formatCurrency(r.total_deductions)}</td>
                               <td className="py-2 text-right font-semibold" style={{ color: 'var(--color-primary)' }}>
                                 {formatCurrency(r.net_pay)}
                               </td>
@@ -1119,14 +1115,62 @@ const AwardNominationApp: React.FC = () => {
                   );
 
                 return (
-                  <div className="space-y-8">
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-800 mb-3">{t('payroll.regularHeading')}</h3>
-                      <PayTable rows={regular} emptyKey="payroll.noRegular" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-800 mb-3">{t('payroll.offCycleHeading')}</h3>
-                      <PayTable rows={offCycle} emptyKey="payroll.noOffCycle" />
+                  <div className="space-y-6 mt-6">
+                    {/* ── Employee Card ── */}
+                    {profile && (
+                      <div className="border border-gray-200 rounded-lg p-5 bg-gray-50">
+                        <h3 className="text-base font-semibold text-gray-900 mb-4">{t('payroll.employeeCard')}</h3>
+                        <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
+                          <div>
+                            <span className="text-gray-500 block">{t('payroll.profileName')}</span>
+                            <span className="font-medium text-gray-900">{profile.full_name || '—'}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 block">{t('payroll.profileEmail')}</span>
+                            <span className="font-medium text-gray-900">{profile.work_email || '—'}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 block">{t('payroll.profileUUID')}</span>
+                            <span className="font-mono text-xs text-gray-700">{profile.employee_uuid || '—'}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 block">{t('payroll.profilePayrate')}</span>
+                            <span className="font-medium text-gray-900">
+                              {profile.payrate?.rate
+                                ? `${formatCurrency(parseFloat(profile.payrate.rate))} / ${profile.payrate.payment_unit}`
+                                : '—'}
+                            </span>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-gray-500 block">{t('payroll.profileAddress')}</span>
+                            <span className="font-medium text-gray-900">
+                              {[
+                                profile.address?.street_1,
+                                profile.address?.street_2,
+                                [profile.address?.city, profile.address?.state].filter(Boolean).join(', '),
+                                profile.address?.zip,
+                              ].filter(Boolean).join(' · ') || '—'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Payroll Card ── */}
+                    <div className="border border-gray-200 rounded-lg p-5">
+                      <h3 className="text-base font-semibold text-gray-900 mb-4">
+                        {t('payroll.payrollCard')} — {monthLabel} {year}
+                      </h3>
+                      <div className="space-y-6">
+                        <div>
+                          <h4 className="text-sm font-semibold text-gray-700 mb-2">{t('payroll.regularHeading')}</h4>
+                          <PayTable rows={regular} emptyKey="payroll.noRegular" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-semibold text-gray-700 mb-2">{t('payroll.offCycleHeading')}</h4>
+                          <PayTable rows={offCycle} emptyKey="payroll.noOffCycle" />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );

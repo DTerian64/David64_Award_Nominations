@@ -92,7 +92,14 @@
     "colNet": "Net Pay",
     "colDeductions": "Deductions",
     "noProvider": "No payroll provider is configured for this tenant.",
-    "selectPrompt": "Select an employee and month, then click Look Up"
+    "selectPrompt": "Select an employee and month, then click Look Up",
+    "employeeCard": "Employee",
+    "payrollCard": "Payroll",
+    "profileName": "Full Name",
+    "profileEmail": "Work Email",
+    "profileUUID": "Employee UUID",
+    "profilePayrate": "Pay Rate",
+    "profileAddress": "Home Address"
   },
   "auth": {
     "signIn": "Sign in with Microsoft",

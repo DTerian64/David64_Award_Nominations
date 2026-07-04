@@ -135,9 +135,9 @@ class PayrollProvider(ABC):
         upn:         str,
         year:        int,
         month:       int,
-    ) -> list[dict]:
+    ) -> dict:
         """
-        Return payroll entries for an employee for a given calendar month.
+        Return employee profile + payroll entries for a given calendar month.
 
         Args:
             credentials: Dict returned by get_credentials().
@@ -147,15 +147,22 @@ class PayrollProvider(ABC):
             month:       Calendar month (1–12).
 
         Returns:
-            List of dicts, each with:
-              payroll_uuid     str
-              payroll_type     "regular" | "off_cycle"
-              pay_period_start str  (YYYY-MM-DD)
-              pay_period_end   str  (YYYY-MM-DD)
-              check_date       str | None  (YYYY-MM-DD)
-              gross_pay        float
-              net_pay          float
-              total_deductions float
+            {
+              "profile": {
+                "employee_uuid": str,
+                "full_name":     str,
+                "work_email":    str,
+                "address":       {"street_1", "street_2", "city", "state", "zip"},
+                "payrate":       {"rate": str, "payment_unit": str},
+              },
+              "entries": [
+                {
+                  payroll_uuid, payroll_type, pay_period_start, pay_period_end,
+                  check_date, gross_pay, net_pay, total_deductions
+                },
+                ...
+              ]
+            }
 
         Raises RuntimeError if the employee is not found.
         """

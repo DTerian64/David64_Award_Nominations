@@ -149,7 +149,36 @@ def get_employees(access_token: str, company_uuid: str, api_base_url: str) -> li
         timeout=30,
     )
     resp.raise_for_status()
-    return resp.json()
+    employees = resp.json()
+    logger.info("Gusto get_employees company=%s count=%d", company_uuid, len(employees))
+    return employees
+
+
+def _extract_payrate(emp: dict) -> dict:
+    """Return {rate, payment_unit} from the employee's first job's most recent compensation."""
+    jobs = emp.get("jobs", [])
+    if not jobs:
+        return {"rate": "", "payment_unit": ""}
+    compensations = jobs[0].get("compensations", [])
+    if not compensations:
+        return {"rate": "", "payment_unit": ""}
+    comp = compensations[-1]   # most recent
+    return {
+        "rate":         comp.get("rate", ""),
+        "payment_unit": comp.get("payment_unit", ""),
+    }
+
+
+def _extract_address(emp: dict) -> dict:
+    """Return flattened home_address fields."""
+    addr = emp.get("home_address") or {}
+    return {
+        "street_1": addr.get("street_1", ""),
+        "street_2": addr.get("street_2", "") or "",
+        "city":     addr.get("city",     ""),
+        "state":    addr.get("state",    ""),
+        "zip":      addr.get("zip",      ""),
+    }
 
 
 def find_employee_by_email(
@@ -161,8 +190,8 @@ def find_employee_by_email(
     """
     Search the company's employees for one matching the given email.
 
-    Returns {"employee_id": str, "job_id": str | None} or None if not found.
-    Checks both work_email and personal email fields.
+    Returns a dict with employee_id, job_id, and full profile fields, or None
+    if not found. Checks both work_email and personal email fields.
     """
     employees   = get_employees(access_token, company_uuid, api_base_url)
     email_lower = email.lower()
@@ -174,7 +203,15 @@ def find_employee_by_email(
         ):
             jobs   = emp.get("jobs", [])
             job_id = jobs[0]["uuid"] if jobs else None
-            return {"employee_id": emp["uuid"], "job_id": job_id}
+            return {
+                "employee_id":  emp["uuid"],
+                "job_id":       job_id,
+                # Profile fields
+                "full_name":    f"{emp.get('first_name', '')} {emp.get('last_name', '')}".strip(),
+                "work_email":   emp.get("work_email") or emp.get("email", ""),
+                "address":      _extract_address(emp),
+                "payrate":      _extract_payrate(emp),
+            }
 
     logger.warning("Gusto employee not found email=%s company=%s", email, company_uuid)
     return None
@@ -206,6 +243,10 @@ def get_payrolls_for_month(
     start_date = f"{year}-{month:02d}-01"
     end_date   = f"{year}-{month:02d}-{last_day:02d}"
 
+    logger.info(
+        "Gusto get_payrolls company=%s start=%s end=%s",
+        company_uuid, start_date, end_date,
+    )
     resp = httpx.get(
         f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls",
         headers=_auth_headers(access_token),
@@ -218,10 +259,20 @@ def get_payrolls_for_month(
         ],
         timeout=30,
     )
+    if not resp.is_success:
+        logger.error(
+            "Gusto get_payrolls failed status=%d body=%s",
+            resp.status_code, resp.text,
+        )
     resp.raise_for_status()
     body = resp.json()
     # Gusto may return a dict with a "payrolls" key or a bare list
-    return body if isinstance(body, list) else body.get("payrolls", [])
+    payrolls = body if isinstance(body, list) else body.get("payrolls", [])
+    logger.info(
+        "Gusto get_payrolls company=%s start=%s end=%s returned=%d",
+        company_uuid, start_date, end_date, len(payrolls),
+    )
+    return payrolls
 
 
 # ---------------------------------------------------------------------------
