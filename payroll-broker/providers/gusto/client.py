@@ -421,7 +421,7 @@ def create_off_cycle_payroll(
                 "employee_uuid": employee_uuid,
                 "version":       version,
                 "fixed_compensations": [{
-                    "name":     "Recognition Award",
+                    "name":     "Bonus",
                     "amount":   f"{amount:.2f}",
                     "job_uuid": job_uuid,
                 }],
