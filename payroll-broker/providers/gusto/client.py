@@ -253,7 +253,6 @@ def get_payrolls_for_month(
         ("include_off_cycle", "true"),
         ("include",           "employee_compensations"),
     ])
-    qs += "&include[]=employee_compensations"
     url = f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls?{qs}"
 
     logger.info(
