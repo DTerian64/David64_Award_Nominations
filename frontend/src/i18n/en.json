@@ -27,7 +27,8 @@
   "history": {
     "heading": "My Nomination History",
     "empty": "No nominations yet",
-    "nominatedOn": "Nominated on {{date}}"
+    "nominatedOn": "Nominated on {{date}}",
+    "filterDecided": "Approved · Rejected · Paid"
   },
   "approvals": {
     "heading": "Pending Approvals",
@@ -62,8 +63,7 @@
     "PendingHRBPReview": "Pending HR Review",
     "Approved": "Approved",
     "Paid": "Paid",
-    "Rejected": "Rejected",
-    "Payed": "Paid"
+    "Rejected": "Rejected"
   },
   "messages": {
     "fillAllFields": "Please fill in all fields",

@@ -27,7 +27,8 @@
   "history": {
     "heading": "내 추천 내역",
     "empty": "아직 추천 내역이 없습니다",
-    "nominatedOn": "추천일: {{date}}"
+    "nominatedOn": "추천일: {{date}}",
+    "filterDecided": "승인됨 · 반려됨 · 지급 완료"
   },
   "approvals": {
     "heading": "대기 중인 승인",
@@ -62,8 +63,7 @@
     "PendingHRBPReview": "HR 검토 대기",
     "Approved": "승인됨",
     "Paid": "지급 완료",
-    "Rejected": "반려됨",
-    "Payed": "지급 완료"
+    "Rejected": "반려됨"
   },
   "messages": {
     "fillAllFields": "모든 항목을 입력해 주세요",

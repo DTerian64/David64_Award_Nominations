@@ -43,7 +43,7 @@ interface Nomination {
   NominationDate: string;
   ApprovedDate: string | null;
   PayedDate: string | null;
-  Status: 'Pending' | 'Approved' | 'Paid' | 'Rejected';
+  Status: 'Pending' | 'Submitted' | 'PendingHRBPReview' | 'Approved' | 'Paid' | 'Rejected';
   CategoryDescription?: string | null;
   RejectionReason?: string | null;
   RejectionActor?: string | null;
@@ -396,11 +396,12 @@ const AwardNominationApp: React.FC = () => {
 
   const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
     const styles: Record<string, string> = {
-      Pending:  'bg-yellow-100 text-yellow-800',
-      Approved: 'bg-green-100 text-green-800',
-      Paid:     'bg-blue-100 text-blue-800',
-      Payed:    'bg-blue-100 text-blue-800',
-      Rejected: 'bg-red-100 text-red-800',
+      Pending:            'bg-yellow-100 text-yellow-800',
+      Submitted:          'bg-yellow-100 text-yellow-800',
+      PendingHRBPReview:  'bg-orange-100 text-orange-800',
+      Approved:           'bg-green-100 text-green-800',
+      Paid:               'bg-blue-100 text-blue-800',
+      Rejected:           'bg-red-100 text-red-800',
     };
     return (
       <span className={`px-3 py-1 rounded-full text-xs font-semibold ${styles[status] || 'bg-gray-100 text-gray-800'}`}>
@@ -716,7 +717,7 @@ const AwardNominationApp: React.FC = () => {
               {(() => {
                 const filtered = nominations.filter(n => {
                   if (historyView === 'pending') return n.Status === 'Pending';
-                  return n.Status === 'Approved' || n.Status === 'Rejected' || n.Status === 'Paid' || n.Status === 'Payed';
+                  return n.Status === 'Approved' || n.Status === 'Rejected' || n.Status === 'Paid';
                 });
 
                 if (filtered.length === 0) {
@@ -779,7 +780,7 @@ const AwardNominationApp: React.FC = () => {
                               </p>
                             )}
                           </div>
-                          {(nom.Status === 'Approved' || nom.Status === 'Paid' || nom.Status === 'Payed') && (
+                          {(nom.Status === 'Approved' || nom.Status === 'Paid') && (
                             <button
                               onClick={() => handleViewCertificate(nom.NominationId)}
                               disabled={certLoadingId === nom.NominationId}
