@@ -229,10 +229,11 @@ class GustoProvider(PayrollProvider):
                 None,
             )
             if not emp_comp:
-                logger.debug(
-                    "get_employee_pay no compensation match payroll_uuid=%s type=%s "
-                    "employee_uuid=%s compensations_in_payroll=%d",
-                    p_uuid, p_type, employee_uuid, len(comps),
+                comp_uuids = [c.get("employee_uuid") for c in comps]
+                logger.info(
+                    "get_employee_pay no match payroll_uuid=%s type=%s "
+                    "looking_for=%s compensations_in_payroll=%d uuids_present=%s",
+                    p_uuid, p_type, employee_uuid, len(comps), comp_uuids,
                 )
                 continue
 
