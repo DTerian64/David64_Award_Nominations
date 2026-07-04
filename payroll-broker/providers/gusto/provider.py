@@ -165,11 +165,12 @@ class GustoProvider(PayrollProvider):
 
     def get_employee_pay(
         self,
-        credentials: dict,
-        company_ref: str,
-        upn:         str,
-        year:        int,
-        month:       int,
+        credentials:        dict,
+        company_ref:        str,
+        upn:                str,
+        year:               int,
+        month:              int,
+        extra_payroll_refs: list[str] | None = None,
     ) -> list[dict]:
         """
         Fetch all payroll entries (regular + off-cycle) for an employee for
@@ -259,6 +260,56 @@ class GustoProvider(PayrollProvider):
                 "net_pay":          net,
                 "total_deductions": round(gross - net, 2),
             })
+
+        # Supplement with DB-known off-cycle refs.
+        # The Gusto list endpoint silently omits payrolls that are unprocessed or
+        # auto-voided in sandbox.  For each ref we stored in payroll_submissions
+        # that isn't already in the list result, fetch it directly by UUID and
+        # add it to entries if it contains a compensation for this employee.
+        if extra_payroll_refs:
+            fetched_uuids = {e["payroll_uuid"] for e in entries}
+            for ref in extra_payroll_refs:
+                if ref in fetched_uuids:
+                    logger.info(
+                        "get_employee_pay extra_ref already in list, skipping ref=%s", ref,
+                    )
+                    continue
+                logger.info("get_employee_pay fetching extra_ref=%s", ref)
+                p = client.get_payroll_by_uuid(access_token, company_ref, ref, api_base_url)
+                if not p:
+                    logger.warning(
+                        "get_employee_pay extra_ref not retrievable ref=%s", ref,
+                    )
+                    continue
+                comps    = p.get("employee_compensations", [])
+                emp_comp = next(
+                    (c for c in comps if c.get("employee_uuid") == employee_uuid), None,
+                )
+                if not emp_comp:
+                    logger.info(
+                        "get_employee_pay extra_ref no match for employee ref=%s "
+                        "employee_uuid=%s comp_uuids=%s",
+                        ref, employee_uuid,
+                        [c.get("employee_uuid") for c in comps],
+                    )
+                    continue
+                pay_period = p.get("pay_period", {})
+                gross      = float(emp_comp.get("gross_pay") or 0)
+                net        = float(emp_comp.get("net_pay")   or 0)
+                logger.info(
+                    "get_employee_pay extra_ref matched ref=%s gross=%.2f net=%.2f",
+                    ref, gross, net,
+                )
+                entries.append({
+                    "payroll_uuid":     ref,
+                    "payroll_type":     "off_cycle",
+                    "pay_period_start": pay_period.get("start_date", ""),
+                    "pay_period_end":   pay_period.get("end_date",   ""),
+                    "check_date":       p.get("check_date"),
+                    "gross_pay":        gross,
+                    "net_pay":          net,
+                    "total_deductions": round(gross - net, 2),
+                })
 
         logger.info(
             "get_employee_pay upn=%s year=%d month=%d entries=%d",

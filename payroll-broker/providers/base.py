@@ -130,21 +130,27 @@ class PayrollProvider(ABC):
     @abstractmethod
     def get_employee_pay(
         self,
-        credentials: dict,
-        company_ref: str,
-        upn:         str,
-        year:        int,
-        month:       int,
+        credentials:        dict,
+        company_ref:        str,
+        upn:                str,
+        year:               int,
+        month:              int,
+        extra_payroll_refs: list[str] | None = None,
     ) -> dict:
         """
         Return employee profile + payroll entries for a given calendar month.
 
         Args:
-            credentials: Dict returned by get_credentials().
-            company_ref: Provider's company identifier.
-            upn:         Employee's userPrincipalName (work email in most providers).
-            year:        Calendar year  (e.g. 2026).
-            month:       Calendar month (1–12).
+            credentials:        Dict returned by get_credentials().
+            company_ref:        Provider's company identifier.
+            upn:                Employee's userPrincipalName (work email in most providers).
+            year:               Calendar year  (e.g. 2026).
+            month:              Calendar month (1–12).
+            extra_payroll_refs: Optional list of provider payroll UUIDs known from
+                                payroll_submissions that may not appear in the
+                                provider's list endpoint (e.g. unprocessed or
+                                sandbox-auto-voided Gusto payrolls).  Each will be
+                                fetched individually and merged into entries.
 
         Returns:
             {

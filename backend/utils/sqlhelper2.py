@@ -2742,6 +2742,32 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
         }
 
 
+def get_payroll_provider_for_tenant(tenant_id: int) -> Optional[dict]:
+    """
+    Return the payroll provider info for a tenant, or None if not configured.
+
+    Returns {display_name, api_base_url, name} — enough for the frontend to
+    show "Look Up Employee Pay (Gusto — api.gusto-demo.com)" in the heading.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT pp.display_name, pp.api_base_url, pp.name
+                FROM   dbo.Tenants t
+                INNER JOIN dbo.payroll_providers pp ON pp.id = t.payroll_provider_id
+                WHERE  t.TenantId = :tenant_id
+            """),
+            {"tenant_id": tenant_id},
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "display_name": row[0],
+        "api_base_url":  row[1],
+        "name":          row[2],
+    }
+
+
 # ===========================================================================
 # Payroll ORM Models
 # Defined here so Alembic autogenerate can detect them alongside all other

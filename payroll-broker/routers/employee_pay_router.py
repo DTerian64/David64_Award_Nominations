@@ -71,6 +71,16 @@ def get_employee_pay(
         )
 
     # 4. Fetch pay data
+    # Look up any off-cycle payroll refs we stored ourselves — the Gusto list
+    # endpoint omits unprocessed / sandbox-auto-voided payrolls, so we
+    # supplement with direct UUID lookups from payroll_submissions.
+    extra_refs = db.get_payroll_refs_for_employee_month(
+        upn=upn, provider_id=provider_row.id, year=year, month=month,
+    )
+    logger.info(
+        "get_employee_pay known_off_cycle_refs=%d upn=%s year=%d month=%d refs=%s",
+        len(extra_refs), upn, year, month, extra_refs,
+    )
     try:
         result = provider.get_employee_pay(
             credentials=credentials,
@@ -78,6 +88,7 @@ def get_employee_pay(
             upn=upn,
             year=year,
             month=month,
+            extra_payroll_refs=extra_refs,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

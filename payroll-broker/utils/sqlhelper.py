@@ -444,6 +444,48 @@ def get_nomination_for_payroll(nomination_id: int) -> Optional[dict]:
     }
 
 
+def get_payroll_refs_for_employee_month(
+    upn:         str,
+    provider_id: int,
+    year:        int,
+    month:       int,
+) -> list[str]:
+    """
+    Return accepted provider_payroll_refs for a specific employee + calendar month.
+
+    Joins payroll_submissions → Nominations → Users (by BeneficiaryId), filtered
+    by the beneficiary's userPrincipalName, provider_id, status='accepted', and
+    the year/month of completed_at.
+
+    Used to supplement the Gusto list endpoint, which silently omits off-cycle
+    payrolls that are unprocessed or auto-voided in sandbox.
+
+    Returns a (possibly empty) list of provider_payroll_ref strings.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT  ps.provider_payroll_ref
+                FROM    dbo.payroll_submissions ps
+                INNER JOIN dbo.Nominations n ON ps.nomination_id = n.NominationId
+                INNER JOIN dbo.Users       u ON n.BeneficiaryId  = u.UserId
+                WHERE   u.userPrincipalName    = :upn
+                  AND   ps.provider_id         = :provider_id
+                  AND   ps.status              = 'accepted'
+                  AND   ps.provider_payroll_ref IS NOT NULL
+                  AND   YEAR (ps.completed_at) = :year
+                  AND   MONTH(ps.completed_at) = :month
+            """),
+            {"upn": upn, "provider_id": provider_id, "year": year, "month": month},
+        ).fetchall()
+    refs = [row[0] for row in rows if row[0]]
+    logger.info(
+        "get_payroll_refs_for_employee_month upn=%s provider_id=%d year=%d month=%d refs=%s",
+        upn, provider_id, year, month, refs,
+    )
+    return refs
+
+
 def get_tenant_name(tenant_id: int) -> Optional[str]:
     """Return TenantName for a given tenant_id."""
     with get_db_context() as session:

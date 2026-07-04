@@ -152,6 +152,7 @@ const AwardNominationApp: React.FC = () => {
   const [historyView, setHistoryView] = useState<'pending' | 'decided'>('pending');
   const [isHRBP, setIsHRBP] = useState(false);
   const [isPayrollBP, setIsPayrollBP] = useState(false);
+  const [payrollProvider, setPayrollProvider] = useState<{ display_name: string; api_base_url: string; name: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [logsNominationId, setLogsNominationId] = useState<number | null>(null);
 
@@ -194,9 +195,10 @@ const AwardNominationApp: React.FC = () => {
   const loadMe = async () => {
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-      const me = await apiFetch<{ is_hrbp: boolean; is_payroll_bp: boolean; is_admin: boolean }>('/api/me', {}, impersonatedUPN);
+      const me = await apiFetch<{ is_hrbp: boolean; is_payroll_bp: boolean; is_admin: boolean; payroll_provider?: { display_name: string; api_base_url: string; name: string } | null }>('/api/me', {}, impersonatedUPN);
       setIsHRBP(me.is_hrbp);
       setIsPayrollBP(me.is_payroll_bp ?? false);
+      setPayrollProvider(me.payroll_provider ?? null);
       // If switching away from a role-gated tab after impersonation change, reset to nominate
       setActiveTab(prev => {
         if (prev === 'hrbp'     && !me.is_hrbp)        return 'nominate';
@@ -207,6 +209,7 @@ const AwardNominationApp: React.FC = () => {
     } catch {
       setIsHRBP(false);
       setIsPayrollBP(false);
+      setPayrollProvider(null);
     }
   };
 
@@ -1059,7 +1062,17 @@ const AwardNominationApp: React.FC = () => {
           {/* ── Payroll tab ──────────────────────────────────────────────── */}
           {activeTab === 'payroll' && isPayrollBP && (
             <div className="bg-white rounded-lg shadow-md p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('payroll.lookupHeading')}</h2>
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">
+                {t('payroll.lookupHeading')}
+                {payrollProvider && (
+                  <span className="ml-2 text-sm font-normal text-gray-500">
+                    ({payrollProvider.display_name}
+                    {payrollProvider.api_base_url && (
+                      <> — {payrollProvider.api_base_url.replace(/^https?:\/\//, '')}</>
+                    )})
+                  </span>
+                )}
+              </h2>
 
               {/* Lookup controls */}
               <div className="flex flex-wrap gap-4 mb-6 items-end">

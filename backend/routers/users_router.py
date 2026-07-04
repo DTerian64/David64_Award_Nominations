@@ -76,16 +76,23 @@ async def get_me(user_context: dict = Depends(get_current_user_with_impersonatio
     effective_user = user_context["effective_user"]
     actual_user    = user_context["actual_user"]
 
-    app_roles = sqlhelper.get_user_roles(effective_user["UserId"])
+    app_roles   = sqlhelper.get_user_roles(effective_user["UserId"])
+    tenant_id   = effective_user["TenantId"]
+    is_payroll  = "PayrollBP" in app_roles
+
+    payroll_provider = None
+    if is_payroll:
+        payroll_provider = sqlhelper.get_payroll_provider_for_tenant(tenant_id)
 
     return {
-        "user_id":        effective_user["UserId"],
-        "upn":            effective_user["userPrincipalName"],
-        "tenant_id":      effective_user["TenantId"],
-        "app_roles":      app_roles,
-        "is_hrbp":        "HRBP"       in app_roles,
-        "is_payroll_bp":  "PayrollBP"  in app_roles,
-        "is_admin":       is_admin(actual_user),
+        "user_id":          effective_user["UserId"],
+        "upn":              effective_user["userPrincipalName"],
+        "tenant_id":        tenant_id,
+        "app_roles":        app_roles,
+        "is_hrbp":          "HRBP" in app_roles,
+        "is_payroll_bp":    is_payroll,
+        "is_admin":         is_admin(actual_user),
+        "payroll_provider": payroll_provider,   # {display_name, api_base_url, name} or null
     }
 
 

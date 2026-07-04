@@ -309,6 +309,31 @@ def get_payrolls_for_month(
     return payrolls
 
 
+def get_payroll_by_uuid(
+    access_token:  str,
+    company_uuid:  str,
+    payroll_uuid:  str,
+    api_base_url:  str,
+) -> Optional[dict]:
+    """
+    Fetch a single payroll by its UUID.
+
+    Returns the full payroll dict (with employee_compensations), or None if the
+    payroll is not found or the request fails.  Used to look up known off-cycle
+    payrolls by stored payroll_ref when the Gusto list endpoint omits them
+    (e.g. unprocessed / sandbox-auto-voided payrolls).
+    """
+    url = f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls/{payroll_uuid}"
+    resp = httpx.get(url, headers=_auth_headers(access_token), timeout=30)
+    if not resp.is_success:
+        logger.warning(
+            "get_payroll_by_uuid failed payroll_uuid=%s status=%d body=%s",
+            payroll_uuid, resp.status_code, resp.text[:300],
+        )
+        return None
+    return resp.json()
+
+
 # ---------------------------------------------------------------------------
 # Off-cycle payroll
 # ---------------------------------------------------------------------------
@@ -396,7 +421,7 @@ def create_off_cycle_payroll(
                 "employee_uuid": employee_uuid,
                 "version":       version,
                 "fixed_compensations": [{
-                    "name":     "Bonus",
+                    "name":     "Recognition Award",
                     "amount":   f"{amount:.2f}",
                     "job_uuid": job_uuid,
                 }],
