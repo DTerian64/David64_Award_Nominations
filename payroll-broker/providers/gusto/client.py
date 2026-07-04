@@ -243,22 +243,22 @@ def get_payrolls_for_month(
     start_date = f"{year}-{month:02d}-01"
     end_date   = f"{year}-{month:02d}-{last_day:02d}"
 
+    # Build the query string manually — httpx encodes [] as %5B%5D which Gusto
+    # does not recognise, causing the include param to be silently ignored.
+    from urllib.parse import urlencode
+    qs = urlencode([
+        ("start_date",        start_date),
+        ("end_date",          end_date),
+        ("include_off_cycle", "true"),
+    ])
+    qs += "&include[]=employee_compensations"
+    url = f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls?{qs}"
+
     logger.info(
         "Gusto get_payrolls company=%s start=%s end=%s",
         company_uuid, start_date, end_date,
     )
-    resp = httpx.get(
-        f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls",
-        headers=_auth_headers(access_token),
-        # httpx encodes list params correctly when passed as a list of tuples
-        params=[
-            ("start_date",       start_date),
-            ("end_date",         end_date),
-            ("include_off_cycle","true"),
-            ("include[]",        "employee_compensations"),
-        ],
-        timeout=30,
-    )
+    resp = httpx.get(url, headers=_auth_headers(access_token), timeout=30)
     if not resp.is_success:
         logger.error(
             "Gusto get_payrolls failed status=%d body=%s",
@@ -268,6 +268,12 @@ def get_payrolls_for_month(
     body = resp.json()
     # Gusto may return a dict with a "payrolls" key or a bare list
     payrolls = body if isinstance(body, list) else body.get("payrolls", [])
+    for p in payrolls:
+        logger.info(
+            "Gusto payroll uuid=%s processed=%s off_cycle=%s compensations=%d",
+            p.get("uuid"), p.get("processed"), p.get("off_cycle"),
+            len(p.get("employee_compensations") or []),
+        )
     logger.info(
         "Gusto get_payrolls company=%s start=%s end=%s returned=%d",
         company_uuid, start_date, end_date, len(payrolls),
