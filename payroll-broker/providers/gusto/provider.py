@@ -238,16 +238,18 @@ class GustoProvider(PayrollProvider):
                 )
                 continue
 
-            pay_period = payroll.get("pay_period", {})
-            gross      = float(emp_comp.get("gross_pay")  or 0)
-            net        = float(emp_comp.get("net_pay")    or 0)
+            pay_period  = payroll.get("pay_period", {})
+            gross       = float(emp_comp.get("gross_pay")  or 0)
+            net         = float(emp_comp.get("net_pay")    or 0)
+            fixed_comps = emp_comp.get("fixed_compensations", [])
+            comp_type   = fixed_comps[0].get("name") if fixed_comps else None
             logger.info(
                 "get_employee_pay match payroll_uuid=%s type=%s period=%s→%s "
-                "gross=%.2f net=%.2f",
+                "gross=%.2f net=%.2f comp_type=%s",
                 p_uuid, p_type,
                 pay_period.get("start_date", ""),
                 pay_period.get("end_date",   ""),
-                gross, net,
+                gross, net, comp_type,
             )
 
             entries.append({
@@ -259,6 +261,7 @@ class GustoProvider(PayrollProvider):
                 "gross_pay":        gross,
                 "net_pay":          net,
                 "total_deductions": round(gross - net, 2),
+                "comp_type":        comp_type,
             })
 
         # Supplement with DB-known off-cycle refs.
@@ -293,12 +296,14 @@ class GustoProvider(PayrollProvider):
                         [c.get("employee_uuid") for c in comps],
                     )
                     continue
-                pay_period = p.get("pay_period", {})
-                gross      = float(emp_comp.get("gross_pay") or 0)
-                net        = float(emp_comp.get("net_pay")   or 0)
+                pay_period  = p.get("pay_period", {})
+                gross       = float(emp_comp.get("gross_pay") or 0)
+                net         = float(emp_comp.get("net_pay")   or 0)
+                fixed_comps = emp_comp.get("fixed_compensations", [])
+                comp_type   = fixed_comps[0].get("name") if fixed_comps else None
                 logger.info(
-                    "get_employee_pay extra_ref matched ref=%s gross=%.2f net=%.2f",
-                    ref, gross, net,
+                    "get_employee_pay extra_ref matched ref=%s gross=%.2f net=%.2f comp_type=%s",
+                    ref, gross, net, comp_type,
                 )
                 entries.append({
                     "payroll_uuid":     ref,
@@ -309,6 +314,7 @@ class GustoProvider(PayrollProvider):
                     "gross_pay":        gross,
                     "net_pay":          net,
                     "total_deductions": round(gross - net, 2),
+                    "comp_type":        comp_type,
                 })
 
         logger.info(

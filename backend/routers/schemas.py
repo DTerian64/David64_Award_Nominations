@@ -92,6 +92,7 @@ class PayrollEntry(BaseModel):
     gross_pay:        float
     net_pay:          float
     total_deductions: float
+    comp_type:        Optional[str] = None  # fixed_compensations[0].name from provider
 
 
 class EmployeeAddress(BaseModel):

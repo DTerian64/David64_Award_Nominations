@@ -1065,7 +1065,7 @@ const AwardNominationApp: React.FC = () => {
               <h2 className="text-2xl font-bold text-gray-900 mb-6">
                 {t('payroll.lookupHeading')}
                 {payrollProvider && (
-                  <span className="ml-2 text-sm font-normal text-gray-500">
+                  <span className="ml-2 text-2xl font-bold text-gray-500">
                     ({payrollProvider.display_name}
                     {payrollProvider.api_base_url && (
                       <> — {payrollProvider.api_base_url.replace(/^https?:\/\//, '')}</>
@@ -1151,41 +1151,8 @@ const AwardNominationApp: React.FC = () => {
               {/* Results */}
               {payrollResult && (() => {
                 const { profile, entries, year, month } = payrollResult;
-                const regular  = entries.filter(e => e.payroll_type === 'regular');
-                const offCycle = entries.filter(e => e.payroll_type === 'off_cycle');
+                const offCycle   = entries.filter((e: any) => e.payroll_type === 'off_cycle');
                 const monthLabel = new Date(year, month - 1).toLocaleString(undefined, { month: 'long' });
-
-                const PayTable: React.FC<{ rows: any[]; emptyKey: string }> = ({ rows, emptyKey }) =>
-                  rows.length === 0 ? (
-                    <p className="text-gray-500 text-sm py-2">{t(emptyKey)}</p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left border-collapse">
-                        <thead>
-                          <tr className="border-b border-gray-200 text-gray-600">
-                            <th className="py-2 pr-4 font-semibold">{t('payroll.colPeriod')}</th>
-                            <th className="py-2 pr-4 font-semibold">{t('payroll.colCheckDate')}</th>
-                            <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colGross')}</th>
-                            <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colDeductions')}</th>
-                            <th className="py-2 font-semibold text-right">{t('payroll.colNet')}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rows.map(r => (
-                            <tr key={r.payroll_uuid} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-2 pr-4 text-gray-700">{r.pay_period_start} – {r.pay_period_end}</td>
-                              <td className="py-2 pr-4 text-gray-700">{r.check_date ?? '—'}</td>
-                              <td className="py-2 pr-4 text-right text-gray-700">{formatCurrency(r.gross_pay)}</td>
-                              <td className="py-2 pr-4 text-right text-gray-700">{formatCurrency(r.total_deductions)}</td>
-                              <td className="py-2 text-right font-semibold" style={{ color: 'var(--color-primary)' }}>
-                                {formatCurrency(r.net_pay)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  );
 
                 return (
                   <div className="space-y-6 mt-6">
@@ -1229,21 +1196,43 @@ const AwardNominationApp: React.FC = () => {
                       </div>
                     )}
 
-                    {/* ── Payroll Card ── */}
+                    {/* ── Award Payouts ── */}
                     <div className="border border-gray-200 rounded-lg p-5">
                       <h3 className="text-base font-semibold text-gray-900 mb-4">
                         {t('payroll.payrollCard')} — {monthLabel} {year}
                       </h3>
-                      <div className="space-y-6">
-                        <div>
-                          <h4 className="text-sm font-semibold text-gray-700 mb-2">{t('payroll.regularHeading')}</h4>
-                          <PayTable rows={regular} emptyKey="payroll.noRegular" />
+                      {offCycle.length === 0 ? (
+                        <p className="text-gray-500 text-sm py-2">{t('payroll.noOffCycle')}</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm text-left border-collapse">
+                            <thead>
+                              <tr className="border-b border-gray-200 text-gray-600">
+                                <th className="py-2 pr-4 font-semibold">{t('payroll.colPeriod')}</th>
+                                <th className="py-2 pr-4 font-semibold">{t('payroll.colCheckDate')}</th>
+                                <th className="py-2 pr-4 font-semibold">{t('payroll.colCompType')}</th>
+                                <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colGross')}</th>
+                                <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colDeductions')}</th>
+                                <th className="py-2 font-semibold text-right">{t('payroll.colNet')}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {offCycle.map((r: any) => (
+                                <tr key={r.payroll_uuid} className="border-b border-gray-100 hover:bg-gray-50">
+                                  <td className="py-2 pr-4 text-gray-700">{r.pay_period_start} – {r.pay_period_end}</td>
+                                  <td className="py-2 pr-4 text-gray-700">{r.check_date ?? '—'}</td>
+                                  <td className="py-2 pr-4 text-gray-700">{r.comp_type ?? '—'}</td>
+                                  <td className="py-2 pr-4 text-right text-gray-700">{formatCurrency(r.gross_pay)}</td>
+                                  <td className="py-2 pr-4 text-right text-gray-700">{formatCurrency(r.total_deductions)}</td>
+                                  <td className="py-2 text-right font-semibold" style={{ color: 'var(--color-primary)' }}>
+                                    {formatCurrency(r.net_pay)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
-                        <div>
-                          <h4 className="text-sm font-semibold text-gray-700 mb-2">{t('payroll.offCycleHeading')}</h4>
-                          <PayTable rows={offCycle} emptyKey="payroll.noOffCycle" />
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </div>
                 );
