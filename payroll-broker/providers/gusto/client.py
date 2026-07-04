@@ -245,11 +245,13 @@ def get_payrolls_for_month(
 
     # Build the query string manually — httpx encodes [] as %5B%5D which Gusto
     # does not recognise, causing the include param to be silently ignored.
+    # Try both bracket and non-bracket forms so at least one is accepted.
     from urllib.parse import urlencode
     qs = urlencode([
         ("start_date",        start_date),
         ("end_date",          end_date),
         ("include_off_cycle", "true"),
+        ("include",           "employee_compensations"),
     ])
     qs += "&include[]=employee_compensations"
     url = f"{api_base_url.rstrip('/')}/v1/companies/{company_uuid}/payrolls?{qs}"
@@ -269,10 +271,12 @@ def get_payrolls_for_month(
     # Gusto may return a dict with a "payrolls" key or a bare list
     payrolls = body if isinstance(body, list) else body.get("payrolls", [])
     for p in payrolls:
+        comps = p.get("employee_compensations")
         logger.info(
-            "Gusto payroll uuid=%s processed=%s off_cycle=%s compensations=%d",
+            "Gusto payroll uuid=%s processed=%s off_cycle=%s "
+            "compensations_key_present=%s compensations_count=%d",
             p.get("uuid"), p.get("processed"), p.get("off_cycle"),
-            len(p.get("employee_compensations") or []),
+            comps is not None, len(comps) if comps else 0,
         )
     logger.info(
         "Gusto get_payrolls company=%s start=%s end=%s returned=%d",
