@@ -39,6 +39,10 @@ from routers.employee_pay_router  import router as employee_pay_router
 from providers.gusto.oauth_router   import router as gusto_oauth_router
 from providers.gusto.webhook_router import router as gusto_webhook_router
 
+# Rippling
+from providers.rippling.oauth_router   import router as rippling_oauth_router
+from providers.rippling.webhook_router import router as rippling_webhook_router
+
 # Workday (uncomment when providers/workday/ is implemented)
 # from providers.workday.oauth_router   import router as workday_oauth_router
 # from providers.workday.webhook_router import router as workday_webhook_router
@@ -119,6 +123,8 @@ app.include_router(health_router)
 app.include_router(employee_pay_router)
 app.include_router(gusto_oauth_router)
 app.include_router(gusto_webhook_router)
+app.include_router(rippling_oauth_router)
+app.include_router(rippling_webhook_router)
 # app.include_router(workday_oauth_router)
 # app.include_router(workday_webhook_router)
 

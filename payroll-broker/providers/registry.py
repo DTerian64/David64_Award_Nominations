@@ -13,9 +13,11 @@ To add a new provider:
 
 from providers.base import PayrollProvider
 from providers.gusto import GustoProvider
+from providers.rippling import RipplingProvider
 
 PROVIDER_REGISTRY: dict[str, PayrollProvider] = {
-    "gusto": GustoProvider(),
+    "gusto":    GustoProvider(),
+    "rippling": RipplingProvider(),
     # "workday": WorkdayProvider(),
     # "adp":     AdpProvider(),
 }
