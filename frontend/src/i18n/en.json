@@ -89,6 +89,7 @@
     "colGross": "Gross Pay",
     "colNet": "Net Pay",
     "colDeductions": "Deductions",
+    "colPayrollRef": "Payroll Ref",
     "noProvider": "No payroll provider is configured for this tenant.",
     "selectPrompt": "Select an employee and month, then click Look Up",
     "employeeCard": "Employee",

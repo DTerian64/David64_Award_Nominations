@@ -89,6 +89,7 @@
     "colGross": "세전 급여",
     "colNet": "실수령액",
     "colDeductions": "공제액",
+    "colPayrollRef": "급여 참조번호",
     "noProvider": "이 테넌트에 급여 제공자가 설정되어 있지 않습니다.",
     "selectPrompt": "직원과 월을 선택한 후 조회 버튼을 클릭하세요",
     "employeeCard": "직원",

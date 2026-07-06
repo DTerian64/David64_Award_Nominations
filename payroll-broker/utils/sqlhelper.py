@@ -341,10 +341,9 @@ def upsert_payroll_submission(
             session.add(sub)
 
         sub.status = status
+        sub.reason = reason          # always written — clears stale failure msg on re-acceptance
         if provider_payroll_ref is not None:
             sub.provider_payroll_ref = provider_payroll_ref
-        if reason is not None:
-            sub.reason = reason
         if completed_at is not None:
             sub.completed_at = completed_at
 

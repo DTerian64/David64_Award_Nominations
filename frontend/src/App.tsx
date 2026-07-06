@@ -1213,7 +1213,8 @@ const AwardNominationApp: React.FC = () => {
                                 <th className="py-2 pr-4 font-semibold">{t('payroll.colCompType')}</th>
                                 <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colGross')}</th>
                                 <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colDeductions')}</th>
-                                <th className="py-2 font-semibold text-right">{t('payroll.colNet')}</th>
+                                <th className="py-2 pr-4 font-semibold text-right">{t('payroll.colNet')}</th>
+                                <th className="py-2 font-semibold">{t('payroll.colPayrollRef')}</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1224,8 +1225,11 @@ const AwardNominationApp: React.FC = () => {
                                   <td className="py-2 pr-4 text-gray-700">{r.comp_type ?? '—'}</td>
                                   <td className="py-2 pr-4 text-right text-gray-700">{formatCurrency(r.gross_pay)}</td>
                                   <td className="py-2 pr-4 text-right text-gray-700">{formatCurrency(r.total_deductions)}</td>
-                                  <td className="py-2 text-right font-semibold" style={{ color: 'var(--color-primary)' }}>
+                                  <td className="py-2 pr-4 text-right font-semibold" style={{ color: 'var(--color-primary)' }}>
                                     {formatCurrency(r.net_pay)}
+                                  </td>
+                                  <td className="py-2 font-mono text-xs text-gray-500" title={r.payroll_uuid}>
+                                    {r.payroll_uuid}
                                   </td>
                                 </tr>
                               ))}
