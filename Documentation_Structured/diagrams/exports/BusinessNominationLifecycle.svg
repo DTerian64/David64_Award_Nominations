@@ -1,0 +1,112 @@
+<svg viewBox="0 0 900 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Business nomination lifecycle</title>
+  <desc id="desc">Business-facing award nomination lifecycle from submission through policy checks, integrity review, approval, recognition, and payout.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b98aa"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-20%" width="120%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="5" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+    <style>
+      .bg { fill: #101722; }
+      .panel { fill: #162233; stroke: #2f4058; stroke-width: 1.4; filter: url(#shadow); }
+      .decision { fill: #1f293a; stroke: #72809a; stroke-width: 1.4; filter: url(#shadow); }
+      .good { fill: #0f3b31; stroke: #2dd4bf; }
+      .warn { fill: #3b2d12; stroke: #f4b740; }
+      .risk { fill: #3d1820; stroke: #fb7185; }
+      .review { fill: #221b52; stroke: #9b8cff; }
+      .done { fill: #103d22; stroke: #5ee17d; }
+      .title { fill: #f2f6fb; font: 700 27px "Segoe UI", Arial, sans-serif; }
+      .subtitle { fill: #aeb8c7; font: 400 13px "Segoe UI", Arial, sans-serif; }
+      .label { fill: #f5f7fb; font: 700 15px "Segoe UI", Arial, sans-serif; }
+      .small { fill: #b7c1d0; font: 400 11px "Segoe UI", Arial, sans-serif; }
+      .tiny { fill: #93a0b3; font: 400 10px "Segoe UI", Arial, sans-serif; }
+      .path { fill: none; stroke: #8b98aa; stroke-width: 2; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #8b98aa; stroke-width: 2; stroke-dasharray: 6 5; marker-end: url(#arrow); }
+      .chip { fill: #243247; stroke: #43536a; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="900" height="560" rx="16"/>
+  <text class="title" x="42" y="46">Award nomination lifecycle</text>
+  <text class="subtitle" x="42" y="69">Business view: governance, review, recognition, and payout outcomes</text>
+
+  <rect class="chip" x="626" y="31" width="22" height="12" rx="3"/>
+  <text class="tiny" x="656" y="41">normal path</text>
+  <rect class="chip warn" x="733" y="31" width="22" height="12" rx="3"/>
+  <text class="tiny" x="763" y="41">review</text>
+  <rect class="chip risk" x="806" y="31" width="22" height="12" rx="3"/>
+  <text class="tiny" x="836" y="41">stop</text>
+
+  <rect class="panel good" x="50" y="118" width="155" height="74" rx="10"/>
+  <text class="label" x="127.5" y="146" text-anchor="middle">Nomination</text>
+  <text class="label" x="127.5" y="165" text-anchor="middle">submitted</text>
+  <text class="small" x="127.5" y="183" text-anchor="middle">colleague + reason + amount</text>
+
+  <line class="path" x1="205" y1="155" x2="255" y2="155"/>
+
+  <rect class="panel" x="255" y="118" width="155" height="74" rx="10"/>
+  <text class="label" x="332.5" y="146" text-anchor="middle">Policy</text>
+  <text class="label" x="332.5" y="165" text-anchor="middle">check</text>
+  <text class="small" x="332.5" y="183" text-anchor="middle">eligibility, limit, category</text>
+
+  <line class="path" x1="410" y1="155" x2="463" y2="155"/>
+
+  <polygon class="decision" points="535,105 607,155 535,205 463,155"/>
+  <text class="label" x="535" y="151" text-anchor="middle">Passes</text>
+  <text class="label" x="535" y="170" text-anchor="middle">policy?</text>
+
+  <path class="path" d="M607 155 H655"/>
+
+  <rect class="panel" x="655" y="118" width="165" height="74" rx="10"/>
+  <text class="label" x="737.5" y="146" text-anchor="middle">Integrity</text>
+  <text class="label" x="737.5" y="165" text-anchor="middle">screening</text>
+  <text class="small" x="737.5" y="183" text-anchor="middle">quality + risk signals</text>
+
+  <path class="dash" d="M535 205 V252 H145"/>
+  <rect class="panel risk" x="50" y="252" width="190" height="70" rx="10"/>
+  <text class="label" x="145" y="279" text-anchor="middle">Returned or rejected</text>
+  <text class="small" x="145" y="299" text-anchor="middle">reason captured and user notified</text>
+
+  <path class="path" d="M737.5 192 V238"/>
+  <polygon class="decision" points="737.5,238 812,288 737.5,338 663,288"/>
+  <text class="label" x="737.5" y="284" text-anchor="middle">Risk</text>
+  <text class="label" x="737.5" y="303" text-anchor="middle">level?</text>
+
+  <path class="path" d="M812 288 H850 V405 H780"/>
+  <text class="tiny" x="827" y="280">clean</text>
+
+  <path class="dash" d="M663 288 H472"/>
+  <text class="tiny" x="548" y="280">flagged</text>
+
+  <rect class="panel review" x="282" y="252" width="190" height="72" rx="10"/>
+  <text class="label" x="377" y="278" text-anchor="middle">HRBP review</text>
+  <text class="small" x="377" y="298" text-anchor="middle">business review of flagged nomination</text>
+  <text class="tiny" x="377" y="314" text-anchor="middle">approve, reject, or request follow-up</text>
+
+  <path class="path" d="M377 324 V405 H470"/>
+  <path class="dash" d="M329 324 V352 H145 V322"/>
+  <text class="tiny" x="213" y="344">reject</text>
+
+  <rect class="panel warn" x="470" y="368" width="180" height="74" rx="10"/>
+  <text class="label" x="560" y="396" text-anchor="middle">Manager</text>
+  <text class="label" x="560" y="415" text-anchor="middle">approval</text>
+  <text class="small" x="560" y="433" text-anchor="middle">approve or reject award</text>
+
+  <line class="path" x1="650" y1="405" x2="705" y2="405"/>
+
+  <rect class="panel done" x="705" y="368" width="155" height="74" rx="10"/>
+  <text class="label" x="782.5" y="396" text-anchor="middle">Recognize</text>
+  <text class="label" x="782.5" y="415" text-anchor="middle">and pay</text>
+  <text class="small" x="782.5" y="433" text-anchor="middle">notify, certificate, payroll</text>
+
+  <path class="dash" d="M560 442 V488 H145 V322"/>
+  <text class="tiny" x="387" y="481">manager rejection</text>
+
+  <rect class="panel" x="282" y="470" width="190" height="48" rx="10"/>
+  <text class="label" x="377" y="499" text-anchor="middle">Audit and analytics updated</text>
+
+  <path class="dash" d="M782.5 442 V494 H472"/>
+  <path class="dash" d="M240 287 H282"/>
+</svg>

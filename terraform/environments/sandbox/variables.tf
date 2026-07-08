@@ -249,6 +249,24 @@ variable "gusto_webhook_secret" {
   sensitive   = true
 }
 
+variable "rippling_client_id" {
+  description = "Rippling OAuth application client ID — obtained from the Rippling developer portal after App Shop approval."
+  type        = string
+  sensitive   = true
+}
+
+variable "rippling_client_secret" {
+  description = "Rippling OAuth application client secret — obtained from the Rippling developer portal. Stored in Key Vault as RIPPLING-CLIENT-SECRET."
+  type        = string
+  sensitive   = true
+}
+
+variable "rippling_webhook_secret" {
+  description = "Shared secret used to validate X-Rippling-Signature on inbound Rippling webhook callbacks. Set in the Rippling developer portal AND here. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}
+
 # ── Workday Proxy ─────────────────────────────────────────────────────────────
 variable "workday_webhook_secret" {
   description = "Shared secret sent as X-Api-Key by Workday_Proxy when calling the Award API webhook. Must match WORKDAY_WEBHOOK_SECRET on the Workday_Proxy container. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""

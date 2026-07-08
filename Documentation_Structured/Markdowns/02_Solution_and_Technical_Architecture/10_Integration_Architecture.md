@@ -80,17 +80,9 @@ The payroll broker abstracts provider-specific payout and lookup behavior.
 
 Current pattern:
 
-```mermaid
-flowchart LR
-    API["Backend API"] -->|nomination.approved| SB["Service Bus"]
-    SB --> Broker["Payroll Broker"]
-    Broker --> Registry["Provider Registry"]
-    Registry --> Gusto["Gusto Provider"]
-    Registry --> Rippling["Rippling Provider"]
-    Registry --> Workday["Future Workday Provider"]
-    Broker --> SQL["Payroll tables"]
-    Broker -->|payroll.accepted/payroll.failed| SB
-```
+Structured source: `../diagrams/structurizr/workspace.dsl`, view `PayrollIntegrationFlow`.
+
+![Payroll integration flow](../../diagrams/exports/PayrollIntegrationFlow.svg)
 
 Provider responsibilities:
 
@@ -199,4 +191,3 @@ Event metadata:
 - Payroll provider certification checklist.
 - Tenant-specific outbound webhook signing.
 - Data export API for audit and compliance.
-

@@ -16,35 +16,15 @@ The solution is an Azure-native SaaS application with:
 
 ## System Context
 
-```mermaid
-flowchart LR
-    Employee["Employee / Manager / HRBP / Admin"] --> Frontend["React Frontend<br/>Azure Static Web Apps"]
-    Frontend --> AFD["Azure Front Door + WAF"]
-    AFD --> API["FastAPI Backend<br/>Azure Container Apps"]
-    API --> SQL["Azure SQL"]
-    API --> SB["Azure Service Bus<br/>award-events topic"]
-    API --> Blob["Azure Blob Storage"]
-    API --> OpenAI["Azure OpenAI"]
-    API --> Entra["Microsoft Entra ID"]
-    SB --> Integrity["Integrity Check Worker"]
-    SB --> Auxiliary["Auxiliary Worker"]
-    SB --> Payroll["Payroll Broker"]
-    Integrity --> SQL
-    Integrity --> Blob
-    Integrity --> OpenAI
-    Integrity --> SB
-    Auxiliary --> SQL
-    Auxiliary --> Email["SMTP / Email Provider"]
-    Auxiliary --> SB
-    Payroll --> Providers["Gusto / Rippling / Workday Pattern"]
-    Payroll --> SQL
-    Payroll --> SB
-    Job["Fraud Analytics Job"] --> SQL
-    Job --> Blob
-    Job --> API
-```
+Structured source: `../diagrams/structurizr/workspace.dsl`, view `SystemContext`.
+
+![System context](../../diagrams/exports/SystemContext.svg)
 
 ## Major Containers
+
+Structured source: `../diagrams/structurizr/workspace.dsl`, view `ContainerArchitecture`.
+
+![Container architecture](../../diagrams/exports/ContainerArchitecture.svg)
 
 | Container | Path | Primary responsibility |
 | --- | --- | --- |
@@ -70,43 +50,11 @@ The tenant boundary is enforced through:
 
 ## Core Workflow
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant FE as Frontend
-    participant API as Backend API
-    participant SB as Service Bus
-    participant IC as Integrity Worker
-    participant AUX as Auxiliary Worker
-    participant HR as HRBP
-    participant M as Manager
-    participant PB as Payroll Broker
+Structured source: `../diagrams/structurizr/workspace.dsl`, views `NominationCleanApprovalFlow` and `NominationHRBPReviewFlow`.
 
-    U->>FE: Submit nomination
-    FE->>API: POST /api/nominations
-    API->>API: Validate tenant, amount, category, manager, description structure
-    API->>SB: Publish nomination.submitted
-    SB->>IC: Deliver to fraud-processor subscription
-    IC->>IC: Semantic and ML fraud assessment
-    alt clean
-        IC->>SB: Publish nomination.created
-        SB->>AUX: Deliver to email-processor
-        AUX->>M: Send approval email
-        M->>API: Approve/reject
-    else flagged
-        IC->>SB: Publish nomination.fraud-flagged
-        SB->>AUX: Deliver HRBP notification
-        AUX->>HR: Send HRBP review alert
-        HR->>API: Approve/reject HRBP review
-    else description rejected
-        IC->>SB: Publish nomination.description-rejected
-        SB->>AUX: Notify nominator
-    end
-    API->>SB: Publish nomination.approved
-    SB->>AUX: Outcome email and payout submit
-    SB->>PB: Payroll processor
-    PB->>SB: Publish payroll.accepted or payroll.failed
-```
+![Clean nomination approval flow](../../diagrams/exports/NominationCleanApprovalFlow.svg)
+
+![HRBP review nomination flow](../../diagrams/exports/NominationHRBPReviewFlow.svg)
 
 ## Service Bus Topology
 
@@ -119,26 +67,9 @@ sequenceDiagram
 
 ## Deployment Topology
 
-```mermaid
-flowchart TB
-    Internet["Users and external providers"] --> AFD["Azure Front Door Standard<br/>WAF, health probes, CORS rule set"]
-    AFD --> API1["Backend API primary ACA"]
-    AFD --> API2["Backend API secondary ACA"]
-    AFD --> Payroll["Payroll Broker ACA"]
-    SWA["Azure Static Web Apps"] --> AFD
-    API1 --> SQL["Azure SQL"]
-    API2 --> SQL
-    API1 --> SB["Service Bus"]
-    API2 --> SB
-    Workers["Integrity, Auxiliary, Analytics Job"] --> SB
-    Workers --> SQL
-    Workers --> Storage["Blob Storage"]
-    KV["Key Vault"] --> API1
-    KV --> API2
-    KV --> Workers
-    AppInsights["Application Insights + Log Analytics"] <-->|Telemetry| API1
-    AppInsights <-->|Telemetry| Workers
-```
+Structured source: `../diagrams/structurizr/workspace.dsl`, view `AzureDeployment`.
+
+![Azure deployment topology](../../diagrams/exports/AzureDeployment.svg)
 
 ## External Dependencies
 
@@ -150,4 +81,3 @@ flowchart TB
 - SMTP/email provider for workflow notifications.
 - Gusto/Rippling/Workday-style payroll providers for payout execution.
 - Cloudflare/Azure DNS assets for public tenant and payroll broker domains.
-

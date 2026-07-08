@@ -201,6 +201,15 @@ module "key_vault" {
     # header on every inbound Gusto callback to reject spoofed payroll events.
     # Must match the webhook secret configured in the Gusto developer portal.
     GUSTO-WEBHOOK-SECRET                  = var.gusto_webhook_secret
+    # Rippling OAuth credentials — used by the Payroll Broker for Rippling-connected tenants.
+    # Populated after Rippling App Shop approval. Stub mode is on (RIPPLING_STUB_MODE=true)
+    # until real credentials are available.
+    RIPPLING-CLIENT-ID                    = var.rippling_client_id
+    RIPPLING-CLIENT-SECRET                = var.rippling_client_secret
+    # Shared webhook secret — Payroll Broker validates the X-Rippling-Signature
+    # header on every inbound Rippling callback.
+    # Must match the webhook secret configured in the Rippling developer portal.
+    RIPPLING-WEBHOOK-SECRET               = var.rippling_webhook_secret
     # AES-256 key for encrypting Gusto OAuth tokens at rest in dbo.payroll_tokens.
     # Generate once: python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
     PAYROLL-TOKEN-ENCRYPTION-KEY          = var.payroll_token_encryption_key
@@ -700,9 +709,12 @@ module "payroll_broker" {
     { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
     { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
     { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
-    { env_name = "GUSTO_CLIENT_ID",     kv_secret_name = "GUSTO-CLIENT-ID" },
-    { env_name = "GUSTO_CLIENT_SECRET", kv_secret_name = "GUSTO-CLIENT-SECRET" },
-    { env_name = "GUSTO_WEBHOOK_SECRET", kv_secret_name = "GUSTO-WEBHOOK-SECRET" },
+    { env_name = "GUSTO_CLIENT_ID",        kv_secret_name = "GUSTO-CLIENT-ID" },
+    { env_name = "GUSTO_CLIENT_SECRET",    kv_secret_name = "GUSTO-CLIENT-SECRET" },
+    { env_name = "GUSTO_WEBHOOK_SECRET",   kv_secret_name = "GUSTO-WEBHOOK-SECRET" },
+    { env_name = "RIPPLING_CLIENT_ID",     kv_secret_name = "RIPPLING-CLIENT-ID" },
+    { env_name = "RIPPLING_CLIENT_SECRET", kv_secret_name = "RIPPLING-CLIENT-SECRET" },
+    { env_name = "RIPPLING_WEBHOOK_SECRET", kv_secret_name = "RIPPLING-WEBHOOK-SECRET" },
     { env_name = "PAYROLL_TOKEN_ENCRYPTION_KEY", kv_secret_name = "PAYROLL-TOKEN-ENCRYPTION-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
   ]

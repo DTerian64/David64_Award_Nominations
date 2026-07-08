@@ -11,4 +11,10 @@ The documents are grouped into named volumes:
 - `03_Engineering_Design_and_API`
 - `04_Operations_Governance_and_Readiness`
 
+Structured diagram sources live under `diagrams`:
+
+- `diagrams/structurizr/workspace.dsl` contains the Structurizr DSL workspace.
+- `diagrams/structurizr/README.md` maps view keys to the original diagrams and explains rendering/export options.
+- `diagrams/exports` contains rendered SVG diagram outputs referenced by the Markdown documents.
+
 The package was reverse engineered from the current repository and is intentionally separate from the existing `Documentation` folder.

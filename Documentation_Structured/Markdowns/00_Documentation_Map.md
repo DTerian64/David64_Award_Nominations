@@ -4,6 +4,14 @@ This folder is a clean, reverse-engineered documentation package for the Award N
 
 The documentation is organized as four named volumes. The numeric prefixes keep the folders in reading order; the folder names describe the purpose of each collection.
 
+Structured diagram sources are stored separately from the prose documents:
+
+| Location | Purpose |
+| --- | --- |
+| [diagrams/structurizr/workspace.dsl](../diagrams/structurizr/workspace.dsl) | Structurizr DSL source for system context, container, data model, workflow, payroll, model lifecycle, and deployment views. |
+| [diagrams/structurizr/README.md](diagrams/structurizr/README.md) | Rendering instructions and mapping from view keys to documentation diagrams. |
+| [diagrams/exports](diagrams/exports/README.md) | Rendered SVG diagram exports embedded in the Markdown documents. |
+
 ## 01 - Business and Product
 
 | Document | Audience | Purpose |

@@ -19,21 +19,9 @@ The data model supports:
 
 ## Conceptual Data Model
 
-```mermaid
-erDiagram
-    TENANTS ||--o{ USERS : owns
-    USERS ||--o{ NOMINATIONS : nominates
-    USERS ||--o{ NOMINATIONS : receives
-    USERS ||--o{ NOMINATIONS : approves
-    NOMINATIONS ||--o{ FRAUD_SCORES : has
-    NOMINATIONS ||--o{ HRBP_FLAGS : has
-    NOMINATIONS ||--o{ PAYROLL_SUBMISSIONS : pays
-    TENANTS ||--o{ NOMINATION_CATEGORIES : configures
-    TENANTS ||--o{ GRAPH_FINDINGS : produces
-    TENANTS ||--o{ FORECAST_RUNS : produces
-    TENANTS ||--o{ CONVERSATIONS : owns
-    CONVERSATIONS ||--o{ MESSAGES : contains
-```
+Structured source: `../diagrams/structurizr/workspace.dsl`, view `ConceptualDataModel`.
+
+![Conceptual data model](../../diagrams/exports/ConceptualDataModel.svg)
 
 ## Core Tables
 
@@ -218,4 +206,3 @@ Controls:
 - Tenant-scoped access.
 - Audit logs for impersonation.
 - Avoid exposing raw secrets in logs.
-

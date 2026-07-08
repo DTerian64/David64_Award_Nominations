@@ -1,0 +1,2190 @@
+{
+  "configuration" : { },
+  "description" : "Structured architecture and workflow model for the Award Nomination App documentation.",
+  "documentation" : { },
+  "id" : 1,
+  "lastModifiedDate" : "2026-07-07T22:48:00Z",
+  "model" : {
+    "deploymentNodes" : [ {
+      "description" : "Browsers, identity provider, payroll providers, and email infrastructure.",
+      "environment" : "Azure",
+      "id" : "98",
+      "infrastructureNodes" : [ {
+        "environment" : "Azure",
+        "id" : "99",
+        "name" : "Microsoft Entra ID",
+        "properties" : {
+          "structurizr.dsl.identifier" : "3d281846-37e2-41af-a749-58d424196ef7"
+        },
+        "tags" : "Element,Infrastructure Node"
+      }, {
+        "environment" : "Azure",
+        "id" : "100",
+        "name" : "Payroll Providers",
+        "properties" : {
+          "structurizr.dsl.identifier" : "bef42436-d69f-4a50-b272-d06d2ef8997d"
+        },
+        "tags" : "Element,Infrastructure Node"
+      }, {
+        "environment" : "Azure",
+        "id" : "101",
+        "name" : "SMTP / Email Provider",
+        "properties" : {
+          "structurizr.dsl.identifier" : "a03a3b36-d221-4d76-bbea-4cc10b248e2c"
+        },
+        "tags" : "Element,Infrastructure Node"
+      } ],
+      "instances" : "1",
+      "name" : "Users and External Providers",
+      "properties" : {
+        "structurizr.dsl.identifier" : "80138328-0352-4e68-bb37-63e1a3974e0c"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "containerInstances" : [ {
+        "containerId" : "5",
+        "environment" : "Azure",
+        "id" : "105",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "f8593e5c-f610-4be0-8fd8-111c987b3b2f"
+        },
+        "relationships" : [ {
+          "description" : "Calls backend APIs",
+          "destinationId" : "107",
+          "id" : "108",
+          "linkedRelationshipId" : "55",
+          "sourceId" : "105"
+        }, {
+          "description" : "Calls backend APIs",
+          "destinationId" : "117",
+          "id" : "118",
+          "linkedRelationshipId" : "55",
+          "sourceId" : "105"
+        } ],
+        "tags" : "Container Instance"
+      } ],
+      "description" : "Public entry points and static frontend hosting.",
+      "environment" : "Azure",
+      "id" : "102",
+      "infrastructureNodes" : [ {
+        "environment" : "Azure",
+        "id" : "103",
+        "name" : "Azure Front Door Standard + WAF",
+        "properties" : {
+          "structurizr.dsl.identifier" : "1f3b1411-e9c3-4267-8843-2e3684f06a2a"
+        },
+        "tags" : "Element,Infrastructure Node"
+      }, {
+        "environment" : "Azure",
+        "id" : "104",
+        "name" : "Azure Static Web Apps",
+        "properties" : {
+          "structurizr.dsl.identifier" : "058ef834-9f3c-4234-9791-9a4ef8b6b8d0"
+        },
+        "tags" : "Element,Infrastructure Node"
+      } ],
+      "instances" : "1",
+      "name" : "Azure Edge and Frontend",
+      "properties" : {
+        "structurizr.dsl.identifier" : "6f28c8ed-4f29-4404-be1d-833e4808d729"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "containerInstances" : [ {
+        "containerId" : "6",
+        "environment" : "Azure",
+        "id" : "107",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "e3ff6781-3052-4f02-a1ba-56872f762089"
+        },
+        "relationships" : [ {
+          "description" : "Calls payroll lookup API",
+          "destinationId" : "111",
+          "id" : "112",
+          "linkedRelationshipId" : "66",
+          "sourceId" : "107"
+        }, {
+          "description" : "Reads and writes tenant-scoped business data",
+          "destinationId" : "122",
+          "id" : "123",
+          "linkedRelationshipId" : "62",
+          "sourceId" : "107"
+        }, {
+          "description" : "Publishes award lifecycle events",
+          "destinationId" : "130",
+          "id" : "131",
+          "linkedRelationshipId" : "63",
+          "sourceId" : "107"
+        }, {
+          "description" : "Reads/writes certificates, exports, and model metadata",
+          "destinationId" : "139",
+          "id" : "140",
+          "linkedRelationshipId" : "64",
+          "sourceId" : "107"
+        }, {
+          "description" : "Uses for analytics and explanations",
+          "destinationId" : "145",
+          "id" : "146",
+          "linkedRelationshipId" : "65",
+          "sourceId" : "107"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "7",
+        "environment" : "Azure",
+        "id" : "109",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "c5f35bf3-7ac1-46d8-8062-77b3ab5af8b1"
+        },
+        "relationships" : [ {
+          "description" : "Reads nomination context and writes fraud flags/status",
+          "destinationId" : "122",
+          "id" : "124",
+          "linkedRelationshipId" : "74",
+          "sourceId" : "109"
+        }, {
+          "description" : "Publishes created, rejected, or flagged routing events",
+          "destinationId" : "130",
+          "id" : "133",
+          "linkedRelationshipId" : "77",
+          "sourceId" : "109"
+        }, {
+          "description" : "Streams tenant fraud model artifacts",
+          "destinationId" : "139",
+          "id" : "141",
+          "linkedRelationshipId" : "75",
+          "sourceId" : "109"
+        }, {
+          "description" : "Runs semantic checks and explanations",
+          "destinationId" : "145",
+          "id" : "147",
+          "linkedRelationshipId" : "76",
+          "sourceId" : "109"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "8",
+        "environment" : "Azure",
+        "id" : "110",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "cdcd4cce-2a2d-4aee-806f-db9f0f1c327a"
+        },
+        "relationships" : [ {
+          "description" : "Reads templates and updates workflow/payment state",
+          "destinationId" : "122",
+          "id" : "125",
+          "linkedRelationshipId" : "79",
+          "sourceId" : "110"
+        }, {
+          "description" : "Publishes follow-up events where required",
+          "destinationId" : "130",
+          "id" : "135",
+          "linkedRelationshipId" : "82",
+          "sourceId" : "110"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "9",
+        "environment" : "Azure",
+        "id" : "111",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "3cc2f42b-c17b-4052-ab74-a79d76d0bcc0"
+        },
+        "relationships" : [ {
+          "description" : "Reads provider configuration and records payroll submissions",
+          "destinationId" : "122",
+          "id" : "126",
+          "linkedRelationshipId" : "84",
+          "sourceId" : "111"
+        }, {
+          "description" : "Publishes payroll.accepted or payroll.failed",
+          "destinationId" : "130",
+          "id" : "137",
+          "linkedRelationshipId" : "89",
+          "sourceId" : "111"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "10",
+        "environment" : "Azure",
+        "id" : "113",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "f3270ee5-7674-425c-b84c-b868eb091ed5"
+        },
+        "relationships" : [ {
+          "description" : "Calls internal model refresh endpoint",
+          "destinationId" : "107",
+          "id" : "114",
+          "linkedRelationshipId" : "94",
+          "sourceId" : "113"
+        }, {
+          "description" : "Calls internal model refresh endpoint",
+          "destinationId" : "117",
+          "id" : "120",
+          "linkedRelationshipId" : "94",
+          "sourceId" : "113"
+        }, {
+          "description" : "Reads nominations and writes graph, score, and forecast data",
+          "destinationId" : "122",
+          "id" : "127",
+          "linkedRelationshipId" : "92",
+          "sourceId" : "113"
+        }, {
+          "description" : "Uploads tenant model artifacts",
+          "destinationId" : "139",
+          "id" : "142",
+          "linkedRelationshipId" : "93",
+          "sourceId" : "113"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "11",
+        "environment" : "Azure",
+        "id" : "115",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "6ab703e2-c406-48ce-8da3-1d9e574ffa26"
+        },
+        "relationships" : [ {
+          "description" : "Reads tenant-scoped analytics data",
+          "destinationId" : "122",
+          "id" : "128",
+          "linkedRelationshipId" : "96",
+          "sourceId" : "115"
+        }, {
+          "description" : "Writes export artifacts",
+          "destinationId" : "139",
+          "id" : "143",
+          "linkedRelationshipId" : "97",
+          "sourceId" : "115"
+        } ],
+        "tags" : "Container Instance"
+      } ],
+      "description" : "Primary application runtime.",
+      "environment" : "Azure",
+      "id" : "106",
+      "instances" : "1",
+      "name" : "Azure Container Apps Environment - Primary Region",
+      "properties" : {
+        "structurizr.dsl.identifier" : "d501cd51-7649-40b6-b216-641222dea0c2"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "containerInstances" : [ {
+        "containerId" : "6",
+        "environment" : "Azure",
+        "id" : "117",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "05272b40-bba3-4387-aea3-ded19b64929c"
+        },
+        "relationships" : [ {
+          "description" : "Calls payroll lookup API",
+          "destinationId" : "111",
+          "id" : "119",
+          "linkedRelationshipId" : "66",
+          "sourceId" : "117"
+        }, {
+          "description" : "Reads and writes tenant-scoped business data",
+          "destinationId" : "122",
+          "id" : "129",
+          "linkedRelationshipId" : "62",
+          "sourceId" : "117"
+        }, {
+          "description" : "Publishes award lifecycle events",
+          "destinationId" : "130",
+          "id" : "138",
+          "linkedRelationshipId" : "63",
+          "sourceId" : "117"
+        }, {
+          "description" : "Reads/writes certificates, exports, and model metadata",
+          "destinationId" : "139",
+          "id" : "144",
+          "linkedRelationshipId" : "64",
+          "sourceId" : "117"
+        }, {
+          "description" : "Uses for analytics and explanations",
+          "destinationId" : "145",
+          "id" : "148",
+          "linkedRelationshipId" : "65",
+          "sourceId" : "117"
+        } ],
+        "tags" : "Container Instance"
+      } ],
+      "description" : "Secondary backend API runtime behind Front Door.",
+      "environment" : "Azure",
+      "id" : "116",
+      "instances" : "1",
+      "name" : "Azure Container Apps Environment - Secondary Region",
+      "properties" : {
+        "structurizr.dsl.identifier" : "37dd9682-945d-4b67-b7bd-e6d54c915e0d"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "containerInstances" : [ {
+        "containerId" : "12",
+        "environment" : "Azure",
+        "id" : "122",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "5460d693-f504-4e0e-94af-3606f35d5cb2"
+        },
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "35",
+        "environment" : "Azure",
+        "id" : "130",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "dcf430cb-6e4e-44ff-81e3-85d934d81fac"
+        },
+        "relationships" : [ {
+          "description" : "Delivers nomination.submitted",
+          "destinationId" : "109",
+          "id" : "132",
+          "linkedRelationshipId" : "71",
+          "sourceId" : "130"
+        }, {
+          "description" : "Delivers downstream notification and outcome events",
+          "destinationId" : "110",
+          "id" : "134",
+          "linkedRelationshipId" : "72",
+          "sourceId" : "130"
+        }, {
+          "description" : "Delivers nomination.approved payout events",
+          "destinationId" : "111",
+          "id" : "136",
+          "linkedRelationshipId" : "73",
+          "sourceId" : "130"
+        } ],
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "36",
+        "environment" : "Azure",
+        "id" : "139",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "c33483b8-2d78-4a3a-8b29-77f77dbf5c63"
+        },
+        "tags" : "Container Instance"
+      }, {
+        "containerId" : "37",
+        "environment" : "Azure",
+        "id" : "145",
+        "instanceId" : 1,
+        "properties" : {
+          "structurizr.dsl.identifier" : "327fa00f-2475-4941-b4f1-36fa8aa95174"
+        },
+        "tags" : "Container Instance"
+      } ],
+      "description" : "Persistent data, events, artifacts, secrets, and AI services.",
+      "environment" : "Azure",
+      "id" : "121",
+      "infrastructureNodes" : [ {
+        "environment" : "Azure",
+        "id" : "149",
+        "name" : "Azure Key Vault",
+        "properties" : {
+          "structurizr.dsl.identifier" : "4a77f711-a9f9-4dbd-8881-e38e863ec78f"
+        },
+        "tags" : "Element,Infrastructure Node"
+      } ],
+      "instances" : "1",
+      "name" : "Azure Data and Messaging",
+      "properties" : {
+        "structurizr.dsl.identifier" : "16524618-73e0-47b4-a6d1-dadac4ba2f7a"
+      },
+      "tags" : "Element,Deployment Node"
+    }, {
+      "description" : "Telemetry and operational analytics.",
+      "environment" : "Azure",
+      "id" : "150",
+      "infrastructureNodes" : [ {
+        "environment" : "Azure",
+        "id" : "151",
+        "name" : "Application Insights + Log Analytics",
+        "properties" : {
+          "structurizr.dsl.identifier" : "c11b93df-ae0f-4b89-8f47-bd613a0dbffc"
+        },
+        "tags" : "Element,Infrastructure Node"
+      } ],
+      "instances" : "1",
+      "name" : "Azure Observability",
+      "properties" : {
+        "structurizr.dsl.identifier" : "849ba78c-8fe5-414c-9ba2-0181e9ae5120"
+      },
+      "tags" : "Element,Deployment Node"
+    } ],
+    "people" : [ {
+      "description" : "Tenant users who submit nominations, approve awards, review flagged items, administer tenants, or inspect analytics.",
+      "id" : "1",
+      "name" : "Employee / Manager / HRBP / Admin",
+      "properties" : {
+        "structurizr.dsl.identifier" : "employee"
+      },
+      "relationships" : [ {
+        "description" : "Uses",
+        "destinationId" : "5",
+        "id" : "46",
+        "sourceId" : "1",
+        "tags" : "Relationship"
+      }, {
+        "description" : "Uses",
+        "destinationId" : "4",
+        "id" : "47",
+        "linkedRelationshipId" : "46",
+        "sourceId" : "1"
+      } ],
+      "tags" : "Element,Person"
+    }, {
+      "description" : "Tenant user with PayrollBP role who can inspect payroll data and support payout reconciliation.",
+      "id" : "2",
+      "name" : "Payroll BP",
+      "properties" : {
+        "structurizr.dsl.identifier" : "payrollBp"
+      },
+      "relationships" : [ {
+        "description" : "Uses payroll lookup and award context",
+        "destinationId" : "5",
+        "id" : "48",
+        "sourceId" : "2",
+        "tags" : "Relationship"
+      }, {
+        "description" : "Uses payroll lookup and award context",
+        "destinationId" : "4",
+        "id" : "49",
+        "linkedRelationshipId" : "48",
+        "sourceId" : "2"
+      } ],
+      "tags" : "Element,Person"
+    }, {
+      "description" : "Engineer or support operator responsible for deployment, observability, and incident response.",
+      "id" : "3",
+      "name" : "Platform Operator",
+      "properties" : {
+        "structurizr.dsl.identifier" : "platformOperator"
+      },
+      "relationships" : [ {
+        "description" : "Monitors and investigates",
+        "destinationId" : "43",
+        "id" : "50",
+        "sourceId" : "3",
+        "tags" : "Relationship"
+      } ],
+      "tags" : "Element,Person"
+    } ],
+    "softwareSystems" : [ {
+      "containers" : [ {
+        "description" : "User experience for nominations, approvals, HRBP review, analytics, payroll lookup, tenant theming, localization, and impersonation.",
+        "documentation" : { },
+        "id" : "5",
+        "name" : "React Frontend",
+        "properties" : {
+          "structurizr.dsl.identifier" : "frontend"
+        },
+        "relationships" : [ {
+          "description" : "Authenticates users with MSAL",
+          "destinationId" : "38",
+          "id" : "51",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Calls API through",
+          "destinationId" : "39",
+          "id" : "53",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Calls backend APIs",
+          "destinationId" : "6",
+          "id" : "55",
+          "sourceId" : "5",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "React, TypeScript, Vite, MSAL, i18next"
+      }, {
+        "description" : "Tenant-aware API for authentication, nomination lifecycle, analytics, admin operations, certificates, payroll lookup, and event publishing.",
+        "documentation" : { },
+        "id" : "6",
+        "name" : "Backend API",
+        "properties" : {
+          "structurizr.dsl.identifier" : "api"
+        },
+        "relationships" : [ {
+          "description" : "Validates JWT issuer, audience, and tenant",
+          "destinationId" : "38",
+          "id" : "61",
+          "sourceId" : "6",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Reads and writes tenant-scoped business data",
+          "destinationId" : "12",
+          "id" : "62",
+          "sourceId" : "6",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Publishes award lifecycle events",
+          "destinationId" : "35",
+          "id" : "63",
+          "sourceId" : "6",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Reads/writes certificates, exports, and model metadata",
+          "destinationId" : "36",
+          "id" : "64",
+          "sourceId" : "6",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Uses for analytics and explanations",
+          "destinationId" : "37",
+          "id" : "65",
+          "sourceId" : "6",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Calls payroll lookup API",
+          "destinationId" : "9",
+          "id" : "66",
+          "sourceId" : "6",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Emits logs, metrics, and traces",
+          "destinationId" : "43",
+          "id" : "67",
+          "sourceId" : "6",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Reads secrets via managed identity",
+          "destinationId" : "44",
+          "id" : "69",
+          "sourceId" : "6",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "FastAPI, Python, SQLAlchemy, pyodbc"
+      }, {
+        "description" : "Consumes nomination.submitted, runs description checks and fraud scoring, and routes nominations to manager approval, HRBP review, or rejection.",
+        "documentation" : { },
+        "id" : "7",
+        "name" : "Integrity Check Worker",
+        "properties" : {
+          "structurizr.dsl.identifier" : "integrityWorker"
+        },
+        "relationships" : [ {
+          "description" : "Reads nomination context and writes fraud flags/status",
+          "destinationId" : "12",
+          "id" : "74",
+          "sourceId" : "7",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Streams tenant fraud model artifacts",
+          "destinationId" : "36",
+          "id" : "75",
+          "sourceId" : "7",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Runs semantic checks and explanations",
+          "destinationId" : "37",
+          "id" : "76",
+          "sourceId" : "7",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Publishes created, rejected, or flagged routing events",
+          "destinationId" : "35",
+          "id" : "77",
+          "sourceId" : "7",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Emits logs and traces",
+          "destinationId" : "43",
+          "id" : "78",
+          "sourceId" : "7",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Python, Azure Service Bus SDK, scikit-learn, sentence-transformers, SHAP"
+      }, {
+        "description" : "Consumes downstream award events, sends notifications, handles HRBP alerts, payout events, payroll outcomes, and idempotent side effects.",
+        "documentation" : { },
+        "id" : "8",
+        "name" : "Auxiliary Worker",
+        "properties" : {
+          "structurizr.dsl.identifier" : "auxiliaryWorker"
+        },
+        "relationships" : [ {
+          "description" : "Reads templates and updates workflow/payment state",
+          "destinationId" : "12",
+          "id" : "79",
+          "sourceId" : "8",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Sends notification emails",
+          "destinationId" : "41",
+          "id" : "80",
+          "sourceId" : "8",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Publishes follow-up events where required",
+          "destinationId" : "35",
+          "id" : "82",
+          "sourceId" : "8",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Emits logs and traces",
+          "destinationId" : "43",
+          "id" : "83",
+          "sourceId" : "8",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Python, Azure Service Bus SDK, SMTP"
+      }, {
+        "description" : "Provider abstraction for payroll lookup, OAuth/webhooks, and approved award payout submission.",
+        "documentation" : { },
+        "id" : "9",
+        "name" : "Payroll Broker",
+        "properties" : {
+          "structurizr.dsl.identifier" : "payrollBroker"
+        },
+        "relationships" : [ {
+          "description" : "Reads provider configuration and records payroll submissions",
+          "destinationId" : "12",
+          "id" : "84",
+          "sourceId" : "9",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Submits payouts, performs employee lookup, and receives webhooks",
+          "destinationId" : "42",
+          "id" : "85",
+          "sourceId" : "9",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Publishes payroll.accepted or payroll.failed",
+          "destinationId" : "35",
+          "id" : "89",
+          "sourceId" : "9",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Emits logs and traces",
+          "destinationId" : "43",
+          "id" : "90",
+          "sourceId" : "9",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Reads provider secrets and token encryption key",
+          "destinationId" : "44",
+          "id" : "91",
+          "sourceId" : "9",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "FastAPI, Python, provider adapters"
+      }, {
+        "description" : "Scheduled analytics job for graph-pattern detection, fraud model retraining, holiday sync, and forecast model generation.",
+        "documentation" : { },
+        "id" : "10",
+        "name" : "Fraud Analytics Job",
+        "properties" : {
+          "structurizr.dsl.identifier" : "analyticsJob"
+        },
+        "relationships" : [ {
+          "description" : "Reads nominations and writes graph, score, and forecast data",
+          "destinationId" : "12",
+          "id" : "92",
+          "sourceId" : "10",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Uploads tenant model artifacts",
+          "destinationId" : "36",
+          "id" : "93",
+          "sourceId" : "10",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Calls internal model refresh endpoint",
+          "destinationId" : "6",
+          "id" : "94",
+          "sourceId" : "10",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Emits job logs and metrics",
+          "destinationId" : "43",
+          "id" : "95",
+          "sourceId" : "10",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Python, Container Apps Job, pandas, scikit-learn, networkx"
+      }, {
+        "description" : "SQL and export services used by analytics and investigation workflows.",
+        "documentation" : { },
+        "id" : "11",
+        "name" : "MCP / Analytics Export Services",
+        "properties" : {
+          "structurizr.dsl.identifier" : "mcpServices"
+        },
+        "relationships" : [ {
+          "description" : "Reads tenant-scoped analytics data",
+          "destinationId" : "12",
+          "id" : "96",
+          "sourceId" : "11",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Writes export artifacts",
+          "destinationId" : "36",
+          "id" : "97",
+          "sourceId" : "11",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Python, MCP"
+      }, {
+        "components" : [ {
+          "description" : "Tenant registry, Entra tenant mapping, domain, site URL, branding, and tenant configuration.",
+          "documentation" : { },
+          "id" : "13",
+          "name" : "Tenants",
+          "properties" : {
+            "structurizr.dsl.identifier" : "tenants"
+          },
+          "relationships" : [ {
+            "description" : "Owns",
+            "destinationId" : "14",
+            "id" : "25",
+            "sourceId" : "13",
+            "tags" : "Relationship"
+          }, {
+            "description" : "Configures",
+            "destinationId" : "17",
+            "id" : "26",
+            "sourceId" : "13",
+            "tags" : "Relationship"
+          }, {
+            "description" : "Produces",
+            "destinationId" : "20",
+            "id" : "27",
+            "sourceId" : "13",
+            "tags" : "Relationship"
+          }, {
+            "description" : "Produces",
+            "destinationId" : "21",
+            "id" : "28",
+            "sourceId" : "13",
+            "tags" : "Relationship"
+          }, {
+            "description" : "Owns",
+            "destinationId" : "22",
+            "id" : "29",
+            "sourceId" : "13",
+            "tags" : "Relationship"
+          } ],
+          "tags" : "Element,Component",
+          "technology" : "Table"
+        }, {
+          "description" : "Tenant-scoped user roster, UPN/email, profile fields, and manager hierarchy.",
+          "documentation" : { },
+          "id" : "14",
+          "name" : "Users",
+          "properties" : {
+            "structurizr.dsl.identifier" : "users"
+          },
+          "relationships" : [ {
+            "description" : "Nominates, receives, and approves",
+            "destinationId" : "16",
+            "id" : "30",
+            "sourceId" : "14",
+            "tags" : "Relationship"
+          } ],
+          "tags" : "Element,Component",
+          "technology" : "Table"
+        }, {
+          "description" : "Application roles such as HRBP, PayrollBP, and Support.",
+          "documentation" : { },
+          "id" : "15",
+          "name" : "UserRoles",
+          "properties" : {
+            "structurizr.dsl.identifier" : "userRoles"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Table"
+        }, {
+          "description" : "Award workflow records and lifecycle status.",
+          "documentation" : { },
+          "id" : "16",
+          "name" : "Nominations",
+          "properties" : {
+            "structurizr.dsl.identifier" : "nominations"
+          },
+          "relationships" : [ {
+            "description" : "Has",
+            "destinationId" : "19",
+            "id" : "31",
+            "sourceId" : "16",
+            "tags" : "Relationship"
+          }, {
+            "description" : "Pays through",
+            "destinationId" : "23",
+            "id" : "32",
+            "sourceId" : "16",
+            "tags" : "Relationship"
+          }, {
+            "description" : "Referenced by",
+            "destinationId" : "18",
+            "id" : "33",
+            "sourceId" : "16",
+            "tags" : "Relationship"
+          } ],
+          "tags" : "Element,Component",
+          "technology" : "Table"
+        }, {
+          "description" : "Tenant-specific award categories.",
+          "documentation" : { },
+          "id" : "17",
+          "name" : "NominationCategories",
+          "properties" : {
+            "structurizr.dsl.identifier" : "nominationCategories"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Table"
+        }, {
+          "description" : "Service Bus idempotency log and processing result table.",
+          "documentation" : { },
+          "id" : "18",
+          "name" : "ProcessedEvents",
+          "properties" : {
+            "structurizr.dsl.identifier" : "processedEvents"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Table"
+        }, {
+          "description" : "P2P, approver, and HRBP fraud score and feature-summary tables.",
+          "documentation" : { },
+          "id" : "19",
+          "name" : "Fraud Score Tables",
+          "properties" : {
+            "structurizr.dsl.identifier" : "fraudScores"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Tables"
+        }, {
+          "description" : "Graph pattern findings and point-in-time graph flag snapshots.",
+          "documentation" : { },
+          "id" : "20",
+          "name" : "Graph and Integrity Findings",
+          "properties" : {
+            "structurizr.dsl.identifier" : "graphFindings"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Tables"
+        }, {
+          "description" : "Forecast run metadata and forecast points.",
+          "documentation" : { },
+          "id" : "21",
+          "name" : "Forecast Tables",
+          "properties" : {
+            "structurizr.dsl.identifier" : "forecastTables"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Tables"
+        }, {
+          "description" : "AI analytics conversation headers, messages, and export metadata.",
+          "documentation" : { },
+          "id" : "22",
+          "name" : "Ask Conversations and Messages",
+          "properties" : {
+            "structurizr.dsl.identifier" : "conversations"
+          },
+          "relationships" : [ {
+            "description" : "Audited separately from",
+            "destinationId" : "24",
+            "id" : "34",
+            "sourceId" : "22",
+            "tags" : "Relationship"
+          } ],
+          "tags" : "Element,Component",
+          "technology" : "Tables"
+        }, {
+          "description" : "Payroll provider config, encrypted tokens, and payroll submission records.",
+          "documentation" : { },
+          "id" : "23",
+          "name" : "Payroll Tables",
+          "properties" : {
+            "structurizr.dsl.identifier" : "payrollTables"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Tables"
+        }, {
+          "description" : "Impersonation audit logs and demo registration requests.",
+          "documentation" : { },
+          "id" : "24",
+          "name" : "Audit and Demo Tables",
+          "properties" : {
+            "structurizr.dsl.identifier" : "auditTables"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Tables"
+        } ],
+        "description" : "System of record for tenants, users, nominations, fraud scores, review state, analytics, conversations, event processing, and payroll metadata.",
+        "documentation" : { },
+        "id" : "12",
+        "name" : "Azure SQL Database",
+        "properties" : {
+          "structurizr.dsl.identifier" : "database"
+        },
+        "tags" : "Element,Container",
+        "technology" : "Azure SQL"
+      }, {
+        "description" : "award-events topic with fraud-processor, email-processor, and payroll-processor subscriptions.",
+        "documentation" : { },
+        "id" : "35",
+        "name" : "Azure Service Bus",
+        "properties" : {
+          "structurizr.dsl.identifier" : "serviceBus"
+        },
+        "relationships" : [ {
+          "description" : "Delivers nomination.submitted",
+          "destinationId" : "7",
+          "id" : "71",
+          "sourceId" : "35",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Delivers downstream notification and outcome events",
+          "destinationId" : "8",
+          "id" : "72",
+          "sourceId" : "35",
+          "tags" : "Relationship"
+        }, {
+          "description" : "Delivers nomination.approved payout events",
+          "destinationId" : "9",
+          "id" : "73",
+          "sourceId" : "35",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Azure Service Bus"
+      }, {
+        "description" : "Stores fraud models, certificates, certificate templates, and exports.",
+        "documentation" : { },
+        "id" : "36",
+        "name" : "Azure Blob Storage",
+        "properties" : {
+          "structurizr.dsl.identifier" : "blobStorage"
+        },
+        "tags" : "Element,Container",
+        "technology" : "Azure Blob Storage"
+      }, {
+        "description" : "Calls Azure OpenAI for semantic checks, explanations, ask analytics, and investigations.",
+        "documentation" : { },
+        "id" : "37",
+        "name" : "Azure OpenAI Adapter",
+        "properties" : {
+          "structurizr.dsl.identifier" : "openAiAdapter"
+        },
+        "tags" : "Element,Container",
+        "technology" : "OpenAI SDK"
+      } ],
+      "description" : "Tenant-configurable SaaS platform for employee award nomination, integrity review, analytics, and payroll coordination.",
+      "documentation" : { },
+      "id" : "4",
+      "name" : "Award Nomination App",
+      "properties" : {
+        "structurizr.dsl.identifier" : "award"
+      },
+      "relationships" : [ {
+        "description" : "Authenticates users with MSAL",
+        "destinationId" : "38",
+        "id" : "52",
+        "linkedRelationshipId" : "51",
+        "sourceId" : "4"
+      }, {
+        "description" : "Calls API through",
+        "destinationId" : "39",
+        "id" : "54",
+        "linkedRelationshipId" : "53",
+        "sourceId" : "4"
+      }, {
+        "description" : "Emits logs, metrics, and traces",
+        "destinationId" : "43",
+        "id" : "68",
+        "linkedRelationshipId" : "67",
+        "sourceId" : "4"
+      }, {
+        "description" : "Reads secrets via managed identity",
+        "destinationId" : "44",
+        "id" : "70",
+        "linkedRelationshipId" : "69",
+        "sourceId" : "4"
+      }, {
+        "description" : "Sends notification emails",
+        "destinationId" : "41",
+        "id" : "81",
+        "linkedRelationshipId" : "80",
+        "sourceId" : "4"
+      }, {
+        "description" : "Submits payouts, performs employee lookup, and receives webhooks",
+        "destinationId" : "42",
+        "id" : "86",
+        "linkedRelationshipId" : "85",
+        "sourceId" : "4"
+      } ],
+      "tags" : "Element,Software System"
+    }, {
+      "description" : "Identity provider for user authentication and admin app roles.",
+      "documentation" : { },
+      "id" : "38",
+      "name" : "Microsoft Entra ID",
+      "properties" : {
+        "structurizr.dsl.identifier" : "entra"
+      },
+      "tags" : "Element,Software System,External"
+    }, {
+      "description" : "Edge routing, WAF, health probes, TLS, and CORS handling.",
+      "documentation" : { },
+      "id" : "39",
+      "name" : "Azure Front Door + WAF",
+      "properties" : {
+        "structurizr.dsl.identifier" : "frontDoor"
+      },
+      "relationships" : [ {
+        "description" : "Routes API traffic to",
+        "destinationId" : "6",
+        "id" : "58",
+        "sourceId" : "39",
+        "tags" : "Relationship"
+      }, {
+        "description" : "Routes API traffic to",
+        "destinationId" : "4",
+        "id" : "59",
+        "linkedRelationshipId" : "58",
+        "sourceId" : "39"
+      }, {
+        "description" : "Routes payroll OAuth and webhook traffic to",
+        "destinationId" : "9",
+        "id" : "60",
+        "sourceId" : "39",
+        "tags" : "Relationship"
+      } ],
+      "tags" : "Element,Software System,External"
+    }, {
+      "description" : "Hosts the React frontend.",
+      "documentation" : { },
+      "id" : "40",
+      "name" : "Azure Static Web Apps",
+      "properties" : {
+        "structurizr.dsl.identifier" : "staticWebApps"
+      },
+      "relationships" : [ {
+        "description" : "Hosts",
+        "destinationId" : "5",
+        "id" : "56",
+        "sourceId" : "40",
+        "tags" : "Relationship"
+      }, {
+        "description" : "Hosts",
+        "destinationId" : "4",
+        "id" : "57",
+        "linkedRelationshipId" : "56",
+        "sourceId" : "40"
+      } ],
+      "tags" : "Element,Software System,External"
+    }, {
+      "description" : "Sends workflow, HRBP, demo, payroll, and analytics notification emails.",
+      "documentation" : { },
+      "id" : "41",
+      "name" : "SMTP / Email Provider",
+      "properties" : {
+        "structurizr.dsl.identifier" : "smtp"
+      },
+      "tags" : "Element,Software System,External"
+    }, {
+      "description" : "Gusto, Rippling, and Workday-style providers for employee pay lookup and award payout execution.",
+      "documentation" : { },
+      "id" : "42",
+      "name" : "Payroll Providers",
+      "properties" : {
+        "structurizr.dsl.identifier" : "payrollProviders"
+      },
+      "relationships" : [ {
+        "description" : "Returns provider API responses and webhook callbacks",
+        "destinationId" : "9",
+        "id" : "87",
+        "sourceId" : "42",
+        "tags" : "Relationship"
+      }, {
+        "description" : "Returns provider API responses and webhook callbacks",
+        "destinationId" : "4",
+        "id" : "88",
+        "linkedRelationshipId" : "87",
+        "sourceId" : "42"
+      } ],
+      "tags" : "Element,Software System,External"
+    }, {
+      "description" : "Telemetry, traces, logs, dashboards, KQL validation, and operational analytics.",
+      "documentation" : { },
+      "id" : "43",
+      "name" : "Application Insights + Log Analytics",
+      "properties" : {
+        "structurizr.dsl.identifier" : "appInsights"
+      },
+      "tags" : "Element,Software System,External"
+    }, {
+      "description" : "Stores SQL credentials, provider secrets, webhook secrets, OpenAI keys, and Application Insights connection strings.",
+      "documentation" : { },
+      "id" : "44",
+      "name" : "Azure Key Vault",
+      "properties" : {
+        "structurizr.dsl.identifier" : "keyVault"
+      },
+      "tags" : "Element,Software System,External"
+    }, {
+      "description" : "Runtime hosting for API, workers, payroll broker, and scheduled jobs.",
+      "documentation" : { },
+      "id" : "45",
+      "name" : "Azure Container Apps",
+      "properties" : {
+        "structurizr.dsl.identifier" : "containerApps"
+      },
+      "tags" : "Element,Software System,External"
+    } ]
+  },
+  "name" : "Award Nomination App",
+  "properties" : {
+    "structurizr.inspection.error" : "125",
+    "structurizr.dsl" : "d29ya3NwYWNlICJBd2FyZCBOb21pbmF0aW9uIEFwcCIgIlN0cnVjdHVyZWQgYXJjaGl0ZWN0dXJlIGFuZCB3b3JrZmxvdyBtb2RlbCBmb3IgdGhlIEF3YXJkIE5vbWluYXRpb24gQXBwIGRvY3VtZW50YXRpb24uIiB7CgogICAgbW9kZWwgewogICAgICAgIGVtcGxveWVlID0gcGVyc29uICJFbXBsb3llZSAvIE1hbmFnZXIgLyBIUkJQIC8gQWRtaW4iICJUZW5hbnQgdXNlcnMgd2hvIHN1Ym1pdCBub21pbmF0aW9ucywgYXBwcm92ZSBhd2FyZHMsIHJldmlldyBmbGFnZ2VkIGl0ZW1zLCBhZG1pbmlzdGVyIHRlbmFudHMsIG9yIGluc3BlY3QgYW5hbHl0aWNzLiIKICAgICAgICBwYXlyb2xsQnAgPSBwZXJzb24gIlBheXJvbGwgQlAiICJUZW5hbnQgdXNlciB3aXRoIFBheXJvbGxCUCByb2xlIHdobyBjYW4gaW5zcGVjdCBwYXlyb2xsIGRhdGEgYW5kIHN1cHBvcnQgcGF5b3V0IHJlY29uY2lsaWF0aW9uLiIKICAgICAgICBwbGF0Zm9ybU9wZXJhdG9yID0gcGVyc29uICJQbGF0Zm9ybSBPcGVyYXRvciIgIkVuZ2luZWVyIG9yIHN1cHBvcnQgb3BlcmF0b3IgcmVzcG9uc2libGUgZm9yIGRlcGxveW1lbnQsIG9ic2VydmFiaWxpdHksIGFuZCBpbmNpZGVudCByZXNwb25zZS4iCgogICAgICAgIGF3YXJkID0gc29mdHdhcmVTeXN0ZW0gIkF3YXJkIE5vbWluYXRpb24gQXBwIiAiVGVuYW50LWNvbmZpZ3VyYWJsZSBTYWFTIHBsYXRmb3JtIGZvciBlbXBsb3llZSBhd2FyZCBub21pbmF0aW9uLCBpbnRlZ3JpdHkgcmV2aWV3LCBhbmFseXRpY3MsIGFuZCBwYXlyb2xsIGNvb3JkaW5hdGlvbi4iIHsKICAgICAgICAgICAgZnJvbnRlbmQgPSBjb250YWluZXIgIlJlYWN0IEZyb250ZW5kIiAiVXNlciBleHBlcmllbmNlIGZvciBub21pbmF0aW9ucywgYXBwcm92YWxzLCBIUkJQIHJldmlldywgYW5hbHl0aWNzLCBwYXlyb2xsIGxvb2t1cCwgdGVuYW50IHRoZW1pbmcsIGxvY2FsaXphdGlvbiwgYW5kIGltcGVyc29uYXRpb24uIiAiUmVhY3QsIFR5cGVTY3JpcHQsIFZpdGUsIE1TQUwsIGkxOG5leHQiCiAgICAgICAgICAgIGFwaSA9IGNvbnRhaW5lciAiQmFja2VuZCBBUEkiICJUZW5hbnQtYXdhcmUgQVBJIGZvciBhdXRoZW50aWNhdGlvbiwgbm9taW5hdGlvbiBsaWZlY3ljbGUsIGFuYWx5dGljcywgYWRtaW4gb3BlcmF0aW9ucywgY2VydGlmaWNhdGVzLCBwYXlyb2xsIGxvb2t1cCwgYW5kIGV2ZW50IHB1Ymxpc2hpbmcuIiAiRmFzdEFQSSwgUHl0aG9uLCBTUUxBbGNoZW15LCBweW9kYmMiCiAgICAgICAgICAgIGludGVncml0eVdvcmtlciA9IGNvbnRhaW5lciAiSW50ZWdyaXR5IENoZWNrIFdvcmtlciIgIkNvbnN1bWVzIG5vbWluYXRpb24uc3VibWl0dGVkLCBydW5zIGRlc2NyaXB0aW9uIGNoZWNrcyBhbmQgZnJhdWQgc2NvcmluZywgYW5kIHJvdXRlcyBub21pbmF0aW9ucyB0byBtYW5hZ2VyIGFwcHJvdmFsLCBIUkJQIHJldmlldywgb3IgcmVqZWN0aW9uLiIgIlB5dGhvbiwgQXp1cmUgU2VydmljZSBCdXMgU0RLLCBzY2lraXQtbGVhcm4sIHNlbnRlbmNlLXRyYW5zZm9ybWVycywgU0hBUCIKICAgICAgICAgICAgYXV4aWxpYXJ5V29ya2VyID0gY29udGFpbmVyICJBdXhpbGlhcnkgV29ya2VyIiAiQ29uc3VtZXMgZG93bnN0cmVhbSBhd2FyZCBldmVudHMsIHNlbmRzIG5vdGlmaWNhdGlvbnMsIGhhbmRsZXMgSFJCUCBhbGVydHMsIHBheW91dCBldmVudHMsIHBheXJvbGwgb3V0Y29tZXMsIGFuZCBpZGVtcG90ZW50IHNpZGUgZWZmZWN0cy4iICJQeXRob24sIEF6dXJlIFNlcnZpY2UgQnVzIFNESywgU01UUCIKICAgICAgICAgICAgcGF5cm9sbEJyb2tlciA9IGNvbnRhaW5lciAiUGF5cm9sbCBCcm9rZXIiICJQcm92aWRlciBhYnN0cmFjdGlvbiBmb3IgcGF5cm9sbCBsb29rdXAsIE9BdXRoL3dlYmhvb2tzLCBhbmQgYXBwcm92ZWQgYXdhcmQgcGF5b3V0IHN1Ym1pc3Npb24uIiAiRmFzdEFQSSwgUHl0aG9uLCBwcm92aWRlciBhZGFwdGVycyIKICAgICAgICAgICAgYW5hbHl0aWNzSm9iID0gY29udGFpbmVyICJGcmF1ZCBBbmFseXRpY3MgSm9iIiAiU2NoZWR1bGVkIGFuYWx5dGljcyBqb2IgZm9yIGdyYXBoLXBhdHRlcm4gZGV0ZWN0aW9uLCBmcmF1ZCBtb2RlbCByZXRyYWluaW5nLCBob2xpZGF5IHN5bmMsIGFuZCBmb3JlY2FzdCBtb2RlbCBnZW5lcmF0aW9uLiIgIlB5dGhvbiwgQ29udGFpbmVyIEFwcHMgSm9iLCBwYW5kYXMsIHNjaWtpdC1sZWFybiwgbmV0d29ya3giCiAgICAgICAgICAgIG1jcFNlcnZpY2VzID0gY29udGFpbmVyICJNQ1AgLyBBbmFseXRpY3MgRXhwb3J0IFNlcnZpY2VzIiAiU1FMIGFuZCBleHBvcnQgc2VydmljZXMgdXNlZCBieSBhbmFseXRpY3MgYW5kIGludmVzdGlnYXRpb24gd29ya2Zsb3dzLiIgIlB5dGhvbiwgTUNQIgogICAgICAgICAgICBkYXRhYmFzZSA9IGNvbnRhaW5lciAiQXp1cmUgU1FMIERhdGFiYXNlIiAiU3lzdGVtIG9mIHJlY29yZCBmb3IgdGVuYW50cywgdXNlcnMsIG5vbWluYXRpb25zLCBmcmF1ZCBzY29yZXMsIHJldmlldyBzdGF0ZSwgYW5hbHl0aWNzLCBjb252ZXJzYXRpb25zLCBldmVudCBwcm9jZXNzaW5nLCBhbmQgcGF5cm9sbCBtZXRhZGF0YS4iICJBenVyZSBTUUwiIHsKICAgICAgICAgICAgICAgIHRlbmFudHMgPSBjb21wb25lbnQgIlRlbmFudHMiICJUZW5hbnQgcmVnaXN0cnksIEVudHJhIHRlbmFudCBtYXBwaW5nLCBkb21haW4sIHNpdGUgVVJMLCBicmFuZGluZywgYW5kIHRlbmFudCBjb25maWd1cmF0aW9uLiIgIlRhYmxlIgogICAgICAgICAgICAgICAgdXNlcnMgPSBjb21wb25lbnQgIlVzZXJzIiAiVGVuYW50LXNjb3BlZCB1c2VyIHJvc3RlciwgVVBOL2VtYWlsLCBwcm9maWxlIGZpZWxkcywgYW5kIG1hbmFnZXIgaGllcmFyY2h5LiIgIlRhYmxlIgogICAgICAgICAgICAgICAgdXNlclJvbGVzID0gY29tcG9uZW50ICJVc2VyUm9sZXMiICJBcHBsaWNhdGlvbiByb2xlcyBzdWNoIGFzIEhSQlAsIFBheXJvbGxCUCwgYW5kIFN1cHBvcnQuIiAiVGFibGUiCiAgICAgICAgICAgICAgICBub21pbmF0aW9ucyA9IGNvbXBvbmVudCAiTm9taW5hdGlvbnMiICJBd2FyZCB3b3JrZmxvdyByZWNvcmRzIGFuZCBsaWZlY3ljbGUgc3RhdHVzLiIgIlRhYmxlIgogICAgICAgICAgICAgICAgbm9taW5hdGlvbkNhdGVnb3JpZXMgPSBjb21wb25lbnQgIk5vbWluYXRpb25DYXRlZ29yaWVzIiAiVGVuYW50LXNwZWNpZmljIGF3YXJkIGNhdGVnb3JpZXMuIiAiVGFibGUiCiAgICAgICAgICAgICAgICBwcm9jZXNzZWRFdmVudHMgPSBjb21wb25lbnQgIlByb2Nlc3NlZEV2ZW50cyIgIlNlcnZpY2UgQnVzIGlkZW1wb3RlbmN5IGxvZyBhbmQgcHJvY2Vzc2luZyByZXN1bHQgdGFibGUuIiAiVGFibGUiCiAgICAgICAgICAgICAgICBmcmF1ZFNjb3JlcyA9IGNvbXBvbmVudCAiRnJhdWQgU2NvcmUgVGFibGVzIiAiUDJQLCBhcHByb3ZlciwgYW5kIEhSQlAgZnJhdWQgc2NvcmUgYW5kIGZlYXR1cmUtc3VtbWFyeSB0YWJsZXMuIiAiVGFibGVzIgogICAgICAgICAgICAgICAgZ3JhcGhGaW5kaW5ncyA9IGNvbXBvbmVudCAiR3JhcGggYW5kIEludGVncml0eSBGaW5kaW5ncyIgIkdyYXBoIHBhdHRlcm4gZmluZGluZ3MgYW5kIHBvaW50LWluLXRpbWUgZ3JhcGggZmxhZyBzbmFwc2hvdHMuIiAiVGFibGVzIgogICAgICAgICAgICAgICAgZm9yZWNhc3RUYWJsZXMgPSBjb21wb25lbnQgIkZvcmVjYXN0IFRhYmxlcyIgIkZvcmVjYXN0IHJ1biBtZXRhZGF0YSBhbmQgZm9yZWNhc3QgcG9pbnRzLiIgIlRhYmxlcyIKICAgICAgICAgICAgICAgIGNvbnZlcnNhdGlvbnMgPSBjb21wb25lbnQgIkFzayBDb252ZXJzYXRpb25zIGFuZCBNZXNzYWdlcyIgIkFJIGFuYWx5dGljcyBjb252ZXJzYXRpb24gaGVhZGVycywgbWVzc2FnZXMsIGFuZCBleHBvcnQgbWV0YWRhdGEuIiAiVGFibGVzIgogICAgICAgICAgICAgICAgcGF5cm9sbFRhYmxlcyA9IGNvbXBvbmVudCAiUGF5cm9sbCBUYWJsZXMiICJQYXlyb2xsIHByb3ZpZGVyIGNvbmZpZywgZW5jcnlwdGVkIHRva2VucywgYW5kIHBheXJvbGwgc3VibWlzc2lvbiByZWNvcmRzLiIgIlRhYmxlcyIKICAgICAgICAgICAgICAgIGF1ZGl0VGFibGVzID0gY29tcG9uZW50ICJBdWRpdCBhbmQgRGVtbyBUYWJsZXMiICJJbXBlcnNvbmF0aW9uIGF1ZGl0IGxvZ3MgYW5kIGRlbW8gcmVnaXN0cmF0aW9uIHJlcXVlc3RzLiIgIlRhYmxlcyIKCiAgICAgICAgICAgICAgICB0ZW5hbnRzIC0+IHVzZXJzICJPd25zIgogICAgICAgICAgICAgICAgdGVuYW50cyAtPiBub21pbmF0aW9uQ2F0ZWdvcmllcyAiQ29uZmlndXJlcyIKICAgICAgICAgICAgICAgIHRlbmFudHMgLT4gZ3JhcGhGaW5kaW5ncyAiUHJvZHVjZXMiCiAgICAgICAgICAgICAgICB0ZW5hbnRzIC0+IGZvcmVjYXN0VGFibGVzICJQcm9kdWNlcyIKICAgICAgICAgICAgICAgIHRlbmFudHMgLT4gY29udmVyc2F0aW9ucyAiT3ducyIKICAgICAgICAgICAgICAgIHVzZXJzIC0+IG5vbWluYXRpb25zICJOb21pbmF0ZXMsIHJlY2VpdmVzLCBhbmQgYXBwcm92ZXMiCiAgICAgICAgICAgICAgICBub21pbmF0aW9ucyAtPiBmcmF1ZFNjb3JlcyAiSGFzIgogICAgICAgICAgICAgICAgbm9taW5hdGlvbnMgLT4gcGF5cm9sbFRhYmxlcyAiUGF5cyB0aHJvdWdoIgogICAgICAgICAgICAgICAgbm9taW5hdGlvbnMgLT4gcHJvY2Vzc2VkRXZlbnRzICJSZWZlcmVuY2VkIGJ5IgogICAgICAgICAgICAgICAgY29udmVyc2F0aW9ucyAtPiBhdWRpdFRhYmxlcyAiQXVkaXRlZCBzZXBhcmF0ZWx5IGZyb20iCiAgICAgICAgICAgIH0KICAgICAgICAgICAgc2VydmljZUJ1cyA9IGNvbnRhaW5lciAiQXp1cmUgU2VydmljZSBCdXMiICJhd2FyZC1ldmVudHMgdG9waWMgd2l0aCBmcmF1ZC1wcm9jZXNzb3IsIGVtYWlsLXByb2Nlc3NvciwgYW5kIHBheXJvbGwtcHJvY2Vzc29yIHN1YnNjcmlwdGlvbnMuIiAiQXp1cmUgU2VydmljZSBCdXMiCiAgICAgICAgICAgIGJsb2JTdG9yYWdlID0gY29udGFpbmVyICJBenVyZSBCbG9iIFN0b3JhZ2UiICJTdG9yZXMgZnJhdWQgbW9kZWxzLCBjZXJ0aWZpY2F0ZXMsIGNlcnRpZmljYXRlIHRlbXBsYXRlcywgYW5kIGV4cG9ydHMuIiAiQXp1cmUgQmxvYiBTdG9yYWdlIgogICAgICAgICAgICBvcGVuQWlBZGFwdGVyID0gY29udGFpbmVyICJBenVyZSBPcGVuQUkgQWRhcHRlciIgIkNhbGxzIEF6dXJlIE9wZW5BSSBmb3Igc2VtYW50aWMgY2hlY2tzLCBleHBsYW5hdGlvbnMsIGFzayBhbmFseXRpY3MsIGFuZCBpbnZlc3RpZ2F0aW9ucy4iICJPcGVuQUkgU0RLIgogICAgICAgIH0KCiAgICAgICAgZW50cmEgPSBzb2Z0d2FyZVN5c3RlbSAiTWljcm9zb2Z0IEVudHJhIElEIiAiSWRlbnRpdHkgcHJvdmlkZXIgZm9yIHVzZXIgYXV0aGVudGljYXRpb24gYW5kIGFkbWluIGFwcCByb2xlcy4iICJFeHRlcm5hbCIKICAgICAgICBmcm9udERvb3IgPSBzb2Z0d2FyZVN5c3RlbSAiQXp1cmUgRnJvbnQgRG9vciArIFdBRiIgIkVkZ2Ugcm91dGluZywgV0FGLCBoZWFsdGggcHJvYmVzLCBUTFMsIGFuZCBDT1JTIGhhbmRsaW5nLiIgIkV4dGVybmFsIgogICAgICAgIHN0YXRpY1dlYkFwcHMgPSBzb2Z0d2FyZVN5c3RlbSAiQXp1cmUgU3RhdGljIFdlYiBBcHBzIiAiSG9zdHMgdGhlIFJlYWN0IGZyb250ZW5kLiIgIkV4dGVybmFsIgogICAgICAgIHNtdHAgPSBzb2Z0d2FyZVN5c3RlbSAiU01UUCAvIEVtYWlsIFByb3ZpZGVyIiAiU2VuZHMgd29ya2Zsb3csIEhSQlAsIGRlbW8sIHBheXJvbGwsIGFuZCBhbmFseXRpY3Mgbm90aWZpY2F0aW9uIGVtYWlscy4iICJFeHRlcm5hbCIKICAgICAgICBwYXlyb2xsUHJvdmlkZXJzID0gc29mdHdhcmVTeXN0ZW0gIlBheXJvbGwgUHJvdmlkZXJzIiAiR3VzdG8sIFJpcHBsaW5nLCBhbmQgV29ya2RheS1zdHlsZSBwcm92aWRlcnMgZm9yIGVtcGxveWVlIHBheSBsb29rdXAgYW5kIGF3YXJkIHBheW91dCBleGVjdXRpb24uIiAiRXh0ZXJuYWwiCiAgICAgICAgYXBwSW5zaWdodHMgPSBzb2Z0d2FyZVN5c3RlbSAiQXBwbGljYXRpb24gSW5zaWdodHMgKyBMb2cgQW5hbHl0aWNzIiAiVGVsZW1ldHJ5LCB0cmFjZXMsIGxvZ3MsIGRhc2hib2FyZHMsIEtRTCB2YWxpZGF0aW9uLCBhbmQgb3BlcmF0aW9uYWwgYW5hbHl0aWNzLiIgIkV4dGVybmFsIgogICAgICAgIGtleVZhdWx0ID0gc29mdHdhcmVTeXN0ZW0gIkF6dXJlIEtleSBWYXVsdCIgIlN0b3JlcyBTUUwgY3JlZGVudGlhbHMsIHByb3ZpZGVyIHNlY3JldHMsIHdlYmhvb2sgc2VjcmV0cywgT3BlbkFJIGtleXMsIGFuZCBBcHBsaWNhdGlvbiBJbnNpZ2h0cyBjb25uZWN0aW9uIHN0cmluZ3MuIiAiRXh0ZXJuYWwiCiAgICAgICAgY29udGFpbmVyQXBwcyA9IHNvZnR3YXJlU3lzdGVtICJBenVyZSBDb250YWluZXIgQXBwcyIgIlJ1bnRpbWUgaG9zdGluZyBmb3IgQVBJLCB3b3JrZXJzLCBwYXlyb2xsIGJyb2tlciwgYW5kIHNjaGVkdWxlZCBqb2JzLiIgIkV4dGVybmFsIgoKICAgICAgICBlbXBsb3llZSAtPiBmcm9udGVuZCAiVXNlcyIKICAgICAgICBwYXlyb2xsQnAgLT4gZnJvbnRlbmQgIlVzZXMgcGF5cm9sbCBsb29rdXAgYW5kIGF3YXJkIGNvbnRleHQiCiAgICAgICAgcGxhdGZvcm1PcGVyYXRvciAtPiBhcHBJbnNpZ2h0cyAiTW9uaXRvcnMgYW5kIGludmVzdGlnYXRlcyIKCiAgICAgICAgZnJvbnRlbmQgLT4gZW50cmEgIkF1dGhlbnRpY2F0ZXMgdXNlcnMgd2l0aCBNU0FMIgogICAgICAgIGZyb250ZW5kIC0+IGZyb250RG9vciAiQ2FsbHMgQVBJIHRocm91Z2giCiAgICAgICAgZnJvbnRlbmQgLT4gYXBpICJDYWxscyBiYWNrZW5kIEFQSXMiCiAgICAgICAgc3RhdGljV2ViQXBwcyAtPiBmcm9udGVuZCAiSG9zdHMiCiAgICAgICAgZnJvbnREb29yIC0+IGFwaSAiUm91dGVzIEFQSSB0cmFmZmljIHRvIgogICAgICAgIGZyb250RG9vciAtPiBwYXlyb2xsQnJva2VyICJSb3V0ZXMgcGF5cm9sbCBPQXV0aCBhbmQgd2ViaG9vayB0cmFmZmljIHRvIgoKICAgICAgICBhcGkgLT4gZW50cmEgIlZhbGlkYXRlcyBKV1QgaXNzdWVyLCBhdWRpZW5jZSwgYW5kIHRlbmFudCIKICAgICAgICBhcGkgLT4gZGF0YWJhc2UgIlJlYWRzIGFuZCB3cml0ZXMgdGVuYW50LXNjb3BlZCBidXNpbmVzcyBkYXRhIgogICAgICAgIGFwaSAtPiBzZXJ2aWNlQnVzICJQdWJsaXNoZXMgYXdhcmQgbGlmZWN5Y2xlIGV2ZW50cyIKICAgICAgICBhcGkgLT4gYmxvYlN0b3JhZ2UgIlJlYWRzL3dyaXRlcyBjZXJ0aWZpY2F0ZXMsIGV4cG9ydHMsIGFuZCBtb2RlbCBtZXRhZGF0YSIKICAgICAgICBhcGkgLT4gb3BlbkFpQWRhcHRlciAiVXNlcyBmb3IgYW5hbHl0aWNzIGFuZCBleHBsYW5hdGlvbnMiCiAgICAgICAgYXBpIC0+IHBheXJvbGxCcm9rZXIgIkNhbGxzIHBheXJvbGwgbG9va3VwIEFQSSIKICAgICAgICBhcGkgLT4gYXBwSW5zaWdodHMgIkVtaXRzIGxvZ3MsIG1ldHJpY3MsIGFuZCB0cmFjZXMiCiAgICAgICAgYXBpIC0+IGtleVZhdWx0ICJSZWFkcyBzZWNyZXRzIHZpYSBtYW5hZ2VkIGlkZW50aXR5IgoKICAgICAgICBzZXJ2aWNlQnVzIC0+IGludGVncml0eVdvcmtlciAiRGVsaXZlcnMgbm9taW5hdGlvbi5zdWJtaXR0ZWQiCiAgICAgICAgc2VydmljZUJ1cyAtPiBhdXhpbGlhcnlXb3JrZXIgIkRlbGl2ZXJzIGRvd25zdHJlYW0gbm90aWZpY2F0aW9uIGFuZCBvdXRjb21lIGV2ZW50cyIKICAgICAgICBzZXJ2aWNlQnVzIC0+IHBheXJvbGxCcm9rZXIgIkRlbGl2ZXJzIG5vbWluYXRpb24uYXBwcm92ZWQgcGF5b3V0IGV2ZW50cyIKCiAgICAgICAgaW50ZWdyaXR5V29ya2VyIC0+IGRhdGFiYXNlICJSZWFkcyBub21pbmF0aW9uIGNvbnRleHQgYW5kIHdyaXRlcyBmcmF1ZCBmbGFncy9zdGF0dXMiCiAgICAgICAgaW50ZWdyaXR5V29ya2VyIC0+IGJsb2JTdG9yYWdlICJTdHJlYW1zIHRlbmFudCBmcmF1ZCBtb2RlbCBhcnRpZmFjdHMiCiAgICAgICAgaW50ZWdyaXR5V29ya2VyIC0+IG9wZW5BaUFkYXB0ZXIgIlJ1bnMgc2VtYW50aWMgY2hlY2tzIGFuZCBleHBsYW5hdGlvbnMiCiAgICAgICAgaW50ZWdyaXR5V29ya2VyIC0+IHNlcnZpY2VCdXMgIlB1Ymxpc2hlcyBjcmVhdGVkLCByZWplY3RlZCwgb3IgZmxhZ2dlZCByb3V0aW5nIGV2ZW50cyIKICAgICAgICBpbnRlZ3JpdHlXb3JrZXIgLT4gYXBwSW5zaWdodHMgIkVtaXRzIGxvZ3MgYW5kIHRyYWNlcyIKCiAgICAgICAgYXV4aWxpYXJ5V29ya2VyIC0+IGRhdGFiYXNlICJSZWFkcyB0ZW1wbGF0ZXMgYW5kIHVwZGF0ZXMgd29ya2Zsb3cvcGF5bWVudCBzdGF0ZSIKICAgICAgICBhdXhpbGlhcnlXb3JrZXIgLT4gc210cCAiU2VuZHMgbm90aWZpY2F0aW9uIGVtYWlscyIKICAgICAgICBhdXhpbGlhcnlXb3JrZXIgLT4gc2VydmljZUJ1cyAiUHVibGlzaGVzIGZvbGxvdy11cCBldmVudHMgd2hlcmUgcmVxdWlyZWQiCiAgICAgICAgYXV4aWxpYXJ5V29ya2VyIC0+IGFwcEluc2lnaHRzICJFbWl0cyBsb2dzIGFuZCB0cmFjZXMiCgogICAgICAgIHBheXJvbGxCcm9rZXIgLT4gZGF0YWJhc2UgIlJlYWRzIHByb3ZpZGVyIGNvbmZpZ3VyYXRpb24gYW5kIHJlY29yZHMgcGF5cm9sbCBzdWJtaXNzaW9ucyIKICAgICAgICBwYXlyb2xsQnJva2VyIC0+IHBheXJvbGxQcm92aWRlcnMgIlN1Ym1pdHMgcGF5b3V0cywgcGVyZm9ybXMgZW1wbG95ZWUgbG9va3VwLCBhbmQgcmVjZWl2ZXMgd2ViaG9va3MiCiAgICAgICAgcGF5cm9sbFByb3ZpZGVycyAtPiBwYXlyb2xsQnJva2VyICJSZXR1cm5zIHByb3ZpZGVyIEFQSSByZXNwb25zZXMgYW5kIHdlYmhvb2sgY2FsbGJhY2tzIgogICAgICAgIHBheXJvbGxCcm9rZXIgLT4gc2VydmljZUJ1cyAiUHVibGlzaGVzIHBheXJvbGwuYWNjZXB0ZWQgb3IgcGF5cm9sbC5mYWlsZWQiCiAgICAgICAgcGF5cm9sbEJyb2tlciAtPiBhcHBJbnNpZ2h0cyAiRW1pdHMgbG9ncyBhbmQgdHJhY2VzIgogICAgICAgIHBheXJvbGxCcm9rZXIgLT4ga2V5VmF1bHQgIlJlYWRzIHByb3ZpZGVyIHNlY3JldHMgYW5kIHRva2VuIGVuY3J5cHRpb24ga2V5IgoKICAgICAgICBhbmFseXRpY3NKb2IgLT4gZGF0YWJhc2UgIlJlYWRzIG5vbWluYXRpb25zIGFuZCB3cml0ZXMgZ3JhcGgsIHNjb3JlLCBhbmQgZm9yZWNhc3QgZGF0YSIKICAgICAgICBhbmFseXRpY3NKb2IgLT4gYmxvYlN0b3JhZ2UgIlVwbG9hZHMgdGVuYW50IG1vZGVsIGFydGlmYWN0cyIKICAgICAgICBhbmFseXRpY3NKb2IgLT4gYXBpICJDYWxscyBpbnRlcm5hbCBtb2RlbCByZWZyZXNoIGVuZHBvaW50IgogICAgICAgIGFuYWx5dGljc0pvYiAtPiBhcHBJbnNpZ2h0cyAiRW1pdHMgam9iIGxvZ3MgYW5kIG1ldHJpY3MiCgogICAgICAgIG1jcFNlcnZpY2VzIC0+IGRhdGFiYXNlICJSZWFkcyB0ZW5hbnQtc2NvcGVkIGFuYWx5dGljcyBkYXRhIgogICAgICAgIG1jcFNlcnZpY2VzIC0+IGJsb2JTdG9yYWdlICJXcml0ZXMgZXhwb3J0IGFydGlmYWN0cyIKCiAgICAgICAgZGVwbG95bWVudEVudmlyb25tZW50ICJBenVyZSIgewogICAgICAgICAgICBkZXBsb3ltZW50Tm9kZSAiVXNlcnMgYW5kIEV4dGVybmFsIFByb3ZpZGVycyIgIkJyb3dzZXJzLCBpZGVudGl0eSBwcm92aWRlciwgcGF5cm9sbCBwcm92aWRlcnMsIGFuZCBlbWFpbCBpbmZyYXN0cnVjdHVyZS4iIHsKICAgICAgICAgICAgICAgIGluZnJhc3RydWN0dXJlTm9kZSAiTWljcm9zb2Z0IEVudHJhIElEIgogICAgICAgICAgICAgICAgaW5mcmFzdHJ1Y3R1cmVOb2RlICJQYXlyb2xsIFByb3ZpZGVycyIKICAgICAgICAgICAgICAgIGluZnJhc3RydWN0dXJlTm9kZSAiU01UUCAvIEVtYWlsIFByb3ZpZGVyIgogICAgICAgICAgICB9CgogICAgICAgICAgICBkZXBsb3ltZW50Tm9kZSAiQXp1cmUgRWRnZSBhbmQgRnJvbnRlbmQiICJQdWJsaWMgZW50cnkgcG9pbnRzIGFuZCBzdGF0aWMgZnJvbnRlbmQgaG9zdGluZy4iIHsKICAgICAgICAgICAgICAgIGluZnJhc3RydWN0dXJlTm9kZSAiQXp1cmUgRnJvbnQgRG9vciBTdGFuZGFyZCArIFdBRiIKICAgICAgICAgICAgICAgIGluZnJhc3RydWN0dXJlTm9kZSAiQXp1cmUgU3RhdGljIFdlYiBBcHBzIgogICAgICAgICAgICAgICAgY29udGFpbmVySW5zdGFuY2UgZnJvbnRlbmQKICAgICAgICAgICAgfQoKICAgICAgICAgICAgZGVwbG95bWVudE5vZGUgIkF6dXJlIENvbnRhaW5lciBBcHBzIEVudmlyb25tZW50IC0gUHJpbWFyeSBSZWdpb24iICJQcmltYXJ5IGFwcGxpY2F0aW9uIHJ1bnRpbWUuIiB7CiAgICAgICAgICAgICAgICBjb250YWluZXJJbnN0YW5jZSBhcGkKICAgICAgICAgICAgICAgIGNvbnRhaW5lckluc3RhbmNlIGludGVncml0eVdvcmtlcgogICAgICAgICAgICAgICAgY29udGFpbmVySW5zdGFuY2UgYXV4aWxpYXJ5V29ya2VyCiAgICAgICAgICAgICAgICBjb250YWluZXJJbnN0YW5jZSBwYXlyb2xsQnJva2VyCiAgICAgICAgICAgICAgICBjb250YWluZXJJbnN0YW5jZSBhbmFseXRpY3NKb2IKICAgICAgICAgICAgICAgIGNvbnRhaW5lckluc3RhbmNlIG1jcFNlcnZpY2VzCiAgICAgICAgICAgIH0KCiAgICAgICAgICAgIGRlcGxveW1lbnROb2RlICJBenVyZSBDb250YWluZXIgQXBwcyBFbnZpcm9ubWVudCAtIFNlY29uZGFyeSBSZWdpb24iICJTZWNvbmRhcnkgYmFja2VuZCBBUEkgcnVudGltZSBiZWhpbmQgRnJvbnQgRG9vci4iIHsKICAgICAgICAgICAgICAgIGNvbnRhaW5lckluc3RhbmNlIGFwaQogICAgICAgICAgICB9CgogICAgICAgICAgICBkZXBsb3ltZW50Tm9kZSAiQXp1cmUgRGF0YSBhbmQgTWVzc2FnaW5nIiAiUGVyc2lzdGVudCBkYXRhLCBldmVudHMsIGFydGlmYWN0cywgc2VjcmV0cywgYW5kIEFJIHNlcnZpY2VzLiIgewogICAgICAgICAgICAgICAgY29udGFpbmVySW5zdGFuY2UgZGF0YWJhc2UKICAgICAgICAgICAgICAgIGNvbnRhaW5lckluc3RhbmNlIHNlcnZpY2VCdXMKICAgICAgICAgICAgICAgIGNvbnRhaW5lckluc3RhbmNlIGJsb2JTdG9yYWdlCiAgICAgICAgICAgICAgICBjb250YWluZXJJbnN0YW5jZSBvcGVuQWlBZGFwdGVyCiAgICAgICAgICAgICAgICBpbmZyYXN0cnVjdHVyZU5vZGUgIkF6dXJlIEtleSBWYXVsdCIKICAgICAgICAgICAgfQoKICAgICAgICAgICAgZGVwbG95bWVudE5vZGUgIkF6dXJlIE9ic2VydmFiaWxpdHkiICJUZWxlbWV0cnkgYW5kIG9wZXJhdGlvbmFsIGFuYWx5dGljcy4iIHsKICAgICAgICAgICAgICAgIGluZnJhc3RydWN0dXJlTm9kZSAiQXBwbGljYXRpb24gSW5zaWdodHMgKyBMb2cgQW5hbHl0aWNzIgogICAgICAgICAgICB9CiAgICAgICAgfQoKICAgIH0KCiAgICB2aWV3cyB7CiAgICAgICAgc3lzdGVtQ29udGV4dCBhd2FyZCAiU3lzdGVtQ29udGV4dCIgIlN5c3RlbSBjb250ZXh0IGZvciB1c2VycywgaWRlbnRpdHksIEF6dXJlIHNlcnZpY2VzLCBwYXlyb2xsIHByb3ZpZGVycywgYW5kIG9ic2VydmFiaWxpdHkuIiB7CiAgICAgICAgICAgIGluY2x1ZGUgKgogICAgICAgICAgICBhdXRvbGF5b3V0IGxyCiAgICAgICAgfQoKICAgICAgICBjb250YWluZXIgYXdhcmQgIkNvbnRhaW5lckFyY2hpdGVjdHVyZSIgIkNvbnRhaW5lciBhcmNoaXRlY3R1cmUgZm9yIHRoZSBBd2FyZCBOb21pbmF0aW9uIEFwcC4iIHsKICAgICAgICAgICAgaW5jbHVkZSAqCiAgICAgICAgICAgIGF1dG9sYXlvdXQgbHIKICAgICAgICB9CgogICAgICAgIGNvbXBvbmVudCBkYXRhYmFzZSAiQ29uY2VwdHVhbERhdGFNb2RlbCIgIkNvbmNlcHR1YWwgZGF0YSBtb2RlbCByZXByZXNlbnRlZCBhcyBBenVyZSBTUUwgdGFibGUgZ3JvdXBzLiIgewogICAgICAgICAgICBpbmNsdWRlICoKICAgICAgICAgICAgYXV0b2xheW91dCBscgogICAgICAgIH0KCiAgICAgICAgZHluYW1pYyBhd2FyZCAiTm9taW5hdGlvbkNsZWFuQXBwcm92YWxGbG93IiAiQ2xlYW4gbm9taW5hdGlvbiBwYXRoIGZyb20gc3VibWlzc2lvbiB0aHJvdWdoIG1hbmFnZXIgYXBwcm92YWwgYW5kIHBheXJvbGwgb3V0Y29tZS4iIHsKICAgICAgICAgICAgZW1wbG95ZWUgLT4gZnJvbnRlbmQgIlN1Ym1pdHMgbm9taW5hdGlvbiIKICAgICAgICAgICAgZnJvbnRlbmQgLT4gYXBpICJQT1NUIC9hcGkvbm9taW5hdGlvbnMiCiAgICAgICAgICAgIGFwaSAtPiBkYXRhYmFzZSAiVmFsaWRhdGVzIHRlbmFudCwgdXNlciwgYW1vdW50LCBjYXRlZ29yeSwgbWFuYWdlciwgYW5kIGRlc2NyaXB0aW9uIHN0cnVjdHVyZSIKICAgICAgICAgICAgYXBpIC0+IGRhdGFiYXNlICJTYXZlcyBub21pbmF0aW9uIGFzIFN1Ym1pdHRlZCIKICAgICAgICAgICAgYXBpIC0+IHNlcnZpY2VCdXMgIlB1Ymxpc2hlcyBub21pbmF0aW9uLnN1Ym1pdHRlZCIKICAgICAgICAgICAgc2VydmljZUJ1cyAtPiBpbnRlZ3JpdHlXb3JrZXIgIkRlbGl2ZXJzIHRvIGZyYXVkLXByb2Nlc3NvciBzdWJzY3JpcHRpb24iCiAgICAgICAgICAgIGludGVncml0eVdvcmtlciAtPiBkYXRhYmFzZSAiTG9hZHMgbm9taW5hdGlvbiBjb250ZXh0IgogICAgICAgICAgICBpbnRlZ3JpdHlXb3JrZXIgLT4gYmxvYlN0b3JhZ2UgIkxvYWRzIHRlbmFudCBmcmF1ZCBtb2RlbCB3aGVuIGF2YWlsYWJsZSIKICAgICAgICAgICAgaW50ZWdyaXR5V29ya2VyIC0+IG9wZW5BaUFkYXB0ZXIgIlJ1bnMgc2VtYW50aWMgY2hlY2tzIHdoZW4gY29uZmlndXJlZCIKICAgICAgICAgICAgaW50ZWdyaXR5V29ya2VyIC0+IGRhdGFiYXNlICJTZXRzIHN0YXR1cyBQZW5kaW5nIgogICAgICAgICAgICBpbnRlZ3JpdHlXb3JrZXIgLT4gc2VydmljZUJ1cyAiUHVibGlzaGVzIG5vbWluYXRpb24uY3JlYXRlZCIKICAgICAgICAgICAgc2VydmljZUJ1cyAtPiBhdXhpbGlhcnlXb3JrZXIgIkRlbGl2ZXJzIHRvIGVtYWlsLXByb2Nlc3NvciBzdWJzY3JpcHRpb24iCiAgICAgICAgICAgIGF1eGlsaWFyeVdvcmtlciAtPiBzbXRwICJTZW5kcyBtYW5hZ2VyIGFwcHJvdmFsIGVtYWlsIgogICAgICAgICAgICBlbXBsb3llZSAtPiBmcm9udGVuZCAiTWFuYWdlciBhcHByb3ZlcyBub21pbmF0aW9uIgogICAgICAgICAgICBmcm9udGVuZCAtPiBhcGkgIlBPU1QgL2FwaS9ub21pbmF0aW9ucy9hcHByb3ZlIgogICAgICAgICAgICBhcGkgLT4gZGF0YWJhc2UgIlNldHMgc3RhdHVzIEFwcHJvdmVkIgogICAgICAgICAgICBhcGkgLT4gc2VydmljZUJ1cyAiUHVibGlzaGVzIG5vbWluYXRpb24uYXBwcm92ZWQiCiAgICAgICAgICAgIHNlcnZpY2VCdXMgLT4gYXV4aWxpYXJ5V29ya2VyICJTZW5kcyBvdXRjb21lIGVtYWlsIGFuZCBwYXlvdXQgcmVxdWVzdCIKICAgICAgICAgICAgc2VydmljZUJ1cyAtPiBwYXlyb2xsQnJva2VyICJEZWxpdmVycyB0byBwYXlyb2xsLXByb2Nlc3NvciBzdWJzY3JpcHRpb24iCiAgICAgICAgICAgIHBheXJvbGxCcm9rZXIgLT4gcGF5cm9sbFByb3ZpZGVycyAiU3VibWl0cyBwYXlyb2xsIHBheW91dCIKICAgICAgICAgICAgcGF5cm9sbEJyb2tlciAtPiBzZXJ2aWNlQnVzICJQdWJsaXNoZXMgcGF5cm9sbC5hY2NlcHRlZCIKICAgICAgICAgICAgYXV4aWxpYXJ5V29ya2VyIC0+IGRhdGFiYXNlICJNYXJrcyBub21pbmF0aW9uIFBhaWQiCiAgICAgICAgICAgIGF1dG9sYXlvdXQgbHIKICAgICAgICB9CgogICAgICAgIGR5bmFtaWMgYXdhcmQgIk5vbWluYXRpb25IUkJQUmV2aWV3RmxvdyIgIkZsYWdnZWQgbm9taW5hdGlvbiBwYXRoIHRocm91Z2ggSFJCUCByZXZpZXcgYmVmb3JlIG1hbmFnZXIgYXBwcm92YWwuIiB7CiAgICAgICAgICAgIGVtcGxveWVlIC0+IGZyb250ZW5kICJTdWJtaXRzIG5vbWluYXRpb24iCiAgICAgICAgICAgIGZyb250ZW5kIC0+IGFwaSAiUE9TVCAvYXBpL25vbWluYXRpb25zIgogICAgICAgICAgICBhcGkgLT4gZGF0YWJhc2UgIlNhdmVzIG5vbWluYXRpb24gYXMgU3VibWl0dGVkIgogICAgICAgICAgICBhcGkgLT4gc2VydmljZUJ1cyAiUHVibGlzaGVzIG5vbWluYXRpb24uc3VibWl0dGVkIgogICAgICAgICAgICBzZXJ2aWNlQnVzIC0+IGludGVncml0eVdvcmtlciAiRGVsaXZlcnMgdG8gZnJhdWQtcHJvY2Vzc29yIHN1YnNjcmlwdGlvbiIKICAgICAgICAgICAgaW50ZWdyaXR5V29ya2VyIC0+IGRhdGFiYXNlICJTYXZlcyBmcmF1ZCBzY29yZSBhbmQgZmVhdHVyZSBzdW1tYXJ5IgogICAgICAgICAgICBpbnRlZ3JpdHlXb3JrZXIgLT4gZGF0YWJhc2UgIlNldHMgc3RhdHVzIFBlbmRpbmdIUkJQUmV2aWV3IgogICAgICAgICAgICBpbnRlZ3JpdHlXb3JrZXIgLT4gc2VydmljZUJ1cyAiUHVibGlzaGVzIG5vbWluYXRpb24uZnJhdWQtZmxhZ2dlZCIKICAgICAgICAgICAgc2VydmljZUJ1cyAtPiBhdXhpbGlhcnlXb3JrZXIgIkRlbGl2ZXJzIEhSQlAgbm90aWZpY2F0aW9uIGV2ZW50IgogICAgICAgICAgICBhdXhpbGlhcnlXb3JrZXIgLT4gc210cCAiRW1haWxzIEhSQlAgcmV2aWV3ZXJzIgogICAgICAgICAgICBlbXBsb3llZSAtPiBmcm9udGVuZCAiSFJCUCBhcHByb3ZlcyBvciByZWplY3RzIgogICAgICAgICAgICBmcm9udGVuZCAtPiBhcGkgIlBPU1QgL2FwaS9ocmJwL25vbWluYXRpb25zL3tpZH0vYXBwcm92ZSBvciByZWplY3QiCiAgICAgICAgICAgIGFwaSAtPiBkYXRhYmFzZSAiV3JpdGVzIEhSQlAgZGVjaXNpb24gYW5kIHRyYWluaW5nIGxhYmVsIgogICAgICAgICAgICBhcGkgLT4gc2VydmljZUJ1cyAiUHVibGlzaGVzIEhSQlAgb3V0Y29tZSBldmVudCIKICAgICAgICAgICAgYXV4aWxpYXJ5V29ya2VyIC0+IHNtdHAgIk5vdGlmaWVzIG5vbWluYXRvciIKICAgICAgICAgICAgYXBpIC0+IHNlcnZpY2VCdXMgIklmIGFwcHJvdmVkLCBwdWJsaXNoZXMgbm9taW5hdGlvbi5jcmVhdGVkIGZvciBtYW5hZ2VyIGFwcHJvdmFsIgogICAgICAgICAgICBhdXRvbGF5b3V0IGxyCiAgICAgICAgfQoKICAgICAgICBkeW5hbWljIGF3YXJkICJNb2RlbExpZmVjeWNsZSIgIldlZWtseSBpbnRlZ3JpdHkgYW5hbHl0aWNzIGFuZCBtb2RlbCByZXRyYWluaW5nIGxpZmVjeWNsZS4iIHsKICAgICAgICAgICAgYW5hbHl0aWNzSm9iIC0+IGRhdGFiYXNlICJSZWFkcyBwcm9kdWN0aW9uIG5vbWluYXRpb25zLCBmcmF1ZCBzY29yZXMsIEhSQlAgbGFiZWxzLCBhbmQgZ3JhcGggaGlzdG9yeSIKICAgICAgICAgICAgYW5hbHl0aWNzSm9iIC0+IGRhdGFiYXNlICJSdW5zIGdyYXBoIHBhdHRlcm4gZGV0ZWN0aW9uIGFuZCB3cml0ZXMgZmluZGluZ3MiCiAgICAgICAgICAgIGFuYWx5dGljc0pvYiAtPiBkYXRhYmFzZSAiTWF0ZXJpYWxpemVzIHVzZXIgYW5kIGFwcHJvdmVyIGdyYXBoIGZsYWcgc25hcHNob3RzIgogICAgICAgICAgICBhbmFseXRpY3NKb2IgLT4gZGF0YWJhc2UgIlRyYWlucyB0ZW5hbnQtc3BlY2lmaWMgUmFuZG9tIEZvcmVzdCBtb2RlbHMiCiAgICAgICAgICAgIGFuYWx5dGljc0pvYiAtPiBkYXRhYmFzZSAiVXBzZXJ0cyBoaXN0b3JpY2FsIFAyUCBhbmQgYXBwcm92ZXIgc2NvcmVzIgogICAgICAgICAgICBhbmFseXRpY3NKb2IgLT4gYmxvYlN0b3JhZ2UgIlVwbG9hZHMgZnJhdWRfZGV0ZWN0aW9uX21vZGVsX3RlbmFudF88VGVuYW50SWQ+LnBrbCIKICAgICAgICAgICAgYW5hbHl0aWNzSm9iIC0+IGFwaSAiUE9TVCAvYXBpL2ludGVybmFsL3JlZnJlc2gtZnJhdWQtbW9kZWwiCiAgICAgICAgICAgIGFwaSAtPiBibG9iU3RvcmFnZSAiUmVmcmVzaGVzIGNhY2hlZCB0ZW5hbnQgbW9kZWwgYXJ0aWZhY3RzIgogICAgICAgICAgICBpbnRlZ3JpdHlXb3JrZXIgLT4gYmxvYlN0b3JhZ2UgIlN0cmVhbXMgbGF0ZXN0IG1vZGVsIGZvciBuZXcgc3VibWlzc2lvbnMiCiAgICAgICAgICAgIGF1dG9sYXlvdXQgbHIKICAgICAgICB9CgogICAgICAgIGR5bmFtaWMgYXdhcmQgIlBheXJvbGxJbnRlZ3JhdGlvbkZsb3ciICJBcHByb3ZlZCBub21pbmF0aW9uIHBheW91dCBmbG93IHRocm91Z2ggdGhlIHBheXJvbGwgYnJva2VyIGFuZCBwcm92aWRlciByZWdpc3RyeS4iIHsKICAgICAgICAgICAgYXBpIC0+IHNlcnZpY2VCdXMgIlB1Ymxpc2hlcyBub21pbmF0aW9uLmFwcHJvdmVkIgogICAgICAgICAgICBzZXJ2aWNlQnVzIC0+IHBheXJvbGxCcm9rZXIgIkRlbGl2ZXJzIGV2ZW50IHRvIHBheXJvbGwtcHJvY2Vzc29yIHN1YnNjcmlwdGlvbiIKICAgICAgICAgICAgcGF5cm9sbEJyb2tlciAtPiBkYXRhYmFzZSAiUmVzb2x2ZXMgdGVuYW50IHBheXJvbGwgcHJvdmlkZXIsIHRva2VucywgYW5kIG5vbWluYXRpb24gZGV0YWlscyIKICAgICAgICAgICAgcGF5cm9sbEJyb2tlciAtPiBwYXlyb2xsUHJvdmlkZXJzICJSb3V0ZXMgcGF5b3V0IHRocm91Z2ggcHJvdmlkZXIgYWRhcHRlciIKICAgICAgICAgICAgcGF5cm9sbFByb3ZpZGVycyAtPiBwYXlyb2xsQnJva2VyICJSZXR1cm5zIGFjY2VwdGVkLCBmYWlsZWQsIG9yIHdlYmhvb2stY29uZmlybWVkIHJlc3VsdCIKICAgICAgICAgICAgcGF5cm9sbEJyb2tlciAtPiBkYXRhYmFzZSAiUmVjb3JkcyBwYXlyb2xsIHN1Ym1pc3Npb24gc3RhdGUiCiAgICAgICAgICAgIHBheXJvbGxCcm9rZXIgLT4gc2VydmljZUJ1cyAiUHVibGlzaGVzIHBheXJvbGwuYWNjZXB0ZWQgb3IgcGF5cm9sbC5mYWlsZWQiCiAgICAgICAgICAgIHNlcnZpY2VCdXMgLT4gYXV4aWxpYXJ5V29ya2VyICJEZWxpdmVycyBwYXlyb2xsIHJlc3VsdCBldmVudCIKICAgICAgICAgICAgYXV4aWxpYXJ5V29ya2VyIC0+IGRhdGFiYXNlICJNYXJrcyBub21pbmF0aW9uIFBhaWQgb3IgcmVjb3JkcyBmYWlsdXJlIHdvcmtmbG93IgogICAgICAgICAgICBhdXhpbGlhcnlXb3JrZXIgLT4gc210cCAiTm90aWZpZXMgc3VwcG9ydCB1c2VycyBvbiBmYWlsdXJlIgogICAgICAgICAgICBhdXRvbGF5b3V0IGxyCiAgICAgICAgfQoKICAgICAgICBkZXBsb3ltZW50IGF3YXJkICJBenVyZSIgIkF6dXJlRGVwbG95bWVudCIgIkF6dXJlIGRlcGxveW1lbnQgdG9wb2xvZ3kgZm9yIGZyb250ZW5kLCBlZGdlLCBBUEksIHdvcmtlcnMsIGRhdGEsIHNlY3JldHMsIGFuZCBvYnNlcnZhYmlsaXR5LiIgewogICAgICAgICAgICBpbmNsdWRlICoKICAgICAgICAgICAgYXV0b2xheW91dCB0YgogICAgICAgIH0KCiAgICAgICAgc3R5bGVzIHsKICAgICAgICAgICAgZWxlbWVudCAiUGVyc29uIiB7CiAgICAgICAgICAgICAgICBzaGFwZSBwZXJzb24KICAgICAgICAgICAgICAgIGJhY2tncm91bmQgIzA4NDI3YgogICAgICAgICAgICAgICAgY29sb3IgI2ZmZmZmZgogICAgICAgICAgICB9CiAgICAgICAgICAgIGVsZW1lbnQgIlNvZnR3YXJlIFN5c3RlbSIgewogICAgICAgICAgICAgICAgYmFja2dyb3VuZCAjMTE2OGJkCiAgICAgICAgICAgICAgICBjb2xvciAjZmZmZmZmCiAgICAgICAgICAgIH0KICAgICAgICAgICAgZWxlbWVudCAiQ29udGFpbmVyIiB7CiAgICAgICAgICAgICAgICBiYWNrZ3JvdW5kICM0MzhkZDUKICAgICAgICAgICAgICAgIGNvbG9yICNmZmZmZmYKICAgICAgICAgICAgfQogICAgICAgICAgICBlbGVtZW50ICJDb21wb25lbnQiIHsKICAgICAgICAgICAgICAgIGJhY2tncm91bmQgIzg1YmJmMAogICAgICAgICAgICAgICAgY29sb3IgIzAwMDAwMAogICAgICAgICAgICB9CiAgICAgICAgICAgIGVsZW1lbnQgIkV4dGVybmFsIiB7CiAgICAgICAgICAgICAgICBiYWNrZ3JvdW5kICM5OTk5OTkKICAgICAgICAgICAgICAgIGNvbG9yICNmZmZmZmYKICAgICAgICAgICAgfQogICAgICAgICAgICByZWxhdGlvbnNoaXAgIlJlbGF0aW9uc2hpcCIgewogICAgICAgICAgICAgICAgY29sb3IgIzcwNzA3MAogICAgICAgICAgICB9CiAgICAgICAgfQogICAgfQp9",
+    "structurizr.inspection.info" : "0",
+    "structurizr.inspection.ignore" : "0",
+    "structurizr.inspection.warning" : "0"
+  },
+  "views" : {
+    "componentViews" : [ {
+      "automaticLayout" : {
+        "edgeSeparation" : 50,
+        "nodeSeparation" : 50,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 100,
+        "vertices" : true
+      },
+      "containerId" : "12",
+      "description" : "Conceptual data model represented as Azure SQL table groups.",
+      "elements" : [ {
+        "id" : "13",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "14",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "15",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "16",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "17",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "18",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "19",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "20",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "21",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "22",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "23",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "24",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "externalContainerBoundariesVisible" : false,
+      "key" : "ConceptualDataModel",
+      "name" : "Component View: Award Nomination App - Azure SQL Database",
+      "order" : 3,
+      "relationships" : [ {
+        "id" : "25"
+      }, {
+        "id" : "26"
+      }, {
+        "id" : "27"
+      }, {
+        "id" : "28"
+      }, {
+        "id" : "29"
+      }, {
+        "id" : "30"
+      }, {
+        "id" : "31"
+      }, {
+        "id" : "32"
+      }, {
+        "id" : "33"
+      }, {
+        "id" : "34"
+      } ]
+    } ],
+    "configuration" : {
+      "styles" : {
+        "elements" : [ {
+          "background" : "#85bbf0",
+          "color" : "#000000",
+          "tag" : "Component"
+        }, {
+          "background" : "#438dd5",
+          "color" : "#ffffff",
+          "tag" : "Container"
+        }, {
+          "background" : "#999999",
+          "color" : "#ffffff",
+          "tag" : "External"
+        }, {
+          "background" : "#08427b",
+          "color" : "#ffffff",
+          "shape" : "Person",
+          "tag" : "Person"
+        }, {
+          "background" : "#1168bd",
+          "color" : "#ffffff",
+          "tag" : "Software System"
+        } ],
+        "relationships" : [ {
+          "color" : "#707070",
+          "tag" : "Relationship"
+        } ]
+      },
+      "terminology" : { }
+    },
+    "containerViews" : [ {
+      "automaticLayout" : {
+        "edgeSeparation" : 50,
+        "nodeSeparation" : 50,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 100,
+        "vertices" : true
+      },
+      "description" : "Container architecture for the Award Nomination App.",
+      "elements" : [ {
+        "id" : "1",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "2",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "5",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "6",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "7",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "8",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "9",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "10",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "11",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "12",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "35",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "36",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "37",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "38",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "39",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "40",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "41",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "42",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "43",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "44",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "externalSoftwareSystemBoundariesVisible" : false,
+      "key" : "ContainerArchitecture",
+      "name" : "Container View: Award Nomination App",
+      "order" : 2,
+      "relationships" : [ {
+        "id" : "46"
+      }, {
+        "id" : "48"
+      }, {
+        "id" : "51"
+      }, {
+        "id" : "53"
+      }, {
+        "id" : "55"
+      }, {
+        "id" : "56"
+      }, {
+        "id" : "58"
+      }, {
+        "id" : "60"
+      }, {
+        "id" : "61"
+      }, {
+        "id" : "62"
+      }, {
+        "id" : "63"
+      }, {
+        "id" : "64"
+      }, {
+        "id" : "65"
+      }, {
+        "id" : "66"
+      }, {
+        "id" : "67"
+      }, {
+        "id" : "69"
+      }, {
+        "id" : "71"
+      }, {
+        "id" : "72"
+      }, {
+        "id" : "73"
+      }, {
+        "id" : "74"
+      }, {
+        "id" : "75"
+      }, {
+        "id" : "76"
+      }, {
+        "id" : "77"
+      }, {
+        "id" : "78"
+      }, {
+        "id" : "79"
+      }, {
+        "id" : "80"
+      }, {
+        "id" : "82"
+      }, {
+        "id" : "83"
+      }, {
+        "id" : "84"
+      }, {
+        "id" : "85"
+      }, {
+        "id" : "87"
+      }, {
+        "id" : "89"
+      }, {
+        "id" : "90"
+      }, {
+        "id" : "91"
+      }, {
+        "id" : "92"
+      }, {
+        "id" : "93"
+      }, {
+        "id" : "94"
+      }, {
+        "id" : "95"
+      }, {
+        "id" : "96"
+      }, {
+        "id" : "97"
+      } ],
+      "softwareSystemId" : "4"
+    } ],
+    "deploymentViews" : [ {
+      "automaticLayout" : {
+        "edgeSeparation" : 50,
+        "nodeSeparation" : 50,
+        "rankDirection" : "TopBottom",
+        "rankSeparation" : 100,
+        "vertices" : true
+      },
+      "description" : "Azure deployment topology for frontend, edge, API, workers, data, secrets, and observability.",
+      "elements" : [ {
+        "id" : "98",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "99",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "100",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "101",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "102",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "103",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "104",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "105",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "106",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "107",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "109",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "110",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "111",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "113",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "115",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "116",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "117",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "121",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "122",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "130",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "139",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "145",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "149",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "150",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "151",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "environment" : "Azure",
+      "key" : "AzureDeployment",
+      "name" : "Deployment View: Award Nomination App - Azure",
+      "order" : 8,
+      "relationships" : [ {
+        "id" : "108"
+      }, {
+        "id" : "112"
+      }, {
+        "id" : "114"
+      }, {
+        "id" : "118"
+      }, {
+        "id" : "119"
+      }, {
+        "id" : "120"
+      }, {
+        "id" : "123"
+      }, {
+        "id" : "124"
+      }, {
+        "id" : "125"
+      }, {
+        "id" : "126"
+      }, {
+        "id" : "127"
+      }, {
+        "id" : "128"
+      }, {
+        "id" : "129"
+      }, {
+        "id" : "131"
+      }, {
+        "id" : "132"
+      }, {
+        "id" : "133"
+      }, {
+        "id" : "134"
+      }, {
+        "id" : "135"
+      }, {
+        "id" : "136"
+      }, {
+        "id" : "137"
+      }, {
+        "id" : "138"
+      }, {
+        "id" : "140"
+      }, {
+        "id" : "141"
+      }, {
+        "id" : "142"
+      }, {
+        "id" : "143"
+      }, {
+        "id" : "144"
+      }, {
+        "id" : "146"
+      }, {
+        "id" : "147"
+      }, {
+        "id" : "148"
+      } ],
+      "softwareSystemId" : "4"
+    } ],
+    "dynamicViews" : [ {
+      "automaticLayout" : {
+        "edgeSeparation" : 50,
+        "nodeSeparation" : 50,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 100,
+        "vertices" : true
+      },
+      "description" : "Clean nomination path from submission through manager approval and payroll outcome.",
+      "elementId" : "4",
+      "elements" : [ {
+        "id" : "1",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "5",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "6",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "7",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "8",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "9",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "12",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "35",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "36",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "37",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "41",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "42",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "externalBoundariesVisible" : false,
+      "key" : "NominationCleanApprovalFlow",
+      "name" : "Dynamic View: Award Nomination App",
+      "order" : 4,
+      "relationships" : [ {
+        "description" : "Submits nomination",
+        "id" : "46",
+        "order" : "1",
+        "response" : false
+      }, {
+        "description" : "POST /api/nominations",
+        "id" : "55",
+        "order" : "2",
+        "response" : false
+      }, {
+        "description" : "Validates tenant, user, amount, category, manager, and description structure",
+        "id" : "62",
+        "order" : "3",
+        "response" : false
+      }, {
+        "description" : "Saves nomination as Submitted",
+        "id" : "62",
+        "order" : "4",
+        "response" : false
+      }, {
+        "description" : "Publishes nomination.submitted",
+        "id" : "63",
+        "order" : "5",
+        "response" : false
+      }, {
+        "description" : "Delivers to fraud-processor subscription",
+        "id" : "71",
+        "order" : "6",
+        "response" : false
+      }, {
+        "description" : "Loads nomination context",
+        "id" : "74",
+        "order" : "7",
+        "response" : false
+      }, {
+        "description" : "Loads tenant fraud model when available",
+        "id" : "75",
+        "order" : "8",
+        "response" : false
+      }, {
+        "description" : "Runs semantic checks when configured",
+        "id" : "76",
+        "order" : "9",
+        "response" : false
+      }, {
+        "description" : "Sets status Pending",
+        "id" : "74",
+        "order" : "10",
+        "response" : false
+      }, {
+        "description" : "Publishes nomination.created",
+        "id" : "77",
+        "order" : "11",
+        "response" : false
+      }, {
+        "description" : "Delivers to email-processor subscription",
+        "id" : "72",
+        "order" : "12",
+        "response" : false
+      }, {
+        "description" : "Sends manager approval email",
+        "id" : "80",
+        "order" : "13",
+        "response" : false
+      }, {
+        "description" : "Manager approves nomination",
+        "id" : "46",
+        "order" : "14",
+        "response" : false
+      }, {
+        "description" : "POST /api/nominations/approve",
+        "id" : "55",
+        "order" : "15",
+        "response" : false
+      }, {
+        "description" : "Sets status Approved",
+        "id" : "62",
+        "order" : "16",
+        "response" : false
+      }, {
+        "description" : "Publishes nomination.approved",
+        "id" : "63",
+        "order" : "17",
+        "response" : false
+      }, {
+        "description" : "Sends outcome email and payout request",
+        "id" : "72",
+        "order" : "18",
+        "response" : false
+      }, {
+        "description" : "Delivers to payroll-processor subscription",
+        "id" : "73",
+        "order" : "19",
+        "response" : false
+      }, {
+        "description" : "Submits payroll payout",
+        "id" : "85",
+        "order" : "20",
+        "response" : false
+      }, {
+        "description" : "Publishes payroll.accepted",
+        "id" : "89",
+        "order" : "21",
+        "response" : false
+      }, {
+        "description" : "Marks nomination Paid",
+        "id" : "79",
+        "order" : "22",
+        "response" : false
+      } ]
+    }, {
+      "automaticLayout" : {
+        "edgeSeparation" : 50,
+        "nodeSeparation" : 50,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 100,
+        "vertices" : true
+      },
+      "description" : "Flagged nomination path through HRBP review before manager approval.",
+      "elementId" : "4",
+      "elements" : [ {
+        "id" : "1",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "5",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "6",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "7",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "8",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "12",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "35",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "41",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "externalBoundariesVisible" : false,
+      "key" : "NominationHRBPReviewFlow",
+      "name" : "Dynamic View: Award Nomination App",
+      "order" : 5,
+      "relationships" : [ {
+        "description" : "Submits nomination",
+        "id" : "46",
+        "order" : "1",
+        "response" : false
+      }, {
+        "description" : "POST /api/nominations",
+        "id" : "55",
+        "order" : "2",
+        "response" : false
+      }, {
+        "description" : "Saves nomination as Submitted",
+        "id" : "62",
+        "order" : "3",
+        "response" : false
+      }, {
+        "description" : "Publishes nomination.submitted",
+        "id" : "63",
+        "order" : "4",
+        "response" : false
+      }, {
+        "description" : "Delivers to fraud-processor subscription",
+        "id" : "71",
+        "order" : "5",
+        "response" : false
+      }, {
+        "description" : "Saves fraud score and feature summary",
+        "id" : "74",
+        "order" : "6",
+        "response" : false
+      }, {
+        "description" : "Sets status PendingHRBPReview",
+        "id" : "74",
+        "order" : "7",
+        "response" : false
+      }, {
+        "description" : "Publishes nomination.fraud-flagged",
+        "id" : "77",
+        "order" : "8",
+        "response" : false
+      }, {
+        "description" : "Delivers HRBP notification event",
+        "id" : "72",
+        "order" : "9",
+        "response" : false
+      }, {
+        "description" : "Emails HRBP reviewers",
+        "id" : "80",
+        "order" : "10",
+        "response" : false
+      }, {
+        "description" : "HRBP approves or rejects",
+        "id" : "46",
+        "order" : "11",
+        "response" : false
+      }, {
+        "description" : "POST /api/hrbp/nominations/{id}/approve or reject",
+        "id" : "55",
+        "order" : "12",
+        "response" : false
+      }, {
+        "description" : "Writes HRBP decision and training label",
+        "id" : "62",
+        "order" : "13",
+        "response" : false
+      }, {
+        "description" : "Publishes HRBP outcome event",
+        "id" : "63",
+        "order" : "14",
+        "response" : false
+      }, {
+        "description" : "Notifies nominator",
+        "id" : "80",
+        "order" : "15",
+        "response" : false
+      }, {
+        "description" : "If approved, publishes nomination.created for manager approval",
+        "id" : "63",
+        "order" : "16",
+        "response" : false
+      } ]
+    }, {
+      "automaticLayout" : {
+        "edgeSeparation" : 50,
+        "nodeSeparation" : 50,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 100,
+        "vertices" : true
+      },
+      "description" : "Weekly integrity analytics and model retraining lifecycle.",
+      "elementId" : "4",
+      "elements" : [ {
+        "id" : "6",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "7",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "10",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "12",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "36",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "externalBoundariesVisible" : false,
+      "key" : "ModelLifecycle",
+      "name" : "Dynamic View: Award Nomination App",
+      "order" : 6,
+      "relationships" : [ {
+        "description" : "Reads production nominations, fraud scores, HRBP labels, and graph history",
+        "id" : "92",
+        "order" : "1",
+        "response" : false
+      }, {
+        "description" : "Runs graph pattern detection and writes findings",
+        "id" : "92",
+        "order" : "2",
+        "response" : false
+      }, {
+        "description" : "Materializes user and approver graph flag snapshots",
+        "id" : "92",
+        "order" : "3",
+        "response" : false
+      }, {
+        "description" : "Trains tenant-specific Random Forest models",
+        "id" : "92",
+        "order" : "4",
+        "response" : false
+      }, {
+        "description" : "Upserts historical P2P and approver scores",
+        "id" : "92",
+        "order" : "5",
+        "response" : false
+      }, {
+        "description" : "Uploads fraud_detection_model_tenant_<TenantId>.pkl",
+        "id" : "93",
+        "order" : "6",
+        "response" : false
+      }, {
+        "description" : "POST /api/internal/refresh-fraud-model",
+        "id" : "94",
+        "order" : "7",
+        "response" : false
+      }, {
+        "description" : "Refreshes cached tenant model artifacts",
+        "id" : "64",
+        "order" : "8",
+        "response" : false
+      }, {
+        "description" : "Streams latest model for new submissions",
+        "id" : "75",
+        "order" : "9",
+        "response" : false
+      } ]
+    }, {
+      "automaticLayout" : {
+        "edgeSeparation" : 50,
+        "nodeSeparation" : 50,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 100,
+        "vertices" : true
+      },
+      "description" : "Approved nomination payout flow through the payroll broker and provider registry.",
+      "elementId" : "4",
+      "elements" : [ {
+        "id" : "6",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "8",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "9",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "12",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "35",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "41",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "42",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "externalBoundariesVisible" : false,
+      "key" : "PayrollIntegrationFlow",
+      "name" : "Dynamic View: Award Nomination App",
+      "order" : 7,
+      "relationships" : [ {
+        "description" : "Publishes nomination.approved",
+        "id" : "63",
+        "order" : "1",
+        "response" : false
+      }, {
+        "description" : "Delivers event to payroll-processor subscription",
+        "id" : "73",
+        "order" : "2",
+        "response" : false
+      }, {
+        "description" : "Resolves tenant payroll provider, tokens, and nomination details",
+        "id" : "84",
+        "order" : "3",
+        "response" : false
+      }, {
+        "description" : "Routes payout through provider adapter",
+        "id" : "85",
+        "order" : "4",
+        "response" : false
+      }, {
+        "description" : "Returns accepted, failed, or webhook-confirmed result",
+        "id" : "87",
+        "order" : "5",
+        "response" : false
+      }, {
+        "description" : "Records payroll submission state",
+        "id" : "84",
+        "order" : "6",
+        "response" : false
+      }, {
+        "description" : "Publishes payroll.accepted or payroll.failed",
+        "id" : "89",
+        "order" : "7",
+        "response" : false
+      }, {
+        "description" : "Delivers payroll result event",
+        "id" : "72",
+        "order" : "8",
+        "response" : false
+      }, {
+        "description" : "Marks nomination Paid or records failure workflow",
+        "id" : "79",
+        "order" : "9",
+        "response" : false
+      }, {
+        "description" : "Notifies support users on failure",
+        "id" : "80",
+        "order" : "10",
+        "response" : false
+      } ]
+    } ],
+    "systemContextViews" : [ {
+      "automaticLayout" : {
+        "edgeSeparation" : 50,
+        "nodeSeparation" : 50,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 100,
+        "vertices" : true
+      },
+      "description" : "System context for users, identity, Azure services, payroll providers, and observability.",
+      "elements" : [ {
+        "id" : "1",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "2",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "4",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "38",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "39",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "40",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "41",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "42",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "43",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "44",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "enterpriseBoundaryVisible" : true,
+      "key" : "SystemContext",
+      "name" : "System Context View: Award Nomination App",
+      "order" : 1,
+      "relationships" : [ {
+        "id" : "47"
+      }, {
+        "id" : "49"
+      }, {
+        "id" : "52"
+      }, {
+        "id" : "54"
+      }, {
+        "id" : "57"
+      }, {
+        "id" : "59"
+      }, {
+        "id" : "68"
+      }, {
+        "id" : "70"
+      }, {
+        "id" : "81"
+      }, {
+        "id" : "86"
+      }, {
+        "id" : "88"
+      } ],
+      "softwareSystemId" : "4"
+    } ]
+  }
+}

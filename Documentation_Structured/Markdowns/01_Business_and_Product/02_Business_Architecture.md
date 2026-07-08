@@ -75,26 +75,9 @@ Business rule: users from an unregistered Entra tenant are rejected. Users from 
 
 ## Nomination Lifecycle
 
-```mermaid
-flowchart TD
-    A["Employee creates nomination"] --> B["API validates tenant, user, amount, category, description structure"]
-    B --> C["Nomination saved as Submitted"]
-    C --> D["Publish nomination.submitted"]
-    D --> E["Integrity check worker"]
-    E --> F{"Description rejected?"}
-    F -->|Yes| G["Status Rejected; notify nominator"]
-    F -->|No| H{"Fraud risk over HRBP threshold?"}
-    H -->|Yes| I["Status PendingHRBPReview; notify HRBP"]
-    H -->|No| J["Status Pending; notify manager"]
-    I --> K{"HRBP decision"}
-    K -->|Approve| J
-    K -->|Reject| G
-    J --> L{"Manager decision"}
-    L -->|Reject| M["Status Rejected; notify nominator"]
-    L -->|Approve| N["Status Approved; notify nominator; submit payout"]
-    N --> O["Payroll accepted"]
-    O --> P["Status Paid"]
-```
+Business-facing lifecycle view. Technical workflow views are covered in the Solution Architecture document.
+
+![Business nomination lifecycle](../../diagrams/exports/BusinessNominationLifecycle.svg)
 
 ## Business Rules
 
@@ -155,4 +138,3 @@ flowchart TD
 | Executives | Spend, fairness, risk, and forecast visibility. |
 | Tenant admins | Configurable, branded, multilingual recognition workflow. |
 | Security and audit teams | Tenant isolation, RBAC, audit logs, and traceable event processing. |
-

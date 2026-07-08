@@ -174,17 +174,9 @@ This creates a feedback loop between model output and human review.
 
 ## Model Lifecycle
 
-```mermaid
-flowchart TD
-    A["Production nominations and HRBP labels"] --> B["Weekly graph pattern detection"]
-    B --> C["User and approver graph flag snapshots"]
-    C --> D["Tenant-specific Random Forest training"]
-    D --> E["Historical scoring tables updated"]
-    D --> F["Model artifact uploaded to Blob Storage"]
-    F --> G["Backend refresh endpoint called"]
-    G --> H["Runtime model cache refreshed or evicted"]
-    H --> I["New submissions scored with latest model"]
-```
+Structured source: `../diagrams/structurizr/workspace.dsl`, view `ModelLifecycle`.
+
+![Model lifecycle](../../diagrams/exports/ModelLifecycle.svg)
 
 ## Drift and Monitoring
 
@@ -221,4 +213,3 @@ Recommended monitoring:
 - Nomination text may include sensitive personal information and should be protected.
 - Fairness should be reviewed across recipient groups, departments, and manager chains.
 - Tenants should be able to tune thresholds and review policies.
-
