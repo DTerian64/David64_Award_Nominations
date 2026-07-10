@@ -18,6 +18,7 @@ resource "azurerm_log_analytics_workspace" "primary" {
   location            = var.location_primary
   sku                 = "PerGB2018"
   retention_in_days   = var.retention_in_days
+  daily_quota_gb      = var.daily_quota_gb
   tags                = var.tags
 }
 
@@ -27,5 +28,6 @@ resource "azurerm_log_analytics_workspace" "secondary" {
   location            = var.location_secondary
   sku                 = "PerGB2018"
   retention_in_days   = var.retention_in_days
+  daily_quota_gb      = var.daily_quota_gb
   tags                = var.tags
 }

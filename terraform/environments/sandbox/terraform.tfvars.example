@@ -32,6 +32,8 @@ model_capacity_tpm  = 10
 # Log Analytics
 workspace_name_primary   = "workspace-award-primary-sandbox"
 workspace_name_secondary = "workspace-award-secondary-sandbox"
+daily_quota_gb            = 3   # hard cap on daily ingestion (GB) — cost safety net for sandbox; -1 = unlimited
+daily_data_cap_gb         = 5   # same cap, applied directly to both App Insights resources; -1 = Azure default (100)
 
 # Container Apps
 cae_name_primary   = "cae-award-primary-sandbox"
@@ -46,7 +48,7 @@ location_primary                = "westus2"
 location_secondary              = "westus"
 model_blob_name                 = "fraud_detection_model.pkl"
 api_base_url                    = "https://award-nomination-api-sandbox.azurefd.net"
-logging_level                   = "DEBUG"
+logging_level                   = "INFO"   # DEBUG drives up Log Analytics ingestion cost — only use temporarily while troubleshooting
 blob_sas_expiry_hours           = 24
 email_action_token_expiry_hours = 72
 

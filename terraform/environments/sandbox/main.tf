@@ -248,6 +248,7 @@ module "log_analytics" {
   location_secondary       = var.location_secondary
   workspace_name_primary   = var.workspace_name_primary
   workspace_name_secondary = var.workspace_name_secondary
+  daily_quota_gb           = var.daily_quota_gb
   tags                     = local.tags
   depends_on               = [azurerm_resource_group.rg]
 }
@@ -260,6 +261,7 @@ module "application_insights" {
   location                   = var.location_primary
   environment                = var.environment
   log_analytics_workspace_id = module.log_analytics.workspace_primary_id
+  daily_data_cap_gb          = var.daily_data_cap_gb
   tags                       = local.tags
   depends_on                 = [azurerm_resource_group.rg, module.log_analytics]
 }
@@ -335,6 +337,15 @@ module "container_apps" {
     # Same value as PAYROLL_BROKER_BASE_URL on the broker side; set separately here
     # to avoid a circular Terraform dependency (payroll_broker depends on container_apps for CAE ID).
     { name = "PAYROLL_BROKER_BASE_URL",          value = "https://${var.payroll_broker_custom_domain}" },
+    # OTel cost controls — configure_azure_monitor() in main.py hooks the root Python
+    # logger by default, which double-ships every log line (once via stdout →
+    # ContainerAppConsoleLogs, once via the OTel logs exporter → AppTraces), both
+    # landing in the same Log Analytics workspace. OTEL_LOGS_EXPORTER=None stops the
+    # second copy. OTEL_TRACES_SAMPLER samples AppRequests/AppDependencies at 20%
+    # instead of capturing every single request/dependency call.
+    { name = "OTEL_LOGS_EXPORTER",               value = "None" },
+    { name = "OTEL_TRACES_SAMPLER",              value = "microsoft.fixed_percentage" },
+    { name = "OTEL_TRACES_SAMPLER_ARG",          value = "0.2" },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -560,6 +571,11 @@ module "auxiliary" {
     # SMTP sender (Zoho) — non-secret config; SMTP_PASSWORD is a Key Vault secret below.
     { name = "SMTP_USER",                       value = "support@terian-services.com" },
     { name = "SMTP_HOST",                       value = "smtppro.zoho.com" },
+    # OTel cost controls — same rationale as the backend container apps above:
+    # avoid double-shipping log lines into Log Analytics and sample traces at 20%.
+    { name = "OTEL_LOGS_EXPORTER",               value = "None" },
+    { name = "OTEL_TRACES_SAMPLER",              value = "microsoft.fixed_percentage" },
+    { name = "OTEL_TRACES_SAMPLER_ARG",          value = "0.2" },
   ]
 
   # Secrets from Key Vault — fetched at runtime via managed identity
@@ -638,6 +654,10 @@ module "integrity_check" {
     { name = "AZURE_OPENAI_ENDPOINT",    value = module.openai.endpoint },
     { name = "AZURE_OPENAI_DEPLOYMENT",  value = module.openai.model_deployment_name },
     { name = "AZURE_OPENAI_API_VERSION", value = var.openai_api_version },
+    # OTel cost controls — same rationale as the backend container apps above.
+    { name = "OTEL_LOGS_EXPORTER",       value = "None" },
+    { name = "OTEL_TRACES_SAMPLER",      value = "microsoft.fixed_percentage" },
+    { name = "OTEL_TRACES_SAMPLER_ARG",  value = "0.2" },
   ]
 
   kv_secret_references = [
@@ -702,6 +722,10 @@ module "payroll_broker" {
   environment_variables = [
     # Public URL of this broker — embedded in the OAuth redirect_uri sent to Gusto.
     { name = "PAYROLL_BROKER_BASE_URL", value = "https://${var.payroll_broker_custom_domain}" },
+    # OTel cost controls — same rationale as the backend container apps above.
+    { name = "OTEL_LOGS_EXPORTER",      value = "None" },
+    { name = "OTEL_TRACES_SAMPLER",     value = "microsoft.fixed_percentage" },
+    { name = "OTEL_TRACES_SAMPLER_ARG", value = "0.2" },
   ]
 
   kv_secret_references = [

@@ -116,6 +116,18 @@ variable "workspace_name_secondary" {
   type        = string
 }
 
+variable "daily_quota_gb" {
+  description = "Daily ingestion cap (GB) for the Log Analytics workspaces — cost safety net for sandbox. -1 = unlimited."
+  type        = number
+  default     = 3
+}
+
+variable "daily_data_cap_gb" {
+  description = "Daily ingestion cap (GB) for the Application Insights resources — cost safety net independent of the Log Analytics workspace cap. -1 = Azure default (100)."
+  type        = number
+  default     = 5
+}
+
 # Container Apps
 variable "cae_name_primary"   { type = string }
 variable "cae_name_secondary" { type = string }
