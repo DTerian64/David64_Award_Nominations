@@ -96,6 +96,21 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("APPLICATIONINSIGHTS_CONNECTION_STRING not set — telemetry disabled.")
 
+    # Drop uvicorn's own access-log lines for /health — Front Door probes this
+    # path every ~30s per origin (terraform/modules/front-door), and its
+    # multi-PoP architecture can multiply that well beyond the nominal
+    # interval. Request-level telemetry for /health is already captured via
+    # FastAPIInstrumentor -> AppRequests (sampled via OTEL_TRACES_SAMPLER_ARG),
+    # so nothing is lost by keeping it out of stdout / ContainerAppConsoleLogs.
+    # Must be attached here (lifespan startup), not in logging_config.py —
+    # UvicornWorker runs its own dictConfig() after post_fork() and before
+    # lifespan startup, which would wipe a filter attached any earlier.
+    class _HealthCheckLogFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return "/health" not in record.getMessage()
+
+    logging.getLogger("uvicorn.access").addFilter(_HealthCheckLogFilter())
+
     # Startup: ensure all ORM-defined tables exist in the database
     sqlhelper.create_all_tables()
     logger.info("Database tables verified on startup.")
