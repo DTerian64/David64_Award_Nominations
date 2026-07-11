@@ -346,6 +346,12 @@ module "container_apps" {
     { name = "OTEL_LOGS_EXPORTER",               value = "None" },
     { name = "OTEL_TRACES_SAMPLER",              value = "microsoft.fixed_percentage" },
     { name = "OTEL_TRACES_SAMPLER_ARG",          value = "0.2" },
+    # /health is probed by Front Door every ~30s per origin, generating enough
+    # volume (confirmed via AppDependencies breakdown: ~29k "HEAD /health http
+    # send" spans/hour per region) to dominate ingestion on its own. Excluding
+    # it from FastAPIInstrumentor stops span creation at the source — cheaper
+    # than sampling it down, and doesn't touch real endpoints' tracing.
+    { name = "OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", value = "health" },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -726,6 +732,8 @@ module "payroll_broker" {
     { name = "OTEL_LOGS_EXPORTER",      value = "None" },
     { name = "OTEL_TRACES_SAMPLER",     value = "microsoft.fixed_percentage" },
     { name = "OTEL_TRACES_SAMPLER_ARG", value = "0.2" },
+    # /health noise — same rationale as the backend container apps above.
+    { name = "OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", value = "health" },
   ]
 
   kv_secret_references = [
