@@ -1,0 +1,6 @@
+# schema-migration — standalone Alembic runner (ADR-0001)
+alembic>=1.13
+SQLAlchemy>=2.0
+pyodbc>=5.1
+azure-identity>=1.16
+python-dotenv>=1.0

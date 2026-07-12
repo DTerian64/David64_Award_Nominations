@@ -5,6 +5,19 @@ output "app_url" {
   value       = "https://${module.front_door.afd_endpoint_hostname}"
 }
 
+# -- ADR-0001 SQL access governance -------------------------------------------
+output "sql_access_readwrite_group" {
+  description = "Runtime SQL read/write group."
+  value       = module.sql_access.readwrite_group_name
+}
+
+output "sql_access_migrations_group" {
+  description = "Schema-migrations group."
+  value       = module.sql_access.migrations_group_name
+}
+
+
+
 output "frontend_url" {
   description = "Static Web App public URL"
   value       = "https://${module.static_web_app.default_hostname}"

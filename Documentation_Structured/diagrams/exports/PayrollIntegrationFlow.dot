@@ -1,0 +1,26 @@
+digraph G {
+  rankdir=LR;
+  bgcolor="white";
+  nodesep=0.5; ranksep=0.75; splines=true; concentrate=false;
+  graph [fontname="Helvetica", labelloc="t", label=<<b>Dynamic — PayrollIntegrationFlow</b><br/><font point-size="10">Approved nomination payout flow through the payroll broker and provider registry.</font><br/> >, fontsize=16];
+  node [margin="0.18,0.12"];
+  edge [arrowsize=0.8];
+
+  "api" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: FastAPI, Python, SQLAlchemy, pyodbc]\nBackend API\n \nTenant-aware API for\nauthentication, nomination\nlifecycle, analytics, admin\noperations, certificates, payroll…"];
+  "serviceBus" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Azure Service Bus]\nAzure Service Bus\n \naward-events topic with fraud-\nprocessor, email-processor, and\npayroll-processor subscriptions."];
+  "payrollBroker" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: FastAPI, Python, provider adapters]\nPayroll Broker\n \nProvider abstraction for payroll\nlookup, OAuth/webhooks, and\napproved award payout submission."];
+  "database" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Azure SQL]\nAzure SQL Database\n \nSystem of record for tenants,\nusers, nominations, fraud scores,\nreview state, analytics,\nconversations, event processing,…"];
+  "payrollProviders" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nPayroll Providers\n \nGusto, Rippling, and Workday-style\nproviders for employee pay lookup\nand award payout execution."];
+  "auxiliaryWorker" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Python, Azure Service Bus SDK, SMTP]\nAuxiliary Worker\n \nConsumes downstream award events,\nsends notifications, handles HRBP\nalerts, payout events, payroll\noutcomes, and idempotent side…"];
+  "smtp" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nSMTP / Email Provider\n \nSends workflow, HRBP, demo,\npayroll, and analytics\nnotification emails."];
+  "api" -> "serviceBus" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="1. Publishes\nnomination.approved"];
+  "serviceBus" -> "payrollBroker" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="2. Delivers event to payroll-\nprocessor subscription"];
+  "payrollBroker" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="3. Resolves tenant payroll\nprovider, tokens, and\nnomination details"];
+  "payrollBroker" -> "payrollProviders" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="4. Routes payout through\nprovider adapter"];
+  "payrollProviders" -> "payrollBroker" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="5. Returns accepted, failed,\nor webhook-confirmed\nresult"];
+  "payrollBroker" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="6. Records payroll submission\nstate"];
+  "payrollBroker" -> "serviceBus" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="7. Publishes payroll.accepted\nor payroll.failed"];
+  "serviceBus" -> "auxiliaryWorker" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="8. Delivers payroll result\nevent"];
+  "auxiliaryWorker" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="9. Marks nomination Paid or\nrecords failure workflow"];
+  "auxiliaryWorker" -> "smtp" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="10. Notifies support users on\nfailure"];
+}

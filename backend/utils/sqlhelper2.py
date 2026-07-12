@@ -8,11 +8,12 @@ Authentication modes (controlled by env vars, same as sqlhelper.py):
   • SQL Authentication – SQL_USER + SQL_PASSWORD set  (development)
   • Azure AD Interactive – fallback                   (development / interactive)
 
-Code-First schema
------------------
-ORM models (UserORM, NominationORM, ImpersonationAuditLogORM, FraudScoreORM)
-are defined with SQLAlchemy Declarative Base.  Call ``create_all_tables()``
-once at startup (or use Alembic migrations) to create/update the schema.
+Schema ownership
+----------------
+The database schema is owned by the standalone `schema-migration` project
+(Alembic) and applied via its pipeline (ADR-0001). This module holds the engine,
+session helpers, and raw-SQL query functions only — it defines no ORM models and
+does not create or alter tables.
 
 Public API is identical to sqlhelper.py so callers need zero changes.
 """
@@ -49,168 +50,6 @@ DB_USERNAME = os.getenv("SQL_USER")
 DB_PASSWORD = os.getenv("SQL_PASSWORD")
 
 USE_MANAGED_IDENTITY = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
-
-
-# ===========================================================================
-# ORM Models  (Code-First schema definition)
-# ===========================================================================
-
-class Base(DeclarativeBase):
-    pass
-
-
-class TenantORM(Base):
-    """
-    Maps to the [Tenants] table.
-
-    One row per customer organisation.  The AzureAdTenantId column stores the
-    Azure AD / Entra ID tenant GUID (the ``tid`` claim in every JWT issued by
-    that tenant) and is used to resolve which tenant a user belongs to at
-    authentication time.
-    """
-    __tablename__ = "Tenants"
-
-    TenantId             = Column(Integer, primary_key=True, autoincrement=True)
-    TenantName           = Column(String(256), nullable=False, unique=True)
-    AzureAdTenantId      = Column(String(36),  nullable=False, unique=True)
-    Config               = Column(Unicode(None), nullable=True)            # NVARCHAR(MAX) JSON blob, NULL = defaults
-    Domain               = Column(String(253),  nullable=True, unique=True)
-    fallback_admin_email = Column(String(256),  nullable=True)             # emailed when no HRBP is configured
-    Site_URL             = Column(String(256),  nullable=True)             # frontend portal URL for email hyperlinks
-    certificate_config   = Column(Unicode(None), nullable=True)            # NVARCHAR(MAX) JSON, NULL = feature off
-
-    # Payroll provider configured for this tenant (NULL = no payroll integration)
-    payroll_provider_id  = Column(Integer, ForeignKey("payroll_providers.id"), nullable=True)
-
-    # Reverse relationship — rarely needed directly, but handy for admin queries
-    users = relationship("UserORM", back_populates="tenant")
-
-
-class UserORM(Base):
-    """Maps to the [Users] table."""
-    __tablename__ = "Users"
-
-    UserId            = Column(Integer, primary_key=True)
-    userPrincipalName = Column(String(256), nullable=False)
-    userEmail         = Column(String(256), nullable=True)
-    FirstName         = Column(Unicode(128), nullable=True)
-    LastName          = Column(Unicode(128), nullable=True)
-    Title             = Column(Unicode(256), nullable=True)
-    ManagerId         = Column(Integer, ForeignKey("Users.UserId"), nullable=True)
-    TenantId          = Column(Integer, ForeignKey("Tenants.TenantId"), nullable=False)
-
-    __table_args__ = (
-        # UPN is unique per tenant, not globally
-        UniqueConstraint("userPrincipalName", "TenantId", name="uq_users_upn_tenant"),
-    )
-
-    # Tenant relationship
-    tenant = relationship("TenantORM", back_populates="users")
-
-    # Self-referential manager relationship
-    manager = relationship("UserORM", remote_side=[UserId])
-
-    # Nomination relationships
-    nominations_sent     = relationship(
-        "NominationORM", foreign_keys="NominationORM.NominatorId",
-        back_populates="nominator",
-    )
-    nominations_received = relationship(
-        "NominationORM", foreign_keys="NominationORM.BeneficiaryId",
-        back_populates="beneficiary",
-    )
-    nominations_approved = relationship(
-        "NominationORM", foreign_keys="NominationORM.ApproverId",
-        back_populates="approver",
-    )
-
-
-class NominationORM(Base):
-    """Maps to the [Nominations] table."""
-    __tablename__ = "Nominations"
-
-    NominationId          = Column(Integer, primary_key=True, autoincrement=True)
-    NominatorId           = Column(Integer, ForeignKey("Users.UserId"), nullable=False)
-    BeneficiaryId         = Column(Integer, ForeignKey("Users.UserId"), nullable=False)
-    ApproverId            = Column(Integer, ForeignKey("Users.UserId"), nullable=False)
-    Amount                = Column(Integer, nullable=False)
-    Currency              = Column(String(3), nullable=False, default="USD")
-    NominationDescription = Column(Unicode(500), nullable=True)
-    NominationDate        = Column(DateTime, server_default=text("GETDATE()"))
-    Status                = Column(String(50), default="Pending")
-    ApprovedDate          = Column(DateTime, nullable=True)
-    PayedDate             = Column(DateTime, nullable=True)
-
-    nominator   = relationship("UserORM", foreign_keys=[NominatorId],
-                               back_populates="nominations_sent")
-    beneficiary = relationship("UserORM", foreign_keys=[BeneficiaryId],
-                               back_populates="nominations_received")
-    approver    = relationship("UserORM", foreign_keys=[ApproverId],
-                               back_populates="nominations_approved")
-
-
-class ImpersonationAuditLogORM(Base):
-    """Maps to the [Impersonation_AuditLog] table."""
-    __tablename__ = "Impersonation_AuditLog"
-
-    AuditId         = Column(Integer, primary_key=True, autoincrement=True)
-    AdminUPN        = Column(String(256), nullable=False)
-    ImpersonatedUPN = Column(String(256), nullable=False)
-    Action          = Column(String(128), nullable=False)
-    Details         = Column(String(1000), nullable=True)
-    IpAddress       = Column(String(64), nullable=True)
-    Timestamp       = Column(DateTime, server_default=text("GETDATE()"))
-
-
-class P2PFraudScoreORM(Base):
-    """Maps to dbo.P2P_FraudScores — peer-to-peer fraud score at submission time."""
-    __tablename__ = "P2P_FraudScores"
-
-    P2PScoreId   = Column(Integer, primary_key=True, autoincrement=True)
-    NominationId = Column(Integer, ForeignKey("Nominations.NominationId"), nullable=False)
-    FraudScore   = Column(Integer,     nullable=False)
-    RiskLevel    = Column(String(20),  nullable=False)
-    FraudFlags   = Column(String(500), nullable=True)
-
-
-class ApprFraudScoreORM(Base):
-    """Maps to dbo.Appr_FraudScores — approver-behaviour fraud score (batch job)."""
-    __tablename__ = "Appr_FraudScores"
-
-    ApprScoreId  = Column(Integer, primary_key=True, autoincrement=True)
-    NominationId = Column(Integer, ForeignKey("Nominations.NominationId"), nullable=False)
-    FraudScore   = Column(Integer,     nullable=False)
-    RiskLevel    = Column(String(20),  nullable=False)
-    FraudFlags   = Column(String(500), nullable=True)
-
-
-class HRBPFraudFlagORM(Base):
-    """Maps to dbo.HRBP_FraudFlags — full inference snapshot for HRBP review queue."""
-    __tablename__ = "HRBP_FraudFlags"
-
-    FlagId             = Column(Integer, primary_key=True, autoincrement=True)
-    NominationId       = Column(Integer, ForeignKey("Nominations.NominationId"), nullable=False)
-    FraudScore         = Column(Integer,     nullable=False)
-    FraudProbability   = Column(Float(),     nullable=False)
-    RiskLevel          = Column(String(20),  nullable=False)
-    WarningFlags       = Column(String(500), nullable=True)
-    TopFeaturesJson    = Column(Unicode(None), nullable=True)
-    FeatureSummaryJson = Column(Unicode(None), nullable=True)
-
-
-class NominationCategoryORM(Base):
-    """
-    Maps to dbo.nomination_categories.
-
-    Per-tenant list of custom award categories (Premium / Enterprise feature).
-    When at least one row exists for a tenant the nomination form shows a
-    required category dropdown; tenants with no rows see no category field.
-    """
-    __tablename__ = "nomination_categories"
-
-    id                   = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id            = Column(Integer, ForeignKey("Tenants.TenantId"), nullable=False)
-    category_description = Column(Unicode(256), nullable=False)
 
 
 # ===========================================================================
@@ -339,16 +178,6 @@ def warmup_database() -> None:
     """Open a SQL connection and run a tiny query to wake Azure SQL Serverless."""
     with get_db_context() as session:
         session.execute(text("SELECT 1")).fetchone()
-
-
-def create_all_tables() -> None:
-    """
-    Code-First: create all tables declared in the ORM models if they do not
-    yet exist in the target database.  Call once at application startup, or
-    replace with Alembic autogenerate migrations for full schema diffing.
-    """
-    Base.metadata.create_all(engine)
-    logger.info("All ORM-defined tables ensured in the database.")
 
 
 # ===========================================================================
@@ -2766,84 +2595,3 @@ def get_payroll_provider_for_tenant(tenant_id: int) -> Optional[dict]:
         "api_base_url":  row[1],
         "name":          row[2],
     }
-
-
-# ===========================================================================
-# Payroll ORM Models
-# Defined here so Alembic autogenerate can detect them alongside all other
-# tables.  The payroll-broker uses its own sqlhelper.py for runtime queries;
-# these models exist solely for migration generation.
-# ===========================================================================
-
-class PayrollProviderORM(Base):
-    """
-    dbo.payroll_providers — one row per configured payroll provider instance.
-
-    Two rows may share the same `name` (e.g. both "gusto") but differ in
-    `company_id_at_provider`.  The `name` column is the type discriminator:
-    the payroll broker switches on it to select the right API client.
-
-    company_id_at_provider — the identifier by which the provider knows this
-    company:
-        Gusto   → company UUID returned by GET /v1/me
-        Workday → tenant name (e.g. "acme_corp")
-        ADP     → company code
-
-    provider_config — JSON blob for provider-specific settings that cannot
-    live in api_base_url (e.g. Workday per-tenant host URL).
-    """
-    __tablename__ = "payroll_providers"
-
-    id                      = Column(Integer, primary_key=True, autoincrement=True)
-    name                    = Column(String(50),    nullable=False)        # "gusto", "workday", "adp"
-    display_name            = Column(String(100),   nullable=False)        # "Gusto – ACME Corp"
-    company_id_at_provider  = Column(String(100),   nullable=True)         # provider's company reference
-    provider_config         = Column(Unicode(None), nullable=True)         # NVARCHAR(MAX) JSON
-    api_base_url            = Column(String(255),   nullable=True)         # NULL = use hardcoded default
-    oauth_base_url          = Column(String(255),   nullable=True)
-
-
-class PayrollTokenORM(Base):
-    """
-    dbo.payroll_tokens — OAuth credentials for one provider instance.
-
-    Keyed by provider_id (UNIQUE) — one token row per provider row.
-    No tenant_id needed here: the tenant→provider link lives in
-    Tenants.payroll_provider_id.
-
-    Rotates on every token refresh (~2 hours for Gusto).
-    """
-    __tablename__ = "payroll_tokens"
-
-    id               = Column(Integer, primary_key=True, autoincrement=True)
-    provider_id      = Column(Integer, ForeignKey("payroll_providers.id"), nullable=False)
-    access_token     = Column(Text,     nullable=False)
-    refresh_token    = Column(Text,     nullable=False)
-    token_expires_at = Column(DateTime, nullable=True)
-    created_at       = Column(DateTime, nullable=False, server_default=text("GETUTCDATE()"))
-    updated_at       = Column(DateTime, nullable=False, server_default=text("GETUTCDATE()"))
-
-    __table_args__ = (
-        UniqueConstraint("provider_id", name="uq_payroll_tokens_provider"),
-    )
-
-
-class PayrollSubmissionORM(Base):
-    """
-    dbo.payroll_submissions — one row per payroll submission attempt.
-
-    Bridges the provider's external payroll reference (e.g. Gusto payroll
-    UUID) back to an internal nomination_id so the webhook handler can
-    resolve the nomination when the provider fires its callback.
-
-    status values: 'submitted' | 'completed' | 'failed'
-    """
-    __tablename__ = "payroll_submissions"
-
-    id                   = Column(Integer,  primary_key=True, autoincrement=True)
-    nomination_id        = Column(Integer,  ForeignKey("Nominations.NominationId"), nullable=False)
-    provider_id          = Column(Integer,  ForeignKey("payroll_providers.id"), nullable=False)
-    provider_payroll_ref = Column(String(100), nullable=True)   # Gusto payroll UUID / Workday ref
-    status               = Column(String(50),  nullable=False,  server_default="submitted")
-    submitted_at         = Column(DateTime, nullable=False, server_default=text("GETUTCDATE()"))
-    completed_at         = Column(DateTime, nullable=True)

@@ -1,0 +1,23 @@
+digraph G {
+  rankdir=LR;
+  bgcolor="white";
+  nodesep=0.5; ranksep=0.75; splines=true; concentrate=false;
+  graph [fontname="Helvetica", labelloc="t", label=<<b>Dynamic — ModelLifecycle</b><br/><font point-size="10">Weekly integrity analytics and model retraining lifecycle.</font><br/> >, fontsize=16];
+  node [margin="0.18,0.12"];
+  edge [arrowsize=0.8];
+
+  "analyticsJob" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Python, Container Apps Job, pandas, scikit-learn, networkx]\nFraud Analytics Job\n \nScheduled analytics job for graph-\npattern detection, fraud model\nretraining, holiday sync, and\nforecast model generation."];
+  "database" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Azure SQL]\nAzure SQL Database\n \nSystem of record for tenants,\nusers, nominations, fraud scores,\nreview state, analytics,\nconversations, event processing,…"];
+  "blobStorage" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Azure Blob Storage]\nAzure Blob Storage\n \nStores fraud models, certificates,\ncertificate templates, and\nexports."];
+  "api" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: FastAPI, Python, SQLAlchemy, pyodbc]\nBackend API\n \nTenant-aware API for\nauthentication, nomination\nlifecycle, analytics, admin\noperations, certificates, payroll…"];
+  "integrityWorker" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Python, Azure Service Bus SDK, scikit-learn, sentence-transformers, SHAP]\nIntegrity Check Worker\n \nConsumes nomination.submitted,\nruns description checks and fraud\nscoring, and routes nominations to\nmanager approval, HRBP review, or…"];
+  "analyticsJob" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="1. Reads production\nnominations, fraud scores,\nHRBP labels, and graph…"];
+  "analyticsJob" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="2. Runs graph pattern\ndetection and writes\nfindings"];
+  "analyticsJob" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="3. Materializes user and\napprover graph flag\nsnapshots"];
+  "analyticsJob" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="4. Trains tenant-specific\nRandom Forest models"];
+  "analyticsJob" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="5. Upserts historical P2P and\napprover scores"];
+  "analyticsJob" -> "blobStorage" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="6. Uploads fraud_detection_mo\ndel_tenant_<TenantId>.pkl"];
+  "analyticsJob" -> "api" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="7. POST\n/api/internal/refresh-\nfraud-model"];
+  "api" -> "blobStorage" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="8. Refreshes cached tenant\nmodel artifacts"];
+  "integrityWorker" -> "blobStorage" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="9. Streams latest model for\nnew submissions"];
+}

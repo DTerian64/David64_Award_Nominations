@@ -64,8 +64,14 @@ module "sql" {
   allowed_ips                = var.my_ips
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
   private_dns_zone_id        = module.networking.dns_zone_sql_id
-  tags                       = local.tags
-  depends_on                 = [azurerm_resource_group.rg, module.networking]
+
+  # -- Entra ID admin (ADR-0001) -- a group, never a personal account
+  entra_admin_login     = module.sql_access.admins_group_name
+  entra_admin_object_id = module.sql_access.admins_group_object_id
+  entra_admin_only      = var.sql_entra_admin_only
+
+  tags       = local.tags
+  depends_on = [azurerm_resource_group.rg, module.networking, module.sql_access]
 }
 
 # ── 3. Container Registry ─────────────────────────────────────────────────────

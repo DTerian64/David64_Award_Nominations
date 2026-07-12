@@ -1,0 +1,39 @@
+digraph G {
+  rankdir=LR;
+  bgcolor="white";
+  nodesep=0.5; ranksep=0.75; splines=true; concentrate=false;
+  graph [fontname="Helvetica", labelloc="t", label=<<b>System Context — Award Nomination App</b><br/><font point-size="10">System context for users, identity, Azure services, payroll providers, and observability.</font><br/> >, fontsize=16];
+  node [margin="0.18,0.12"];
+  edge [arrowsize=0.8];
+
+  "award" [shape=box, style="rounded,filled", fillcolor="#1168bd", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Software System]\nAward Nomination App\n \nTenant-configurable SaaS platform\nfor employee award nomination,\nintegrity review, analytics, and\npayroll coordination."];
+  "employee" [shape=box, style="filled", fillcolor="#08427b", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Person]\nEmployee / Manager / HRBP\n/ Admin\n \nTenant users who submit\nnominations, approve awards,\nreview flagged items, administer\ntenants, or inspect analytics."];
+  "payrollBp" [shape=box, style="filled", fillcolor="#08427b", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Person]\nPayroll BP\n \nTenant user with PayrollBP role\nwho can inspect payroll data and\nsupport payout reconciliation."];
+  "platformOperator" [shape=box, style="filled", fillcolor="#08427b", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Person]\nPlatform Operator\n \nEngineer or support operator\nresponsible for deployment,\nobservability, and incident\nresponse."];
+  "entra" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nMicrosoft Entra ID\n \nIdentity provider for user\nauthentication and admin app\nroles."];
+  "frontDoor" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nAzure Front Door + WAF\n \nEdge routing, WAF, health probes,\nTLS, and CORS handling."];
+  "staticWebApps" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nAzure Static Web Apps\n \nHosts the React frontend."];
+  "smtp" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nSMTP / Email Provider\n \nSends workflow, HRBP, demo,\npayroll, and analytics\nnotification emails."];
+  "payrollProviders" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nPayroll Providers\n \nGusto, Rippling, and Workday-style\nproviders for employee pay lookup\nand award payout execution."];
+  "appInsights" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nApplication Insights + Log\nAnalytics\n \nTelemetry, traces, logs,\ndashboards, KQL validation, and\noperational analytics."];
+  "keyVault" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nAzure Key Vault\n \nStores SQL credentials, provider\nsecrets, webhook secrets, OpenAI\nkeys, and Application Insights\nconnection strings."];
+  "containerApps" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nAzure Container Apps\n \nRuntime hosting for API, workers,\npayroll broker, and scheduled\njobs."];
+  "github" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nGitHub Actions\n \nCI/CD pipeline on GitHub-hosted\nrunners, outside the VNet; drives\nthe ARM control plane only, never\nSQL."];
+  "acr" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nAzure Container Registry\n \nStores application and schema-\nmigration images; pulled in-VNet\nover a private endpoint."];
+  "employee" -> "award" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Uses"];
+  "payrollBp" -> "award" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Uses payroll lookup and\naward context"];
+  "platformOperator" -> "appInsights" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Monitors and investigates"];
+  "award" -> "entra" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Authenticates users with\nMSAL"];
+  "award" -> "frontDoor" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Calls API through"];
+  "staticWebApps" -> "award" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Hosts"];
+  "frontDoor" -> "award" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Routes API traffic to"];
+  "award" -> "appInsights" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Emits logs, metrics, and\ntraces"];
+  "award" -> "keyVault" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Reads secrets via managed\nidentity"];
+  "award" -> "smtp" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Sends notification emails"];
+  "award" -> "payrollProviders" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Submits payouts, performs\nemployee lookup, and\nreceives webhooks"];
+  "payrollProviders" -> "award" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Returns provider API\nresponses and webhook\ncallbacks"];
+  "github" -> "acr" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Builds and pushes the\nschema-migration image"];
+  "github" -> "containerApps" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Runs az containerapp job\nupdate, start, and status\nover ARM"];
+  "containerApps" -> "award" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Launches a job execution\ninside the VNet"];
+  "acr" -> "award" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="Provides the migration\nimage via private endpoint"];
+}

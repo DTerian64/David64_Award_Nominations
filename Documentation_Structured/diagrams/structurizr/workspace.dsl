@@ -13,6 +13,7 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
             payrollBroker = container "Payroll Broker" "Provider abstraction for payroll lookup, OAuth/webhooks, and approved award payout submission." "FastAPI, Python, provider adapters"
             analyticsJob = container "Fraud Analytics Job" "Scheduled analytics job for graph-pattern detection, fraud model retraining, holiday sync, and forecast model generation." "Python, Container Apps Job, pandas, scikit-learn, networkx"
             mcpServices = container "MCP / Analytics Export Services" "SQL and export services used by analytics and investigation workflows." "Python, MCP"
+            schemaMigrationJob = container "Schema Migration Job" "In-VNet Container Apps Job that applies Alembic migrations to Azure SQL as the sql-migrations managed identity (db_ddladmin). Triggered by GitHub Actions over ARM." "Python, Alembic, Azure Container Apps Job"
             database = container "Azure SQL Database" "System of record for tenants, users, nominations, fraud scores, review state, analytics, conversations, event processing, and payroll metadata." "Azure SQL" {
                 tenants = component "Tenants" "Tenant registry, Entra tenant mapping, domain, site URL, branding, and tenant configuration." "Table"
                 users = component "Users" "Tenant-scoped user roster, UPN/email, profile fields, and manager hierarchy." "Table"
@@ -51,6 +52,8 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
         appInsights = softwareSystem "Application Insights + Log Analytics" "Telemetry, traces, logs, dashboards, KQL validation, and operational analytics." "External"
         keyVault = softwareSystem "Azure Key Vault" "Stores SQL credentials, provider secrets, webhook secrets, OpenAI keys, and Application Insights connection strings." "External"
         containerApps = softwareSystem "Azure Container Apps" "Runtime hosting for API, workers, payroll broker, and scheduled jobs." "External"
+        github = softwareSystem "GitHub Actions" "CI/CD pipeline on GitHub-hosted runners, outside the VNet; drives the ARM control plane only, never SQL." "External"
+        acr = softwareSystem "Azure Container Registry" "Stores application and schema-migration images; pulled in-VNet over a private endpoint." "External"
 
         employee -> frontend "Uses"
         payrollBp -> frontend "Uses payroll lookup and award context"
@@ -102,6 +105,14 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
         mcpServices -> database "Reads tenant-scoped analytics data"
         mcpServices -> blobStorage "Writes export artifacts"
 
+        github -> acr "Builds and pushes the schema-migration image"
+        github -> containerApps "Runs az containerapp job update, start, and status over ARM"
+        containerApps -> schemaMigrationJob "Launches a job execution inside the VNet"
+        acr -> schemaMigrationJob "Provides the migration image via private endpoint"
+        schemaMigrationJob -> entra "Obtains a managed-identity token for Azure SQL (sql-migrations, db_ddladmin)"
+        schemaMigrationJob -> database "Applies alembic upgrade head over the private endpoint"
+        schemaMigrationJob -> appInsights "Emits job logs and traces"
+
         deploymentEnvironment "Azure" {
             deploymentNode "Users and External Providers" "Browsers, identity provider, payroll providers, and email infrastructure." {
                 infrastructureNode "Microsoft Entra ID"
@@ -122,6 +133,7 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
                 containerInstance payrollBroker
                 containerInstance analyticsJob
                 containerInstance mcpServices
+                containerInstance schemaMigrationJob
             }
 
             deploymentNode "Azure Container Apps Environment - Secondary Region" "Secondary backend API runtime behind Front Door." {
@@ -229,6 +241,17 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
             serviceBus -> auxiliaryWorker "Delivers payroll result event"
             auxiliaryWorker -> database "Marks nomination Paid or records failure workflow"
             auxiliaryWorker -> smtp "Notifies support users on failure"
+            autolayout lr
+        }
+
+        dynamic award "SchemaMigrationFlow" "ADR-0001 schema migration: the GitHub runner drives the ARM control plane; the in-VNet ACA Job applies Alembic to private Azure SQL." {
+            github -> acr "Builds and pushes the schema-migration image"
+            github -> containerApps "az containerapp job update / start (ARM control plane)"
+            containerApps -> schemaMigrationJob "Starts a job execution inside the VNet"
+            acr -> schemaMigrationJob "Pulls the migration image via private endpoint"
+            schemaMigrationJob -> entra "Gets a managed-identity token (sql-migrations, db_ddladmin)"
+            schemaMigrationJob -> database "Runs alembic upgrade head over the private endpoint"
+            github -> containerApps "Polls job execution status until Succeeded or Failed"
             autolayout lr
         }
 

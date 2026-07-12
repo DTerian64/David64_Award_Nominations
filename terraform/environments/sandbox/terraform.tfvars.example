@@ -15,6 +15,10 @@ sql_server_name    = "david64-sql-sandbox"
 sql_admin_login    = "YOUR_SQL_ADMIN_LOGIN"
 sql_admin_password = "YOUR_SQL_ADMIN_PASSWORD"
 
+# SQL access governance (ADR-0001)
+github_org_repo      = "YOUR_GITHUB_ORG/YOUR_REPO"  # runs the schema-migrations pipeline (OIDC)
+sql_entra_admin_only = false                        # flip to true after grants are validated (Phase 6)
+
 # ACR
 acr_name = "acrawardnominationsandbox"
 

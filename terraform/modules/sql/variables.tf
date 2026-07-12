@@ -66,3 +66,22 @@ variable "tags" {
   default     = {}
 }
 
+# ── Entra ID (Azure AD) administrator — ADR-0001 ──────────────────────────────
+variable "entra_admin_login" {
+  description = "Display name of the Entra principal (group) set as the SQL server AD admin. Empty => no AD admin configured."
+  type        = string
+  default     = ""
+}
+
+variable "entra_admin_object_id" {
+  description = "Object ID of the Entra principal (group) set as the SQL server AD admin. Empty => no AD admin configured."
+  type        = string
+  default     = ""
+}
+
+variable "entra_admin_only" {
+  description = "When true, disables SQL authentication (Entra-only). Flip to true only AFTER contained users + grants are in place and validated (ADR-0001 Phase 6)."
+  type        = bool
+  default     = false
+}
+

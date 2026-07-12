@@ -16,6 +16,17 @@ variable "sql_admin_password" {
   sensitive = true
 }
 
+# SQL access governance (ADR-0001)
+variable "github_org_repo" {
+  description = "GitHub 'org/repo' running the schema-migrations pipeline (OIDC federated credential subject)."
+  type        = string
+}
+variable "sql_entra_admin_only" {
+  description = "Disable SQL authentication (Entra-only). Keep false until contained users + grants are validated (ADR-0001 Phase 6)."
+  type        = bool
+  default     = false
+}
+
 # ACR
 variable "acr_name"             { type = string }
 

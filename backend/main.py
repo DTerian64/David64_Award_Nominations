@@ -111,9 +111,9 @@ async def lifespan(app: FastAPI):
 
     logging.getLogger("uvicorn.access").addFilter(_HealthCheckLogFilter())
 
-    # Startup: ensure all ORM-defined tables exist in the database
-    sqlhelper.create_all_tables()
-    logger.info("Database tables verified on startup.")
+    # Schema is owned by the standalone `schema-migration` project (Alembic) and
+    # applied by its pipeline (ADR-0001). The backend does not create/alter tables
+    # at startup — its runtime identity holds no DDL rights.
 
     # Start background task that evicts idle per-tenant fraud models
     eviction_task = asyncio.create_task(_model_eviction_loop())

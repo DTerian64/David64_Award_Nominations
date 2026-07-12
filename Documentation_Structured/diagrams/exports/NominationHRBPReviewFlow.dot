@@ -1,0 +1,33 @@
+digraph G {
+  rankdir=LR;
+  bgcolor="white";
+  nodesep=0.5; ranksep=0.75; splines=true; concentrate=false;
+  graph [fontname="Helvetica", labelloc="t", label=<<b>Dynamic — NominationHRBPReviewFlow</b><br/><font point-size="10">Flagged nomination path through HRBP review before manager approval.</font><br/> >, fontsize=16];
+  node [margin="0.18,0.12"];
+  edge [arrowsize=0.8];
+
+  "employee" [shape=box, style="filled", fillcolor="#08427b", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Person]\nEmployee / Manager / HRBP\n/ Admin\n \nTenant users who submit\nnominations, approve awards,\nreview flagged items, administer\ntenants, or inspect analytics."];
+  "frontend" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: React, TypeScript, Vite, MSAL, i18next]\nReact Frontend\n \nUser experience for nominations,\napprovals, HRBP review, analytics,\npayroll lookup, tenant theming,\nlocalization, and impersonation."];
+  "api" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: FastAPI, Python, SQLAlchemy, pyodbc]\nBackend API\n \nTenant-aware API for\nauthentication, nomination\nlifecycle, analytics, admin\noperations, certificates, payroll…"];
+  "database" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Azure SQL]\nAzure SQL Database\n \nSystem of record for tenants,\nusers, nominations, fraud scores,\nreview state, analytics,\nconversations, event processing,…"];
+  "serviceBus" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Azure Service Bus]\nAzure Service Bus\n \naward-events topic with fraud-\nprocessor, email-processor, and\npayroll-processor subscriptions."];
+  "integrityWorker" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Python, Azure Service Bus SDK, scikit-learn, sentence-transformers, SHAP]\nIntegrity Check Worker\n \nConsumes nomination.submitted,\nruns description checks and fraud\nscoring, and routes nominations to\nmanager approval, HRBP review, or…"];
+  "auxiliaryWorker" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Python, Azure Service Bus SDK, SMTP]\nAuxiliary Worker\n \nConsumes downstream award events,\nsends notifications, handles HRBP\nalerts, payout events, payroll\noutcomes, and idempotent side…"];
+  "smtp" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nSMTP / Email Provider\n \nSends workflow, HRBP, demo,\npayroll, and analytics\nnotification emails."];
+  "employee" -> "frontend" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="1. Submits nomination"];
+  "frontend" -> "api" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="2. POST /api/nominations"];
+  "api" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="3. Saves nomination as\nSubmitted"];
+  "api" -> "serviceBus" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="4. Publishes\nnomination.submitted"];
+  "serviceBus" -> "integrityWorker" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="5. Delivers to fraud-\nprocessor subscription"];
+  "integrityWorker" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="6. Saves fraud score and\nfeature summary"];
+  "integrityWorker" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="7. Sets status\nPendingHRBPReview"];
+  "integrityWorker" -> "serviceBus" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="8. Publishes\nnomination.fraud-flagged"];
+  "serviceBus" -> "auxiliaryWorker" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="9. Delivers HRBP notification\nevent"];
+  "auxiliaryWorker" -> "smtp" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="10. Emails HRBP reviewers"];
+  "employee" -> "frontend" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="11. HRBP approves or rejects"];
+  "frontend" -> "api" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="12. POST /api/hrbp/nominations\n/{id}/approve or reject"];
+  "api" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="13. Writes HRBP decision and\ntraining label"];
+  "api" -> "serviceBus" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="14. Publishes HRBP outcome\nevent"];
+  "auxiliaryWorker" -> "smtp" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="15. Notifies nominator"];
+  "api" -> "serviceBus" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="16. If approved, publishes\nnomination.created for\nmanager approval"];
+}
