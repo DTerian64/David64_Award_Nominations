@@ -67,8 +67,8 @@ from typing import Optional
 
 import numpy as np
 
-import db
-from db import DescCheckConfig
+from utils import db
+from utils.db import DescCheckConfig
 
 logger = logging.getLogger("integrity_check.description_check")
 
@@ -115,11 +115,13 @@ def _get_llm_client():
             return None
 
         try:
-            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            from azure.identity import get_bearer_token_provider
             from openai import AzureOpenAI
 
+            from utils.azure_credential import credential
+
             token_provider = get_bearer_token_provider(
-                DefaultAzureCredential(),
+                credential,
                 "https://cognitiveservices.azure.com/.default",
             )
             _llm_client = AzureOpenAI(

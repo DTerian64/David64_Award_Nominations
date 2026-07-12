@@ -30,7 +30,6 @@ from contextlib import suppress
 from contextvars import ContextVar
 from datetime import datetime, timezone
 
-from azure.identity import DefaultAzureCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
 from dotenv import load_dotenv
@@ -39,6 +38,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 from handler import handle
 from logging_config import setup_logging
+from utils.azure_credential import credential
 
 load_dotenv()
 
@@ -107,8 +107,6 @@ def main() -> None:
             "subscription":        SERVICE_BUS_SUBSCRIPTION,
         },
     )
-
-    credential = DefaultAzureCredential()
 
     with ServiceBusClient(
         fully_qualified_namespace=SERVICE_BUS_FQNS,

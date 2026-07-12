@@ -43,7 +43,8 @@ from datetime import datetime
 from typing import List, Optional
 
 import pyodbc
-from azure.identity import DefaultAzureCredential
+
+from .azure_credential import credential
 
 logger = logging.getLogger("integrity_check.db")
 
@@ -64,14 +65,11 @@ _BASE_CONNECTION_STRING = (
     f"Encrypt=yes;"
     f"TrustServerCertificate=no;"
 )
-_credential = DefaultAzureCredential(
-    managed_identity_client_id=os.getenv("MI_CLIENT_ID")
-) 
 
 
 @contextmanager
 def _get_conn():
-    token        = _credential.get_token(_AZURE_SQL_SCOPE).token.encode("utf-16-le")
+    token        = credential.get_token(_AZURE_SQL_SCOPE).token.encode("utf-16-le")
     token_struct = struct.pack(f"<I{len(token)}s", len(token), token)
     conn = pyodbc.connect(
         _BASE_CONNECTION_STRING,

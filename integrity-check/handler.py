@@ -22,10 +22,10 @@ import json
 import logging
 from datetime import datetime, timezone
 
-import db
 import description_check
 import fraud_check
-import service_bus_publisher
+from utils import db
+from utils import service_bus_publisher
 
 logger = logging.getLogger("integrity_check.handler")
 

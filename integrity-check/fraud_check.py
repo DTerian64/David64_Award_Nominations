@@ -38,7 +38,7 @@ from datetime import datetime
 
 import numpy as np
 
-import db
+from utils import db
 
 logger = logging.getLogger("auxiliary.fraud_check")
 
@@ -46,7 +46,6 @@ logger = logging.getLogger("auxiliary.fraud_check")
 _STORAGE_ACCOUNT = os.environ["AZURE_STORAGE_ACCOUNT"]
 _MODEL_CONTAINER  = os.getenv("MODEL_CONTAINER", "ml-models")
 _STORAGE_KEY      = os.getenv("AZURE_STORAGE_KEY")   # local dev only
-_MI_CLIENT_ID     = os.getenv("MI_CLIENT_ID") or None
 
 
 # ── Per-tenant model cache ────────────────────────────────────────────────────
@@ -128,10 +127,10 @@ def _stream_from_blob(tenant_id: int) -> dict | None:
         )
         client = BlobServiceClient.from_connection_string(conn_str)
     else:
-        from azure.identity import DefaultAzureCredential
+        from utils.azure_credential import credential
         client = BlobServiceClient(
             f"https://{_STORAGE_ACCOUNT}.blob.core.windows.net",
-            credential=DefaultAzureCredential(managed_identity_client_id=_MI_CLIENT_ID),
+            credential=credential,
         )
 
     try:
