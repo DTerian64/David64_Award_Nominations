@@ -66,7 +66,7 @@ _BASE_CONNECTION_STRING = (
 )
 _credential = DefaultAzureCredential(
     managed_identity_client_id=os.getenv("MI_CLIENT_ID")
-)
+) 
 
 
 @contextmanager
