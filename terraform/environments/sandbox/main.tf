@@ -288,7 +288,17 @@ module "container_apps" {
   min_replicas                       = var.min_replicas
   max_replicas                       = var.max_replicas
   log_analytics_workspace_primary_id   = module.log_analytics.workspace_primary_id
-  log_analytics_workspace_secondary_id = module.log_analytics.workspace_secondary_id
+  # Redirected to the primary workspace — workspace-award-secondary-sandbox
+  # never received data (confirmed: az containerapp env show on the secondary
+  # CAE returned an apparently-correct logAnalyticsConfiguration, but the
+  # Usage table showed zero ingestion over 7 days despite confirmed real
+  # traffic on that container). Root cause unconfirmed; not worth chasing for
+  # a sandbox. This also fixes a real gap: the admin nomination-logs endpoint
+  # (LOG_ANALYTICS_WORKSPACE_ID) only ever queried the primary workspace, so
+  # secondary's logs were unreachable through the app either way.
+  # NOTE: log_analytics_workspace_id is immutable on azurerm_container_app_environment —
+  # this forces a replace of the secondary CAE (and award-api-secondary-sandbox with it).
+  log_analytics_workspace_secondary_id = module.log_analytics.workspace_primary_id
   acr_login_server                   = module.container_registry.login_server
   acr_admin_username                 = module.container_registry.admin_username
   acr_admin_password                 = module.container_registry.admin_password
