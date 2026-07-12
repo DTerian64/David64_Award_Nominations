@@ -67,18 +67,12 @@ _HOLIDAY_SET: set = set()
 
 # ── DB ──────────────────────────────────────────────────────────────────────────
 
+from db_conn import connect
+
+
 def get_db_connection():
-    """Open an Azure SQL connection from env vars (same convention as the other
-    stages). The DB is already awake by the time this runs — run_job.py calls
-    wake_database() before any stage."""
-    return pyodbc.connect(
-        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-        f"SERVER={os.getenv('SQL_SERVER')};"
-        f"DATABASE={os.getenv('SQL_DATABASE')};"
-        f"UID={os.getenv('SQL_USER')};"
-        f"PWD={os.getenv('SQL_PASSWORD')};"
-        f"Encrypt=yes;TrustServerCertificate=no;Connection Timeout=60;"
-    )
+    """Open an Azure SQL connection via Managed Identity (see db_conn.connect)."""
+    return connect()
 
 
 def get_tenants(conn) -> list:

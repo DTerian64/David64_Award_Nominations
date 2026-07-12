@@ -366,8 +366,6 @@ module "container_apps" {
   kv_secret_references = [
     { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
     { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
-    { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
-    { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY",   kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "EMAIL_ACTION_SECRET_KEY",                  kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
     { env_name = "AZURE_OPENAI_KEY",                         kv_secret_name = "AZURE-OPENAI-KEY" },
@@ -594,8 +592,6 @@ module "auxiliary" {
   kv_secret_references = [
     { env_name = "SQL_SERVER",                    kv_secret_name = "SQL-SERVER" },
     { env_name = "SQL_DATABASE",                  kv_secret_name = "SQL-DATABASE" },
-    { env_name = "SQL_USER",                      kv_secret_name = "SQL-USER" },
-    { env_name = "SQL_PASSWORD",                  kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY",             kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "SMTP_PASSWORD",                 kv_secret_name = "SMTP-PASSWORD" },
     { env_name = "FROM_EMAIL",                    kv_secret_name = "FROM-EMAIL" },
@@ -675,8 +671,6 @@ module "integrity_check" {
   kv_secret_references = [
     { env_name = "SQL_SERVER",       kv_secret_name = "SQL-SERVER" },
     { env_name = "SQL_DATABASE",     kv_secret_name = "SQL-DATABASE" },
-    { env_name = "SQL_USER",         kv_secret_name = "SQL-USER" },
-    { env_name = "SQL_PASSWORD",     kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
   ]
@@ -745,8 +739,6 @@ module "payroll_broker" {
   kv_secret_references = [
     { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
     { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
-    { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
-    { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
     { env_name = "GUSTO_CLIENT_ID",        kv_secret_name = "GUSTO-CLIENT-ID" },
     { env_name = "GUSTO_CLIENT_SECRET",    kv_secret_name = "GUSTO-CLIENT-SECRET" },
     { env_name = "GUSTO_WEBHOOK_SECRET",   kv_secret_name = "GUSTO-WEBHOOK-SECRET" },
@@ -815,8 +807,6 @@ module "fraud_analytics_job" {
   kv_secret_references = [
     { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
     { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
-    { env_name = "SQL_USER",            kv_secret_name = "SQL-USER" },
-    { env_name = "SQL_PASSWORD",        kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY",   kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
     # Shared secret for /api/internal/refresh-fraud-model — must match FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET on the API.

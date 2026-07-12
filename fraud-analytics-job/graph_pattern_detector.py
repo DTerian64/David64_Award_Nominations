@@ -80,28 +80,12 @@ def _load_tenant_integrity_config(conn: pyodbc.Connection, tenant_id: int) -> di
         return {}
 
 
-def _get_connection() -> pyodbc.Connection:
-    """Connect to Azure SQL.
+from db_conn import connect
 
-    The DB is guaranteed to be awake by the time this is called — run_job.py
-    runs wake_database() before any stage starts. Timeout is 60 s as a safety
-    net for transient hiccups after the initial resume.
-    """
-    server   = os.environ["SQL_SERVER"]
-    database = os.environ["SQL_DATABASE"]
-    user     = os.environ["SQL_USER"]
-    password = os.environ["SQL_PASSWORD"]
-    conn_str = (
-        "DRIVER={ODBC Driver 18 for SQL Server};"
-        f"SERVER={server};"
-        f"DATABASE={database};"
-        f"UID={user};"
-        f"PWD={password};"
-        "Encrypt=yes;"
-        "TrustServerCertificate=no;"
-        "Connection Timeout=60;"
-    )
-    return pyodbc.connect(conn_str)
+
+def _get_connection() -> pyodbc.Connection:
+    """Connect to Azure SQL via Managed Identity (see db_conn.connect)."""
+    return connect()
 
 
 # ── Graph sync ────────────────────────────────────────────────────────────────

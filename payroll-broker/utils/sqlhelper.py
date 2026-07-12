@@ -127,60 +127,32 @@ class PayrollSubmissionORM(Base):
 # ===========================================================================
 
 def _build_engine():
-    if USE_MANAGED_IDENTITY:
-        try:
-            from azure.identity import ManagedIdentityCredential
-        except ImportError:
-            raise RuntimeError("azure-identity required for Managed Identity auth.")
+    """
+    SQLAlchemy engine using an Entra token via DefaultAzureCredential -- the
+    container's Managed Identity in Azure (selected by AZURE_CLIENT_ID), or the
+    developer's az / VS Code login locally. NullPool: tokens expire, so a fresh
+    one is fetched per connection.
+    """
+    from azure.identity import DefaultAzureCredential
 
-        credential = ManagedIdentityCredential()
+    credential    = DefaultAzureCredential()
+    base_conn_str = (
+        f"Driver={{{DB_DRIVER}}};"
+        f"Server={DB_SERVER};"
+        f"Database={DB_NAME};"
+        f"Encrypt=yes;"
+        f"TrustServerCertificate=no;"
+    )
+    SQL_COPT_SS_ACCESS_TOKEN = 1256
 
-        def _creator():
-            import pyodbc
-            token        = credential.get_token("https://database.windows.net/.default")
-            token_bytes  = token.token.encode("UTF-16-LE")
-            token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-            SQL_COPT_SS_ACCESS_TOKEN = 1256
-            conn_str = (
-                f"Driver={{{DB_DRIVER}}};"
-                f"Server={DB_SERVER};"
-                f"Database={DB_NAME};"
-                f"Encrypt=yes;"
-                f"TrustServerCertificate=no;"
-            )
-            return pyodbc.connect(conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
+    def _creator():
+        import pyodbc
+        token        = credential.get_token("https://database.windows.net/.default").token
+        token_bytes  = token.encode("UTF-16-LE")
+        token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+        return pyodbc.connect(base_conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
 
-        return create_engine("mssql+pyodbc://", creator=_creator, poolclass=NullPool)
-
-    elif DB_USERNAME and DB_PASSWORD:
-        odbc_str = (
-            f"Driver={{{DB_DRIVER}}};"
-            f"Server={DB_SERVER};"
-            f"Database={DB_NAME};"
-            f"UID={DB_USERNAME};"
-            f"PWD={DB_PASSWORD};"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-        )
-        return create_engine(
-            f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}",
-            pool_pre_ping=True,
-        )
-
-    else:
-        odbc_str = (
-            f"Driver={{{DB_DRIVER}}};"
-            f"Server={DB_SERVER};"
-            f"Database={DB_NAME};"
-            f"Authentication=ActiveDirectoryInteractive;"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-        )
-        return create_engine(
-            f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}",
-            poolclass=NullPool,
-        )
-
+    return create_engine("mssql+pyodbc://", creator=_creator, poolclass=NullPool)
 
 engine       = _build_engine()
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

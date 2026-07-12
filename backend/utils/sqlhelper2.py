@@ -3,10 +3,9 @@ sqlhelper2.py – SQLAlchemy-based database helper
 =================================================
 Drop-in replacement for sqlhelper.py (pyodbc/ODBC).
 
-Authentication modes (controlled by env vars, same as sqlhelper.py):
-  • Managed Identity  – USE_MANAGED_IDENTITY=true   (Azure App Service / Functions)
-  • SQL Authentication – SQL_USER + SQL_PASSWORD set  (development)
-  • Azure AD Interactive – fallback                   (development / interactive)
+Authentication: Entra token via DefaultAzureCredential -- the container's
+Managed Identity in Azure (selected by AZURE_CLIENT_ID), or your az / VS Code
+login locally. No SQL username/password.
 
 Schema ownership
 ----------------
@@ -46,10 +45,7 @@ logger = logging.getLogger(__name__)
 DB_SERVER   = os.getenv("SQL_SERVER")
 DB_NAME     = os.getenv("SQL_DATABASE")
 DB_DRIVER   = os.getenv("DB_DRIVER", "ODBC Driver 18 for SQL Server")
-DB_USERNAME = os.getenv("SQL_USER")
-DB_PASSWORD = os.getenv("SQL_PASSWORD")
 
-USE_MANAGED_IDENTITY = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
 
 
 # ===========================================================================
@@ -58,89 +54,31 @@ USE_MANAGED_IDENTITY = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "tr
 
 def _build_engine():
     """
-    Build a SQLAlchemy engine matching the auth mode selected by env vars.
-    Mirrors the three-branch logic in sqlhelper.py.
+    SQLAlchemy engine using an Entra token via DefaultAzureCredential.
+    DefaultAzureCredential resolves the container's user-assigned MI (selected by
+    AZURE_CLIENT_ID) in Azure, or the developer's az / VS Code login locally.
+    NullPool: access tokens expire, so a fresh one is fetched per connection.
     """
-    if USE_MANAGED_IDENTITY:
-        # -------------------------------------------------------------------
-        # Production: Managed Identity
-        # Acquire an AAD token via azure-identity and inject it into each
-        # pyodbc connection through the creator callable.
-        # NullPool is used because tokens have a limited lifetime – we do not
-        # want SQLAlchemy to re-use a connection whose token has expired.
-        # -------------------------------------------------------------------
-        try:
-            from azure.identity import ManagedIdentityCredential
-        except ImportError:
-            raise RuntimeError(
-                "azure-identity is required for Managed Identity auth. "
-                "Install it with: pip install azure-identity"
-            )
+    from azure.identity import DefaultAzureCredential
 
-        credential = ManagedIdentityCredential()
+    credential    = DefaultAzureCredential()
+    base_conn_str = (
+        f"Driver={{{DB_DRIVER}}};"
+        f"Server={DB_SERVER};"
+        f"Database={DB_NAME};"
+        f"Encrypt=yes;"
+        f"TrustServerCertificate=no;"
+    )
+    SQL_COPT_SS_ACCESS_TOKEN = 1256
 
-        def _creator():
-            import pyodbc
-            token     = credential.get_token("https://database.windows.net/.default")
-            # Encode the bearer token in the format SQL Server expects
-            token_bytes  = token.token.encode("UTF-16-LE")
-            token_struct = struct.pack(
-                f"<I{len(token_bytes)}s", len(token_bytes), token_bytes
-            )
-            SQL_COPT_SS_ACCESS_TOKEN = 1256
-            conn_str = (
-                f"Driver={{{DB_DRIVER}}};"
-                f"Server={DB_SERVER};"
-                f"Database={DB_NAME};"
-                f"Encrypt=yes;"
-                f"TrustServerCertificate=no;"
-            )
-            return pyodbc.connect(
-                conn_str,
-                attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct},
-            )
+    def _creator():
+        import pyodbc
+        token        = credential.get_token("https://database.windows.net/.default").token
+        token_bytes  = token.encode("UTF-16-LE")
+        token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+        return pyodbc.connect(base_conn_str, attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct})
 
-        return create_engine(
-            "mssql+pyodbc://",
-            creator=_creator,
-            poolclass=NullPool,
-        )
-
-    elif DB_USERNAME and DB_PASSWORD:
-        # -------------------------------------------------------------------
-        # Development: SQL Authentication
-        # -------------------------------------------------------------------
-        odbc_str = (
-            f"Driver={{{DB_DRIVER}}};"
-            f"Server={DB_SERVER};"
-            f"Database={DB_NAME};"
-            f"UID={DB_USERNAME};"
-            f"PWD={DB_PASSWORD};"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-        )
-        return create_engine(
-            f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}",
-            pool_pre_ping=True,
-        )
-
-    else:
-        # -------------------------------------------------------------------
-        # Development: Azure AD Interactive (will prompt for login)
-        # NullPool avoids reuse of a connection acquired interactively.
-        # -------------------------------------------------------------------
-        odbc_str = (
-            f"Driver={{{DB_DRIVER}}};"
-            f"Server={DB_SERVER};"
-            f"Database={DB_NAME};"
-            f"Authentication=ActiveDirectoryInteractive;"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-        )
-        return create_engine(
-            f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}",
-            poolclass=NullPool,
-        )
+    return create_engine("mssql+pyodbc://", creator=_creator, poolclass=NullPool)
 
 
 engine      = _build_engine()

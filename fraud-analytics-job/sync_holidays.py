@@ -44,15 +44,11 @@ YEARS_AHEAD = 1
 NAGER_URL = "https://date.nager.at/api/v3/PublicHolidays/{year}/{cc}"
 
 
+from db_conn import connect
+
+
 def get_db_connection():
-    return pyodbc.connect(
-        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-        f"SERVER={os.getenv('SQL_SERVER')};"
-        f"DATABASE={os.getenv('SQL_DATABASE')};"
-        f"UID={os.getenv('SQL_USER')};"
-        f"PWD={os.getenv('SQL_PASSWORD')};"
-        f"Encrypt=yes;TrustServerCertificate=no;Connection Timeout=60;"
-    )
+    return connect()
 
 
 def country_from_locale(locale: str) -> str | None:

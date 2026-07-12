@@ -114,18 +114,11 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # DATABASE CONNECTION
 # ============================================================================
 
+from db_conn import connect
+
+
 def get_db_connection():
-    connection_string = (
-        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-        f"SERVER={os.getenv('SQL_SERVER')};"
-        f"DATABASE={os.getenv('SQL_DATABASE')};"
-        f"UID={os.getenv('SQL_USER')};"
-        f"PWD={os.getenv('SQL_PASSWORD')};"
-        f"Encrypt=yes;"
-        f"TrustServerCertificate=no;"
-        f"Connection Timeout=60;"
-    )
-    return pyodbc.connect(connection_string)
+    return connect()
 
 
 # ============================================================================

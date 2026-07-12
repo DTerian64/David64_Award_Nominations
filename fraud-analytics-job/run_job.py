@@ -95,16 +95,7 @@ def wake_database(
     """
     server   = os.getenv("SQL_SERVER", "(not set)")
     database = os.getenv("SQL_DATABASE", "(not set)")
-    conn_str = (
-        "DRIVER={ODBC Driver 18 for SQL Server};"
-        f"SERVER={server};"
-        f"DATABASE={database};"
-        f"UID={os.getenv('SQL_USER', '')};"
-        f"PWD={os.getenv('SQL_PASSWORD', '')};"
-        "Encrypt=yes;"
-        "TrustServerCertificate=no;"
-        f"Connection Timeout={attempt_timeout_s};"
-    )
+    from db_conn import connect  # Managed Identity token auth (ADR-0001)
 
     logger.info("──────────────────────────────────────────────────")
     logger.info("DB WAKE-UP  server=%s  database=%s", server, database)
@@ -119,7 +110,7 @@ def wake_database(
         t_attempt = time.monotonic()
         logger.info("DB WAKE-UP  attempt %d/%d — connecting...", attempt, max_attempts)
         try:
-            conn = pyodbc.connect(conn_str)
+            conn = connect(attempt_timeout_s)
             conn.execute("SELECT 1").fetchone()
             conn.close()
             elapsed = time.monotonic() - t_start
