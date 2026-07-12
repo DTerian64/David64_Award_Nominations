@@ -129,13 +129,15 @@ class PayrollSubmissionORM(Base):
 def _build_engine():
     """
     SQLAlchemy engine using an Entra token via DefaultAzureCredential -- the
-    container's Managed Identity in Azure (selected by AZURE_CLIENT_ID), or the
+    container's Managed Identity in Azure (selected by MI_CLIENT_ID), or the
     developer's az / VS Code login locally. NullPool: tokens expire, so a fresh
     one is fetched per connection.
     """
     from azure.identity import DefaultAzureCredential
 
-    credential    = DefaultAzureCredential()
+    credential    = DefaultAzureCredential(
+    managed_identity_client_id=os.getenv("MI_CLIENT_ID")
+)
     base_conn_str = (
         f"Driver={{{DB_DRIVER}}};"
         f"Server={DB_SERVER};"

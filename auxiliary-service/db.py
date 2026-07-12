@@ -43,7 +43,7 @@ _DATABASE = os.environ["SQL_DATABASE"]
 _DRIVER   = os.getenv("DB_DRIVER", "{ODBC Driver 18 for SQL Server}")
 
 # Entra token via Managed Identity (DefaultAzureCredential: the container MI in
-# Azure via AZURE_CLIENT_ID, or the developer's az/VS Code login locally).
+# Azure via MI_CLIENT_ID, or the developer's az/VS Code login locally).
 _SQL_COPT_SS_ACCESS_TOKEN = 1256
 _AZURE_SQL_SCOPE          = "https://database.windows.net/.default"
 _BASE_CONNECTION_STRING = (
@@ -53,7 +53,9 @@ _BASE_CONNECTION_STRING = (
     f"Encrypt=yes;"
     f"TrustServerCertificate=no;"
 )
-_credential = DefaultAzureCredential()
+_credential = DefaultAzureCredential(
+    managed_identity_client_id=os.getenv("MI_CLIENT_ID")
+)
 
 
 @contextmanager

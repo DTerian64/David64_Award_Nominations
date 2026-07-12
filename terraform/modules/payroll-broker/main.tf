@@ -127,7 +127,7 @@ resource "azurerm_container_app" "payroll_broker" {
       }
       # Required by DefaultAzureCredential when multiple MIs are attached.
       env {
-        name  = "AZURE_CLIENT_ID"
+        name  = "MI_CLIENT_ID"
         value = var.identity_client_id
       }
       env {

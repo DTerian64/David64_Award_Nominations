@@ -6,7 +6,7 @@ Models-free: migrations are hand-written and applied with `alembic upgrade head`
 so target_metadata is None.
 
 Auth: always Entra via DefaultAzureCredential -- it resolves the assigned Managed
-Identity inside Azure (AZURE_CLIENT_ID selects the user-assigned MI) and your
+Identity inside Azure (MI_CLIENT_ID selects the user-assigned MI) and your
 az / VS Code login locally. No SQL username/password, no toggles.
 """
 
@@ -32,7 +32,9 @@ DB_DRIVER = os.getenv("DB_DRIVER", "ODBC Driver 18 for SQL Server")
 SQL_COPT_SS_ACCESS_TOKEN = 1256
 AZURE_SQL_SCOPE = "https://database.windows.net/.default"
 
-_credential = DefaultAzureCredential()
+_credential = DefaultAzureCredential(
+    managed_identity_client_id=os.getenv("MI_CLIENT_ID")
+)
 
 
 def _odbc() -> str:

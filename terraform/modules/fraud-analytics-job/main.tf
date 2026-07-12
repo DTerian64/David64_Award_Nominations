@@ -105,7 +105,7 @@ resource "azurerm_container_app_job" "fraud_analytics" {
         value = var.model_container_name
       }
       env {
-        name  = "AZURE_CLIENT_ID"
+        name  = "MI_CLIENT_ID"
         value = var.analytics_identity_client_id
       }
       env {

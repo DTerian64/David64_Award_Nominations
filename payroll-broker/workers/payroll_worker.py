@@ -171,11 +171,11 @@ async def run_worker(stop_event: asyncio.Event) -> None:
         )
         return
 
-    # DefaultAzureCredential automatically picks up AZURE_CLIENT_ID set by Terraform,
+    # DefaultAzureCredential automatically picks up MI_CLIENT_ID set by Terraform,
     # which disambiguates the user-assigned MI when multiple identities are attached.
     credential = None
     try:
-        credential = DefaultAzureCredential()
+        credential = DefaultAzureCredential(managed_identity_client_id=os.getenv("MI_CLIENT_ID"))
         logger.info("Payroll worker starting topic=%s subscription=%s", _TOPIC, _SUBSCRIPTION)
 
         async with ServiceBusClient(_FQNS, credential) as sb_client:

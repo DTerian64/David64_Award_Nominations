@@ -7,7 +7,7 @@ to emit payroll.accepted / payroll.failed events after Gusto webhooks arrive.
 Environment variables required:
     SERVICE_BUS_FQNS         e.g. sb-award-sandbox.servicebus.windows.net
     SERVICE_BUS_TOPIC_NAME   e.g. award-events
-    AZURE_CLIENT_ID          Set by Terraform — disambiguates the user-assigned MI
+    MI_CLIENT_ID          Set by Terraform — disambiguates the user-assigned MI
                              when multiple identities are attached to the ACA.
                              Read automatically by DefaultAzureCredential(); no
                              explicit wiring needed in application code.
@@ -69,7 +69,7 @@ async def publish_event(
         application_properties=props,
     )
 
-    credential = DefaultAzureCredential()  # picks up AZURE_CLIENT_ID automatically
+    credential = DefaultAzureCredential(managed_identity_client_id=os.getenv("MI_CLIENT_ID"))
 
     try:
         async with ServiceBusClient(_FQNS, credential) as client:

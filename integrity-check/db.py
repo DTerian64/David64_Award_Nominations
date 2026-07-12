@@ -49,7 +49,7 @@ logger = logging.getLogger("integrity_check.db")
 
 # ── Connection (Entra token via Managed Identity) ─────────────────────────────
 # DefaultAzureCredential resolves the container's user-assigned MI (selected by
-# AZURE_CLIENT_ID) in Azure, or the developer's az / VS Code login locally.
+# MI_CLIENT_ID) in Azure, or the developer's az / VS Code login locally.
 # No SQL username/password.
 _SERVER   = os.environ["SQL_SERVER"]
 _DATABASE = os.environ["SQL_DATABASE"]
@@ -64,7 +64,9 @@ _BASE_CONNECTION_STRING = (
     f"Encrypt=yes;"
     f"TrustServerCertificate=no;"
 )
-_credential = DefaultAzureCredential()
+_credential = DefaultAzureCredential(
+    managed_identity_client_id=os.getenv("MI_CLIENT_ID")
+)
 
 
 @contextmanager

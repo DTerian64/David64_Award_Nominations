@@ -56,7 +56,7 @@ resource "azurerm_container_app_job" "schema_migration" {
       # env.py: no SQL_USER/PASSWORD => DefaultAzureCredential; AZURE_CLIENT_ID
       # selects this user-assigned MI for the Entra token.
       env {
-        name  = "AZURE_CLIENT_ID"
+        name  = "MI_CLIENT_ID"
         value = var.identity_client_id
       }
       env {

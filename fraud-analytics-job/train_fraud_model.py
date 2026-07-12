@@ -56,13 +56,13 @@ def _upload_artefact(local_path: Path) -> None:
     """
     Upload a local file to Azure Blob Storage and keep it under the same
     filename (no path prefix).  Uses the User-Assigned Managed Identity
-    injected via AZURE_CLIENT_ID; falls back to env-var key auth when
+    injected via MI_CLIENT_ID; falls back to env-var key auth when
     running locally with AZURE_STORAGE_KEY set.
 
     Env vars (set by Terraform / Container Apps Job):
       AZURE_STORAGE_ACCOUNT  — storage account name  (e.g. 'awardnomsa')
       MODEL_CONTAINER        — blob container name    (e.g. 'ml-models')
-      AZURE_CLIENT_ID        — MI client ID for DefaultAzureCredential
+      MI_CLIENT_ID        — MI client ID for DefaultAzureCredential
       AZURE_STORAGE_KEY      — (optional) key auth for local dev
     """
     account   = os.getenv("AZURE_STORAGE_ACCOUNT")
@@ -84,10 +84,10 @@ def _upload_artefact(local_path: Path) -> None:
                 credential=storage_key,
             )
         else:
-            # Container: Managed Identity (AZURE_CLIENT_ID picked up automatically)
+            # Container: Managed Identity (MI_CLIENT_ID picked up automatically)
             client = BlobServiceClient(
                 account_url=f"https://{account}.blob.core.windows.net",
-                credential=DefaultAzureCredential(),
+                credential=DefaultAzureCredential(managed_identity_client_id=os.getenv("MI_CLIENT_ID")),
             )
 
         blob_client = client.get_blob_client(container=container, blob=local_path.name)

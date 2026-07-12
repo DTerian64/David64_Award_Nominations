@@ -2,7 +2,7 @@
 fraud-analytics-job/db_conn.py -- shared Azure SQL connection (ADR-0001).
 
 Entra token via DefaultAzureCredential: the job's Managed Identity in Azure
-(selected by AZURE_CLIENT_ID) or the developer's az / VS Code login locally.
+(selected by MI_CLIENT_ID) or the developer's az / VS Code login locally.
 No SQL username/password.
 """
 import os
@@ -13,7 +13,9 @@ from azure.identity import DefaultAzureCredential
 
 _SQL_COPT_SS_ACCESS_TOKEN = 1256
 _AZURE_SQL_SCOPE          = "https://database.windows.net/.default"
-_credential = DefaultAzureCredential()
+_credential = DefaultAzureCredential(
+    managed_identity_client_id=os.getenv("MI_CLIENT_ID")
+)
 
 
 def connect(timeout: int = 60) -> pyodbc.Connection:
