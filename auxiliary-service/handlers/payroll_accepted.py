@@ -16,7 +16,7 @@ Payload keys
 
 import logging
 
-import db
+from utils import db
 
 logger = logging.getLogger("auxiliary.handlers.payroll_accepted")
 

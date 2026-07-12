@@ -21,10 +21,10 @@ records when the decision was made. Email delivery is tracked in ProcessedEvents
 
 import logging
 
-import cert_blob
-import db
-import email_client
-import templating
+from utils import cert_blob
+from utils import db
+from utils import email_client
+from utils import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_approved")
 

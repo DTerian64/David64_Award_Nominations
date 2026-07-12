@@ -14,9 +14,9 @@ Schema (managed by backend/alembic/versions/0030_payroll_tables.py):
 
   Tenants.payroll_provider_id — FK → payroll_providers.id
 
-Authentication modes (env vars):
-  USE_MANAGED_IDENTITY=true  → Managed Identity (production)
-  SQL_USER + SQL_PASSWORD     → SQL auth (development)
+Authentication:
+  Always Entra via the container's Managed Identity (utils/azure_credential.py).
+  No SQL username/password.
 """
 
 import logging
@@ -42,10 +42,6 @@ logger = logging.getLogger(__name__)
 DB_SERVER   = os.getenv("SQL_SERVER")
 DB_NAME     = os.getenv("SQL_DATABASE")
 DB_DRIVER   = os.getenv("DB_DRIVER", "ODBC Driver 18 for SQL Server")
-DB_USERNAME = os.getenv("SQL_USER")
-DB_PASSWORD = os.getenv("SQL_PASSWORD")
-
-USE_MANAGED_IDENTITY = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
 
 
 # ===========================================================================
@@ -133,11 +129,8 @@ def _build_engine():
     developer's az / VS Code login locally. NullPool: tokens expire, so a fresh
     one is fetched per connection.
     """
-    from azure.identity import DefaultAzureCredential
+    from .azure_credential import credential
 
-    credential    = DefaultAzureCredential(
-    managed_identity_client_id=os.getenv("MI_CLIENT_ID")
-)
     base_conn_str = (
         f"Driver={{{DB_DRIVER}}};"
         f"Server={DB_SERVER};"

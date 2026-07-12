@@ -31,7 +31,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Callable
 
-import db
+from utils import db
 from handlers import (
     nomination_created,
     nomination_approved,

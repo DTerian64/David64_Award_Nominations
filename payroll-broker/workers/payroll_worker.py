@@ -34,11 +34,11 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from azure.identity.aio import DefaultAzureCredential
 from azure.servicebus.aio import ServiceBusClient
 
 import utils.sqlhelper as db
 from providers.registry import PROVIDER_REGISTRY
+from utils.azure_credential import async_credential
 from utils.service_bus_publisher import publish_event
 
 logger = logging.getLogger(__name__)
@@ -173,12 +173,10 @@ async def run_worker(stop_event: asyncio.Event) -> None:
 
     # DefaultAzureCredential automatically picks up MI_CLIENT_ID set by Terraform,
     # which disambiguates the user-assigned MI when multiple identities are attached.
-    credential = None
     try:
-        credential = DefaultAzureCredential(managed_identity_client_id=os.getenv("MI_CLIENT_ID"))
         logger.info("Payroll worker starting topic=%s subscription=%s", _TOPIC, _SUBSCRIPTION)
 
-        async with ServiceBusClient(_FQNS, credential) as sb_client:
+        async with ServiceBusClient(_FQNS, async_credential) as sb_client:
             receiver = sb_client.get_subscription_receiver(
                 topic_name=_TOPIC,
                 subscription_name=_SUBSCRIPTION,
@@ -257,6 +255,4 @@ async def run_worker(stop_event: asyncio.Event) -> None:
     except Exception:
         logger.exception("Payroll worker crashed unexpectedly")
     finally:
-        if credential:
-            await credential.close()
         logger.info("Payroll worker stopped")

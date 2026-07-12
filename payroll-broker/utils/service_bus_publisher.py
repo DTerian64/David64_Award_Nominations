@@ -18,10 +18,11 @@ import logging
 import os
 import uuid
 
-from azure.identity.aio import DefaultAzureCredential
 from azure.servicebus.aio import ServiceBusClient
 from azure.servicebus import ServiceBusMessage
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+from .azure_credential import async_credential
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,8 @@ async def publish_event(
         application_properties=props,
     )
 
-    credential = DefaultAzureCredential(managed_identity_client_id=os.getenv("MI_CLIENT_ID"))
-
     try:
-        async with ServiceBusClient(_FQNS, credential) as client:
+        async with ServiceBusClient(_FQNS, async_credential) as client:
             async with client.get_topic_sender(_TOPIC) as sender:
                 await sender.send_messages(msg)
         logger.info(
@@ -85,5 +84,3 @@ async def publish_event(
             event_type, nomination_id,
         )
         raise
-    finally:
-        await credential.close()

@@ -21,9 +21,9 @@ Any exception propagates to the dispatcher for retry (same as all handlers).
 
 import logging
 
-import db
-import email_client
-import templating
+from utils import db
+from utils import email_client
+from utils import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_fraud_flagged")
 

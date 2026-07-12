@@ -14,7 +14,7 @@ import time
 
 from jinja2.sandbox import SandboxedEnvironment
 
-import db
+from . import db
 
 logger = logging.getLogger("auxiliary.templating")
 

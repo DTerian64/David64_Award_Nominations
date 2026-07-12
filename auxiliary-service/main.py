@@ -31,7 +31,6 @@ import sys
 import time
 from contextvars import ContextVar
 
-from azure.identity import DefaultAzureCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
 from dotenv import load_dotenv
@@ -40,6 +39,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 from dispatcher import dispatch
 from logging_config import setup_logging
+from utils.azure_credential import credential
 
 # ── Message-ID context ────────────────────────────────────────────────────────
 # Holds the Service Bus message_id for the message currently being processed.
@@ -112,8 +112,6 @@ def main() -> None:
             "subscription": SERVICE_BUS_SUBSCRIPTION,
         }
     )
-
-    credential = DefaultAzureCredential()
 
     with ServiceBusClient(
         fully_qualified_namespace=SERVICE_BUS_FQNS,

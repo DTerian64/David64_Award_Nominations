@@ -30,14 +30,15 @@ from datetime import datetime
 from typing import Optional
 
 import pyodbc
-from azure.identity import DefaultAzureCredential
+
+from .azure_credential import credential
 
 logger = logging.getLogger("auxiliary.db")
 
 # ── Connection string ─────────────────────────────────────────────────────────
 # Secrets are injected by ACA from Key Vault references at container startup.
-# The worker always uses SQL auth (the managed identity is used for Service Bus
-# and Key Vault, not for the SQL Server in this setup).
+# SQL access uses the container's Managed Identity (Entra token via
+# utils/azure_credential.py) — no SQL username/password.
 _SERVER   = os.environ["SQL_SERVER"]
 _DATABASE = os.environ["SQL_DATABASE"]
 _DRIVER   = os.getenv("DB_DRIVER", "{ODBC Driver 18 for SQL Server}")
@@ -53,15 +54,12 @@ _BASE_CONNECTION_STRING = (
     f"Encrypt=yes;"
     f"TrustServerCertificate=no;"
 )
-_credential = DefaultAzureCredential(
-    managed_identity_client_id=os.getenv("MI_CLIENT_ID")
-)
 
 
 @contextmanager
 def _get_conn():
     """Open a connection, yield it, and close it — even on exception."""
-    token        = _credential.get_token(_AZURE_SQL_SCOPE).token.encode("utf-16-le")
+    token        = credential.get_token(_AZURE_SQL_SCOPE).token.encode("utf-16-le")
     token_struct = struct.pack(f"<I{len(token)}s", len(token), token)
     conn = pyodbc.connect(
         _BASE_CONNECTION_STRING,

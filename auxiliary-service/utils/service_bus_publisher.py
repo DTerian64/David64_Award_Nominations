@@ -20,12 +20,12 @@ import uuid
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from .azure_credential import credential
+
 logger = logging.getLogger("auxiliary.service_bus_publisher")
 
-_FQNS         = os.environ["SERVICE_BUS_FQNS"]
-_TOPIC        = os.environ["SERVICE_BUS_TOPIC_NAME"]
-_MI_CLIENT_ID = os.getenv("MI_CLIENT_ID") or None
-_STORAGE_KEY  = os.getenv("AZURE_STORAGE_KEY")   # local dev key auth sentinel
+_FQNS  = os.environ["SERVICE_BUS_FQNS"]
+_TOPIC = os.environ["SERVICE_BUS_TOPIC_NAME"]
 
 
 def publish_event(
@@ -60,15 +60,6 @@ def publish_event(
         content_type="application/json",
         application_properties={"event_type": event_type, **carrier},
     )
-
-    if _STORAGE_KEY:
-        # Local dev: reuse AZURE_STORAGE_KEY as a signal that we're running
-        # locally and should fall back to AzureCliCredential.
-        from azure.identity import DefaultAzureCredential
-        credential = DefaultAzureCredential()
-    else:
-        from azure.identity import DefaultAzureCredential
-        credential = DefaultAzureCredential(managed_identity_client_id=_MI_CLIENT_ID)
 
     with ServiceBusClient(_FQNS, credential) as client:
         with client.get_topic_sender(_TOPIC) as sender:

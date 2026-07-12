@@ -14,9 +14,9 @@ this event is published.
 
 import logging
 
-import db
-import email_client
-import templating
+from utils import db
+from utils import email_client
+from utils import templating
 
 logger = logging.getLogger("auxiliary.handlers.nomination_hrbp_rejected")
 

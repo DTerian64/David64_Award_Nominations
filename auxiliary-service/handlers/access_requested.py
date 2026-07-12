@@ -24,8 +24,8 @@ No DB lookup needed — all content is in the payload.
 
 import logging
 
-import email_client
-import templating
+from utils import email_client
+from utils import templating
 
 logger = logging.getLogger("auxiliary.handlers.access_requested")
 
