@@ -36,36 +36,45 @@ Focused subset of queries needed by handler.py and fraud_check.py:
 import json
 import logging
 import os
+import struct
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
 import pyodbc
+from azure.identity import DefaultAzureCredential
 
 logger = logging.getLogger("integrity_check.db")
 
-# ── Connection string ─────────────────────────────────────────────────────────
+# ── Connection (Entra token via Managed Identity) ─────────────────────────────
+# DefaultAzureCredential resolves the container's user-assigned MI (selected by
+# AZURE_CLIENT_ID) in Azure, or the developer's az / VS Code login locally.
+# No SQL username/password.
 _SERVER   = os.environ["SQL_SERVER"]
 _DATABASE = os.environ["SQL_DATABASE"]
-_USER     = os.environ["SQL_USER"]
-_PASSWORD = os.environ["SQL_PASSWORD"]
 _DRIVER   = os.getenv("DB_DRIVER", "{ODBC Driver 18 for SQL Server}")
 
-_CONNECTION_STRING = (
+_SQL_COPT_SS_ACCESS_TOKEN = 1256
+_AZURE_SQL_SCOPE          = "https://database.windows.net/.default"
+_BASE_CONNECTION_STRING = (
     f"Driver={_DRIVER};"
     f"Server={_SERVER};"
     f"Database={_DATABASE};"
-    f"UID={_USER};"
-    f"PWD={_PASSWORD};"
     f"Encrypt=yes;"
     f"TrustServerCertificate=no;"
 )
+_credential = DefaultAzureCredential()
 
 
 @contextmanager
 def _get_conn():
-    conn = pyodbc.connect(_CONNECTION_STRING)
+    token        = _credential.get_token(_AZURE_SQL_SCOPE).token.encode("utf-16-le")
+    token_struct = struct.pack(f"<I{len(token)}s", len(token), token)
+    conn = pyodbc.connect(
+        _BASE_CONNECTION_STRING,
+        attrs_before={_SQL_COPT_SS_ACCESS_TOKEN: token_struct},
+    )
     try:
         yield conn
     finally:
