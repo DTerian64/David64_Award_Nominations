@@ -29,7 +29,7 @@ from urllib.parse import quote_plus
 
 from sqlalchemy import (
     Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, Unicode,
-    UniqueConstraint, create_engine, text,
+    UniqueConstraint, create_engine, event, text,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -69,6 +69,11 @@ class PayrollProviderORM(Base):
     provider_config         = Column(Unicode(None), nullable=True)    # NVARCHAR(MAX) JSON
     api_base_url            = Column(String(255),   nullable=True)    # NULL = use hardcoded default
     oauth_base_url          = Column(String(255),   nullable=True)
+    created_at              = Column(DateTime, server_default=text("GETUTCDATE()"))
+    created_by              = Column(Unicode(256), nullable=True)
+    updated_at              = Column(DateTime, server_default=text("GETUTCDATE()"),
+                                     onupdate=datetime.utcnow)
+    updated_by              = Column(Unicode(256), nullable=True)
 
 
 class PayrollTokenORM(Base):
@@ -88,6 +93,8 @@ class PayrollTokenORM(Base):
     created_at       = Column(DateTime, server_default=text("GETUTCDATE()"))
     updated_at       = Column(DateTime, server_default=text("GETUTCDATE()"),
                               onupdate=datetime.utcnow)
+    created_by       = Column(Unicode(256), nullable=True)
+    updated_by       = Column(Unicode(256), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("provider_id", name="uq_payroll_tokens_provider"),
@@ -116,6 +123,35 @@ class PayrollSubmissionORM(Base):
     reason               = Column(String(1000), nullable=True)
     submitted_at         = Column(DateTime,   server_default=text("GETUTCDATE()"))
     completed_at         = Column(DateTime,   nullable=True)
+    created_at           = Column(DateTime,   server_default=text("GETUTCDATE()"))
+    created_by           = Column(Unicode(256), nullable=True)
+    updated_at           = Column(DateTime,   server_default=text("GETUTCDATE()"),
+                                  onupdate=datetime.utcnow)
+    updated_by           = Column(Unicode(256), nullable=True)
+
+
+# ===========================================================================
+# Audit stamping (SOC 2) - created_by / updated_by
+# ===========================================================================
+_AUDIT_ACTOR = "svc:payroll-broker"
+
+
+@event.listens_for(Session, "before_flush")
+def _stamp_audit_actor(session, flush_context, instances):
+    """Stamp the service actor on any audit-bearing model at flush time.
+
+    payroll-broker writes autonomously (OAuth callback, token refresh, worker),
+    so there is no human actor; created_by/updated_by carry a constant service
+    marker. Covers both branches of the upsert helpers without per-site edits.
+    """
+    for obj in session.new:
+        if hasattr(obj, "updated_by"):
+            if getattr(obj, "created_by", None) is None:
+                obj.created_by = _AUDIT_ACTOR
+            obj.updated_by = _AUDIT_ACTOR
+    for obj in session.dirty:
+        if hasattr(obj, "updated_by"):
+            obj.updated_by = _AUDIT_ACTOR
 
 
 # ===========================================================================

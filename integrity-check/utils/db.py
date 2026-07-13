@@ -48,6 +48,9 @@ from .azure_credential import credential
 
 logger = logging.getLogger("integrity_check.db")
 
+# created_by / updated_by marker for this service's autonomous writes (no human actor).
+_AUDIT_ACTOR = "svc:integrity-check"
+
 # ── Connection (Entra token via Managed Identity) ─────────────────────────────
 # DefaultAzureCredential resolves the container's user-assigned MI (selected by
 # MI_CLIENT_ID) in Azure, or the developer's az / VS Code login locally.
@@ -307,8 +310,9 @@ def set_nomination_status(nomination_id: int, new_status: str) -> None:
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE dbo.Nominations SET Status = ? WHERE NominationId = ?",
-            (new_status, nomination_id),
+            "UPDATE dbo.Nominations SET Status = ?, "
+            "updated_at = SYSUTCDATETIME(), updated_by = ? WHERE NominationId = ?",
+            (new_status, _AUDIT_ACTOR, nomination_id),
         )
         conn.commit()
         logger.info("Status updated",
@@ -334,10 +338,12 @@ def reject_nomination(nomination_id: int, reason: str, actor: str) -> None:
             UPDATE dbo.Nominations
             SET Status          = 'Rejected',
                 RejectionReason = ?,
-                RejectionActor  = ?
+                RejectionActor  = ?,
+                updated_at      = SYSUTCDATETIME(),
+                updated_by      = ?
             WHERE NominationId  = ?
             """,
-            (reason.strip() or None, actor, nomination_id),
+            (reason.strip() or None, actor, _AUDIT_ACTOR, nomination_id),
         )
         conn.commit()
         logger.info(

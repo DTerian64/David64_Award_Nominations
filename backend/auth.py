@@ -42,6 +42,7 @@ from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import OAuth2
 from typing import Optional, Dict, Any, Callable
 import utils.sqlhelper2 as sqlhelper
+from utils.audit_context import set_actor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -259,6 +260,8 @@ async def _authenticate(token: str, origin: Optional[str] = None) -> Dict[str, A
             row[2], row[3], row[0], tenant_id,
         )
 
+        set_actor(row[1])  # audit: default actor = authenticated UPN
+
         return {
             "UserId":             row[0],
             "userPrincipalName":  row[1],
@@ -386,6 +389,8 @@ async def get_current_user_with_impersonation(
             x_impersonate_user,
             tenant_id,
         )
+
+        set_actor(impersonated_user["userPrincipalName"])  # audit: acting-as UPN
 
         return {
             "actual_user":     actual_user,

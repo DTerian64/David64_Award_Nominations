@@ -35,6 +35,9 @@ from .azure_credential import credential
 
 logger = logging.getLogger("auxiliary.db")
 
+# created_by / updated_by marker for this service's autonomous writes (no human actor).
+_AUDIT_ACTOR = "svc:auxiliary"
+
 # ── Connection string ─────────────────────────────────────────────────────────
 # Secrets are injected by ACA from Key Vault references at container startup.
 # SQL access uses the container's Managed Identity (Entra token via
@@ -149,10 +152,12 @@ def set_approver_notified(nomination_id: int) -> None:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE dbo.Nominations
-            SET    ApproverNotifiedAt = GETUTCDATE()
+            SET    ApproverNotifiedAt = GETUTCDATE(),
+                   updated_at = SYSUTCDATETIME(),
+                   updated_by = ?
             WHERE  NominationId = ?
               AND  ApproverNotifiedAt IS NULL   -- only stamp once
-        """, (nomination_id,))
+        """, (_AUDIT_ACTOR, nomination_id))
         conn.commit()
         if cursor.rowcount == 0:
             logger.debug(
@@ -578,8 +583,10 @@ def set_nomination_status(nomination_id: int, new_status: str) -> None:
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            UPDATE dbo.Nominations SET Status = ? WHERE NominationId = ?
-        """, (new_status, nomination_id))
+            UPDATE dbo.Nominations
+            SET Status = ?, updated_at = SYSUTCDATETIME(), updated_by = ?
+            WHERE NominationId = ?
+        """, (new_status, _AUDIT_ACTOR, nomination_id))
         conn.commit()
         logger.info(
             "Nomination status updated",

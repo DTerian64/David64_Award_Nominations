@@ -39,6 +39,8 @@ from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger(__name__)
 
+from utils.audit_context import get_actor
+
 # ---------------------------------------------------------------------------
 # Environment / configuration  (mirrors sqlhelper.py)
 # ---------------------------------------------------------------------------
@@ -586,11 +588,11 @@ def create_nomination(
                 INSERT INTO Nominations
                     (NominatorId, BeneficiaryId, ApproverId, Amount, Currency,
                      NominationDescription, NominationDate, Status, ApprovedDate, PayedDate,
-                     CategoryId)
+                     CategoryId, created_at, created_by, updated_at, updated_by)
                 OUTPUT INSERTED.NominationId
                 VALUES (:nominator_id, :beneficiary_id, :approver_id, :amount, :currency,
                         :description, GETDATE(), :initial_status, NULL, NULL,
-                        :category_id)
+                        :category_id, GETDATE(), :audit_by, GETDATE(), :audit_by)
             """),
             {
                 "nominator_id":   nominator_id,
@@ -601,6 +603,7 @@ def create_nomination(
                 "description":    description,
                 "category_id":    category_id,
                 "initial_status": initial_status,
+                "audit_by":       get_actor(),
             },
         )
         nomination_id = result.fetchone()[0]
@@ -775,10 +778,11 @@ def approve_nomination(nomination_id: int) -> bool:
         result = session.execute(
             text("""
                 UPDATE Nominations
-                SET ApprovedDate = GETDATE(), Status = 'Approved'
+                SET ApprovedDate = GETDATE(), Status = 'Approved',
+                    updated_at = SYSUTCDATETIME(), updated_by = :audit_by
                 WHERE NominationId = :nomination_id
             """),
-            {"nomination_id": nomination_id},
+            {"nomination_id": nomination_id, "audit_by": get_actor()},
         )
         session.commit()
         return result.rowcount > 0
@@ -809,13 +813,16 @@ def reject_nomination(
                 UPDATE dbo.Nominations
                 SET Status          = 'Rejected',
                     RejectionReason = :reason,
-                    RejectionActor  = :actor
+                    RejectionActor  = :actor,
+                    updated_at      = SYSUTCDATETIME(),
+                    updated_by      = :audit_by
                 WHERE NominationId  = :nomination_id
             """),
             {
                 "nomination_id": nomination_id,
                 "reason":        reason.strip() or None,
                 "actor":         actor,
+                "audit_by":      get_actor(),
             },
         )
         session.commit()
@@ -925,10 +932,11 @@ def mark_nomination_as_paid(nomination_id: int) -> bool:
         result = session.execute(
             text("""
                 UPDATE Nominations
-                SET PayedDate = GETDATE(), Status = 'Paid'
+                SET PayedDate = GETDATE(), Status = 'Paid',
+                    updated_at = SYSUTCDATETIME(), updated_by = :audit_by
                 WHERE NominationId = :nomination_id
             """),
-            {"nomination_id": nomination_id},
+            {"nomination_id": nomination_id, "audit_by": get_actor()},
         )
         session.commit()
         return result.rowcount > 0
@@ -947,10 +955,12 @@ def mark_nomination_payment_submitted(nomination_id: int, payment_ref: str) -> b
                 UPDATE Nominations
                 SET Status             = 'PaymentSubmitted',
                     PaymentRef         = :payment_ref,
-                    PaymentSubmittedAt = GETUTCDATE()
+                    PaymentSubmittedAt = GETUTCDATE(),
+                    updated_at         = SYSUTCDATETIME(),
+                    updated_by         = :audit_by
                 WHERE NominationId = :nomination_id
             """),
-            {"nomination_id": nomination_id, "payment_ref": payment_ref},
+            {"nomination_id": nomination_id, "payment_ref": payment_ref, "audit_by": get_actor()},
         )
         session.commit()
         return result.rowcount > 0
@@ -966,12 +976,13 @@ def mark_nomination_paid_by_ref(payment_ref: str) -> Optional[int]:
         row = session.execute(
             text("""
                 UPDATE Nominations
-                SET PayedDate = GETUTCDATE(), Status = 'Paid'
+                SET PayedDate = GETUTCDATE(), Status = 'Paid',
+                    updated_at = SYSUTCDATETIME(), updated_by = :audit_by
                 OUTPUT INSERTED.NominationId
                 WHERE PaymentRef = :payment_ref
                   AND Status     = 'PaymentSubmitted'
             """),
-            {"payment_ref": payment_ref},
+            {"payment_ref": payment_ref, "audit_by": get_actor()},
         ).fetchone()
         session.commit()
         return row[0] if row else None
@@ -2187,9 +2198,11 @@ def create_demo_user(
         result = session.execute(
             text("""
                 INSERT INTO dbo.Users
-                    (userPrincipalName, userEmail, FirstName, LastName, Title, ManagerId, TenantId)
+                    (userPrincipalName, userEmail, FirstName, LastName, Title, ManagerId, TenantId,
+                     created_by, updated_by)
                 OUTPUT INSERTED.UserId
-                VALUES (:upn, :email, :first, :last, 'Demo User', NULL, :tid)
+                VALUES (:upn, :email, :first, :last, 'Demo User', NULL, :tid,
+                        :audit_by, :audit_by)
             """),
             {
                 "upn":   upn,
@@ -2197,6 +2210,7 @@ def create_demo_user(
                 "first": first_name,
                 "last":  last_name,
                 "tid":   tenant_id,
+                "audit_by": get_actor(),
             },
         )
         row = result.fetchone()
@@ -2280,10 +2294,12 @@ def set_nomination_status(nomination_id: int, status: str) -> None:
         session.execute(
             text("""
                 UPDATE dbo.Nominations
-                SET    Status = :status
+                SET    Status = :status,
+                       updated_at = SYSUTCDATETIME(),
+                       updated_by = :audit_by
                 WHERE  NominationId = :nomination_id
             """),
-            {"nomination_id": nomination_id, "status": status},
+            {"nomination_id": nomination_id, "status": status, "audit_by": get_actor()},
         )
         session.commit()
 
@@ -2369,10 +2385,10 @@ def assign_user_role(user_id: int, role: str, assigned_by: int) -> bool:
                 USING (SELECT :uid AS UserId, :role AS Role) AS src
                 ON target.UserId = src.UserId AND target.Role = src.Role
                 WHEN NOT MATCHED THEN
-                    INSERT (UserId, Role, AssignedBy)
-                    VALUES (:uid, :role, :assigned_by);
+                    INSERT (UserId, Role, AssignedBy, created_by, updated_by)
+                    VALUES (:uid, :role, :assigned_by, :audit_by, :audit_by);
             """),
-            {"uid": user_id, "role": role, "assigned_by": assigned_by},
+            {"uid": user_id, "role": role, "assigned_by": assigned_by, "audit_by": get_actor()},
         )
         session.commit()
         return result.rowcount > 0
