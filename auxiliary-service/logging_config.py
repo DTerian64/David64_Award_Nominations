@@ -115,7 +115,6 @@ def setup_logging():
     # SOC 2: persist nomination-scoped logs to dbo.Nomination_Logs. Attached
     # FIRST so it captures the clean record before the console filters mutate it.
     try:
-        import os
         from utils.db import insert_nomination_logs
         from utils.nomination_log_handler import NominationLogDBHandler
         _svc = os.getenv("CONTAINER_APP_NAME") or "auxiliary-service"
