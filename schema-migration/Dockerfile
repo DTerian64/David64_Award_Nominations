@@ -2,7 +2,7 @@
 # Ephemeral, one-shot image: applies `alembic upgrade head` and exits.
 # Owned by no runtime service; run by the deploy-schema-migration pipeline
 # as the `sql-migrations` identity (db_ddladmin).
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # Microsoft ODBC Driver 18 + unixODBC (required by pyodbc against Azure SQL).
 RUN apt-get update \
