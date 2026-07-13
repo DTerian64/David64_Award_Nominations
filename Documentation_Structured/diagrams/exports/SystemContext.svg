@@ -15,88 +15,86 @@
 <!-- award -->
 <g id="node1" class="node">
 <title>award</title>
-<path fill="#1168bd" stroke="#333333" stroke-opacity="0.333333" d="M875.76,-421.78C875.76,-421.78 707.34,-421.78 707.34,-421.78 701.34,-421.78 695.34,-415.78 695.34,-409.78 695.34,-409.78 695.34,-322 695.34,-322 695.34,-316 701.34,-310 707.34,-310 707.34,-310 875.76,-310 875.76,-310 881.76,-310 887.76,-316 887.76,-322 887.76,-322 887.76,-409.78 887.76,-409.78 887.76,-415.78 881.76,-421.78 875.76,-421.78"/>
-<text xml:space="preserve" text-anchor="middle" x="791.55" y="-402.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[Software System]</text>
-<text xml:space="preserve" text-anchor="middle" x="791.55" y="-389.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Award Nomination App</text>
-<text xml:space="preserve" text-anchor="middle" x="791.55" y="-375.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="791.55" y="-362.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Tenant&#45;configurable SaaS platform</text>
-<text xml:space="preserve" text-anchor="middle" x="791.55" y="-348.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">for employee award nomination,</text>
-<text xml:space="preserve" text-anchor="middle" x="791.55" y="-335.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">integrity review, analytics, and</text>
-<text xml:space="preserve" text-anchor="middle" x="791.55" y="-321.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">payroll coordination.</text>
-</g>
-<!-- entra -->
-<g id="node5" class="node">
-<title>entra</title>
-<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M1224.56,-636.03C1224.56,-636.03 1081.63,-636.03 1081.63,-636.03 1075.63,-636.03 1069.63,-630.03 1069.63,-624.03 1069.63,-624.03 1069.63,-549.75 1069.63,-549.75 1069.63,-543.75 1075.63,-537.75 1081.63,-537.75 1081.63,-537.75 1224.56,-537.75 1224.56,-537.75 1230.56,-537.75 1236.56,-543.75 1236.56,-549.75 1236.56,-549.75 1236.56,-624.03 1236.56,-624.03 1236.56,-630.03 1230.56,-636.03 1224.56,-636.03"/>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-616.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-603.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Microsoft Entra ID</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-589.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-576.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Identity provider for user</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-562.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">authentication and admin app</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-549.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">roles.</text>
-</g>
-<!-- award&#45;&gt;entra -->
-<g id="edge4" class="edge">
-<title>award&#45;&gt;entra</title>
-<path fill="none" stroke="#707070" d="M863.67,-422.19C880.12,-434.43 897.78,-446.97 914.76,-457.89 961.64,-488.04 1016.15,-518 1061.09,-541.45"/>
-<polygon fill="#707070" stroke="#707070" points="1059.64,-543.85 1068.03,-545.05 1062.22,-538.88 1059.64,-543.85"/>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-533.79" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Authenticates users with</text>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-523.29" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">MSAL</text>
-</g>
-<!-- frontDoor -->
-<g id="node6" class="node">
-<title>frontDoor</title>
-<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M1236.18,-501.28C1236.18,-501.28 1070.01,-501.28 1070.01,-501.28 1064.01,-501.28 1058.01,-495.28 1058.01,-489.28 1058.01,-489.28 1058.01,-428.5 1058.01,-428.5 1058.01,-422.5 1064.01,-416.5 1070.01,-416.5 1070.01,-416.5 1236.18,-416.5 1236.18,-416.5 1242.18,-416.5 1248.18,-422.5 1248.18,-428.5 1248.18,-428.5 1248.18,-489.28 1248.18,-489.28 1248.18,-495.28 1242.18,-501.28 1236.18,-501.28"/>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-482.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-468.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Azure Front Door + WAF</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-455.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-441.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Edge routing, WAF, health probes,</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-428.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">TLS, and CORS handling.</text>
-</g>
-<!-- award&#45;&gt;frontDoor -->
-<g id="edge5" class="edge">
-<title>award&#45;&gt;frontDoor</title>
-<path fill="none" stroke="#707070" d="M888.07,-404.45C897.03,-407.51 906.02,-410.38 914.76,-412.89 957.98,-425.29 1006.6,-435.36 1048.52,-442.89"/>
-<polygon fill="#707070" stroke="#707070" points="1047.78,-445.6 1056.15,-444.24 1048.76,-440.09 1047.78,-445.6"/>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-440.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Calls API through</text>
-</g>
-<!-- smtp -->
-<g id="node8" class="node">
-<title>smtp</title>
-<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M1227.93,-380.03C1227.93,-380.03 1078.26,-380.03 1078.26,-380.03 1072.26,-380.03 1066.26,-374.03 1066.26,-368.03 1066.26,-368.03 1066.26,-293.75 1066.26,-293.75 1066.26,-287.75 1072.26,-281.75 1078.26,-281.75 1078.26,-281.75 1227.93,-281.75 1227.93,-281.75 1233.93,-281.75 1239.93,-287.75 1239.93,-293.75 1239.93,-293.75 1239.93,-368.03 1239.93,-368.03 1239.93,-374.03 1233.93,-380.03 1227.93,-380.03"/>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-360.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-347.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">SMTP / Email Provider</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-333.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-320.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Sends workflow, HRBP, demo,</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-306.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">payroll, and analytics</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-293.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">notification emails.</text>
-</g>
-<!-- award&#45;&gt;smtp -->
-<g id="edge10" class="edge">
-<title>award&#45;&gt;smtp</title>
-<path fill="none" stroke="#707070" d="M888.08,-346.18C897.07,-344.73 906.07,-343.43 914.76,-342.39 961.22,-336.83 1013.1,-333.93 1056.48,-332.44"/>
-<polygon fill="#707070" stroke="#707070" points="1056.47,-335.24 1064.37,-332.18 1056.29,-329.65 1056.47,-335.24"/>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-344.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Sends notification emails</text>
+<path fill="#1168bd" stroke="#333333" stroke-opacity="0.333333" d="M875.76,-482.78C875.76,-482.78 707.34,-482.78 707.34,-482.78 701.34,-482.78 695.34,-476.78 695.34,-470.78 695.34,-470.78 695.34,-383 695.34,-383 695.34,-377 701.34,-371 707.34,-371 707.34,-371 875.76,-371 875.76,-371 881.76,-371 887.76,-377 887.76,-383 887.76,-383 887.76,-470.78 887.76,-470.78 887.76,-476.78 881.76,-482.78 875.76,-482.78"/>
+<text xml:space="preserve" text-anchor="middle" x="791.55" y="-463.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[Software System]</text>
+<text xml:space="preserve" text-anchor="middle" x="791.55" y="-450.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Award Nomination App</text>
+<text xml:space="preserve" text-anchor="middle" x="791.55" y="-436.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="791.55" y="-423.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Tenant&#45;configurable SaaS platform</text>
+<text xml:space="preserve" text-anchor="middle" x="791.55" y="-409.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">for employee award nomination,</text>
+<text xml:space="preserve" text-anchor="middle" x="791.55" y="-396.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">integrity review, analytics, and</text>
+<text xml:space="preserve" text-anchor="middle" x="791.55" y="-382.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">payroll coordination.</text>
 </g>
 <!-- payrollProviders -->
-<g id="node9" class="node">
+<g id="node5" class="node">
 <title>payrollProviders</title>
-<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M1238.43,-246.03C1238.43,-246.03 1067.76,-246.03 1067.76,-246.03 1061.76,-246.03 1055.76,-240.03 1055.76,-234.03 1055.76,-234.03 1055.76,-159.75 1055.76,-159.75 1055.76,-153.75 1061.76,-147.75 1067.76,-147.75 1067.76,-147.75 1238.43,-147.75 1238.43,-147.75 1244.43,-147.75 1250.43,-153.75 1250.43,-159.75 1250.43,-159.75 1250.43,-234.03 1250.43,-234.03 1250.43,-240.03 1244.43,-246.03 1238.43,-246.03"/>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-226.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-213.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Payroll Providers</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-199.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-186.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Gusto, Rippling, and Workday&#45;style</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-172.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">providers for employee pay lookup</text>
-<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-159.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">and award payout execution.</text>
+<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M1238.43,-636.03C1238.43,-636.03 1067.76,-636.03 1067.76,-636.03 1061.76,-636.03 1055.76,-630.03 1055.76,-624.03 1055.76,-624.03 1055.76,-549.75 1055.76,-549.75 1055.76,-543.75 1061.76,-537.75 1067.76,-537.75 1067.76,-537.75 1238.43,-537.75 1238.43,-537.75 1244.43,-537.75 1250.43,-543.75 1250.43,-549.75 1250.43,-549.75 1250.43,-624.03 1250.43,-624.03 1250.43,-630.03 1244.43,-636.03 1238.43,-636.03"/>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-616.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-603.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Payroll Providers</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-589.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-576.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Gusto, Rippling, and Workday&#45;style</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-562.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">providers for employee pay lookup</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-549.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">and award payout execution.</text>
 </g>
 <!-- award&#45;&gt;payrollProviders -->
-<g id="edge11" class="edge">
+<g id="edge1" class="edge">
 <title>award&#45;&gt;payrollProviders</title>
-<path fill="none" stroke="#707070" d="M884.16,-309.57C894.37,-303.89 904.71,-298.38 914.76,-293.39 956.98,-272.43 1004.91,-252.29 1046.59,-235.88"/>
-<polygon fill="#707070" stroke="#707070" points="1047.54,-238.51 1053.97,-232.99 1045.5,-233.3 1047.54,-238.51"/>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-316.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Submits payouts, performs</text>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-305.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">employee lookup, and</text>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-295.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">receives webhooks</text>
+<path fill="none" stroke="#707070" d="M842.95,-483.24C863.4,-502.96 888.42,-523.5 914.76,-536.89 955.15,-557.42 1003.52,-569.53 1046.02,-576.66"/>
+<polygon fill="#707070" stroke="#707070" points="1045.44,-579.4 1053.78,-577.91 1046.33,-573.87 1045.44,-579.4"/>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-575.22" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Configures payroll via</text>
+</g>
+<!-- entra -->
+<g id="node6" class="node">
+<title>entra</title>
+<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M1224.56,-502.03C1224.56,-502.03 1081.63,-502.03 1081.63,-502.03 1075.63,-502.03 1069.63,-496.03 1069.63,-490.03 1069.63,-490.03 1069.63,-415.75 1069.63,-415.75 1069.63,-409.75 1075.63,-403.75 1081.63,-403.75 1081.63,-403.75 1224.56,-403.75 1224.56,-403.75 1230.56,-403.75 1236.56,-409.75 1236.56,-415.75 1236.56,-415.75 1236.56,-490.03 1236.56,-490.03 1236.56,-496.03 1230.56,-502.03 1224.56,-502.03"/>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-482.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-469.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Microsoft Entra ID</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-455.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-442.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Identity provider for user</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-428.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">authentication and admin app</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-415.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">roles.</text>
+</g>
+<!-- award&#45;&gt;entra -->
+<g id="edge6" class="edge">
+<title>award&#45;&gt;entra</title>
+<path fill="none" stroke="#707070" d="M887.96,-433.79C941.24,-437.64 1007.31,-442.42 1060.05,-446.23"/>
+<polygon fill="#707070" stroke="#707070" points="1059.7,-449.02 1067.88,-446.8 1060.11,-443.43 1059.7,-449.02"/>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-456.19" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Authenticates users with</text>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-445.69" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">MSAL</text>
+</g>
+<!-- frontDoor -->
+<g id="node7" class="node">
+<title>frontDoor</title>
+<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M1236.18,-367.28C1236.18,-367.28 1070.01,-367.28 1070.01,-367.28 1064.01,-367.28 1058.01,-361.28 1058.01,-355.28 1058.01,-355.28 1058.01,-294.5 1058.01,-294.5 1058.01,-288.5 1064.01,-282.5 1070.01,-282.5 1070.01,-282.5 1236.18,-282.5 1236.18,-282.5 1242.18,-282.5 1248.18,-288.5 1248.18,-294.5 1248.18,-294.5 1248.18,-355.28 1248.18,-355.28 1248.18,-361.28 1242.18,-367.28 1236.18,-367.28"/>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-348.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-334.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Azure Front Door + WAF</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-321.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-307.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Edge routing, WAF, health probes,</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-294.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">TLS, and CORS handling.</text>
+</g>
+<!-- award&#45;&gt;frontDoor -->
+<g id="edge7" class="edge">
+<title>award&#45;&gt;frontDoor</title>
+<path fill="none" stroke="#707070" d="M887.96,-399.82C937.51,-385.77 998.13,-368.57 1048.79,-354.2"/>
+<polygon fill="#707070" stroke="#707070" points="1049.41,-356.93 1056.34,-352.05 1047.88,-351.54 1049.41,-356.93"/>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-392.94" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Calls API through</text>
+</g>
+<!-- smtp -->
+<g id="node9" class="node">
+<title>smtp</title>
+<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M1227.93,-246.03C1227.93,-246.03 1078.26,-246.03 1078.26,-246.03 1072.26,-246.03 1066.26,-240.03 1066.26,-234.03 1066.26,-234.03 1066.26,-159.75 1066.26,-159.75 1066.26,-153.75 1072.26,-147.75 1078.26,-147.75 1078.26,-147.75 1227.93,-147.75 1227.93,-147.75 1233.93,-147.75 1239.93,-153.75 1239.93,-159.75 1239.93,-159.75 1239.93,-234.03 1239.93,-234.03 1239.93,-240.03 1233.93,-246.03 1227.93,-246.03"/>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-226.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-213.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">SMTP / Email Provider</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-199.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-186.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Sends workflow, HRBP, demo,</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-172.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">payroll, and analytics</text>
+<text xml:space="preserve" text-anchor="middle" x="1153.1" y="-159.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">notification emails.</text>
+</g>
+<!-- award&#45;&gt;smtp -->
+<g id="edge12" class="edge">
+<title>award&#45;&gt;smtp</title>
+<path fill="none" stroke="#707070" d="M838.78,-370.55C860.13,-347.02 886.9,-320.72 914.76,-301.39 958.28,-271.18 1011.93,-246.67 1057.21,-228.99"/>
+<polygon fill="#707070" stroke="#707070" points="1057.99,-231.7 1064.44,-226.21 1055.97,-226.47 1057.99,-231.7"/>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-303.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Sends notification emails</text>
 </g>
 <!-- appInsights -->
 <g id="node10" class="node">
@@ -111,12 +109,12 @@
 <text xml:space="preserve" text-anchor="middle" x="1153.1" y="-683.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">operational analytics.</text>
 </g>
 <!-- award&#45;&gt;appInsights -->
-<g id="edge8" class="edge">
+<g id="edge10" class="edge">
 <title>award&#45;&gt;appInsights</title>
-<path fill="none" stroke="#707070" d="M822.77,-422.12C845.15,-460.79 878.02,-511.99 914.76,-550.89 955.88,-594.43 1008.73,-635 1054.12,-666.28"/>
-<polygon fill="#707070" stroke="#707070" points="1052.48,-668.56 1060.67,-670.76 1055.65,-663.94 1052.48,-668.56"/>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-657.96" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Emits logs, metrics, and</text>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-647.46" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">traces</text>
+<path fill="none" stroke="#707070" d="M825.44,-483.13C847.59,-517.7 879.19,-561.27 914.76,-592.89 955.78,-629.36 1008.25,-660.46 1053.42,-683.58"/>
+<polygon fill="#707070" stroke="#707070" points="1052.01,-686.01 1060.41,-687.12 1054.54,-681.01 1052.01,-686.01"/>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-680.9" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Emits logs, metrics, and</text>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-670.4" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">traces</text>
 </g>
 <!-- keyVault -->
 <g id="node11" class="node">
@@ -131,51 +129,51 @@
 <text xml:space="preserve" text-anchor="middle" x="1153.1" y="-11.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">connection strings.</text>
 </g>
 <!-- award&#45;&gt;keyVault -->
-<g id="edge9" class="edge">
+<g id="edge11" class="edge">
 <title>award&#45;&gt;keyVault</title>
-<path fill="none" stroke="#707070" d="M812.32,-309.51C831.72,-261.54 865.58,-193.79 914.76,-150.89 952.78,-117.73 1003.83,-95.28 1048.84,-80.58"/>
-<polygon fill="#707070" stroke="#707070" points="1049.54,-83.29 1056.31,-78.2 1047.84,-77.96 1049.54,-83.29"/>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-163.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Reads secrets via managed</text>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-152.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">identity</text>
+<path fill="none" stroke="#707070" d="M815.61,-370.53C836.56,-324.18 870.86,-258.72 914.76,-211.89 953.25,-170.83 1004.6,-135.37 1049.69,-108.68"/>
+<polygon fill="#707070" stroke="#707070" points="1050.95,-111.19 1056.44,-104.73 1048.12,-106.36 1050.95,-111.19"/>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-224.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Reads secrets via managed</text>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-213.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">identity</text>
 </g>
 <!-- employee -->
 <g id="node2" class="node">
 <title>employee</title>
-<polygon fill="#08427b" stroke="#333333" stroke-opacity="0.333333" points="529.59,-697.53 349.92,-697.53 349.92,-572.25 529.59,-572.25 529.59,-697.53"/>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-678.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[Person]</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-664.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Employee / Manager / HRBP</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-651.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">/ Admin</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-637.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-624.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Tenant users who submit</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-610.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">nominations, approve awards,</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-597.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">review flagged items, administer</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-583.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">tenants, or inspect analytics.</text>
+<polygon fill="#08427b" stroke="#333333" stroke-opacity="0.333333" points="529.59,-758.53 349.92,-758.53 349.92,-633.25 529.59,-633.25 529.59,-758.53"/>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-739.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[Person]</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-725.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Employee / Manager / HRBP</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-712.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">/ Admin</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-698.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-685.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Tenant users who submit</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-671.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">nominations, approve awards,</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-658.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">review flagged items, administer</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-644.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">tenants, or inspect analytics.</text>
 </g>
 <!-- employee&#45;&gt;award -->
-<g id="edge1" class="edge">
+<g id="edge3" class="edge">
 <title>employee&#45;&gt;award</title>
-<path fill="none" stroke="#707070" d="M529.92,-575.13C572.59,-545.69 623.95,-509.04 668.34,-473.89 686.37,-459.61 705.26,-443.53 722.65,-428.21"/>
-<polygon fill="#707070" stroke="#707070" points="724.22,-430.56 728.36,-423.16 720.51,-426.37 724.22,-430.56"/>
-<text xml:space="preserve" text-anchor="middle" x="614.34" y="-553.19" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Uses</text>
+<path fill="none" stroke="#707070" d="M529.92,-636.13C572.59,-606.69 623.95,-570.04 668.34,-534.89 686.37,-520.61 705.26,-504.53 722.65,-489.21"/>
+<polygon fill="#707070" stroke="#707070" points="724.22,-491.56 728.36,-484.16 720.51,-487.37 724.22,-491.56"/>
+<text xml:space="preserve" text-anchor="middle" x="614.34" y="-614.19" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Uses</text>
 </g>
 <!-- payrollBp -->
 <g id="node3" class="node">
 <title>payrollBp</title>
-<polygon fill="#08427b" stroke="#333333" stroke-opacity="0.333333" points="531.09,-536.03 348.42,-536.03 348.42,-437.75 531.09,-437.75 531.09,-536.03"/>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-516.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[Person]</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-503.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Payroll BP</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-489.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-476.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Tenant user with PayrollBP role</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-462.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">who can inspect payroll data and</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-449.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">support payout reconciliation.</text>
+<polygon fill="#08427b" stroke="#333333" stroke-opacity="0.333333" points="531.09,-597.03 348.42,-597.03 348.42,-498.75 531.09,-498.75 531.09,-597.03"/>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-577.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[Person]</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-564.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Payroll BP</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-550.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-537.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Tenant user with PayrollBP role</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-523.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">who can inspect payroll data and</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-510.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">support payout reconciliation.</text>
 </g>
 <!-- payrollBp&#45;&gt;award -->
-<g id="edge2" class="edge">
+<g id="edge4" class="edge">
 <title>payrollBp&#45;&gt;award</title>
-<path fill="none" stroke="#707070" d="M531.29,-455.57C578.65,-439.19 636.86,-419.05 686.12,-402.02"/>
-<polygon fill="#707070" stroke="#707070" points="686.81,-404.74 693.46,-399.48 684.98,-399.45 686.81,-404.74"/>
-<text xml:space="preserve" text-anchor="middle" x="614.34" y="-456.75" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Uses payroll lookup and</text>
-<text xml:space="preserve" text-anchor="middle" x="614.34" y="-446.25" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">award context</text>
+<path fill="none" stroke="#707070" d="M531.29,-516.57C578.65,-500.19 636.86,-480.05 686.12,-463.02"/>
+<polygon fill="#707070" stroke="#707070" points="686.81,-465.74 693.46,-460.48 684.98,-460.45 686.81,-465.74"/>
+<text xml:space="preserve" text-anchor="middle" x="614.34" y="-517.75" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Uses payroll lookup and</text>
+<text xml:space="preserve" text-anchor="middle" x="614.34" y="-507.25" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">award context</text>
 </g>
 <!-- platformOperator -->
 <g id="node4" class="node">
@@ -190,110 +188,108 @@
 <text xml:space="preserve" text-anchor="middle" x="791.55" y="-683.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">response.</text>
 </g>
 <!-- platformOperator&#45;&gt;appInsights -->
-<g id="edge3" class="edge">
+<g id="edge5" class="edge">
 <title>platformOperator&#45;&gt;appInsights</title>
 <path fill="none" stroke="#707070" d="M874.14,-727.89C927.03,-727.89 996.28,-727.89 1052.43,-727.89"/>
 <polygon fill="#707070" stroke="#707070" points="1052.16,-730.69 1060.16,-727.89 1052.16,-725.09 1052.16,-730.69"/>
 <text xml:space="preserve" text-anchor="middle" x="971.76" y="-729.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Monitors and investigates</text>
 </g>
+<!-- payrollProviders&#45;&gt;award -->
+<g id="edge2" class="edge">
+<title>payrollProviders&#45;&gt;award</title>
+<path fill="none" stroke="#707070" d="M1064.88,-537.38C1052.86,-531.08 1040.59,-524.92 1028.76,-519.39 1015.67,-513.27 953.9,-489.11 896.82,-467.02"/>
+<polygon fill="#707070" stroke="#707070" points="897.95,-464.45 889.48,-464.18 895.93,-469.68 897.95,-464.45"/>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-521.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Authenticated by</text>
+</g>
 <!-- frontDoor&#45;&gt;award -->
-<g id="edge7" class="edge">
+<g id="edge9" class="edge">
 <title>frontDoor&#45;&gt;award</title>
-<path fill="none" stroke="#707070" d="M1076.08,-416.13C1060.78,-408.93 1044.54,-402.23 1028.76,-397.39 986.75,-384.51 938.93,-376.89 897.37,-372.39"/>
-<polygon fill="#707070" stroke="#707070" points="897.8,-369.62 889.55,-371.58 897.22,-375.19 897.8,-369.62"/>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-399.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Routes API traffic to</text>
+<path fill="none" stroke="#707070" d="M1057.6,-319.96C1013.12,-320.51 960.03,-325.38 914.76,-341.39 898.34,-347.2 882.11,-355.86 867.1,-365.47"/>
+<polygon fill="#707070" stroke="#707070" points="865.77,-362.99 860.63,-369.74 868.85,-367.67 865.77,-362.99"/>
+<text xml:space="preserve" text-anchor="middle" x="971.76" y="-343.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Routes API traffic to</text>
 </g>
 <!-- staticWebApps -->
-<g id="node7" class="node">
+<g id="node8" class="node">
 <title>staticWebApps</title>
-<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M502.22,-401.53C502.22,-401.53 377.3,-401.53 377.3,-401.53 371.3,-401.53 365.3,-395.53 365.3,-389.53 365.3,-389.53 365.3,-342.25 365.3,-342.25 365.3,-336.25 371.3,-330.25 377.3,-330.25 377.3,-330.25 502.22,-330.25 502.22,-330.25 508.22,-330.25 514.22,-336.25 514.22,-342.25 514.22,-342.25 514.22,-389.53 514.22,-389.53 514.22,-395.53 508.22,-401.53 502.22,-401.53"/>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-382.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-368.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Azure Static Web Apps</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-355.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-341.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Hosts the React frontend.</text>
+<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M502.22,-462.53C502.22,-462.53 377.3,-462.53 377.3,-462.53 371.3,-462.53 365.3,-456.53 365.3,-450.53 365.3,-450.53 365.3,-403.25 365.3,-403.25 365.3,-397.25 371.3,-391.25 377.3,-391.25 377.3,-391.25 502.22,-391.25 502.22,-391.25 508.22,-391.25 514.22,-397.25 514.22,-403.25 514.22,-403.25 514.22,-450.53 514.22,-450.53 514.22,-456.53 508.22,-462.53 502.22,-462.53"/>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-443.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-429.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Azure Static Web Apps</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-416.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-402.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Hosts the React frontend.</text>
 </g>
 <!-- staticWebApps&#45;&gt;award -->
-<g id="edge6" class="edge">
+<g id="edge8" class="edge">
 <title>staticWebApps&#45;&gt;award</title>
-<path fill="none" stroke="#707070" d="M514.51,-365.89C564.15,-365.89 630.36,-365.89 685.49,-365.89"/>
-<polygon fill="#707070" stroke="#707070" points="685.43,-368.69 693.43,-365.89 685.43,-363.09 685.43,-368.69"/>
-<text xml:space="preserve" text-anchor="middle" x="614.34" y="-367.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Hosts</text>
-</g>
-<!-- payrollProviders&#45;&gt;award -->
-<g id="edge12" class="edge">
-<title>payrollProviders&#45;&gt;award</title>
-<path fill="none" stroke="#707070" d="M1055.48,-181.49C1010.4,-178.79 957.42,-182.33 914.76,-204.39 874.4,-225.26 843.65,-266.22 823.08,-301.66"/>
-<polygon fill="#707070" stroke="#707070" points="820.84,-299.93 819.34,-308.28 825.72,-302.69 820.84,-299.93"/>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-227.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Returns provider API</text>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-216.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">responses and webhook</text>
-<text xml:space="preserve" text-anchor="middle" x="971.76" y="-206.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">callbacks</text>
+<path fill="none" stroke="#707070" d="M514.51,-426.89C564.15,-426.89 630.36,-426.89 685.49,-426.89"/>
+<polygon fill="#707070" stroke="#707070" points="685.43,-429.69 693.43,-426.89 685.43,-424.09 685.43,-429.69"/>
+<text xml:space="preserve" text-anchor="middle" x="614.34" y="-428.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Hosts</text>
 </g>
 <!-- containerApps -->
 <g id="node12" class="node">
 <title>containerApps</title>
-<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M521.34,-294.03C521.34,-294.03 358.17,-294.03 358.17,-294.03 352.17,-294.03 346.17,-288.03 346.17,-282.03 346.17,-282.03 346.17,-207.75 346.17,-207.75 346.17,-201.75 352.17,-195.75 358.17,-195.75 358.17,-195.75 521.34,-195.75 521.34,-195.75 527.34,-195.75 533.34,-201.75 533.34,-207.75 533.34,-207.75 533.34,-282.03 533.34,-282.03 533.34,-288.03 527.34,-294.03 521.34,-294.03"/>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-274.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-261.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Azure Container Apps</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-247.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-234.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Runtime hosting for API, workers,</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-220.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">payroll broker, and scheduled</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-207.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">jobs.</text>
+<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M521.34,-355.03C521.34,-355.03 358.17,-355.03 358.17,-355.03 352.17,-355.03 346.17,-349.03 346.17,-343.03 346.17,-343.03 346.17,-268.75 346.17,-268.75 346.17,-262.75 352.17,-256.75 358.17,-256.75 358.17,-256.75 521.34,-256.75 521.34,-256.75 527.34,-256.75 533.34,-262.75 533.34,-268.75 533.34,-268.75 533.34,-343.03 533.34,-343.03 533.34,-349.03 527.34,-355.03 521.34,-355.03"/>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-335.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-322.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Azure Container Apps</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-308.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-295.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Runtime hosting for API, workers,</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-281.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">payroll broker, and scheduled</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-268.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">jobs.</text>
 </g>
 <!-- containerApps&#45;&gt;award -->
 <g id="edge15" class="edge">
 <title>containerApps&#45;&gt;award</title>
-<path fill="none" stroke="#707070" d="M533.58,-277C580.45,-293.21 637.49,-312.94 685.92,-329.7"/>
-<polygon fill="#707070" stroke="#707070" points="684.95,-332.32 693.42,-332.29 686.78,-327.03 684.95,-332.32"/>
-<text xml:space="preserve" text-anchor="middle" x="614.34" y="-335.75" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Launches a job execution</text>
-<text xml:space="preserve" text-anchor="middle" x="614.34" y="-325.25" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">inside the VNet</text>
+<path fill="none" stroke="#707070" d="M533.58,-338C580.45,-354.21 637.49,-373.94 685.92,-390.7"/>
+<polygon fill="#707070" stroke="#707070" points="684.95,-393.32 693.42,-393.29 686.78,-388.03 684.95,-393.32"/>
+<text xml:space="preserve" text-anchor="middle" x="614.34" y="-396.75" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Launches a job execution</text>
+<text xml:space="preserve" text-anchor="middle" x="614.34" y="-386.25" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">inside the VNet</text>
 </g>
 <!-- github -->
 <g id="node13" class="node">
 <title>github</title>
-<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M175.17,-233.78C175.17,-233.78 12,-233.78 12,-233.78 6,-233.78 0,-227.78 0,-221.78 0,-221.78 0,-134 0,-134 0,-128 6,-122 12,-122 12,-122 175.17,-122 175.17,-122 181.17,-122 187.17,-128 187.17,-134 187.17,-134 187.17,-221.78 187.17,-221.78 187.17,-227.78 181.17,-233.78 175.17,-233.78"/>
-<text xml:space="preserve" text-anchor="middle" x="93.59" y="-214.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
-<text xml:space="preserve" text-anchor="middle" x="93.59" y="-201.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">GitHub Actions</text>
-<text xml:space="preserve" text-anchor="middle" x="93.59" y="-187.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="93.59" y="-174.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">CI/CD pipeline on GitHub&#45;hosted</text>
-<text xml:space="preserve" text-anchor="middle" x="93.59" y="-160.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">runners, outside the VNet; drives</text>
-<text xml:space="preserve" text-anchor="middle" x="93.59" y="-147.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">the ARM control plane only, never</text>
-<text xml:space="preserve" text-anchor="middle" x="93.59" y="-133.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">SQL.</text>
+<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M175.17,-294.78C175.17,-294.78 12,-294.78 12,-294.78 6,-294.78 0,-288.78 0,-282.78 0,-282.78 0,-195 0,-195 0,-189 6,-183 12,-183 12,-183 175.17,-183 175.17,-183 181.17,-183 187.17,-189 187.17,-195 187.17,-195 187.17,-282.78 187.17,-282.78 187.17,-288.78 181.17,-294.78 175.17,-294.78"/>
+<text xml:space="preserve" text-anchor="middle" x="93.59" y="-275.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
+<text xml:space="preserve" text-anchor="middle" x="93.59" y="-262.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">GitHub Actions</text>
+<text xml:space="preserve" text-anchor="middle" x="93.59" y="-248.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="93.59" y="-235.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">CI/CD pipeline on GitHub&#45;hosted</text>
+<text xml:space="preserve" text-anchor="middle" x="93.59" y="-221.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">runners, outside the VNet; drives</text>
+<text xml:space="preserve" text-anchor="middle" x="93.59" y="-208.19" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">the ARM control plane only, never</text>
+<text xml:space="preserve" text-anchor="middle" x="93.59" y="-194.69" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">SQL.</text>
 </g>
 <!-- github&#45;&gt;containerApps -->
 <g id="edge14" class="edge">
 <title>github&#45;&gt;containerApps</title>
-<path fill="none" stroke="#707070" d="M187.27,-195.93C233.47,-204.93 289.45,-215.82 336.85,-225.05"/>
-<polygon fill="#707070" stroke="#707070" points="336.03,-227.75 344.42,-226.53 337.1,-222.25 336.03,-227.75"/>
-<text xml:space="preserve" text-anchor="middle" x="266.67" y="-244.26" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Runs az containerapp job</text>
-<text xml:space="preserve" text-anchor="middle" x="266.67" y="-233.76" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">update, start, and status</text>
-<text xml:space="preserve" text-anchor="middle" x="266.67" y="-223.26" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">over ARM</text>
+<path fill="none" stroke="#707070" d="M187.27,-256.93C233.47,-265.93 289.45,-276.82 336.85,-286.05"/>
+<polygon fill="#707070" stroke="#707070" points="336.03,-288.75 344.42,-287.53 337.1,-283.25 336.03,-288.75"/>
+<text xml:space="preserve" text-anchor="middle" x="266.67" y="-305.26" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Runs az containerapp job</text>
+<text xml:space="preserve" text-anchor="middle" x="266.67" y="-294.76" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">update, start, and status</text>
+<text xml:space="preserve" text-anchor="middle" x="266.67" y="-284.26" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">over ARM</text>
 </g>
 <!-- acr -->
 <g id="node14" class="node">
 <title>acr</title>
-<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M518.72,-160.03C518.72,-160.03 360.8,-160.03 360.8,-160.03 354.8,-160.03 348.8,-154.03 348.8,-148.03 348.8,-148.03 348.8,-73.75 348.8,-73.75 348.8,-67.75 354.8,-61.75 360.8,-61.75 360.8,-61.75 518.72,-61.75 518.72,-61.75 524.72,-61.75 530.72,-67.75 530.72,-73.75 530.72,-73.75 530.72,-148.03 530.72,-148.03 530.72,-154.03 524.72,-160.03 518.72,-160.03"/>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-140.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-127.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Azure Container Registry</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-113.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-100.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Stores application and schema&#45;</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-86.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">migration images; pulled in&#45;VNet</text>
-<text xml:space="preserve" text-anchor="middle" x="439.76" y="-73.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">over a private endpoint.</text>
+<path fill="#999999" stroke="#333333" stroke-opacity="0.333333" d="M518.72,-221.03C518.72,-221.03 360.8,-221.03 360.8,-221.03 354.8,-221.03 348.8,-215.03 348.8,-209.03 348.8,-209.03 348.8,-134.75 348.8,-134.75 348.8,-128.75 354.8,-122.75 360.8,-122.75 360.8,-122.75 518.72,-122.75 518.72,-122.75 524.72,-122.75 530.72,-128.75 530.72,-134.75 530.72,-134.75 530.72,-209.03 530.72,-209.03 530.72,-215.03 524.72,-221.03 518.72,-221.03"/>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-201.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">[External System]</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-188.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Azure Container Registry</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-174.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff"> </text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-161.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">Stores application and schema&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-147.94" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">migration images; pulled in&#45;VNet</text>
+<text xml:space="preserve" text-anchor="middle" x="439.76" y="-134.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#ffffff">over a private endpoint.</text>
 </g>
 <!-- github&#45;&gt;acr -->
 <g id="edge13" class="edge">
 <title>github&#45;&gt;acr</title>
-<path fill="none" stroke="#707070" d="M187.27,-159.85C234.31,-150.69 291.49,-139.56 339.43,-130.22"/>
-<polygon fill="#707070" stroke="#707070" points="339.78,-133.01 347.1,-128.73 338.71,-127.51 339.78,-133.01"/>
-<text xml:space="preserve" text-anchor="middle" x="266.67" y="-166.76" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Builds and pushes the</text>
-<text xml:space="preserve" text-anchor="middle" x="266.67" y="-156.26" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">schema&#45;migration image</text>
+<path fill="none" stroke="#707070" d="M187.27,-220.85C234.31,-211.69 291.49,-200.56 339.43,-191.22"/>
+<polygon fill="#707070" stroke="#707070" points="339.78,-194.01 347.1,-189.73 338.71,-188.51 339.78,-194.01"/>
+<text xml:space="preserve" text-anchor="middle" x="266.67" y="-227.76" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Builds and pushes the</text>
+<text xml:space="preserve" text-anchor="middle" x="266.67" y="-217.26" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">schema&#45;migration image</text>
 </g>
 <!-- acr&#45;&gt;award -->
 <g id="edge16" class="edge">
 <title>acr&#45;&gt;award</title>
-<path fill="none" stroke="#707070" d="M523.88,-160.39C567.9,-187.64 622.23,-222.94 668.34,-257.89 686.87,-271.93 706.08,-288.08 723.63,-303.53"/>
-<polygon fill="#707070" stroke="#707070" points="721.55,-305.43 729.4,-308.64 725.27,-301.24 721.55,-305.43"/>
-<text xml:space="preserve" text-anchor="middle" x="614.34" y="-270.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Provides the migration</text>
-<text xml:space="preserve" text-anchor="middle" x="614.34" y="-259.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">image via private endpoint</text>
+<path fill="none" stroke="#707070" d="M523.88,-221.39C567.9,-248.64 622.23,-283.94 668.34,-318.89 686.87,-332.93 706.08,-349.08 723.63,-364.53"/>
+<polygon fill="#707070" stroke="#707070" points="721.55,-366.43 729.4,-369.64 725.27,-362.24 721.55,-366.43"/>
+<text xml:space="preserve" text-anchor="middle" x="614.34" y="-331.34" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">Provides the migration</text>
+<text xml:space="preserve" text-anchor="middle" x="614.34" y="-320.84" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#444444">image via private endpoint</text>
 </g>
 </g>
 </svg>

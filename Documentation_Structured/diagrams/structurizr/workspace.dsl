@@ -15,27 +15,34 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
             mcpServices = container "MCP / Analytics Export Services" "SQL and export services used by analytics and investigation workflows." "Python, MCP"
             schemaMigrationJob = container "Schema Migration Job" "In-VNet Container Apps Job that applies Alembic migrations to Azure SQL as the sql-migrations managed identity (db_ddladmin). Triggered by GitHub Actions over ARM." "Python, Alembic, Azure Container Apps Job"
             database = container "Azure SQL Database" "System of record for tenants, users, nominations, fraud scores, review state, analytics, conversations, event processing, and payroll metadata." "Azure SQL" {
-                tenants = component "Tenants" "Tenant registry, Entra tenant mapping, domain, site URL, branding, and tenant configuration." "Table"
-                users = component "Users" "Tenant-scoped user roster, UPN/email, profile fields, and manager hierarchy." "Table"
-                userRoles = component "UserRoles" "Application roles such as HRBP, PayrollBP, and Support." "Table"
-                nominations = component "Nominations" "Award workflow records and lifecycle status." "Table"
-                nominationCategories = component "NominationCategories" "Tenant-specific award categories." "Table"
+                tenants = component "Tenants" "Tenant registry, Entra tenant mapping, domain, site URL, branding, and tenant configuration." "Table" "Auditable"
+                users = component "Users" "Tenant-scoped user roster, UPN/email, profile fields, and manager hierarchy." "Table" "Auditable"
+                userRoles = component "UserRoles" "Application roles such as HRBP, PayrollBP, and Support." "Table" "Auditable"
+                nominations = component "Nominations" "Award workflow records and lifecycle status." "Table" "Auditable"
+                nominationCategories = component "NominationCategories" "Tenant-specific award categories." "Table" "Auditable"
+                emailTemplates = component "EmailTemplates" "Tenant-editable notification email templates (subject, body, version)." "Table" "Auditable"
                 processedEvents = component "ProcessedEvents" "Service Bus idempotency log and processing result table." "Table"
                 fraudScores = component "Fraud Score Tables" "P2P, approver, and HRBP fraud score and feature-summary tables." "Tables"
                 graphFindings = component "Graph and Integrity Findings" "Graph pattern findings and point-in-time graph flag snapshots." "Tables"
                 forecastTables = component "Forecast Tables" "Forecast run metadata and forecast points." "Tables"
                 conversations = component "Ask Conversations and Messages" "AI analytics conversation headers, messages, and export metadata." "Tables"
-                payrollTables = component "Payroll Tables" "Payroll provider config, encrypted tokens, and payroll submission records." "Tables"
+                payrollProviders = component "payroll_providers" "Per-tenant payroll provider configuration and external company id." "Table" "Auditable"
+                payrollTokens = component "payroll_tokens" "Rotating OAuth credentials (AES-256-GCM ciphertext) per provider." "Table" "Auditable"
+                payrollSubmissions = component "payroll_submissions" "One row per payout submission; bridges the provider payroll ref back to the nomination." "Table" "Auditable"
                 auditTables = component "Audit and Demo Tables" "Impersonation audit logs and demo registration requests." "Tables"
 
                 tenants -> users "Owns"
                 tenants -> nominationCategories "Configures"
+                tenants -> emailTemplates "Configures"
+                tenants -> payrollProviders "Configures payroll via"
                 tenants -> graphFindings "Produces"
                 tenants -> forecastTables "Produces"
                 tenants -> conversations "Owns"
                 users -> nominations "Nominates, receives, and approves"
                 nominations -> fraudScores "Has"
-                nominations -> payrollTables "Pays through"
+                nominations -> payrollSubmissions "Pays through"
+                payrollProviders -> payrollTokens "Authenticated by"
+                payrollProviders -> payrollSubmissions "Executes payouts recorded in"
                 nominations -> processedEvents "Referenced by"
                 conversations -> auditTables "Audited separately from"
             }
@@ -171,6 +178,11 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
             autolayout lr
         }
 
+        component database "AuditableTables" "SOC 2 auditable tables (ADR-0001 / migration 0034): the nine key tables carrying the audit quartet created_at, created_by, updated_at, updated_by. The *_by columns hold the effective user UPN for human writes, or a svc: service marker (e.g. svc:integrity-check) for autonomous service writes." {
+            include tenants users userRoles nominations nominationCategories emailTemplates payrollProviders payrollTokens payrollSubmissions
+            autolayout lr
+        }
+
         dynamic award "NominationCleanApprovalFlow" "Clean nomination path from submission through manager approval and payroll outcome." {
             employee -> frontend "Submits nomination"
             frontend -> api "POST /api/nominations"
@@ -223,7 +235,7 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
             analyticsJob -> database "Materializes user and approver graph flag snapshots"
             analyticsJob -> database "Trains tenant-specific Random Forest models"
             analyticsJob -> database "Upserts historical P2P and approver scores"
-            analyticsJob -> blobStorage "Uploads fraud_detection_model_tenant_<TenantId>.pkl"
+            analyticsJob -> blobStorage "Uploads fraud_detection_model_tenant_(TenantId).pkl"
             analyticsJob -> api "POST /api/internal/refresh-fraud-model"
             api -> blobStorage "Refreshes cached tenant model artifacts"
             integrityWorker -> blobStorage "Streams latest model for new submissions"
@@ -245,8 +257,8 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
         }
 
         dynamic award "SchemaMigrationFlow" "ADR-0001 schema migration (deploy-schema-migration.yaml): a GitHub-hosted runner drives only the ARM control plane, while the in-VNet ACA Job applies Alembic to the private Azure SQL as the sql-migrations managed identity (db_ddladmin)." {
-            github -> acr "Builds and pushes the migration image (tags :latest and :<sha>)"
-            github -> containerApps "az containerapp job update --image <sha> (points the job at the new image)"
+            github -> acr "Builds and pushes the migration image (tags :latest and :sha)"
+            github -> containerApps "az containerapp job update --image sha (points the job at the new image)"
             github -> containerApps "az containerapp job start (triggers a job execution)"
             containerApps -> schemaMigrationJob "Starts the execution inside the VNet"
             acr -> schemaMigrationJob "Pulls the migration image over the private endpoint"
@@ -278,6 +290,10 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
             }
             element "Component" {
                 background #85bbf0
+                color #000000
+            }
+            element "Auditable" {
+                background #f2c14e
                 color #000000
             }
             element "External" {
