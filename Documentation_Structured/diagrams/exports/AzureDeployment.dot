@@ -7,13 +7,13 @@ digraph G {
   edge [arrowsize=0.8];
 
   subgraph cluster_dn_1 { label="Users and External Providers"; style="rounded,filled"; fillcolor="#f4f7fb"; color="#9bb7d4"; fontname="Helvetica"; fontsize=11;
-    "infra_1_45060" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Microsoft Entra ID\n[Infrastructure]"];
-    "infra_1_13092" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Payroll Providers\n[Infrastructure]"];
-    "infra_1_89126" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="SMTP / Email Provider\n[Infrastructure]"];
+    "infra_1_72152" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Microsoft Entra ID\n[Infrastructure]"];
+    "infra_1_89511" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Payroll Providers\n[Infrastructure]"];
+    "infra_1_89402" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="SMTP / Email Provider\n[Infrastructure]"];
   }
   subgraph cluster_dn_2 { label="Azure Edge and Frontend"; style="rounded,filled"; fillcolor="#f4f7fb"; color="#9bb7d4"; fontname="Helvetica"; fontsize=11;
-    "infra_2_4795" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Azure Front Door Standard + WAF\n[Infrastructure]"];
-    "infra_2_7069" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Azure Static Web Apps\n[Infrastructure]"];
+    "infra_2_74273" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Azure Front Door Standard + WAF\n[Infrastructure]"];
+    "infra_2_77631" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Azure Static Web Apps\n[Infrastructure]"];
     "inst_2_frontend" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", fontname="Helvetica", fontsize=10, label="React Frontend\n[React, TypeScript, Vite, MSAL, i18next]"];
   }
   subgraph cluster_dn_3 { label="Azure Container Apps Environment - Primary Region"; style="rounded,filled"; fillcolor="#f4f7fb"; color="#9bb7d4"; fontname="Helvetica"; fontsize=11;
@@ -29,13 +29,13 @@ digraph G {
     "inst_4_api" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", fontname="Helvetica", fontsize=10, label="Backend API\n[FastAPI, Python, SQLAlchemy, pyodbc]"];
   }
   subgraph cluster_dn_5 { label="Azure Data and Messaging"; style="rounded,filled"; fillcolor="#f4f7fb"; color="#9bb7d4"; fontname="Helvetica"; fontsize=11;
-    "infra_5_67447" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Azure Key Vault\n[Infrastructure]"];
+    "infra_5_83786" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Azure Key Vault\n[Infrastructure]"];
     "inst_5_database" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", fontname="Helvetica", fontsize=10, label="Azure SQL Database\n[Azure SQL]"];
     "inst_5_serviceBus" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", fontname="Helvetica", fontsize=10, label="Azure Service Bus\n[Azure Service Bus]"];
     "inst_5_blobStorage" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", fontname="Helvetica", fontsize=10, label="Azure Blob Storage\n[Azure Blob Storage]"];
     "inst_5_openAiAdapter" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", fontname="Helvetica", fontsize=10, label="Azure OpenAI Adapter\n[OpenAI SDK]"];
   }
   subgraph cluster_dn_6 { label="Azure Observability"; style="rounded,filled"; fillcolor="#f4f7fb"; color="#9bb7d4"; fontname="Helvetica"; fontsize=11;
-    "infra_6_11488" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Application Insights + Log Analytics\n[Infrastructure]"];
+    "infra_6_97891" [shape=box, style="rounded,filled", fillcolor="#dfe7f0", fontname="Helvetica", fontsize=10, label="Application Insights + Log Analytics\n[Infrastructure]"];
   }
 }

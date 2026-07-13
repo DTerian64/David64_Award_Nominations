@@ -244,13 +244,15 @@ workspace "Award Nomination App" "Structured architecture and workflow model for
             autolayout lr
         }
 
-        dynamic award "SchemaMigrationFlow" "ADR-0001 schema migration: the GitHub runner drives the ARM control plane; the in-VNet ACA Job applies Alembic to private Azure SQL." {
-            github -> acr "Builds and pushes the schema-migration image"
-            github -> containerApps "az containerapp job update / start (ARM control plane)"
-            containerApps -> schemaMigrationJob "Starts a job execution inside the VNet"
-            acr -> schemaMigrationJob "Pulls the migration image via private endpoint"
-            schemaMigrationJob -> entra "Gets a managed-identity token (sql-migrations, db_ddladmin)"
+        dynamic award "SchemaMigrationFlow" "ADR-0001 schema migration (deploy-schema-migration.yaml): a GitHub-hosted runner drives only the ARM control plane, while the in-VNet ACA Job applies Alembic to the private Azure SQL as the sql-migrations managed identity (db_ddladmin)." {
+            github -> acr "Builds and pushes the migration image (tags :latest and :<sha>)"
+            github -> containerApps "az containerapp job update --image <sha> (points the job at the new image)"
+            github -> containerApps "az containerapp job start (triggers a job execution)"
+            containerApps -> schemaMigrationJob "Starts the execution inside the VNet"
+            acr -> schemaMigrationJob "Pulls the migration image over the private endpoint"
+            schemaMigrationJob -> entra "Acquires a managed-identity token (sql-migrations, db_ddladmin)"
             schemaMigrationJob -> database "Runs alembic upgrade head over the private endpoint"
+            schemaMigrationJob -> appInsights "Emits job logs and traces"
             github -> containerApps "Polls job execution status until Succeeded or Failed"
             autolayout lr
         }

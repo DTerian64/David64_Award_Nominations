@@ -42,37 +42,37 @@
 <path fill="#f4f7fb" stroke="#9bb7d4" d="M4008,-8C4008,-8 4182,-8 4182,-8 4188,-8 4194,-14 4194,-20 4194,-20 4194,-74.78 4194,-74.78 4194,-80.78 4188,-86.78 4182,-86.78 4182,-86.78 4008,-86.78 4008,-86.78 4002,-86.78 3996,-80.78 3996,-74.78 3996,-74.78 3996,-20 3996,-20 3996,-14 4002,-8 4008,-8"/>
 <text xml:space="preserve" text-anchor="middle" x="4095" y="-72.33" font-family="Helvetica,sans-Serif" font-size="11.00">Azure Observability</text>
 </g>
-<!-- infra_1_45060 -->
+<!-- infra_1_72152 -->
 <g id="node1" class="node">
-<title>infra_1_45060</title>
+<title>infra_1_72152</title>
 <path fill="#dfe7f0" stroke="black" d="M110.09,-57.28C110.09,-57.28 27.91,-57.28 27.91,-57.28 21.91,-57.28 15.91,-51.28 15.91,-45.28 15.91,-45.28 15.91,-28 15.91,-28 15.91,-22 21.91,-16 27.91,-16 27.91,-16 110.09,-16 110.09,-16 116.09,-16 122.09,-22 122.09,-28 122.09,-28 122.09,-45.28 122.09,-45.28 122.09,-51.28 116.09,-57.28 110.09,-57.28"/>
 <text xml:space="preserve" text-anchor="middle" x="69" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00">Microsoft Entra ID</text>
 <text xml:space="preserve" text-anchor="middle" x="69" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00">[Infrastructure]</text>
 </g>
-<!-- infra_1_13092 -->
+<!-- infra_1_89511 -->
 <g id="node2" class="node">
-<title>infra_1_13092</title>
+<title>infra_1_89511</title>
 <path fill="#dfe7f0" stroke="black" d="M246.09,-57.28C246.09,-57.28 169.91,-57.28 169.91,-57.28 163.91,-57.28 157.91,-51.28 157.91,-45.28 157.91,-45.28 157.91,-28 157.91,-28 157.91,-22 163.91,-16 169.91,-16 169.91,-16 246.09,-16 246.09,-16 252.09,-16 258.09,-22 258.09,-28 258.09,-28 258.09,-45.28 258.09,-45.28 258.09,-51.28 252.09,-57.28 246.09,-57.28"/>
 <text xml:space="preserve" text-anchor="middle" x="208" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00">Payroll Providers</text>
 <text xml:space="preserve" text-anchor="middle" x="208" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00">[Infrastructure]</text>
 </g>
-<!-- infra_1_89126 -->
+<!-- infra_1_89402 -->
 <g id="node3" class="node">
-<title>infra_1_89126</title>
+<title>infra_1_89402</title>
 <path fill="#dfe7f0" stroke="black" d="M408.21,-57.28C408.21,-57.28 305.79,-57.28 305.79,-57.28 299.79,-57.28 293.79,-51.28 293.79,-45.28 293.79,-45.28 293.79,-28 293.79,-28 293.79,-22 299.79,-16 305.79,-16 305.79,-16 408.21,-16 408.21,-16 414.21,-16 420.21,-22 420.21,-28 420.21,-28 420.21,-45.28 420.21,-45.28 420.21,-51.28 414.21,-57.28 408.21,-57.28"/>
 <text xml:space="preserve" text-anchor="middle" x="357" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00">SMTP / Email Provider</text>
 <text xml:space="preserve" text-anchor="middle" x="357" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00">[Infrastructure]</text>
 </g>
-<!-- infra_2_4795 -->
+<!-- infra_2_74273 -->
 <g id="node4" class="node">
-<title>infra_2_4795</title>
+<title>infra_2_74273</title>
 <path fill="#dfe7f0" stroke="black" d="M621.34,-57.28C621.34,-57.28 468.67,-57.28 468.67,-57.28 462.67,-57.28 456.67,-51.28 456.67,-45.28 456.67,-45.28 456.67,-28 456.67,-28 456.67,-22 462.67,-16 468.67,-16 468.67,-16 621.34,-16 621.34,-16 627.34,-16 633.34,-22 633.34,-28 633.34,-28 633.34,-45.28 633.34,-45.28 633.34,-51.28 627.34,-57.28 621.34,-57.28"/>
 <text xml:space="preserve" text-anchor="middle" x="545" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00">Azure Front Door Standard + WAF</text>
 <text xml:space="preserve" text-anchor="middle" x="545" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00">[Infrastructure]</text>
 </g>
-<!-- infra_2_7069 -->
+<!-- infra_2_77631 -->
 <g id="node5" class="node">
-<title>infra_2_7069</title>
+<title>infra_2_77631</title>
 <path fill="#dfe7f0" stroke="black" d="M784.59,-57.28C784.59,-57.28 681.41,-57.28 681.41,-57.28 675.41,-57.28 669.41,-51.28 669.41,-45.28 669.41,-45.28 669.41,-28 669.41,-28 669.41,-22 675.41,-16 681.41,-16 681.41,-16 784.59,-16 784.59,-16 790.59,-16 796.59,-22 796.59,-28 796.59,-28 796.59,-45.28 796.59,-45.28 796.59,-51.28 790.59,-57.28 784.59,-57.28"/>
 <text xml:space="preserve" text-anchor="middle" x="733" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00">Azure Static Web Apps</text>
 <text xml:space="preserve" text-anchor="middle" x="733" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00">[Infrastructure]</text>
@@ -140,9 +140,9 @@
 <text xml:space="preserve" text-anchor="middle" x="3094" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#ffffff">Backend API</text>
 <text xml:space="preserve" text-anchor="middle" x="3094" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#ffffff">[FastAPI, Python, SQLAlchemy, pyodbc]</text>
 </g>
-<!-- infra_5_67447 -->
+<!-- infra_5_83786 -->
 <g id="node15" class="node">
-<title>infra_5_67447</title>
+<title>infra_5_83786</title>
 <path fill="#dfe7f0" stroke="black" d="M3339.21,-57.28C3339.21,-57.28 3266.79,-57.28 3266.79,-57.28 3260.79,-57.28 3254.79,-51.28 3254.79,-45.28 3254.79,-45.28 3254.79,-28 3254.79,-28 3254.79,-22 3260.79,-16 3266.79,-16 3266.79,-16 3339.21,-16 3339.21,-16 3345.21,-16 3351.21,-22 3351.21,-28 3351.21,-28 3351.21,-45.28 3351.21,-45.28 3351.21,-51.28 3345.21,-57.28 3339.21,-57.28"/>
 <text xml:space="preserve" text-anchor="middle" x="3303" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00">Azure Key Vault</text>
 <text xml:space="preserve" text-anchor="middle" x="3303" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00">[Infrastructure]</text>
@@ -175,9 +175,9 @@
 <text xml:space="preserve" text-anchor="middle" x="3906" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#ffffff">Azure OpenAI Adapter</text>
 <text xml:space="preserve" text-anchor="middle" x="3906" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#ffffff">[OpenAI SDK]</text>
 </g>
-<!-- infra_6_11488 -->
+<!-- infra_6_97891 -->
 <g id="node20" class="node">
-<title>infra_6_11488</title>
+<title>infra_6_97891</title>
 <path fill="#dfe7f0" stroke="black" d="M4173.96,-57.28C4173.96,-57.28 4016.04,-57.28 4016.04,-57.28 4010.04,-57.28 4004.04,-51.28 4004.04,-45.28 4004.04,-45.28 4004.04,-28 4004.04,-28 4004.04,-22 4010.04,-16 4016.04,-16 4016.04,-16 4173.96,-16 4173.96,-16 4179.96,-16 4185.96,-22 4185.96,-28 4185.96,-28 4185.96,-45.28 4185.96,-45.28 4185.96,-51.28 4179.96,-57.28 4173.96,-57.28"/>
 <text xml:space="preserve" text-anchor="middle" x="4095" y="-39.14" font-family="Helvetica,sans-Serif" font-size="10.00">Application Insights + Log Analytics</text>
 <text xml:space="preserve" text-anchor="middle" x="4095" y="-27.14" font-family="Helvetica,sans-Serif" font-size="10.00">[Infrastructure]</text>

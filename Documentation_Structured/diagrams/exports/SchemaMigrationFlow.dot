@@ -2,7 +2,7 @@ digraph G {
   rankdir=LR;
   bgcolor="white";
   nodesep=0.5; ranksep=0.75; splines=true; concentrate=false;
-  graph [fontname="Helvetica", labelloc="t", label=<<b>Dynamic — SchemaMigrationFlow</b><br/><font point-size="10">ADR-0001 schema migration: the GitHub runner drives the ARM control plane; the in-VNet ACA Job applies Alembic to private Azure SQL.</font><br/> >, fontsize=16];
+  graph [fontname="Helvetica", labelloc="t", label=<<b>Dynamic — SchemaMigrationFlow</b><br/><font point-size="10">ADR-0001 schema migration (deploy-schema-migration.yaml): a GitHub-hosted runner drives only the ARM control plane, while the in-VNet ACA Job applies Alembic to the private Azure SQL as the sql-migrations managed identity (db_ddladmin).</font><br/> >, fontsize=16];
   node [margin="0.18,0.12"];
   edge [arrowsize=0.8];
 
@@ -12,11 +12,14 @@ digraph G {
   "schemaMigrationJob" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Python, Alembic, Azure Container Apps Job]\nSchema Migration Job\n \nIn-VNet Container Apps Job that\napplies Alembic migrations to\nAzure SQL as the sql-migrations\nmanaged identity (db_ddladmin)…"];
   "entra" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nMicrosoft Entra ID\n \nIdentity provider for user\nauthentication and admin app\nroles."];
   "database" [shape=box, style="rounded,filled", fillcolor="#438dd5", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[Container: Azure SQL]\nAzure SQL Database\n \nSystem of record for tenants,\nusers, nominations, fraud scores,\nreview state, analytics,\nconversations, event processing,…"];
-  "github" -> "acr" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="1. Builds and pushes the\nschema-migration image"];
-  "github" -> "containerApps" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="2. az containerapp job update\n/ start (ARM control\nplane)"];
-  "containerApps" -> "schemaMigrationJob" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="3. Starts a job execution\ninside the VNet"];
-  "acr" -> "schemaMigrationJob" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="4. Pulls the migration image\nvia private endpoint"];
-  "schemaMigrationJob" -> "entra" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="5. Gets a managed-identity\ntoken (sql-migrations,\ndb_ddladmin)"];
-  "schemaMigrationJob" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="6. Runs alembic upgrade head\nover the private endpoint"];
-  "github" -> "containerApps" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="7. Polls job execution status\nuntil Succeeded or Failed"];
+  "appInsights" [shape=box, style="rounded,filled", fillcolor="#999999", fontcolor="#ffffff", color="#33333355", penwidth=1, fontname="Helvetica", fontsize=11, label="[External System]\nApplication Insights + Log\nAnalytics\n \nTelemetry, traces, logs,\ndashboards, KQL validation, and\noperational analytics."];
+  "github" -> "acr" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="1. Builds and pushes the\nmigration image (tags\n:latest and :<sha>)"];
+  "github" -> "containerApps" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="2. az containerapp job update\n--image <sha> (points the\njob at the new image)"];
+  "github" -> "containerApps" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="3. az containerapp job start\n(triggers a job execution)"];
+  "containerApps" -> "schemaMigrationJob" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="4. Starts the execution\ninside the VNet"];
+  "acr" -> "schemaMigrationJob" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="5. Pulls the migration image\nover the private endpoint"];
+  "schemaMigrationJob" -> "entra" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="6. Acquires a managed-\nidentity token (sql-\nmigrations, db_ddladmin)"];
+  "schemaMigrationJob" -> "database" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="7. Runs alembic upgrade head\nover the private endpoint"];
+  "schemaMigrationJob" -> "appInsights" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="8. Emits job logs and traces"];
+  "github" -> "containerApps" [color="#707070", fontcolor="#444444", fontname="Helvetica", fontsize=9, penwidth=1, label="9. Polls job execution status\nuntil Succeeded or Failed"];
 }
