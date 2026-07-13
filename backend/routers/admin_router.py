@@ -13,11 +13,9 @@ GET  /api/admin/nominations/{id}/logs           — Log Analytics trace for a no
 
 import logging
 import os
-from datetime import timedelta
+from datetime import timezone
 from typing import List
 
-from azure.identity import DefaultAzureCredential
-from azure.monitor.query import LogsQueryClient, LogsQueryStatus
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 import fraud_ml
@@ -28,14 +26,6 @@ from routers.schemas import AuditLog
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
-
-# Log Analytics workspace ID — set by Terraform as a plain env var on the backend container.
-# Required only for the nomination logs endpoint; other admin routes don't need it.
-_LOG_ANALYTICS_WORKSPACE_ID = os.getenv("LOG_ANALYTICS_WORKSPACE_ID", "")
-
-# Same pattern as service_bus_publisher.py — must be explicit on ACA so IMDS
-# resolves the correct user-assigned MI rather than looking for a system-assigned one.
-_MI_CLIENT_ID = os.getenv("MI_CLIENT_ID") or None
 
 
 @router.get("/api/admin/audit-logs", response_model=List[AuditLog])
@@ -129,95 +119,40 @@ async def get_nomination_logs(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Return the Log Analytics trace for a single nomination (Admin only).
+    Return the persisted log trail for a single nomination (Admin only).
 
-    Queries ContainerAppConsoleLogs_CL for all App_Log entries that mention
-    the given nomination_id across the backend, integrity-check, and auxiliary
-    containers. Results are sorted by the inner JSON timestamp (actual emission
-    time, not Log Analytics ingestion time).
-
-    Fixed 7-day lookback — covers any realistic support scenario within
-    Log Analytics' 30-day retention window.
-
-    Note: Log Analytics has a ~2 minute ingestion delay. Logs for nominations
-    submitted in the last 2 minutes may not appear yet.
+    Reads dbo.Nomination_Logs — written at runtime by every service that logs
+    with a nomination_id — so the trail survives indefinitely, with no Log
+    Analytics retention window and no ingestion delay. Ordered by emission time.
     """
     if not is_admin(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="AWard_Nomination_Admin access required")
 
-    if not _LOG_ANALYTICS_WORKSPACE_ID:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="LOG_ANALYTICS_WORKSPACE_ID is not configured on this environment",
-        )
+    rows = sqlhelper.get_nomination_logs(nomination_id)
 
-    kql = f"""
-ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(7d)
-| where Log_s has "App_Log:"
-| where Log_s has "{nomination_id}"
-| extend d = parse_json(Log_s)
-| extend
-    LogTime      = todatetime(d.timestamp),
-    PacificTime  = datetime_utc_to_local(todatetime(d.timestamp), 'US/Pacific'),
-    Level        = tostring(d.level),
-    Service      = ContainerAppName_s,
-    Logger       = tostring(d.logger),
-    Message      = tostring(d.message),
-    NominationId = toint(d.nomination_id)
-| where NominationId == {nomination_id}
-| project PacificTime, LogTime, Level, Service, Logger, Message
-| order by LogTime asc
-"""
+    logs = []
+    for log_time, level, service, logger_name, message in rows:
+        # Return UTC (ISO 8601); the browser renders it in each viewer's local
+        # timezone. No server-side timezone assumption.
+        utc_time = log_time.replace(tzinfo=timezone.utc).isoformat() if log_time else ""
+        logs.append({
+            "time":    utc_time,
+            "level":   level or "",
+            "service": service or "",
+            "logger":  logger_name or "",
+            "message": message or "",
+        })
 
-    try:
-        credential = DefaultAzureCredential(managed_identity_client_id=_MI_CLIENT_ID)
-        client = LogsQueryClient(credential)
+    # Note: no nomination_id in this log's extras — we don't want the admin's
+    # "viewed logs" event to pollute the very trail being viewed.
+    logger.info(
+        "Admin fetched nomination logs",
+        extra={"viewed_nomination_id": nomination_id, "log_count": len(logs)},
+    )
 
-        response = client.query_workspace(
-            workspace_id=_LOG_ANALYTICS_WORKSPACE_ID,
-            query=kql,
-            timespan=timedelta(days=7),
-        )
-
-        if response.status != LogsQueryStatus.SUCCESS:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Log Analytics query failed: {response.partial_error}",
-            )
-
-        logs = []
-        if response.tables:
-            table = response.tables[0]
-            col_names = list(table.columns)  # columns are plain strings in azure-monitor-query 1.x
-            for row in table.rows:
-                entry = dict(zip(col_names, row))
-                logs.append({
-                    "time":    str(entry.get("PacificTime", "")),
-                    "level":   entry.get("Level", ""),
-                    "service": entry.get("Service", ""),
-                    "logger":  entry.get("Logger", ""),
-                    "message": entry.get("Message", ""),
-                })
-
-        logger.info(
-            "Admin fetched nomination logs",
-            extra={"nomination_id": nomination_id, "log_count": len(logs)},
-        )
-
-        return {
-            "nomination_id":  nomination_id,
-            "log_count":      len(logs),
-            "logs":           logs,
-            "ingestion_note": "Log Analytics has a ~2 min ingestion delay. Recent nominations may show incomplete results.",
-        }
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to query nomination logs", extra={"nomination_id": nomination_id})
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Log query failed: {str(exc)}",
-        )
+    return {
+        "nomination_id": nomination_id,
+        "log_count":     len(logs),
+        "logs":          logs,
+    }

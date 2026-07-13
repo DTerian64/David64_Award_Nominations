@@ -496,3 +496,26 @@ def get_tenant_name(tenant_id: int) -> Optional[str]:
             {"tid": tenant_id},
         ).fetchone()
         return row[0] if row else None
+
+
+# ===========================================================================
+# NOMINATION LOG PERSISTENCE (SOC 2) — dbo.Nomination_Logs
+# ===========================================================================
+
+_NOMINATION_LOG_INSERT = text("""
+    INSERT INTO dbo.Nomination_Logs
+        (nomination_id, tenant_id, log_time, level, service, logger, message,
+         message_id, details, exception, created_by, updated_by)
+    VALUES
+        (:nomination_id, :tenant_id, :log_time, :level, :service, :logger, :message,
+         :message_id, :details, :exception, :created_by, :updated_by)
+""")
+
+
+def insert_nomination_logs(rows: list) -> None:
+    """Bulk-insert nomination log rows (called by the background log handler)."""
+    if not rows:
+        return
+    with get_db_context() as session:
+        session.execute(_NOMINATION_LOG_INSERT, rows)
+        session.commit()

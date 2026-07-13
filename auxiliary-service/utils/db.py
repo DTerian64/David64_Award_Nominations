@@ -642,3 +642,36 @@ def save_hrbp_fraud_flags(
             warning_flags, top_features_json, feature_summary_json,
         ))
         conn.commit()
+
+
+# ===========================================================================
+# NOMINATION LOG PERSISTENCE (SOC 2) — dbo.Nomination_Logs
+# ===========================================================================
+
+_NOMLOG_SQL = (
+    "INSERT INTO dbo.Nomination_Logs "
+    "(nomination_id, tenant_id, log_time, level, service, logger, message, "
+    " message_id, details, exception, created_by, updated_by) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+
+def insert_nomination_logs(rows: list) -> None:
+    """Bulk-insert nomination log rows (called by the background log handler).
+    created_at/updated_at come from the DB default (SYSUTCDATETIME())."""
+    if not rows:
+        return
+    params = [
+        (r["nomination_id"], r["tenant_id"], r["log_time"], r["level"], r["service"],
+         r["logger"], r["message"], r["message_id"], r["details"], r["exception"],
+         r["created_by"], r["updated_by"])
+        for r in rows
+    ]
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.fast_executemany = True
+        except Exception:
+            pass
+        cursor.executemany(_NOMLOG_SQL, params)
+        conn.commit()

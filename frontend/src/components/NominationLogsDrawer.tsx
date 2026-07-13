@@ -221,7 +221,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                         <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                           {/* Timestamp */}
                           <span className="text-gray-400 font-mono whitespace-nowrap">
-                            {log.time.replace('T', ' ').slice(0, 19)}
+                            {log.time ? new Date(log.time).toLocaleString() : ''}
                           </span>
                           {/* Level badge */}
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${LEVEL_STYLES[log.level] ?? 'bg-gray-100 text-gray-600'}`}>

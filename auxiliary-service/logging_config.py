@@ -112,6 +112,19 @@ def setup_logging():
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
+    # SOC 2: persist nomination-scoped logs to dbo.Nomination_Logs. Attached
+    # FIRST so it captures the clean record before the console filters mutate it.
+    try:
+        import os
+        from utils.db import insert_nomination_logs
+        from utils.nomination_log_handler import NominationLogDBHandler
+        _svc = os.getenv("CONTAINER_APP_NAME") or "auxiliary-service"
+        root_logger.addHandler(
+            NominationLogDBHandler(insert_nomination_logs, service=_svc, actor="svc:auxiliary")
+        )
+    except Exception:
+        pass  # never let log persistence break app startup
+
     # Attach filters to the handler so only our own code reaches stdout.
     # _AppLogFilter drops third-party records entirely and prefixes ours with
     # 'App_Log: ' for easy KQL filtering.

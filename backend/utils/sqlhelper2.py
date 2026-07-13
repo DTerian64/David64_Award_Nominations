@@ -2551,3 +2551,43 @@ def get_payroll_provider_for_tenant(tenant_id: int) -> Optional[dict]:
         "api_base_url":  row[1],
         "name":          row[2],
     }
+
+
+# ===========================================================================
+# NOMINATION LOG PERSISTENCE (SOC 2) — dbo.Nomination_Logs
+# ===========================================================================
+
+_NOMINATION_LOG_INSERT = text("""
+    INSERT INTO dbo.Nomination_Logs
+        (nomination_id, tenant_id, log_time, level, service, logger, message,
+         message_id, details, exception, created_by, updated_by)
+    VALUES
+        (:nomination_id, :tenant_id, :log_time, :level, :service, :logger, :message,
+         :message_id, :details, :exception, :created_by, :updated_by)
+""")
+
+
+def insert_nomination_logs(rows: list) -> None:
+    """Bulk-insert nomination log rows. Called by the background log handler;
+    created_at/updated_at are supplied by the DB default (SYSUTCDATETIME())."""
+    if not rows:
+        return
+    with get_db_context() as session:
+        session.execute(_NOMINATION_LOG_INSERT, rows)
+        session.commit()
+
+
+def get_nomination_logs(nomination_id: int) -> list:
+    """Return persisted nomination log rows (log_time, level, service, logger, message)
+    for the drawer, oldest first."""
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT log_time, level, service, logger, message
+                FROM   dbo.Nomination_Logs
+                WHERE  nomination_id = :nid
+                ORDER  BY log_time ASC, log_id ASC
+            """),
+            {"nid": nomination_id},
+        ).fetchall()
+    return [tuple(r) for r in rows]
