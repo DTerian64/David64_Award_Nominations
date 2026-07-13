@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Clock, Award, BarChart3, ShieldAlert, DollarSign } from 'lucide-react';
+import { CheckCircle, Clock, Award, BarChart3, ShieldAlert, DollarSign, RefreshCw } from 'lucide-react';
 import { Toast } from './components/Toast';
 import {
   AuthenticatedTemplate,
@@ -144,6 +144,7 @@ const AwardNominationApp: React.FC = () => {
   const [_currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [nominations, setNominations] = useState<Nomination[]>([]);
+  const [nominationsLoading, setNominationsLoading] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<Nomination[]>([]);
   const [decidedApprovals, setDecidedApprovals] = useState<Nomination[]>([]);
   const [approvalsView, setApprovalsView] = useState<'pending' | 'decided' | 'paid'>('pending');
@@ -191,6 +192,14 @@ const AwardNominationApp: React.FC = () => {
       loadDecidedApprovals();
     }
   }, [accounts, isImpersonating, activeTab, approvalsView]);
+
+  // Refresh "My Nominations" each time the tab is opened, so a just-created
+  // nomination (Status 'Submitted') or a status change shows without a full reload.
+  useEffect(() => {
+    if (accounts.length > 0 && activeTab === 'history') {
+      loadNominations();
+    }
+  }, [accounts, isImpersonating, activeTab]);
 
   const loadMe = async () => {
     try {
@@ -260,12 +269,15 @@ const AwardNominationApp: React.FC = () => {
   };
 
   const loadNominations = async () => {
+    setNominationsLoading(true);
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
       const history = await apiFetch<Nomination[]>('/api/nominations/history', {}, impersonatedUPN);
       setNominations(history);
     } catch (error) {
       console.error('Failed to load nominations:', error);
+    } finally {
+      setNominationsLoading(false);
     }
   };
 
@@ -353,10 +365,8 @@ const AwardNominationApp: React.FC = () => {
       setDescription('');
       setSelectedCategoryId('');
 
-      setTimeout(() => {
-        loadNominations();
-        setSubmitStatus(null);
-      }, 2000);
+      loadNominations();
+      setTimeout(() => setSubmitStatus(null), 2000);
     } catch (error: any) {
       setSubmitStatus({
         type: 'error',
@@ -707,7 +717,18 @@ const AwardNominationApp: React.FC = () => {
             <div className="bg-white rounded-lg shadow-md p-8">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold text-gray-900">{t('history.heading')}</h2>
-                <select
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => loadNominations()}
+                    disabled={nominationsLoading}
+                    title={t('history.refresh', { defaultValue: 'Refresh' })}
+                    aria-label={t('history.refresh', { defaultValue: 'Refresh' })}
+                    className="p-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${nominationsLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                  <select
                   value={historyView}
                   onChange={e => setHistoryView(e.target.value as 'pending' | 'decided')}
                   className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none text-sm text-gray-700"
@@ -715,12 +736,14 @@ const AwardNominationApp: React.FC = () => {
                   <option value="pending">{t('approvals.viewPending')}</option>
                   <option value="decided">{t('history.filterDecided', { defaultValue: 'Approved · Rejected · Paid' })}</option>
                 </select>
+                </div>
               </div>
 
               {(() => {
                 const filtered = nominations.filter(n => {
-                  if (historyView === 'pending') return n.Status === 'Pending';
-                  return n.Status === 'Approved' || n.Status === 'Rejected' || n.Status === 'Paid';
+                  if (historyView === 'pending')
+                    return ['Submitted', 'PendingHRBPReview', 'Pending'].includes(n.Status);
+                  return ['Approved', 'Rejected', 'Paid'].includes(n.Status);
                 });
 
                 if (filtered.length === 0) {
