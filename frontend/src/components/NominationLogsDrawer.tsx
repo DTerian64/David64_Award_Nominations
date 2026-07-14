@@ -1,11 +1,11 @@
 /**
  * NominationLogsDrawer
  *
- * Slide-in panel that shows the Log Analytics trace for a single nomination.
+ * Slide-in panel that shows the persistent log trail for a single nomination.
  * Triggered by admin clicking the #NominationId watermark on any nomination card.
  *
- * The backend endpoint GET /api/admin/nominations/{id}/logs handles the KQL query.
- * Log Analytics has a ~2 min ingestion delay — a note is shown to the admin.
+ * The backend endpoint GET /api/admin/nominations/{id}/logs reads dbo.Nomination_Logs,
+ * written at runtime by every service — full history, no retention window, no delay.
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -20,13 +20,13 @@ interface LogEntry {
   service: string;
   logger:  string;
   message: string;
+  details: string;
 }
 
 interface LogsResponse {
   nomination_id:   number;
   log_count:       number;
   logs:            LogEntry[];
-  ingestion_note:  string;
 }
 
 interface Props {
@@ -44,23 +44,10 @@ const LEVEL_STYLES: Record<string, string> = {
 // Fields too noisy or redundant to show as extras tags.
 const SKIP_EXTRAS = new Set(['nomination_id', 'message_id', 'body', 'NominationId']);
 
-/**
- * Split a raw log message into the human-readable text and the structured
- * extras blob that _ExtrasToMessageFilter appended.
- *
- * Raw format:  "App_Log: Fraud assessment complete {"fraud_score": 0.12, ...}"
- * Returns:     { text: "Fraud assessment complete", extras: { fraud_score: 0.12, ... } }
- */
-function parseMessage(raw: string): { text: string; extras: Record<string, unknown> } {
-  const stripped = raw.replace(/^App_Log:\s*/, '');
-  const braceIdx = stripped.indexOf(' {');
-  if (braceIdx === -1) return { text: stripped.trim(), extras: {} };
-  try {
-    const extras = JSON.parse(stripped.slice(braceIdx).trim());
-    return { text: stripped.slice(0, braceIdx).trim(), extras };
-  } catch {
-    return { text: stripped.trim(), extras: {} }; 
-  }
+/** Parse the structured `details` JSON column into an extras object. */
+function parseDetails(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { return {}; }
 }
 
 // Shorten service container name for display: "award-api-primary-sandbox" → "backend"
@@ -154,7 +141,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
               Nomination Logs
               <span className="ml-2 font-mono text-gray-400 text-sm">#{nominationId}</span>
             </h2>
-            <p className="text-xs text-gray-500 mt-0.5">Log Analytics trace across all services</p>
+            <p className="text-xs text-gray-500 mt-0.5">Persistent trail across all services</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -175,10 +162,10 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
           </div>
         </div>
 
-        {/* Ingestion note */}
+        {/* Persistence note */}
         <div className="flex items-start gap-2 px-6 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-700">
           <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Shows logs from the last 7 days. Log Analytics has a ~2 min ingestion delay, so very recent nominations may be incomplete. Logs older than 30 days are not retained.</span>
+          <span>Persisted from every service at write time — the full history for this nomination, retained indefinitely.</span>
         </div>
 
         {/* Body */}
@@ -187,7 +174,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
           {loading && (
             <div className="flex items-center justify-center h-40 text-gray-400 text-sm gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" />
-              Querying Log Analytics…
+              Loading logs…
             </div>
           )}
 
@@ -201,18 +188,19 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
           {data && !loading && (
             <>
               <p className="text-xs text-gray-400 mb-4">
-                {data.log_count} {data.log_count === 1 ? 'entry' : 'entries'} · last 7 days
+                {data.log_count} {data.log_count === 1 ? 'entry' : 'entries'}
               </p>
 
               {data.log_count === 0 ? (
                 <div className="text-center py-16 text-gray-400 text-sm">
                   <p>No logs found for nomination #{nominationId}.</p>
-                  <p className="mt-1">If this nomination was just submitted, wait ~2 minutes and refresh.</p>
+                  <p className="mt-1">Logs are written as the nomination is processed — refresh in a moment if it was just submitted.</p>
                 </div>
               ) : (
                 <div className="space-y-2">
                   {data.logs.map((log, i) => {
-                    const { text, extras } = parseMessage(log.message);
+                    const text = log.message.replace(/^App_Log:\s*/, '');
+                    const extras = parseDetails(log.details);
                     const extraEntries = Object.entries(extras).filter(
                       ([k]) => !SKIP_EXTRAS.has(k)
                     );

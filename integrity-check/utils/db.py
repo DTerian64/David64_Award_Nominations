@@ -692,7 +692,9 @@ _NOMLOG_SQL = (
     "INSERT INTO dbo.Nomination_Logs "
     "(nomination_id, tenant_id, log_time, level, service, logger, message, "
     " message_id, details, exception, created_by, updated_by) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "VALUES (?, COALESCE(?, (SELECT TOP 1 u.TenantId FROM dbo.Nominations n "
+    "JOIN dbo.Users u ON u.UserId = n.NominatorId WHERE n.NominationId = ?)), "
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -702,7 +704,7 @@ def insert_nomination_logs(rows: list) -> None:
     if not rows:
         return
     params = [
-        (r["nomination_id"], r["tenant_id"], r["log_time"], r["level"], r["service"],
+        (r["nomination_id"], r["tenant_id"], r["nomination_id"], r["log_time"], r["level"], r["service"],
          r["logger"], r["message"], r["message_id"], r["details"], r["exception"],
          r["created_by"], r["updated_by"])
         for r in rows

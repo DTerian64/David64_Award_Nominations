@@ -193,13 +193,14 @@ const AwardNominationApp: React.FC = () => {
     }
   }, [accounts, isImpersonating, activeTab, approvalsView]);
 
-  // Refresh "My Nominations" each time the tab is opened, so a just-created
-  // nomination (Status 'Submitted') or a status change shows without a full reload.
+  // Refresh "My Nominations" when the tab opens AND whenever the status filter
+  // changes, so a nomination whose status moved buckets (e.g. Pending -> Approved)
+  // is re-fetched from the DB rather than filtered from a stale client-side list.
   useEffect(() => {
     if (accounts.length > 0 && activeTab === 'history') {
       loadNominations();
     }
-  }, [accounts, isImpersonating, activeTab]);
+  }, [accounts, isImpersonating, activeTab, historyView]);
 
   const loadMe = async () => {
     try {

@@ -132,7 +132,7 @@ async def get_nomination_logs(
     rows = sqlhelper.get_nomination_logs(nomination_id)
 
     logs = []
-    for log_time, level, service, logger_name, message in rows:
+    for log_time, level, service, logger_name, message, details in rows:
         # Return UTC (ISO 8601); the browser renders it in each viewer's local
         # timezone. No server-side timezone assumption.
         utc_time = log_time.replace(tzinfo=timezone.utc).isoformat() if log_time else ""
@@ -142,6 +142,7 @@ async def get_nomination_logs(
             "service": service or "",
             "logger":  logger_name or "",
             "message": message or "",
+            "details": details or "",
         })
 
     # Note: no nomination_id in this log's extras — we don't want the admin's

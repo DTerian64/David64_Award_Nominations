@@ -28,7 +28,7 @@ from typing import Optional, Tuple
 from urllib.parse import quote_plus
 
 from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, Unicode,
+    Column, DateTime, ForeignKey, Integer, LargeBinary, String, Unicode,
     UniqueConstraint, create_engine, event, text,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -507,7 +507,11 @@ _NOMINATION_LOG_INSERT = text("""
         (nomination_id, tenant_id, log_time, level, service, logger, message,
          message_id, details, exception, created_by, updated_by)
     VALUES
-        (:nomination_id, :tenant_id, :log_time, :level, :service, :logger, :message,
+        (:nomination_id,
+         COALESCE(:tenant_id, (SELECT TOP 1 u.TenantId FROM dbo.Nominations n
+                               JOIN dbo.Users u ON u.UserId = n.NominatorId
+                               WHERE n.NominationId = :nomination_id)),
+         :log_time, :level, :service, :logger, :message,
          :message_id, :details, :exception, :created_by, :updated_by)
 """)
 

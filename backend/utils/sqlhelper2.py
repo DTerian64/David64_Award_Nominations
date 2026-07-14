@@ -2562,7 +2562,11 @@ _NOMINATION_LOG_INSERT = text("""
         (nomination_id, tenant_id, log_time, level, service, logger, message,
          message_id, details, exception, created_by, updated_by)
     VALUES
-        (:nomination_id, :tenant_id, :log_time, :level, :service, :logger, :message,
+        (:nomination_id,
+         COALESCE(:tenant_id, (SELECT TOP 1 u.TenantId FROM dbo.Nominations n
+                               JOIN dbo.Users u ON u.UserId = n.NominatorId
+                               WHERE n.NominationId = :nomination_id)),
+         :log_time, :level, :service, :logger, :message,
          :message_id, :details, :exception, :created_by, :updated_by)
 """)
 
@@ -2583,7 +2587,7 @@ def get_nomination_logs(nomination_id: int) -> list:
     with get_db_context() as session:
         rows = session.execute(
             text("""
-                SELECT log_time, level, service, logger, message
+                SELECT log_time, level, service, logger, message, details
                 FROM   dbo.Nomination_Logs
                 WHERE  nomination_id = :nid
                 ORDER  BY log_time ASC, log_id ASC
