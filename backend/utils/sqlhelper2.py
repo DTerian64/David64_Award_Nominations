@@ -2395,8 +2395,21 @@ def assign_user_role(user_id: int, role: str, assigned_by: int) -> bool:
 
 
 def revoke_user_role(user_id: int, role: str) -> bool:
-    """Remove a role assignment. Returns True if a row was deleted."""
+    """Remove a role assignment. Returns True if a row was deleted.
+
+    Stamps updated_by with the current actor *before* deleting, so the temporal
+    history's final version attributes the revocation to a person (SOC 2) — a
+    bare DELETE would otherwise leave the last grantor as the apparent actor.
+    """
     with get_db_context() as session:
+        session.execute(
+            text("""
+                UPDATE dbo.UserRoles
+                SET    updated_at = SYSUTCDATETIME(), updated_by = :actor
+                WHERE  UserId = :uid AND Role = :role
+            """),
+            {"actor": get_actor(), "uid": user_id, "role": role},
+        )
         result = session.execute(
             text("""
                 DELETE FROM dbo.UserRoles

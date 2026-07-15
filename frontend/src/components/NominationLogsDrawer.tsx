@@ -165,7 +165,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
         {/* Persistence note */}
         <div className="flex items-start gap-2 px-6 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-700">
           <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Persisted from every service at write time — the full history for this nomination, retained indefinitely.</span>
+          <span>The full history for this nomination across all services.</span>
         </div>
 
         {/* Body */}
