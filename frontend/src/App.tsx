@@ -534,7 +534,7 @@ const AwardNominationApp: React.FC = () => {
           />
 
           {/* Tab bar */}
-          <div className="bg-white rounded-lg shadow-sm p-1 flex space-x-1">
+          <div className="bg-white rounded-lg shadow-sm p-1 grid grid-cols-2 gap-1 sm:flex">
             {(['nominate', 'history', 'approvals'] as const).map((tab) => {
               const isActive = activeTab === tab;
               return (
