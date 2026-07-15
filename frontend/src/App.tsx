@@ -494,7 +494,7 @@ const AwardNominationApp: React.FC = () => {
 
         <header className="bg-white shadow-sm border-b border-gray-200">
           <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
               <div className="flex items-center space-x-3">
                 {branding?.company_logo_url ? (
                   <img
@@ -506,7 +506,7 @@ const AwardNominationApp: React.FC = () => {
                   <Award className="w-8 h-8" style={{ color: branding?.primary_color ?? 'var(--color-primary)' }} />
                 )}
                 <div>
-                  <h1 className="text-2xl font-bold text-gray-900">{t('app.title')}</h1>
+                  <h1 className="text-xl sm:text-2xl font-bold text-gray-900">{t('app.title')}</h1>
                   {!branding?.company_logo_url && (
                     <p className="text-sm text-gray-600">
                       {branding?.tenant_name ?? t('app.subtitle')}
@@ -514,7 +514,7 @@ const AwardNominationApp: React.FC = () => {
                   )}
                 </div>
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex flex-col items-start gap-1 sm:items-end">
                 <div className="flex items-center gap-3">
                   {accounts.length > 0 && (
                     <p className="text-sm font-semibold text-gray-900">{accounts[0].name}</p>
