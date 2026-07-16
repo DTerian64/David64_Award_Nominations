@@ -250,6 +250,20 @@ async def create_nomination(
                 detail=f"CategoryId {nomination.CategoryId} is not valid for this tenant",
             )
 
+        # ── Category-specific amount limits (narrower than tenant limits) ─────
+        _cat = next((c for c in _categories if c[0] == nomination.CategoryId), None)
+        if _cat and (_cat[2] is not None or _cat[3] is not None):
+            _cat_min = _cat[2] if _cat[2] is not None else _min_award
+            _cat_max = _cat[3] if _cat[3] is not None else _max_award
+            if not (_cat_min <= _amount <= _cat_max):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"For this award category, the amount must be between "
+                        f"{_cat_min} and {_cat_max} {_currency}."
+                    ),
+                )
+
     # ── Description quality validation (API-layer, synchronous) ──────────────
     # Structural checks only — no embedding model involved.
     # Semantic checks (category alignment, duplicate detection) run async in

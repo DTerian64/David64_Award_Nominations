@@ -175,6 +175,11 @@ const AwardNominationApp: React.FC = () => {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
+
+  // Effective award limits: a selected category's own min/max narrow the tenant limits.
+  const selectedCategory = config.nomination_categories.find(c => String(c.id) === selectedCategoryId);
+  const effectiveMin = selectedCategory?.min_amount ?? minAmount;
+  const effectiveMax = selectedCategory?.max_amount ?? maxAmount;
   const [submitStatus, setSubmitStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
@@ -330,12 +335,12 @@ const AwardNominationApp: React.FC = () => {
     }
 
     const dollarAmount = Number(amount);
-    if (dollarAmount < minAmount || dollarAmount > maxAmount) {
+    if (dollarAmount < effectiveMin || dollarAmount > effectiveMax) {
       setSubmitStatus({
         type: 'error',
         message: t('messages.amountRange', {
-          min: formatCurrency(minAmount),
-          max: formatCurrency(maxAmount),
+          min: formatCurrency(effectiveMin),
+          max: formatCurrency(effectiveMax),
         }),
       });
       return;
@@ -684,16 +689,16 @@ const AwardNominationApp: React.FC = () => {
                     type="number"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    min={minAmount}
-                    max={maxAmount}
+                    min={effectiveMin}
+                    max={effectiveMax}
                     step="50"
                     placeholder={t('nominate.amountPlaceholder')}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none"
                   />
                   <p className="mt-1 text-xs text-gray-500">
                     {t('nominate.amountHint', {
-                      min: formatCurrency(minAmount),
-                      max: formatCurrency(maxAmount),
+                      min: formatCurrency(effectiveMin),
+                      max: formatCurrency(effectiveMax),
                     })}
                   </p>
                 </div>

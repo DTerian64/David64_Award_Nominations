@@ -39,6 +39,8 @@ export interface TenantTheme {
 export interface NominationCategory {
   id: number;
   category_description: string;
+  min_amount?: number | null;
+  max_amount?: number | null;
 }
 
 export interface TenantConfig {

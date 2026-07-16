@@ -246,14 +246,14 @@ def get_nomination_categories(tenant_id: int) -> List[Tuple]:
     """
     Return all nomination categories for a tenant, ordered by id.
 
-    Returns: List of (id, category_description)
+    Returns: List of (id, category_description, min_amount, max_amount)
     An empty list means the tenant has no custom categories — the nomination
     form should show no category field at all.
     """
     with get_db_context() as session:
         rows = session.execute(
             text(
-                "SELECT id, category_description "
+                "SELECT id, category_description, min_amount, max_amount "
                 "FROM dbo.nomination_categories "
                 "WHERE tenant_id = :tid "
                 "ORDER BY id"

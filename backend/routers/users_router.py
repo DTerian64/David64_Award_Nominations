@@ -174,7 +174,8 @@ async def get_tenant_config(user_context: dict = Depends(get_current_user_with_i
         # Empty list → tenant has no categories → frontend hides the field.
         cat_rows = sqlhelper.get_nomination_categories(tenant_id)
         parsed["nomination_categories"] = [
-            {"id": row[0], "category_description": row[1]}
+            {"id": row[0], "category_description": row[1],
+             "min_amount": row[2], "max_amount": row[3]}
             for row in cat_rows
         ]
 
