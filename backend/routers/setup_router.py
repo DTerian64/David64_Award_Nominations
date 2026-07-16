@@ -57,6 +57,8 @@ class OrganizationUpdate(BaseModel):
     primary_color:        Optional[str] = None
     locale:               Optional[str] = None
     currency:             Optional[str] = None
+    min_award:            Optional[int] = None
+    max_award:            Optional[int] = None
 
 
 @router.get("/api/admin/setup/organization")
@@ -141,4 +143,78 @@ async def revoke_role(payload: RoleChange, admin: dict = Depends(require_setup_a
         extra={"tenant_id": admin["TenantId"], "target_user": payload.user_id,
                "role": payload.role, "by": admin.get("userPrincipalName")},
     )
+    return {"ok": True}
+
+
+# ── Award Categories ──────────────────────────────────────────────────────────
+# Categories are soft-deleted (is_active), never removed, so historic nominations
+# keep resolving them. Per-category limits must sit within the org award range.
+
+class CategoryPayload(BaseModel):
+    category_description: str
+    min_amount: Optional[int] = None
+    max_amount: Optional[int] = None
+    is_active:  bool = True
+
+
+def _org_award_range(tenant_id: int):
+    org = sqlhelper.get_organization_settings(tenant_id)
+    org_min = org.get("min_award")
+    org_max = org.get("max_award")
+    return (
+        org_min if org_min is not None else 50,
+        org_max if org_max is not None else 5000,
+        org.get("currency") or "USD",
+    )
+
+
+def _validate_category(payload: "CategoryPayload", tenant_id: int) -> None:
+    if not payload.category_description or not payload.category_description.strip():
+        raise HTTPException(status_code=422, detail="Category name is required.")
+    lo, hi = payload.min_amount, payload.max_amount
+    if lo is not None and hi is not None and lo > hi:
+        raise HTTPException(status_code=422, detail="Category minimum cannot exceed its maximum.")
+    org_min, org_max, _ = _org_award_range(tenant_id)
+    if lo is not None and lo < org_min:
+        raise HTTPException(status_code=422, detail=f"Category minimum ({lo}) is below the organization minimum ({org_min}).")
+    if hi is not None and hi > org_max:
+        raise HTTPException(status_code=422, detail=f"Category maximum ({hi}) exceeds the organization maximum ({org_max}).")
+
+
+@router.get("/api/admin/setup/categories")
+async def list_categories(admin: dict = Depends(require_setup_admin)):
+    tid = admin["TenantId"]
+    org_min, org_max, currency = _org_award_range(tid)
+    return {
+        "currency": currency,
+        "org_min_award": org_min,
+        "org_max_award": org_max,
+        "categories": sqlhelper.get_categories_admin(tid),
+    }
+
+
+@router.post("/api/admin/setup/categories")
+async def create_category(payload: CategoryPayload, admin: dict = Depends(require_setup_admin)):
+    _validate_category(payload, admin["TenantId"])
+    cid = sqlhelper.create_category(
+        admin["TenantId"], payload.category_description.strip(),
+        payload.min_amount, payload.max_amount, payload.is_active,
+        admin.get("userPrincipalName", "unknown"),
+    )
+    logger.info("Category created", extra={"tenant_id": admin["TenantId"], "category_id": cid})
+    return {"id": cid}
+
+
+@router.put("/api/admin/setup/categories/{category_id}")
+async def update_category(category_id: int, payload: CategoryPayload,
+                          admin: dict = Depends(require_setup_admin)):
+    if not sqlhelper.category_in_tenant(category_id, admin["TenantId"]):
+        raise HTTPException(status_code=404, detail="Category not found in your organization.")
+    _validate_category(payload, admin["TenantId"])
+    sqlhelper.update_category(
+        category_id, admin["TenantId"], payload.category_description.strip(),
+        payload.min_amount, payload.max_amount, payload.is_active,
+        admin.get("userPrincipalName", "unknown"),
+    )
+    logger.info("Category updated", extra={"tenant_id": admin["TenantId"], "category_id": category_id})
     return {"ok": True}

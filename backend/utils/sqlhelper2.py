@@ -255,7 +255,7 @@ def get_nomination_categories(tenant_id: int) -> List[Tuple]:
             text(
                 "SELECT id, category_description, min_amount, max_amount "
                 "FROM dbo.nomination_categories "
-                "WHERE tenant_id = :tid "
+                "WHERE tenant_id = :tid AND is_active = 1 "
                 "ORDER BY id"
             ),
             {"tid": tenant_id},
@@ -2646,6 +2646,8 @@ def get_organization_settings(tenant_id: int) -> dict:
         "primary_color":        theme.get("primaryColor"),
         "locale":               cfg.get("locale"),
         "currency":             cfg.get("currency"),
+        "min_award":            cfg.get("min_award"),
+        "max_award":            cfg.get("max_award"),
     }
 
 
@@ -2671,6 +2673,10 @@ def update_organization_settings(tenant_id: int, data: dict, actor: str) -> None
             theme = cfg.get("theme") if isinstance(cfg.get("theme"), dict) else {}
             theme["primaryColor"] = data["primary_color"]
             cfg["theme"] = theme
+        if data.get("min_award") is not None:
+            cfg["min_award"] = int(data["min_award"])
+        if data.get("max_award") is not None:
+            cfg["max_award"] = int(data["max_award"])
 
         session.execute(
             text("""
@@ -2750,3 +2756,75 @@ def get_tenant_users_brief(tenant_id: int) -> list:
         {"user_id": r[0], "name": f"{r[1] or ''} {r[2] or ''}".strip() or r[3], "upn": r[3]}
         for r in rows
     ]
+
+
+# ===========================================================================
+# ADMIN SETUP — Award Categories (own-tenant; soft-delete via is_active)
+# ===========================================================================
+
+def get_categories_admin(tenant_id: int) -> list:
+    """All categories for a tenant (active + inactive) for the admin UI."""
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT id, category_description, min_amount, max_amount, is_active
+                FROM   dbo.nomination_categories
+                WHERE  tenant_id = :tid
+                ORDER  BY is_active DESC, category_description
+            """),
+            {"tid": tenant_id},
+        ).fetchall()
+    return [
+        {"id": r[0], "category_description": r[1], "min_amount": r[2],
+         "max_amount": r[3], "is_active": bool(r[4])}
+        for r in rows
+    ]
+
+
+def category_in_tenant(category_id: int, tenant_id: int) -> bool:
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT 1 FROM dbo.nomination_categories WHERE id = :cid AND tenant_id = :tid"),
+            {"cid": category_id, "tid": tenant_id},
+        ).fetchone()
+    return row is not None
+
+
+def create_category(tenant_id: int, description: str, min_amount, max_amount,
+                    is_active: bool, actor: str) -> int:
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                INSERT INTO dbo.nomination_categories
+                    (tenant_id, category_description, min_amount, max_amount,
+                     is_active, created_by, updated_by)
+                OUTPUT INSERTED.id
+                VALUES (:tid, :desc, :min, :max, :active, :actor, :actor)
+            """),
+            {"tid": tenant_id, "desc": description, "min": min_amount, "max": max_amount,
+             "active": 1 if is_active else 0, "actor": actor},
+        ).fetchone()
+        session.commit()
+        return row[0]
+
+
+def update_category(category_id: int, tenant_id: int, description: str, min_amount,
+                    max_amount, is_active: bool, actor: str) -> bool:
+    with get_db_context() as session:
+        result = session.execute(
+            text("""
+                UPDATE dbo.nomination_categories
+                SET category_description = :desc,
+                    min_amount           = :min,
+                    max_amount           = :max,
+                    is_active            = :active,
+                    updated_at           = SYSUTCDATETIME(),
+                    updated_by           = :actor
+                WHERE id = :cid AND tenant_id = :tid
+            """),
+            {"desc": description, "min": min_amount, "max": max_amount,
+             "active": 1 if is_active else 0, "actor": actor,
+             "cid": category_id, "tid": tenant_id},
+        )
+        session.commit()
+        return result.rowcount > 0

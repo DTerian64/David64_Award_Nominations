@@ -28,6 +28,8 @@ interface OrgSettings {
   primary_color:        string | null;
   locale:               string | null;
   currency:             string | null;
+  min_award:            number | null;
+  max_award:            number | null;
 }
 
 const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
@@ -64,7 +66,7 @@ export const SetupPanel: React.FC = () => {
 
       {sub === 'organization' && <OrganizationForm />}
       {sub === 'roles'        && <RolesPanel />}
-      {sub === 'categories'   && <ComingSoon title="Award Categories" />}
+      {sub === 'categories'   && <CategoriesPanel />}
       {sub === 'fraud'        && <ComingSoon title="Fraud / Integrity" />}
       {sub === 'payroll'      && <ComingSoon title="Payroll Integration" />}
     </div>
@@ -175,6 +177,26 @@ const OrganizationForm: React.FC = () => {
         </div>
         {field('locale', 'Locale', { placeholder: 'en-US' })}
         {field('currency', 'Currency', { placeholder: 'USD' })}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Min award amount</label>
+          <input
+            type="number"
+            value={data.min_award ?? ''}
+            placeholder="50"
+            onChange={e => setData(d => (d ? { ...d, min_award: e.target.value === '' ? null : Number(e.target.value) } : d))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Max award amount</label>
+          <input
+            type="number"
+            value={data.max_award ?? ''}
+            placeholder="5000"
+            onChange={e => setData(d => (d ? { ...d, max_award: e.target.value === '' ? null : Number(e.target.value) } : d))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          />
+        </div>
       </div>
 
       {/* Read-only identity fields */}
@@ -362,6 +384,179 @@ const RolesPanel: React.FC = () => {
         Admin access is managed in Microsoft Entra, not here. Every change is recorded in the
         organization's role history.
       </p>
+    </div>
+  );
+};
+
+interface Category {
+  id: number;
+  category_description: string;
+  min_amount: number | null;
+  max_amount: number | null;
+  is_active: boolean;
+}
+interface CategoriesData {
+  currency: string;
+  org_min_award: number;
+  org_max_award: number;
+  categories: Category[];
+}
+
+const CategoriesPanel: React.FC = () => {
+  const [data, setData]     = useState<CategoriesData | null>(null);
+  const [rows, setRows]     = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<number | 'new' | null>(null);
+  const [msg, setMsg]       = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [neu, setNeu]       = useState({ category_description: '', min_amount: '', max_amount: '', is_active: true });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/categories`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const d: CategoriesData = await res.json();
+      setData(d);
+      setRows(d.categories.map(c => ({ ...c })));
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Failed to load categories' });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const patchRow = (id: number, patch: Partial<Category>) =>
+    setRows(rs => rs.map(r => (r.id === id ? { ...r, ...patch } : r)));
+
+  const numOrNull = (v: string) => (v === '' ? null : Number(v));
+
+  const saveRow = async (row: Category) => {
+    setBusyId(row.id);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/categories/${row.id}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category_description: row.category_description,
+          min_amount: row.min_amount,
+          max_amount: row.max_amount,
+          is_active: row.is_active,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      setMsg({ type: 'ok', text: 'Saved.' });
+      await load();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Save failed' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const addNew = async () => {
+    setBusyId('new');
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/categories`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category_description: neu.category_description,
+          min_amount: numOrNull(neu.min_amount),
+          max_amount: numOrNull(neu.max_amount),
+          is_active: neu.is_active,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      setNeu({ category_description: '', min_amount: '', max_amount: '', is_active: true });
+      setMsg({ type: 'ok', text: 'Category added.' });
+      await load();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Add failed' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 text-gray-400 text-sm py-12">
+        <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+  if (!data) return <div className="text-sm text-red-600 py-6">{msg?.text ?? 'No data.'}</div>;
+
+  return (
+    <div className="space-y-5">
+      <p className="text-xs text-gray-500">
+        Organization award range:{' '}
+        <span className="font-medium">{data.org_min_award}–{data.org_max_award} {data.currency}</span>.
+        Category limits must sit within this range; leave a field blank to inherit it.
+      </p>
+
+      {/* Add new */}
+      <div className="border border-gray-200 rounded-lg p-3 space-y-2">
+        <p className="text-sm font-semibold text-gray-700">Add category</p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input value={neu.category_description} onChange={e => setNeu({ ...neu, category_description: e.target.value })}
+            placeholder="Category name" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+          <input value={neu.min_amount} onChange={e => setNeu({ ...neu, min_amount: e.target.value })}
+            type="number" placeholder="Min" className="sm:w-24 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+          <input value={neu.max_amount} onChange={e => setNeu({ ...neu, max_amount: e.target.value })}
+            type="number" placeholder="Max" className="sm:w-24 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+          <button disabled={busyId === 'new' || !neu.category_description.trim()} onClick={addNew}
+            style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium disabled:opacity-50">
+            <Plus className="w-4 h-4" /> Add
+          </button>
+        </div>
+      </div>
+
+      {msg && (
+        <div className={`flex items-center gap-2 text-sm ${msg.type === 'ok' ? 'text-green-700' : 'text-red-700'}`}>
+          {msg.type === 'ok' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+          {msg.text}
+        </div>
+      )}
+
+      {/* Existing categories */}
+      {rows.length === 0 ? (
+        <p className="text-sm text-gray-400 py-4">No categories yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map(row => (
+            <div key={row.id}
+              className={`border rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-2 ${row.is_active ? 'border-gray-200' : 'border-gray-100 bg-gray-50'}`}>
+              <input value={row.category_description}
+                onChange={e => patchRow(row.id, { category_description: e.target.value })}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+              <input value={row.min_amount ?? ''} type="number" placeholder="Min"
+                onChange={e => patchRow(row.id, { min_amount: e.target.value === '' ? null : Number(e.target.value) })}
+                className="sm:w-24 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+              <input value={row.max_amount ?? ''} type="number" placeholder="Max"
+                onChange={e => patchRow(row.id, { max_amount: e.target.value === '' ? null : Number(e.target.value) })}
+                className="sm:w-24 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+              <label className="inline-flex items-center gap-1.5 text-sm text-gray-600 sm:w-24">
+                <input type="checkbox" checked={row.is_active}
+                  onChange={e => patchRow(row.id, { is_active: e.target.checked })} /> Active
+              </label>
+              <button disabled={busyId === row.id} onClick={() => saveRow(row)}
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50">
+                <Save className="w-3.5 h-3.5" /> Save
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
