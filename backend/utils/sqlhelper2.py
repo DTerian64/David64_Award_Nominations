@@ -2608,3 +2608,92 @@ def get_nomination_logs(nomination_id: int) -> list:
             {"nid": nomination_id},
         ).fetchall()
     return [tuple(r) for r in rows]
+
+
+# ===========================================================================
+# ADMIN SETUP — Organization (own-tenant settings; Tenants is temporal-audited)
+# ===========================================================================
+
+def get_organization_settings(tenant_id: int) -> dict:
+    """Return editable org settings for a tenant (dedicated columns + Config JSON)."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT TenantName, Tagline, Company_Logo_URL, Site_URL,
+                       fallback_admin_email, Domain, AzureAdTenantId, Config
+                FROM   dbo.Tenants
+                WHERE  TenantId = :tid
+            """),
+            {"tid": tenant_id},
+        ).fetchone()
+    if not row:
+        return {}
+    try:
+        cfg = json.loads(row[7]) if row[7] else {}
+    except Exception:
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    theme = cfg.get("theme") if isinstance(cfg.get("theme"), dict) else {}
+    return {
+        "tenant_name":          row[0],
+        "tagline":              row[1],
+        "company_logo_url":     row[2],
+        "site_url":             row[3],
+        "fallback_admin_email": row[4],
+        "domain":               row[5],   # read-only (routing/identity)
+        "aad_tenant_id":        row[6],   # read-only (identity)
+        "primary_color":        theme.get("primaryColor"),
+        "locale":               cfg.get("locale"),
+        "currency":             cfg.get("currency"),
+    }
+
+
+def update_organization_settings(tenant_id: int, data: dict, actor: str) -> None:
+    """Update a tenant's own org settings. JSON fields are merged into Config."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT Config FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+        try:
+            cfg = json.loads(row[0]) if row and row[0] else {}
+        except Exception:
+            cfg = {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+
+        if data.get("locale") is not None:
+            cfg["locale"] = data["locale"]
+        if data.get("currency") is not None:
+            cfg["currency"] = data["currency"]
+        if data.get("primary_color") is not None:
+            theme = cfg.get("theme") if isinstance(cfg.get("theme"), dict) else {}
+            theme["primaryColor"] = data["primary_color"]
+            cfg["theme"] = theme
+
+        session.execute(
+            text("""
+                UPDATE dbo.Tenants
+                SET TenantName           = :name,
+                    Tagline              = :tagline,
+                    Company_Logo_URL     = :logo,
+                    Site_URL             = :site,
+                    fallback_admin_email = :fallback,
+                    Config               = :config,
+                    updated_at           = SYSUTCDATETIME(),
+                    updated_by           = :actor
+                WHERE TenantId = :tid
+            """),
+            {
+                "name":     data.get("tenant_name"),
+                "tagline":  data.get("tagline"),
+                "logo":     data.get("company_logo_url"),
+                "site":     data.get("site_url"),
+                "fallback": data.get("fallback_admin_email"),
+                "config":   json.dumps(cfg),
+                "actor":    actor,
+                "tid":      tenant_id,
+            },
+        )
+        session.commit()

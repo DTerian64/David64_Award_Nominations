@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Clock, Award, BarChart3, ShieldAlert, DollarSign, RefreshCw } from 'lucide-react';
+import { CheckCircle, Clock, Award, BarChart3, ShieldAlert, DollarSign, RefreshCw, Settings } from 'lucide-react';
 import { Toast } from './components/Toast';
 import {
   AuthenticatedTemplate,
@@ -15,6 +15,7 @@ import { SignOutButton } from './components/SignOutButton';
 import { AdminImpersonationPanel } from './components/AdminImpersonationPanel';
 import { ImpersonationBanner } from './components/ImpersonationBanner';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { SetupPanel } from './components/SetupPanel';
 import { HRBPReviewTab } from './components/HRBPReviewTab';
 import { useImpersonation } from './contexts/ImpersonationContext';
 import { useTenantConfig } from './contexts/TenantConfigContext';
@@ -149,7 +150,7 @@ const AwardNominationApp: React.FC = () => {
   const [decidedApprovals, setDecidedApprovals] = useState<Nomination[]>([]);
   const [approvalsView, setApprovalsView] = useState<'pending' | 'decided' | 'paid'>('pending');
   const [certLoadingId, setCertLoadingId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics' | 'payroll'>('nominate');
+  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics' | 'payroll' | 'setup'>('nominate');
   const [historyView, setHistoryView] = useState<'pending' | 'decided'>('pending');
   const [isHRBP, setIsHRBP] = useState(false);
   const [isPayrollBP, setIsPayrollBP] = useState(false);
@@ -607,6 +608,22 @@ const AwardNominationApp: React.FC = () => {
               >
                 <DollarSign className="w-5 h-5 inline-block mr-2" />
                 {t('payroll.heading')}
+              </button>
+            )}
+            {/* Setup tab — admin only, hidden while impersonating */}
+            {isAdmin && !isImpersonating && (
+              <button
+                onClick={() => setActiveTab('setup')}
+                style={activeTab === 'setup' ? {
+                  backgroundColor: 'var(--color-primary)',
+                  color: 'var(--color-primary-text)',
+                } : {}}
+                className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
+                  activeTab === 'setup' ? '' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <Settings className="w-5 h-5 inline-block mr-2" />
+                {t('nav.setup', { defaultValue: 'Setup' })}
               </button>
             )}
           </div>
@@ -1081,6 +1098,11 @@ const AwardNominationApp: React.FC = () => {
               <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('analytics.heading')}</h2>
               <AnalyticsDashboard />
             </div>
+          )}
+
+          {/* Setup tab — admin only, hidden while impersonating */}
+          {activeTab === 'setup' && isAdmin && !isImpersonating && (
+            <SetupPanel />
           )}
 
           {/* ── Payroll tab ──────────────────────────────────────────────── */}

@@ -35,6 +35,7 @@ from routers.analytics_router   import router as analytics_router
 from routers.webhooks_router    import router as webhooks_router
 from routers.internal_router    import router as internal_router
 from routers.payroll_router     import router as payroll_router
+from routers.setup_router       import router as setup_router
 
 # ============================================================================
 # CONFIGURATION
@@ -206,6 +207,7 @@ app.include_router(analytics_router)
 app.include_router(webhooks_router)
 app.include_router(internal_router)
 app.include_router(payroll_router)
+app.include_router(setup_router)
 
 # ============================================================================
 # INFRASTRUCTURE ENDPOINTS
