@@ -672,11 +672,15 @@ const AwardNominationApp: React.FC = () => {
                       style={{ accentColor: 'var(--color-primary)' }}
                     >
                       <option value="">Select a category…</option>
-                      {config.nomination_categories.map((cat) => (
-                        <option key={cat.id} value={cat.id}>
-                          {cat.category_description}
-                        </option>
-                      ))}
+                      {config.nomination_categories.map((cat) => {
+                        const cmin = cat.min_amount ?? minAmount;
+                        const cmax = cat.max_amount ?? maxAmount;
+                        return (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.category_description} ({formatCurrency(cmin)} – {formatCurrency(cmax)})
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                 )}
