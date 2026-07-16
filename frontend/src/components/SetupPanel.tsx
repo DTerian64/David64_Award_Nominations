@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Settings, Users as UsersIcon, Tag, ShieldAlert, DollarSign,
-  Save, RefreshCw, AlertCircle, CheckCircle,
+  Save, RefreshCw, AlertCircle, CheckCircle, X, Plus,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
 
@@ -63,7 +63,7 @@ export const SetupPanel: React.FC = () => {
       </div>
 
       {sub === 'organization' && <OrganizationForm />}
-      {sub === 'roles'        && <ComingSoon title="Roles & Access" />}
+      {sub === 'roles'        && <RolesPanel />}
       {sub === 'categories'   && <ComingSoon title="Award Categories" />}
       {sub === 'fraud'        && <ComingSoon title="Fraud / Integrity" />}
       {sub === 'payroll'      && <ComingSoon title="Payroll Integration" />}
@@ -214,6 +214,154 @@ const OrganizationForm: React.FC = () => {
           Reset
         </button>
       </div>
+    </div>
+  );
+};
+
+interface RoleMember { user_id: number; name: string; upn: string; roles: string[]; }
+interface RoleUser   { user_id: number; name: string; upn: string; }
+interface RolesData  { assignable_roles: string[]; members: RoleMember[]; users: RoleUser[]; }
+
+const RolesPanel: React.FC = () => {
+  const [data, setData]       = useState<RolesData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy]       = useState(false);
+  const [msg, setMsg]         = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [selUser, setSelUser] = useState<number | ''>('');
+  const [selRole, setSelRole] = useState<string>('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/roles`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const d: RolesData = await res.json();
+      setData(d);
+      setSelRole(r => r || (d.assignable_roles[0] ?? ''));
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Failed to load roles' });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const change = async (action: 'grant' | 'revoke', user_id: number, role: string) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/roles/${action}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id, role }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      setMsg({ type: 'ok', text: action === 'grant' ? 'Role granted.' : 'Role revoked.' });
+      await load();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Action failed' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 text-gray-400 text-sm py-12">
+        <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+  if (!data) return <div className="text-sm text-red-600 py-6">{msg?.text ?? 'No data.'}</div>;
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      {/* Grant */}
+      <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+        <div className="flex-1">
+          <label className="block text-sm font-medium text-gray-700 mb-1">User</label>
+          <select
+            value={selUser}
+            onChange={e => setSelUser(e.target.value ? Number(e.target.value) : '')}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          >
+            <option value="">Select a user…</option>
+            {data.users.map(u => (
+              <option key={u.user_id} value={u.user_id}>{u.name} ({u.upn})</option>
+            ))}
+          </select>
+        </div>
+        <div className="sm:w-44">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+          <select
+            value={selRole}
+            onChange={e => setSelRole(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          >
+            {data.assignable_roles.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        <button
+          disabled={busy || !selUser || !selRole}
+          onClick={() => selUser && change('grant', Number(selUser), selRole)}
+          style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium disabled:opacity-50"
+        >
+          <Plus className="w-4 h-4" /> Grant
+        </button>
+      </div>
+
+      {msg && (
+        <div className={`flex items-center gap-2 text-sm ${msg.type === 'ok' ? 'text-green-700' : 'text-red-700'}`}>
+          {msg.type === 'ok' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+          {msg.text}
+        </div>
+      )}
+
+      {/* Current assignments */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Current assignments</h3>
+        {data.members.length === 0 ? (
+          <p className="text-sm text-gray-400 py-4">No app roles assigned yet.</p>
+        ) : (
+          <div className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+            {data.members.map(m => (
+              <div key={m.user_id} className="flex items-center justify-between gap-3 p-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{m.name}</p>
+                  <p className="text-xs text-gray-500 truncate">{m.upn}</p>
+                </div>
+                <div className="flex flex-wrap gap-1.5 justify-end">
+                  {m.roles.map(r => (
+                    <span key={r} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs">
+                      {r}
+                      <button
+                        disabled={busy}
+                        onClick={() => change('revoke', m.user_id, r)}
+                        title={`Revoke ${r}`}
+                        className="text-gray-400 hover:text-red-600 disabled:opacity-50"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <p className="text-xs text-gray-400">
+        Admin access is managed in Microsoft Entra, not here. Every change is recorded in the
+        organization's role history.
+      </p>
     </div>
   );
 };

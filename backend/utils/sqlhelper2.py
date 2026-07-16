@@ -2697,3 +2697,56 @@ def update_organization_settings(tenant_id: int, data: dict, actor: str) -> None
             },
         )
         session.commit()
+
+
+# ===========================================================================
+# ADMIN SETUP — Roles & Access (own-tenant; UserRoles is temporal-audited)
+# ===========================================================================
+
+def user_in_tenant(user_id: int, tenant_id: int) -> bool:
+    """True if the user belongs to the given tenant (own-tenant guard on writes)."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT 1 FROM dbo.Users WHERE UserId = :uid AND TenantId = :tid"),
+            {"uid": user_id, "tid": tenant_id},
+        ).fetchone()
+    return row is not None
+
+
+def get_tenant_role_members(tenant_id: int) -> list:
+    """Users in the tenant who hold >=1 app role, grouped: {user_id, name, upn, roles[]}."""
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT u.UserId, u.FirstName, u.LastName, u.userPrincipalName, ur.Role
+                FROM   dbo.UserRoles ur
+                JOIN   dbo.Users u ON u.UserId = ur.UserId
+                WHERE  u.TenantId = :tid
+                ORDER  BY u.LastName, u.FirstName
+            """),
+            {"tid": tenant_id},
+        ).fetchall()
+    members: dict = {}
+    for uid, first, last, upn, role in rows:
+        name = f"{first or ''} {last or ''}".strip() or upn
+        m = members.setdefault(uid, {"user_id": uid, "name": name, "upn": upn, "roles": []})
+        m["roles"].append(role)
+    return list(members.values())
+
+
+def get_tenant_users_brief(tenant_id: int) -> list:
+    """All users in the tenant (id, name, upn) for the role-assignment picker."""
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT UserId, FirstName, LastName, userPrincipalName
+                FROM   dbo.Users
+                WHERE  TenantId = :tid
+                ORDER  BY LastName, FirstName
+            """),
+            {"tid": tenant_id},
+        ).fetchall()
+    return [
+        {"user_id": r[0], "name": f"{r[1] or ''} {r[2] or ''}".strip() or r[3], "upn": r[3]}
+        for r in rows
+    ]

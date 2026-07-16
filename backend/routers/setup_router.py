@@ -81,3 +81,64 @@ async def update_organization(
         extra={"tenant_id": admin["TenantId"], "by": admin.get("userPrincipalName")},
     )
     return sqlhelper.get_organization_settings(admin["TenantId"])
+
+
+# ── Roles & Access ────────────────────────────────────────────────────────────
+# App roles only. AWard_Nomination_Admin is Entra-managed and intentionally NOT
+# grantable here — admins can't self-elevate or mint other admins from the app.
+
+_ASSIGNABLE_ROLES = {"HRBP", "PayrollBP", "Support"}
+
+
+class RoleChange(BaseModel):
+    user_id: int
+    role: str
+
+
+def _validate_role_change(payload: "RoleChange", admin: dict) -> None:
+    if payload.role not in _ASSIGNABLE_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Role '{payload.role}' cannot be managed here.",
+        )
+    # Own-tenant enforcement on the TARGET user (not just the caller).
+    if not sqlhelper.user_in_tenant(payload.user_id, admin["TenantId"]):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found in your organization.",
+        )
+
+
+@router.get("/api/admin/setup/roles")
+async def list_roles(admin: dict = Depends(require_setup_admin)):
+    """Current app-role assignments + the tenant's users (for the grant picker)."""
+    tid = admin["TenantId"]
+    return {
+        "assignable_roles": sorted(_ASSIGNABLE_ROLES),
+        "members": sqlhelper.get_tenant_role_members(tid),
+        "users":   sqlhelper.get_tenant_users_brief(tid),
+    }
+
+
+@router.post("/api/admin/setup/roles/grant")
+async def grant_role(payload: RoleChange, admin: dict = Depends(require_setup_admin)):
+    _validate_role_change(payload, admin)
+    sqlhelper.assign_user_role(payload.user_id, payload.role, admin["UserId"])
+    logger.info(
+        "Role granted",
+        extra={"tenant_id": admin["TenantId"], "target_user": payload.user_id,
+               "role": payload.role, "by": admin.get("userPrincipalName")},
+    )
+    return {"ok": True}
+
+
+@router.post("/api/admin/setup/roles/revoke")
+async def revoke_role(payload: RoleChange, admin: dict = Depends(require_setup_admin)):
+    _validate_role_change(payload, admin)
+    sqlhelper.revoke_user_role(payload.user_id, payload.role)
+    logger.info(
+        "Role revoked",
+        extra={"tenant_id": admin["TenantId"], "target_user": payload.user_id,
+               "role": payload.role, "by": admin.get("userPrincipalName")},
+    )
+    return {"ok": True}
