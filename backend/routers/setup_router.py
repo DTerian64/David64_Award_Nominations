@@ -299,3 +299,33 @@ async def disconnect_payroll(admin: dict = Depends(require_setup_admin)):
     ok = sqlhelper.disconnect_payroll(admin["TenantId"], admin.get("userPrincipalName", "unknown"))
     logger.info("Payroll disconnected", extra={"tenant_id": admin["TenantId"], "removed": ok})
     return {"ok": ok}
+
+
+# ── Audit & Access Review ─────────────────────────────────────────────────────
+# Read-only SOC 2 views over the tenant's own data: the current access snapshot
+# (who holds which app role), the full role change timeline (from UserRoles
+# temporal history), and the impersonation audit trail. Nothing here mutates
+# state; each query is scoped to the admin's own tenant from the token.
+
+_AUDIT_HISTORY_LIMIT = 300
+
+
+@router.get("/api/admin/setup/audit/access-review")
+async def audit_access_review(admin: dict = Depends(require_setup_admin)):
+    """Current app-role assignments for the admin's tenant (access-review snapshot)."""
+    return {
+        "note": "App-managed roles only. AWard_Nomination_Admin is managed in Microsoft Entra.",
+        "rows": sqlhelper.get_access_review(admin["TenantId"]),
+    }
+
+
+@router.get("/api/admin/setup/audit/role-history")
+async def audit_role_history(admin: dict = Depends(require_setup_admin)):
+    """Grant/revoke timeline from UserRoles system-versioned history (own tenant)."""
+    return {"rows": sqlhelper.get_role_change_history(admin["TenantId"], _AUDIT_HISTORY_LIMIT)}
+
+
+@router.get("/api/admin/setup/audit/impersonation")
+async def audit_impersonation(admin: dict = Depends(require_setup_admin)):
+    """Impersonation audit trail for admins in the caller's tenant."""
+    return {"rows": sqlhelper.get_impersonation_audit(admin["TenantId"], _AUDIT_HISTORY_LIMIT)}

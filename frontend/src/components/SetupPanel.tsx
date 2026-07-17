@@ -10,12 +10,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Settings, Users as UsersIcon, Tag, ShieldAlert, DollarSign,
   Save, RefreshCw, AlertCircle, CheckCircle, X, Plus,
+  ShieldCheck, History, UserCheck, Eye,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-type SubTab = 'organization' | 'roles' | 'categories' | 'fraud' | 'payroll';
+type SubTab = 'organization' | 'roles' | 'categories' | 'fraud' | 'payroll' | 'audit';
 
 interface OrgSettings {
   tenant_name:          string;
@@ -38,6 +39,7 @@ const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
   { id: 'categories',   label: 'Award Categories', icon: <Tag className="w-4 h-4" /> },
   { id: 'fraud',        label: 'Fraud / Integrity',icon: <ShieldAlert className="w-4 h-4" /> },
   { id: 'payroll',      label: 'Payroll',          icon: <DollarSign className="w-4 h-4" /> },
+  { id: 'audit',        label: 'Audit & Access',   icon: <ShieldCheck className="w-4 h-4" /> },
 ];
 
 export const SetupPanel: React.FC = () => {
@@ -69,6 +71,7 @@ export const SetupPanel: React.FC = () => {
       {sub === 'categories'   && <CategoriesPanel />}
       {sub === 'fraud'        && <FraudPanel />}
       {sub === 'payroll'      && <PayrollPanel />}
+      {sub === 'audit'        && <AuditPanel />}
     </div>
   );
 };
@@ -880,6 +883,205 @@ const PayrollPanel: React.FC = () => {
         Connecting opens the provider's secure OAuth flow. Disconnect removes the stored token;
         the change is recorded in the payroll token history.
       </p>
+    </div>
+  );
+};
+
+
+// ── Audit & Access Review ─────────────────────────────────────────────────────
+// Read-only SOC 2 views over the tenant's own data. Three sections, each fetched
+// on demand: the current access snapshot, the role change timeline (from the
+// UserRoles temporal history), and the impersonation audit trail.
+
+type AuditSection = 'access' | 'history' | 'impersonation';
+
+interface AccessRow {
+  user_id: number; upn: string; name: string; title: string | null; role: string;
+  granted_by: string | null; granted_at: string | null;
+  updated_by: string | null; updated_at: string | null;
+}
+interface HistoryRow {
+  user_id: number; upn: string | null; name: string; role: string;
+  created_by: string | null; updated_by: string | null;
+  valid_from: string | null; valid_to: string | null; active: boolean;
+}
+interface ImpRow {
+  time: string | null; admin_upn: string; impersonated_upn: string;
+  action: string; details: string | null; ip_address: string | null;
+}
+
+const AUDIT_SECTIONS: { id: AuditSection; label: string; icon: React.ReactNode; endpoint: string }[] = [
+  { id: 'access',        label: 'Access Review',     icon: <UserCheck className="w-4 h-4" />, endpoint: 'audit/access-review' },
+  { id: 'history',       label: 'Role History',      icon: <History className="w-4 h-4" />,   endpoint: 'audit/role-history' },
+  { id: 'impersonation', label: 'Impersonation Log', icon: <Eye className="w-4 h-4" />,       endpoint: 'audit/impersonation' },
+];
+
+// UTC ISO (…Z) → localized string in the viewer's own timezone.
+const fmtTime = (iso: string | null | undefined): string =>
+  iso ? new Date(iso).toLocaleString() : '—';
+
+const AuditPanel: React.FC = () => {
+  const [section, setSection] = useState<AuditSection>('access');
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
+  const [note, setNote]       = useState<string | null>(null);
+  const [rows, setRows]       = useState<any[]>([]);
+
+  const load = useCallback(async (sec: AuditSection) => {
+    const cfg = AUDIT_SECTIONS.find(s => s.id === sec)!;
+    setLoading(true);
+    setError(null);
+    setRows([]);
+    setNote(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/${cfg.endpoint}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const body = await res.json();
+      setRows(body.rows || []);
+      if (body.note) setNote(body.note);
+    } catch (e: any) {
+      setError(e.message || 'Failed to load audit data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(section); }, [section, load]);
+
+  return (
+    <div className="space-y-4">
+      {/* Section selector */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex flex-wrap gap-1 p-1 bg-gray-100 rounded-lg">
+          {AUDIT_SECTIONS.map(s => {
+            const active = section === s.id;
+            return (
+              <button
+                key={s.id}
+                onClick={() => setSection(s.id)}
+                style={active ? { backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' } : {}}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  active ? '' : 'text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {s.icon}<span>{s.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <button
+          onClick={() => load(section)}
+          disabled={loading}
+          className="p-1.5 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-40"
+          title="Refresh"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {note && (
+        <p className="text-xs text-gray-500 flex items-center gap-1.5">
+          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />{note}
+        </p>
+      )}
+
+      {loading && (
+        <div className="flex items-center justify-center gap-2 text-gray-400 text-sm py-12">
+          <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="flex items-start gap-2 p-3 bg-red-50 rounded-lg text-red-700 text-sm">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><span>{error}</span>
+        </div>
+      )}
+
+      {!loading && !error && rows.length === 0 && (
+        <div className="text-center py-14 text-gray-400 text-sm">No records to show.</div>
+      )}
+
+      {/* ── Access Review ─────────────────────────────────────────── */}
+      {!loading && !error && section === 'access' && rows.length > 0 && (
+        <div className="overflow-x-auto border border-gray-100 rounded-lg">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="text-left font-medium px-3 py-2">User</th>
+                <th className="text-left font-medium px-3 py-2">Role</th>
+                <th className="text-left font-medium px-3 py-2">Granted by</th>
+                <th className="text-left font-medium px-3 py-2">Granted</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {(rows as AccessRow[]).map((r, i) => (
+                <tr key={`${r.user_id}-${r.role}-${i}`} className="hover:bg-gray-50">
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-gray-800">{r.name}</div>
+                    <div className="text-xs text-gray-400">{r.upn}{r.title ? ` · ${r.title}` : ''}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="inline-block px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs">{r.role}</span>
+                  </td>
+                  <td className="px-3 py-2 text-gray-600 text-xs">{r.granted_by || '—'}</td>
+                  <td className="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">{fmtTime(r.granted_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Role Change History (temporal) ────────────────────────── */}
+      {!loading && !error && section === 'history' && rows.length > 0 && (
+        <div className="space-y-2">
+          {(rows as HistoryRow[]).map((r, i) => (
+            <div key={i} className="border border-gray-100 rounded-lg p-3 text-sm">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-gray-800">{r.name}</span>
+                <span className="inline-block px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs">{r.role}</span>
+                {r.active ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 text-green-700 text-xs">
+                    <CheckCircle className="w-3 h-3" />Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs">Ended</span>
+                )}
+              </div>
+              <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5 text-xs text-gray-500">
+                <span>Effective: <span className="text-gray-700">{fmtTime(r.valid_from)}</span>{r.created_by ? ` · by ${r.created_by}` : ''}</span>
+                {r.active
+                  ? <span>Currently in effect</span>
+                  : <span>Ended: <span className="text-gray-700">{fmtTime(r.valid_to)}</span>{r.updated_by ? ` · by ${r.updated_by}` : ''}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Impersonation Log ─────────────────────────────────────── */}
+      {!loading && !error && section === 'impersonation' && rows.length > 0 && (
+        <div className="space-y-2">
+          {(rows as ImpRow[]).map((r, i) => (
+            <div key={i} className="border border-gray-100 rounded-lg p-3 text-sm">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-gray-400 font-mono text-xs whitespace-nowrap">{fmtTime(r.time)}</span>
+                <span className="inline-block px-2 py-0.5 rounded bg-purple-50 text-purple-700 text-xs">{r.action}</span>
+              </div>
+              <p className="mt-1.5 text-gray-700 text-xs break-words">
+                <span className="font-medium">{r.admin_upn}</span>
+                <span className="text-gray-400"> impersonated </span>
+                <span className="font-medium">{r.impersonated_upn}</span>
+                {r.ip_address ? <span className="text-gray-400"> · {r.ip_address}</span> : null}
+              </p>
+              {r.details && <p className="mt-1 text-xs text-gray-500 break-words">{r.details}</p>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

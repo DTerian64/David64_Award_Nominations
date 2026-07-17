@@ -2986,3 +2986,129 @@ def disconnect_payroll(tenant_id: int, actor: str) -> bool:
         )
         session.commit()
         return result.rowcount > 0
+
+
+# ===========================================================================
+# AUDIT & ACCESS REVIEW QUERIES  (Setup > Audit & Access Review, read-only)
+# All tenant-scoped; timestamps returned as UTC ISO strings (SYSUTCDATETIME /
+# Azure SQL GETDATE() are UTC) so the browser can localise them.
+# ===========================================================================
+
+# SQL Server's row-end sentinel for an open (currently-active) temporal row.
+_TEMPORAL_OPEN_YEAR = 9999
+
+
+def _iso_utc(dt) -> Optional[str]:
+    """Render a naive UTC datetime as an ISO-8601 string with a 'Z' marker."""
+    if dt is None:
+        return None
+    s = dt.isoformat()
+    return s if s.endswith("Z") or "+" in s else s + "Z"
+
+
+def get_access_review(tenant_id: int) -> List[dict]:
+    """Current app-role assignments for the tenant (the 'who has access' snapshot).
+
+    App-managed roles only (HRBP / PayrollBP / Support). AWard_Nomination_Admin is
+    Entra-managed and never lands in dbo.UserRoles, so it is intentionally absent.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT u.UserId, u.userPrincipalName, u.FirstName, u.LastName, u.Title,
+                       ur.Role, ur.created_by, ur.created_at, ur.updated_by, ur.updated_at
+                FROM   dbo.UserRoles ur
+                JOIN   dbo.Users u ON u.UserId = ur.UserId
+                WHERE  ur.TenantId = :tid
+                ORDER  BY u.LastName, u.FirstName, ur.Role
+            """),
+            {"tid": tenant_id},
+        ).fetchall()
+    out = []
+    for uid, upn, first, last, title, role, cby, cat, uby, uat in rows:
+        out.append({
+            "user_id":      uid,
+            "upn":          upn,
+            "name":         f"{first or ''} {last or ''}".strip() or upn,
+            "title":        title,
+            "role":         role,
+            "granted_by":   cby,
+            "granted_at":   _iso_utc(cat),
+            "updated_by":   uby,
+            "updated_at":   _iso_utc(uat),
+        })
+    return out
+
+
+def get_role_change_history(tenant_id: int, limit: int = 200) -> List[dict]:
+    """Full grant/revoke timeline for the tenant from UserRoles temporal history.
+
+    Reads every row version (current + history). An open ValidTo (year 9999)
+    means the assignment is still active; a finite ValidTo means it ended
+    (revoked or superseded) at that instant. ValidFrom/ValidTo are HIDDEN period
+    columns — returned only because they are named explicitly here.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT TOP (:limit)
+                       ur.UserId, u.userPrincipalName, u.FirstName, u.LastName,
+                       ur.Role, ur.created_by, ur.updated_by,
+                       ur.ValidFrom, ur.ValidTo
+                FROM   dbo.UserRoles FOR SYSTEM_TIME ALL ur
+                LEFT   JOIN dbo.Users u ON u.UserId = ur.UserId
+                WHERE  ur.TenantId = :tid
+                ORDER  BY ur.ValidFrom DESC
+            """),
+            {"tid": tenant_id, "limit": limit},
+        ).fetchall()
+    out = []
+    for uid, upn, first, last, role, cby, uby, vfrom, vto in rows:
+        active = vto is not None and vto.year >= _TEMPORAL_OPEN_YEAR
+        out.append({
+            "user_id":     uid,
+            "upn":         upn,
+            "name":        (f"{first or ''} {last or ''}".strip() or upn) if upn else f"user #{uid}",
+            "role":        role,
+            "created_by":  cby,
+            "updated_by":  uby,
+            "valid_from":  _iso_utc(vfrom),
+            "valid_to":    None if active else _iso_utc(vto),
+            "active":      active,
+        })
+    return out
+
+
+def get_impersonation_audit(tenant_id: int, limit: int = 200) -> List[dict]:
+    """Impersonation audit trail, scoped to admins belonging to this tenant.
+
+    Impersonation_AuditLog stores UPNs, not TenantId, so we scope by requiring
+    the acting admin (AdminUPN) to be a user in this tenant. Impersonation is
+    already tenant-bound at the point of use, so this cannot leak other tenants.
+    """
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT TOP (:limit)
+                       l.Timestamp, l.AdminUPN, l.ImpersonatedUPN,
+                       l.Action, l.Details, l.IpAddress
+                FROM   dbo.Impersonation_AuditLog l
+                WHERE  EXISTS (
+                    SELECT 1 FROM dbo.Users u
+                    WHERE u.userPrincipalName = l.AdminUPN AND u.TenantId = :tid
+                )
+                ORDER  BY l.Timestamp DESC
+            """),
+            {"tid": tenant_id, "limit": limit},
+        ).fetchall()
+    out = []
+    for ts, admin_upn, imp_upn, action, details, ip in rows:
+        out.append({
+            "time":             _iso_utc(ts),
+            "admin_upn":        admin_upn,
+            "impersonated_upn": imp_upn,
+            "action":           action,
+            "details":          details,
+            "ip_address":       ip,
+        })
+    return out
