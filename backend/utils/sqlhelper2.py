@@ -2828,3 +2828,101 @@ def update_category(category_id: int, tenant_id: int, description: str, min_amou
         )
         session.commit()
         return result.rowcount > 0
+
+
+# ===========================================================================
+# ADMIN SETUP — Fraud / Integrity (Tenants.desc_check_config + integrity_config)
+# ===========================================================================
+
+def get_fraud_settings(tenant_id: int) -> dict:
+    """Return the tenant's description-quality + fraud-routing config, flattened,
+    with system defaults filled in for any missing key."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT desc_check_config, integrity_config FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+
+    def _parse(v):
+        try:
+            d = json.loads(v) if v else {}
+        except Exception:
+            d = {}
+        return d if isinstance(d, dict) else {}
+
+    dcc = _parse(row[0]) if row else {}
+    ic  = _parse(row[1]) if row else {}
+    routing = ic.get("score_routing") if isinstance(ic.get("score_routing"), dict) else {}
+    graph   = ic.get("graph_pattern") if isinstance(ic.get("graph_pattern"), dict) else {}
+    phrases = dcc.get("boilerplate_phrases")
+    return {
+        # Fraud score routing (0..100 cutoffs)
+        "low_threshold":                  int(routing.get("low_threshold", 20)),
+        "medium_threshold":               int(routing.get("medium_threshold", 40)),
+        "high_threshold":                 int(routing.get("high_threshold", 60)),
+        "critical_threshold":             int(routing.get("critical_threshold", 80)),
+        "detection_window_days":          int(graph.get("detection_window_days", 365)),
+        # Description quality
+        "use_char_count":                 bool(dcc.get("use_char_count", False)),
+        "min_char_count":                 int(dcc.get("min_char_count", 12)),
+        "min_word_count":                 int(dcc.get("min_word_count", 3)),
+        "category_alignment_threshold":   float(dcc.get("category_alignment_threshold", 0.15)),
+        "duplicate_similarity_threshold": float(dcc.get("duplicate_similarity_threshold", 0.85)),
+        "llm_category_check_enabled":     bool(dcc.get("llm_category_check_enabled", False)),
+        "llm_fit_threshold":              float(dcc.get("llm_fit_threshold", 0.40)),
+        "llm_instructions":               dcc.get("llm_instructions"),
+        "boilerplate_phrases":            phrases if isinstance(phrases, list) else [],
+    }
+
+
+def update_fraud_settings(tenant_id: int, data: dict, actor: str) -> None:
+    """Merge the flattened config back into desc_check_config + integrity_config,
+    preserving any unrelated keys already present."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT desc_check_config, integrity_config FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+
+        def _parse(v):
+            try:
+                d = json.loads(v) if v else {}
+            except Exception:
+                d = {}
+            return d if isinstance(d, dict) else {}
+
+        dcc = _parse(row[0]) if row else {}
+        ic  = _parse(row[1]) if row else {}
+
+        dcc["use_char_count"]                 = bool(data["use_char_count"])
+        dcc["min_char_count"]                 = int(data["min_char_count"])
+        dcc["min_word_count"]                 = int(data["min_word_count"])
+        dcc["category_alignment_threshold"]   = float(data["category_alignment_threshold"])
+        dcc["duplicate_similarity_threshold"] = float(data["duplicate_similarity_threshold"])
+        dcc["llm_category_check_enabled"]     = bool(data["llm_category_check_enabled"])
+        dcc["llm_fit_threshold"]              = float(data["llm_fit_threshold"])
+        dcc["llm_instructions"]               = data.get("llm_instructions") or None
+        dcc["boilerplate_phrases"]            = data.get("boilerplate_phrases", [])
+
+        routing = ic.get("score_routing") if isinstance(ic.get("score_routing"), dict) else {}
+        routing["low_threshold"]      = int(data["low_threshold"])
+        routing["medium_threshold"]   = int(data["medium_threshold"])
+        routing["high_threshold"]     = int(data["high_threshold"])
+        routing["critical_threshold"] = int(data["critical_threshold"])
+        ic["score_routing"] = routing
+        graph = ic.get("graph_pattern") if isinstance(ic.get("graph_pattern"), dict) else {}
+        graph["detection_window_days"] = int(data["detection_window_days"])
+        ic["graph_pattern"] = graph
+
+        session.execute(
+            text("""
+                UPDATE dbo.Tenants
+                SET desc_check_config = :dcc,
+                    integrity_config  = :ic,
+                    updated_at        = SYSUTCDATETIME(),
+                    updated_by        = :actor
+                WHERE TenantId = :tid
+            """),
+            {"dcc": json.dumps(dcc), "ic": json.dumps(ic), "actor": actor, "tid": tenant_id},
+        )
+        session.commit()

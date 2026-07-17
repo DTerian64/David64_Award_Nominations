@@ -218,3 +218,58 @@ async def update_category(category_id: int, payload: CategoryPayload,
     )
     logger.info("Category updated", extra={"tenant_id": admin["TenantId"], "category_id": category_id})
     return {"ok": True}
+
+
+# ── Fraud / Integrity ─────────────────────────────────────────────────────────
+# Edits desc_check_config + integrity_config. NOTE: the integrity-check service
+# caches these for its process lifetime, so changes take effect on its next
+# restart (documented behaviour; hot-reload is deferred to the fraud project).
+
+class FraudConfig(BaseModel):
+    # Fraud score routing (0..100 cutoffs)
+    low_threshold:      int
+    medium_threshold:   int
+    high_threshold:     int
+    critical_threshold: int
+    detection_window_days: int
+    # Description quality
+    use_char_count:                 bool
+    min_char_count:                 int
+    min_word_count:                 int
+    category_alignment_threshold:   float
+    duplicate_similarity_threshold: float
+    llm_category_check_enabled:     bool
+    llm_fit_threshold:              float
+    llm_instructions:               Optional[str] = None
+    boilerplate_phrases:            list = []
+
+
+def _validate_fraud(p: "FraudConfig") -> None:
+    routing = [p.low_threshold, p.medium_threshold, p.high_threshold, p.critical_threshold]
+    if not all(0 <= x <= 100 for x in routing):
+        raise HTTPException(status_code=422, detail="Score thresholds must be between 0 and 100.")
+    if not (p.low_threshold <= p.medium_threshold <= p.high_threshold <= p.critical_threshold):
+        raise HTTPException(status_code=422,
+                            detail="Score thresholds must be non-decreasing: low <= medium <= high <= critical.")
+    for name, val in (("Category alignment", p.category_alignment_threshold),
+                      ("Duplicate similarity", p.duplicate_similarity_threshold),
+                      ("LLM fit", p.llm_fit_threshold)):
+        if not (0.0 <= val <= 1.0):
+            raise HTTPException(status_code=422, detail=f"{name} threshold must be between 0 and 1.")
+    if p.min_char_count < 0 or p.min_word_count < 0 or p.detection_window_days < 1:
+        raise HTTPException(status_code=422, detail="Counts and the detection window must be positive.")
+
+
+@router.get("/api/admin/setup/fraud")
+async def get_fraud(admin: dict = Depends(require_setup_admin)):
+    return sqlhelper.get_fraud_settings(admin["TenantId"])
+
+
+@router.put("/api/admin/setup/fraud")
+async def update_fraud(payload: FraudConfig, admin: dict = Depends(require_setup_admin)):
+    _validate_fraud(payload)
+    sqlhelper.update_fraud_settings(
+        admin["TenantId"], payload.dict(), admin.get("userPrincipalName", "unknown"),
+    )
+    logger.info("Fraud/integrity config updated", extra={"tenant_id": admin["TenantId"]})
+    return sqlhelper.get_fraud_settings(admin["TenantId"])
