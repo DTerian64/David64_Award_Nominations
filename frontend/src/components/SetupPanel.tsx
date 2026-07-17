@@ -68,7 +68,7 @@ export const SetupPanel: React.FC = () => {
       {sub === 'roles'        && <RolesPanel />}
       {sub === 'categories'   && <CategoriesPanel />}
       {sub === 'fraud'        && <FraudPanel />}
-      {sub === 'payroll'      && <ComingSoon title="Payroll Integration" />}
+      {sub === 'payroll'      && <PayrollPanel />}
     </div>
   );
 };
@@ -743,9 +743,143 @@ const FraudPanel: React.FC = () => {
   );
 };
 
-const ComingSoon: React.FC<{ title: string }> = ({ title }) => (
-  <div className="text-center py-16 text-gray-400">
-    <Settings className="w-10 h-10 mx-auto mb-3 opacity-40" />
-    <p className="text-sm">{title} — coming soon.</p>
-  </div>
-);
+interface PayrollProvider {
+  id: number;
+  name: string;
+  display_name: string;
+  company_id_at_provider: string | null;
+  api_base_url: string | null;
+}
+interface PayrollStatus {
+  provider: PayrollProvider | null;
+  connected: boolean;
+  token_expires_at: string | null;
+  authorize_url: string | null;
+}
+
+const PayrollPanel: React.FC = () => {
+  const [data, setData]     = useState<PayrollStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy]     = useState(false);
+  const [msg, setMsg]       = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/payroll`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      setData(await res.json());
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Failed to load payroll status' });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const disconnect = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/payroll/disconnect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      setMsg({ type: 'ok', text: 'Disconnected.' });
+      await load();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Disconnect failed' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 text-gray-400 text-sm py-12">
+        <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+  if (!data) return <div className="text-sm text-red-600 py-6">{msg?.text ?? 'No data.'}</div>;
+
+  if (!data.provider) {
+    return (
+      <div className="text-center py-14 text-gray-400">
+        <DollarSign className="w-10 h-10 mx-auto mb-3 opacity-40" />
+        <p className="text-sm">No payroll provider is configured for this organization.</p>
+        <p className="mt-1 text-xs">Provider assignment is handled during onboarding — contact support to add one.</p>
+      </div>
+    );
+  }
+
+  const p = data.provider;
+  const expiry = data.token_expires_at ? new Date(data.token_expires_at).toLocaleString() : null;
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900">{p.display_name}</p>
+            <p className="text-xs text-gray-500 truncate">{p.name}{p.api_base_url ? ` · ${p.api_base_url}` : ''}</p>
+          </div>
+          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs shrink-0 ${data.connected ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+            {data.connected ? (<><CheckCircle className="w-3 h-3" />Connected</>) : 'Not connected'}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1 border-t border-gray-100">
+          <div>
+            <span className="text-gray-400">Company ID</span>
+            <p className="text-gray-700 font-mono break-all">{p.company_id_at_provider || '—'}</p>
+          </div>
+          <div>
+            <span className="text-gray-400">Token expires</span>
+            <p className="text-gray-700">{expiry || '—'}</p>
+          </div>
+        </div>
+      </div>
+
+      {msg && (
+        <div className={`flex items-center gap-2 text-sm ${msg.type === 'ok' ? 'text-green-700' : 'text-red-700'}`}>
+          {msg.type === 'ok' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+          {msg.text}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        {data.authorize_url ? (
+          <a
+            href={data.authorize_url}
+            style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium"
+          >
+            {data.connected ? 'Reconnect' : 'Connect'} {p.display_name}
+          </a>
+        ) : (
+          <span className="text-xs text-gray-400">Connect link unavailable (payroll broker URL not configured).</span>
+        )}
+        {data.connected && (
+          <button
+            onClick={disconnect}
+            disabled={busy}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50"
+          >
+            <X className="w-4 h-4" /> Disconnect
+          </button>
+        )}
+      </div>
+
+      <p className="text-xs text-gray-400">
+        Connecting opens the provider's secure OAuth flow. Disconnect removes the stored token;
+        the change is recorded in the payroll token history.
+      </p>
+    </div>
+  );
+};

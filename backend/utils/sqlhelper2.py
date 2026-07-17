@@ -2926,3 +2926,63 @@ def update_fraud_settings(tenant_id: int, data: dict, actor: str) -> None:
             {"dcc": json.dumps(dcc), "ic": json.dumps(ic), "actor": actor, "tid": tenant_id},
         )
         session.commit()
+
+
+# ===========================================================================
+# ADMIN SETUP — Payroll Integration (own-tenant; provider + token status)
+# ===========================================================================
+
+def get_payroll_setup(tenant_id: int) -> dict:
+    """Return the tenant's configured payroll provider and its connection status.
+
+    provider is None when Tenants.payroll_provider_id is unset. `connected`
+    reflects whether an OAuth token row exists for that provider."""
+    with get_db_context() as session:
+        prov = session.execute(
+            text("""
+                SELECT pp.id, pp.name, pp.display_name, pp.company_id_at_provider, pp.api_base_url
+                FROM   dbo.Tenants t
+                JOIN   dbo.payroll_providers pp ON pp.id = t.payroll_provider_id
+                WHERE  t.TenantId = :tid
+            """),
+            {"tid": tenant_id},
+        ).fetchone()
+        if not prov:
+            return {"provider": None, "connected": False, "token_expires_at": None}
+        tok = session.execute(
+            text("SELECT token_expires_at FROM dbo.payroll_tokens WHERE provider_id = :pid"),
+            {"pid": prov[0]},
+        ).fetchone()
+    return {
+        "provider": {
+            "id": prov[0], "name": prov[1], "display_name": prov[2],
+            "company_id_at_provider": prov[3], "api_base_url": prov[4],
+        },
+        "connected": tok is not None,
+        "token_expires_at": str(tok[0]) if tok and tok[0] else None,
+    }
+
+
+def disconnect_payroll(tenant_id: int, actor: str) -> bool:
+    """Delete the tenant's payroll OAuth token (revoke the local connection).
+
+    Stamps updated_by before deleting so the temporal history (payroll_tokens is
+    system-versioned) attributes the disconnect to a person."""
+    with get_db_context() as session:
+        prov = session.execute(
+            text("SELECT payroll_provider_id FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+        if not prov or prov[0] is None:
+            return False
+        pid = prov[0]
+        session.execute(
+            text("UPDATE dbo.payroll_tokens SET updated_at = SYSUTCDATETIME(), updated_by = :actor WHERE provider_id = :pid"),
+            {"actor": actor, "pid": pid},
+        )
+        result = session.execute(
+            text("DELETE FROM dbo.payroll_tokens WHERE provider_id = :pid"),
+            {"pid": pid},
+        )
+        session.commit()
+        return result.rowcount > 0

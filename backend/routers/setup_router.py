@@ -11,6 +11,7 @@ Fraud / Integrity, Payroll Integration.
 """
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -273,3 +274,28 @@ async def update_fraud(payload: FraudConfig, admin: dict = Depends(require_setup
     )
     logger.info("Fraud/integrity config updated", extra={"tenant_id": admin["TenantId"]})
     return sqlhelper.get_fraud_settings(admin["TenantId"])
+
+
+# ── Payroll Integration ───────────────────────────────────────────────────────
+# Shows the tenant's configured provider + connection status. Connecting runs the
+# provider OAuth on the payroll-broker (a browser redirect); disconnecting deletes
+# the token here (payroll_tokens is temporal, so the removal is audited).
+
+_BROKER_URL = os.getenv("PAYROLL_BROKER_BASE_URL", "").rstrip("/")
+
+
+@router.get("/api/admin/setup/payroll")
+async def get_payroll(admin: dict = Depends(require_setup_admin)):
+    tid = admin["TenantId"]
+    status_obj = sqlhelper.get_payroll_setup(tid)
+    status_obj["authorize_url"] = None
+    if status_obj["provider"] and _BROKER_URL:
+        status_obj["authorize_url"] = f"{_BROKER_URL}/{status_obj['provider']['name']}/authorize?tenant_id={tid}"
+    return status_obj
+
+
+@router.post("/api/admin/setup/payroll/disconnect")
+async def disconnect_payroll(admin: dict = Depends(require_setup_admin)):
+    ok = sqlhelper.disconnect_payroll(admin["TenantId"], admin.get("userPrincipalName", "unknown"))
+    logger.info("Payroll disconnected", extra={"tenant_id": admin["TenantId"], "removed": ok})
+    return {"ok": ok}
