@@ -10,7 +10,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Settings, Users as UsersIcon, Tag, ShieldAlert, DollarSign,
   Save, RefreshCw, AlertCircle, CheckCircle, X, Plus,
-  ShieldCheck, History, UserCheck, Eye,
+  ShieldCheck, History, UserCheck, Eye, Download,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
 
@@ -920,6 +920,37 @@ const AUDIT_SECTIONS: { id: AuditSection; label: string; icon: React.ReactNode; 
 const fmtTime = (iso: string | null | undefined): string =>
   iso ? new Date(iso).toLocaleString() : '—';
 
+// RFC-4180 CSV cell: quote when the value contains a comma, quote, or newline.
+const csvCell = (v: unknown): string => {
+  const s = v === null || v === undefined ? '' : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+// Build the access-review evidence CSV. Timestamps stay as raw UTC ISO strings
+// (unambiguous for an auditor) rather than the viewer's localized rendering.
+function buildAccessReviewCsv(rows: AccessRow[]): string {
+  const header = ['Name', 'UPN', 'Title', 'Role', 'Granted By', 'Granted At (UTC)', 'Updated By', 'Updated At (UTC)'];
+  const lines = rows.map(r => [
+    r.name, r.upn, r.title ?? '', r.role,
+    r.granted_by ?? '', r.granted_at ?? '', r.updated_by ?? '', r.updated_at ?? '',
+  ].map(csvCell).join(','));
+  return [header.join(','), ...lines].join('\r\n');
+}
+
+// Trigger a browser download of text content. A UTF-8 BOM is prepended so Excel
+// renders Unicode names correctly.
+function downloadTextFile(filename: string, text: string): void {
+  const blob = new Blob(['\ufeff' + text], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 const AuditPanel: React.FC = () => {
   const [section, setSection] = useState<AuditSection>('access');
   const [loading, setLoading] = useState(true);
@@ -972,14 +1003,30 @@ const AuditPanel: React.FC = () => {
             );
           })}
         </div>
-        <button
-          onClick={() => load(section)}
-          disabled={loading}
-          className="p-1.5 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-40"
-          title="Refresh"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-1">
+          {section === 'access' && rows.length > 0 && (
+            <button
+              onClick={() =>
+                downloadTextFile(
+                  `access-review-${new Date().toISOString().slice(0, 10)}.csv`,
+                  buildAccessReviewCsv(rows as AccessRow[]),
+                )
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-600 border border-gray-200 hover:bg-gray-50"
+              title="Export access review as CSV"
+            >
+              <Download className="w-4 h-4" /> Export CSV
+            </button>
+          )}
+          <button
+            onClick={() => load(section)}
+            disabled={loading}
+            className="p-1.5 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-40"
+            title="Refresh"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {note && (
