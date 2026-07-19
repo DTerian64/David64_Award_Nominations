@@ -1326,7 +1326,7 @@ const EmailTemplatesPanel: React.FC = () => {
               <div className="border border-gray-200 rounded-md overflow-hidden text-xs">
                 <CodeMirror
                   value={body}
-                  height="320px"
+                  height="640px"
                   extensions={[html()]}
                   onChange={val => setBody(val)}
                   basicSetup={{
@@ -1346,7 +1346,7 @@ const EmailTemplatesPanel: React.FC = () => {
                   title="Template preview"
                   sandbox=""
                   srcDoc={body}
-                  className="w-full h-80 border border-gray-200 rounded-md bg-white"
+                  className="w-full h-[640px] border border-gray-200 rounded-md bg-white"
                 />
               </div>
             )}
