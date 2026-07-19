@@ -13,6 +13,8 @@ import {
   ShieldCheck, History, UserCheck, Eye, Download, Mail,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
+import CodeMirror from '@uiw/react-codemirror';
+import { html } from '@codemirror/lang-html';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -1321,12 +1323,21 @@ const EmailTemplatesPanel: React.FC = () => {
           <div className={showPreview ? 'grid grid-cols-1 lg:grid-cols-2 gap-3' : ''}>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Body (HTML / Jinja2)</label>
-              <textarea
-                value={body}
-                onChange={e => setBody(e.target.value)}
-                spellCheck={false}
-                className="w-full h-80 border border-gray-200 rounded-md px-3 py-2 text-xs font-mono"
-              />
+              <div className="border border-gray-200 rounded-md overflow-hidden text-xs">
+                <CodeMirror
+                  value={body}
+                  height="320px"
+                  extensions={[html()]}
+                  onChange={val => setBody(val)}
+                  basicSetup={{
+                    lineNumbers: true,
+                    bracketMatching: true,
+                    closeBrackets: true,
+                    highlightActiveLine: true,
+                    foldGutter: true,
+                  }}
+                />
+              </div>
             </div>
             {showPreview && (
               <div>
