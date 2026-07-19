@@ -6,7 +6,7 @@
  * incrementally; Organization is the first working one.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Settings, Users as UsersIcon, Tag, ShieldAlert, DollarSign,
   Save, RefreshCw, AlertCircle, CheckCircle, X, Plus,
@@ -1155,13 +1155,58 @@ interface EmailTemplate {
   updated_by: string | null;
 }
 
+// ── Editor <-> preview linking ───────────────────────────────────────────────
+// Parse the template source into element ranges and inject a data-cm-el index
+// into every opening tag. The rendered preview then carries those markers, so the
+// editor cursor (a source offset) maps to the matching preview element — robust
+// against the browser inserting <tbody>/<head>/<body>, which never carry our
+// attribute. Best-effort: outlines the innermost element around the cursor.
+
+const _VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr',
+]);
+
+interface ElRange { start: number; end: number; domIndex: number; tag: string; nameEnd: number; }
+
+function buildPreview(src: string): { html: string; ranges: ElRange[] } {
+  const tagRe = /<(\/?)([a-zA-Z][\w:-]*)((?:"[^"]*"|'[^']*'|[^>])*)>/g;
+  const els: ElRange[] = [];
+  const stack: number[] = [];
+  let domIndex = -1;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(src)) !== null) {
+    const closing = m[1] === '/';
+    const tag = m[2].toLowerCase();
+    const start = m.index;
+    const end = tagRe.lastIndex;
+    if (closing) {
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (els[stack[i]].tag === tag) { els[stack[i]].end = end; stack.length = i; break; }
+      }
+    } else {
+      domIndex += 1;
+      const selfClose = /\/\s*$/.test(m[3]);
+      els.push({ start, end, domIndex, tag, nameEnd: start + 1 + m[2].length });
+      if (!_VOID_TAGS.has(tag) && !selfClose) stack.push(els.length - 1);
+    }
+  }
+  // Inject markers back-to-front so earlier offsets stay valid.
+  const inserts = els
+    .map(e => ({ at: e.nameEnd, text: ` data-cm-el="${e.domIndex}"` }))
+    .sort((a, b) => b.at - a.at);
+  let html = src;
+  for (const ins of inserts) html = html.slice(0, ins.at) + ins.text + html.slice(ins.at);
+  return { html, ranges: els };
+}
+
 const EmailTemplatesPanel: React.FC = () => {
   const [list, setList]           = useState<EmailTemplate[]>([]);
   const [selectedId, setSelected] = useState<number | null>(null);
   const [subject, setSubject]     = useState('');
   const [body, setBody]           = useState('');
   const [showPreview, setShowPreview] = useState(true);
-  const [editorFocused, setEditorFocused] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [filter, setFilter]       = useState<'active' | 'all'>('active');
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
@@ -1212,6 +1257,41 @@ const EmailTemplatesPanel: React.FC = () => {
 
   const dirty = selected != null &&
     (subject !== (selected.subject ?? '') || body !== (selected.body_template ?? ''));
+
+  // Annotated preview HTML + source ranges, recomputed as the body changes.
+  const preview = useMemo(() => buildPreview(body), [body]);
+  const rangesRef = useRef(preview.ranges);
+  rangesRef.current = preview.ranges;
+
+  const clearHighlight = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    doc?.querySelectorAll('[data-cm-hl]').forEach(el => {
+      const h = el as HTMLElement;
+      h.style.outline = '';
+      h.style.outlineOffset = '';
+      h.removeAttribute('data-cm-hl');
+    });
+  }, []);
+
+  // Outline the innermost element whose source range contains the cursor.
+  const highlightAt = useCallback((pos: number) => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    clearHighlight();
+    let best: ElRange | null = null;
+    for (const r of rangesRef.current) {
+      if (pos >= r.start && pos <= r.end && (!best || r.start > best.start)) best = r;
+    }
+    if (!best) return;
+    const el = doc.querySelector(`[data-cm-el="${best.domIndex}"]`) as HTMLElement | null;
+    if (!el) return;
+    const accent = getComputedStyle(document.documentElement)
+      .getPropertyValue('--color-primary').trim() || '#2563eb';
+    el.style.outline = `2px solid ${accent}`;
+    el.style.outlineOffset = '1px';
+    el.setAttribute('data-cm-hl', '');
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [clearHighlight]);
 
   const save = async () => {
     if (!selected) return;
@@ -1330,8 +1410,8 @@ const EmailTemplatesPanel: React.FC = () => {
                   height="640px"
                   extensions={[html()]}
                   onChange={val => setBody(val)}
-                  onFocus={() => setEditorFocused(true)}
-                  onBlur={() => setEditorFocused(false)}
+                  onUpdate={u => { if (u.selectionSet || u.focusChanged) highlightAt(u.state.selection.main.head); }}
+                  onBlur={clearHighlight}
                   basicSetup={{
                     lineNumbers: true,
                     bracketMatching: true,
@@ -1344,20 +1424,13 @@ const EmailTemplatesPanel: React.FC = () => {
             </div>
             {showPreview && (
               <div>
-                <label
-                  className="block text-xs font-medium mb-1 transition-colors"
-                  style={{ color: editorFocused ? 'var(--color-primary)' : undefined }}
-                >
-                  Preview{editorFocused ? ' · editing' : ''}
-                </label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Preview</label>
                 <iframe
+                  ref={iframeRef}
                   title="Template preview"
-                  sandbox=""
-                  srcDoc={body}
-                  style={editorFocused
-                    ? { boxShadow: '0 0 0 2px var(--color-primary)', borderColor: 'transparent' }
-                    : undefined}
-                  className="w-full h-[640px] border border-gray-200 rounded-md bg-white transition-shadow duration-200"
+                  sandbox="allow-same-origin"
+                  srcDoc={preview.html}
+                  className="w-full h-[640px] border border-gray-200 rounded-md bg-white"
                 />
               </div>
             )}
