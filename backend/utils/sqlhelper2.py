@@ -446,7 +446,7 @@ def get_tenant_email_templates(tenant_id: int) -> List[dict]:
         rows = session.execute(
             text("""
                 SELECT TemplateId, TemplateKey, Lang, Subject, BodyTemplate,
-                       Active, Version, UpdatedAt, UpdatedBy
+                       Active, Version, updated_at, updated_by
                 FROM   dbo.EmailTemplates
                 WHERE  TenantId = :tid
                 ORDER  BY TemplateKey, Lang
@@ -469,7 +469,7 @@ def email_template_in_tenant(template_id: int, tenant_id: int) -> bool:
 def update_email_template(template_id: int, tenant_id: int, subject,
                           body_template: str, actor: str) -> Optional[dict]:
     """Update Subject + BodyTemplate for one of the tenant's own templates.
-    Bumps Version and stamps UpdatedAt/UpdatedBy. Returns the updated row, or
+    Bumps Version and stamps updated_at/updated_by. Returns the updated row, or
     None if the template does not belong to the tenant (own-tenant guard)."""
     with get_db_context() as session:
         result = session.execute(
@@ -478,8 +478,8 @@ def update_email_template(template_id: int, tenant_id: int, subject,
                 SET    Subject      = :subject,
                        BodyTemplate = :body,
                        Version      = Version + 1,
-                       UpdatedAt    = SYSUTCDATETIME(),
-                       UpdatedBy    = :actor
+                       updated_at   = SYSUTCDATETIME(),
+                       updated_by   = :actor
                 WHERE  TemplateId = :id AND TenantId = :tid
             """),
             {"subject": subject, "body": body_template, "actor": actor,
@@ -491,7 +491,7 @@ def update_email_template(template_id: int, tenant_id: int, subject,
         row = session.execute(
             text("""
                 SELECT TemplateId, TemplateKey, Lang, Subject, BodyTemplate,
-                       Active, Version, UpdatedAt, UpdatedBy
+                       Active, Version, updated_at, updated_by
                 FROM   dbo.EmailTemplates WHERE TemplateId = :id
             """),
             {"id": template_id},

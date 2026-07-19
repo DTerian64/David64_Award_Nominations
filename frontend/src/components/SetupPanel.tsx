@@ -1159,6 +1159,7 @@ const EmailTemplatesPanel: React.FC = () => {
   const [subject, setSubject]     = useState('');
   const [body, setBody]           = useState('');
   const [showPreview, setShowPreview] = useState(true);
+  const [filter, setFilter]       = useState<'active' | 'all'>('active');
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
   const [msg, setMsg]             = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -1185,6 +1186,16 @@ const EmailTemplatesPanel: React.FC = () => {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const visible = filter === 'active' ? list.filter(t => t.active) : list;
+
+  // Keep the selection inside the visible set when the filter or list changes.
+  useEffect(() => {
+    if (selectedId != null && !visible.some(t => t.template_id === selectedId)) {
+      setSelected(visible[0]?.template_id ?? null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, list]);
 
   const selected = list.find(t => t.template_id === selectedId) || null;
 
@@ -1244,10 +1255,27 @@ const EmailTemplatesPanel: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col md:flex-row gap-4">
+    <div className="space-y-4">
+      {/* Active / all filter */}
+      <div className="flex items-center justify-between gap-2">
+        <select
+          value={filter}
+          onChange={e => setFilter(e.target.value as 'active' | 'all')}
+          className="border border-gray-200 rounded-md px-3 py-1.5 text-sm bg-white"
+        >
+          <option value="active">View Active Only</option>
+          <option value="all">View All</option>
+        </select>
+        <span className="text-xs text-gray-400">{visible.length} {visible.length === 1 ? 'template' : 'templates'}</span>
+      </div>
+
+      <div className="flex flex-col md:flex-row gap-4">
       {/* Template list */}
       <div className="md:w-56 shrink-0 border border-gray-100 rounded-lg divide-y divide-gray-100 overflow-hidden self-start w-full">
-        {list.map(t => {
+        {visible.length === 0 && (
+          <div className="px-3 py-4 text-xs text-gray-400">No active templates — switch to “View All”.</div>
+        )}
+        {visible.map(t => {
           const active = t.template_id === selectedId;
           return (
             <button
@@ -1340,6 +1368,7 @@ const EmailTemplatesPanel: React.FC = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };
