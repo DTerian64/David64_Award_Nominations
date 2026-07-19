@@ -425,6 +425,80 @@ def get_email_template_candidates(template_key: str, tenant_id: int, lang: str) 
         ).fetchall()
 
 
+def _email_template_row(r) -> dict:
+    return {
+        "template_id":  r[0],
+        "template_key": r[1],
+        "lang":         r[2],
+        "subject":      r[3],
+        "body_template": r[4],
+        "active":       bool(r[5]),
+        "version":      r[6],
+        "updated_at":   (r[7].isoformat() + "Z") if r[7] else None,
+        "updated_by":   r[8],
+    }
+
+
+def get_tenant_email_templates(tenant_id: int) -> List[dict]:
+    """The tenant's OWN email/certificate template rows (not inherited defaults),
+    ordered by key then language."""
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT TemplateId, TemplateKey, Lang, Subject, BodyTemplate,
+                       Active, Version, UpdatedAt, UpdatedBy
+                FROM   dbo.EmailTemplates
+                WHERE  TenantId = :tid
+                ORDER  BY TemplateKey, Lang
+            """),
+            {"tid": tenant_id},
+        ).fetchall()
+    return [_email_template_row(r) for r in rows]
+
+
+def email_template_in_tenant(template_id: int, tenant_id: int) -> bool:
+    """True if the template row exists and belongs to this tenant."""
+    with get_db_context() as session:
+        return session.execute(
+            text("SELECT 1 FROM dbo.EmailTemplates "
+                 "WHERE TemplateId = :id AND TenantId = :tid"),
+            {"id": template_id, "tid": tenant_id},
+        ).fetchone() is not None
+
+
+def update_email_template(template_id: int, tenant_id: int, subject,
+                          body_template: str, actor: str) -> Optional[dict]:
+    """Update Subject + BodyTemplate for one of the tenant's own templates.
+    Bumps Version and stamps UpdatedAt/UpdatedBy. Returns the updated row, or
+    None if the template does not belong to the tenant (own-tenant guard)."""
+    with get_db_context() as session:
+        result = session.execute(
+            text("""
+                UPDATE dbo.EmailTemplates
+                SET    Subject      = :subject,
+                       BodyTemplate = :body,
+                       Version      = Version + 1,
+                       UpdatedAt    = SYSUTCDATETIME(),
+                       UpdatedBy    = :actor
+                WHERE  TemplateId = :id AND TenantId = :tid
+            """),
+            {"subject": subject, "body": body_template, "actor": actor,
+             "id": template_id, "tid": tenant_id},
+        )
+        session.commit()
+        if result.rowcount == 0:
+            return None
+        row = session.execute(
+            text("""
+                SELECT TemplateId, TemplateKey, Lang, Subject, BodyTemplate,
+                       Active, Version, UpdatedAt, UpdatedBy
+                FROM   dbo.EmailTemplates WHERE TemplateId = :id
+            """),
+            {"id": template_id},
+        ).fetchone()
+    return _email_template_row(row)
+
+
 # ===========================================================================
 # USER QUERIES
 # ===========================================================================

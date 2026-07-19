@@ -10,13 +10,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Settings, Users as UsersIcon, Tag, ShieldAlert, DollarSign,
   Save, RefreshCw, AlertCircle, CheckCircle, X, Plus,
-  ShieldCheck, History, UserCheck, Eye, Download,
+  ShieldCheck, History, UserCheck, Eye, Download, Mail,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-type SubTab = 'organization' | 'roles' | 'categories' | 'fraud' | 'payroll' | 'audit';
+type SubTab = 'organization' | 'roles' | 'categories' | 'email' | 'fraud' | 'payroll' | 'audit';
 
 interface OrgSettings {
   tenant_name:          string;
@@ -37,6 +37,7 @@ const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
   { id: 'organization', label: 'Organization',     icon: <Settings className="w-4 h-4" /> },
   { id: 'roles',        label: 'Roles & Access',   icon: <UsersIcon className="w-4 h-4" /> },
   { id: 'categories',   label: 'Award Categories', icon: <Tag className="w-4 h-4" /> },
+  { id: 'email',        label: 'Email Templates',  icon: <Mail className="w-4 h-4" /> },
   { id: 'fraud',        label: 'Fraud / Integrity',icon: <ShieldAlert className="w-4 h-4" /> },
   { id: 'payroll',      label: 'Payroll',          icon: <DollarSign className="w-4 h-4" /> },
   { id: 'audit',        label: 'Audit & Access',   icon: <ShieldCheck className="w-4 h-4" /> },
@@ -69,6 +70,7 @@ export const SetupPanel: React.FC = () => {
       {sub === 'organization' && <OrganizationForm />}
       {sub === 'roles'        && <RolesPanel />}
       {sub === 'categories'   && <CategoriesPanel />}
+      {sub === 'email'        && <EmailTemplatesPanel />}
       {sub === 'fraud'        && <FraudPanel />}
       {sub === 'payroll'      && <PayrollPanel />}
       {sub === 'audit'        && <AuditPanel />}
@@ -1127,6 +1129,215 @@ const AuditPanel: React.FC = () => {
               {r.details && <p className="mt-1 text-xs text-gray-500 break-words">{r.details}</p>}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// ── Email Templates ───────────────────────────────────────────────────────────
+// Admins edit their tenant's OWN template rows (subject + body); inherited system
+// defaults are resolved at send time and not editable here. Each (key, language)
+// is its own row. The preview renders the HTML body in a sandboxed iframe.
+
+interface EmailTemplate {
+  template_id: number;
+  template_key: string;
+  lang: string;
+  subject: string | null;
+  body_template: string;
+  active: boolean;
+  version: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+const EmailTemplatesPanel: React.FC = () => {
+  const [list, setList]           = useState<EmailTemplate[]>([]);
+  const [selectedId, setSelected] = useState<number | null>(null);
+  const [subject, setSubject]     = useState('');
+  const [body, setBody]           = useState('');
+  const [showPreview, setShowPreview] = useState(true);
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [msg, setMsg]             = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/email-templates`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const data = await res.json();
+      const items: EmailTemplate[] = data.templates || [];
+      setList(items);
+      setSelected(prev =>
+        prev != null && items.some(t => t.template_id === prev) ? prev : (items[0]?.template_id ?? null),
+      );
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Failed to load templates' });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const selected = list.find(t => t.template_id === selectedId) || null;
+
+  // Sync the editor when the selection changes, or after a save bumps the version.
+  useEffect(() => {
+    if (selected) {
+      setSubject(selected.subject ?? '');
+      setBody(selected.body_template ?? '');
+    }
+  }, [selectedId, selected?.version]);
+
+  const dirty = selected != null &&
+    (subject !== (selected.subject ?? '') || body !== (selected.body_template ?? ''));
+
+  const save = async () => {
+    if (!selected) return;
+    if (!body.trim()) { setMsg({ type: 'err', text: 'Body cannot be empty.' }); return; }
+    setSaving(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/email-templates/${selected.template_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ subject: subject.trim() ? subject : null, body_template: body }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const updated: EmailTemplate = await res.json();
+      setList(prev => prev.map(t => (t.template_id === updated.template_id ? updated : t)));
+      setMsg({ type: 'ok', text: 'Template saved.' });
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Save failed' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 text-gray-400 text-sm py-12">
+        <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+
+  if (list.length === 0) {
+    return (
+      <div className="text-center py-14 text-gray-400">
+        <Mail className="w-10 h-10 mx-auto mb-3 opacity-40" />
+        <p className="text-sm">No organization-specific email templates yet.</p>
+        <p className="mt-1 text-xs">
+          This organization currently inherits the system default templates.
+          Editing inherited defaults isn't available here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col md:flex-row gap-4">
+      {/* Template list */}
+      <div className="md:w-56 shrink-0 border border-gray-100 rounded-lg divide-y divide-gray-100 overflow-hidden self-start w-full">
+        {list.map(t => {
+          const active = t.template_id === selectedId;
+          return (
+            <button
+              key={t.template_id}
+              onClick={() => setSelected(t.template_id)}
+              style={{ borderLeft: `3px solid ${active ? 'var(--color-primary)' : 'transparent'}` }}
+              className={`w-full text-left px-3 py-2 text-sm ${active ? 'bg-gray-50' : 'hover:bg-gray-50'}`}
+            >
+              <div className="font-medium text-gray-800 break-words">{t.template_key}</div>
+              <div className="text-xs text-gray-400 flex items-center gap-1.5 mt-0.5">
+                <span className="uppercase">{t.lang}</span>
+                {!t.active && <span className="px-1 rounded bg-gray-100 text-gray-500">inactive</span>}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Editor */}
+      {selected && (
+        <div className="flex-1 min-w-0 space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-xs text-gray-400">
+              {selected.template_key} · <span className="uppercase">{selected.lang}</span> · v{selected.version}
+              {selected.updated_by ? ` · last edit by ${selected.updated_by}` : ''}
+            </div>
+            <label className="inline-flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+              <input type="checkbox" checked={showPreview} onChange={e => setShowPreview(e.target.checked)} />
+              Preview
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Subject</label>
+            <input
+              value={subject}
+              onChange={e => setSubject(e.target.value)}
+              placeholder="(no subject — e.g. a certificate template)"
+              className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div className={showPreview ? 'grid grid-cols-1 lg:grid-cols-2 gap-3' : ''}>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Body (HTML / Jinja2)</label>
+              <textarea
+                value={body}
+                onChange={e => setBody(e.target.value)}
+                spellCheck={false}
+                className="w-full h-80 border border-gray-200 rounded-md px-3 py-2 text-xs font-mono"
+              />
+            </div>
+            {showPreview && (
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Preview</label>
+                <iframe
+                  title="Template preview"
+                  sandbox=""
+                  srcDoc={body}
+                  className="w-full h-80 border border-gray-200 rounded-md bg-white"
+                />
+              </div>
+            )}
+          </div>
+
+          {showPreview && (
+            <p className="text-xs text-gray-400">
+              Preview renders the HTML as-is; Jinja variables like <code>{'{{ nominee }}'}</code> appear
+              literally until the email is sent.
+            </p>
+          )}
+
+          {msg && (
+            <div className={`flex items-center gap-2 text-sm ${msg.type === 'ok' ? 'text-green-700' : 'text-red-700'}`}>
+              {msg.type === 'ok' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+              {msg.text}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={save}
+              disabled={saving || !dirty}
+              style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium disabled:opacity-50"
+            >
+              <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save'}
+            </button>
+            {dirty && <span className="text-xs text-amber-600">Unsaved changes</span>}
+          </div>
         </div>
       )}
     </div>

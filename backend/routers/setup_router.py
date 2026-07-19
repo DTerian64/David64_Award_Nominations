@@ -7,7 +7,7 @@ configures the real tenant as themselves, not "as" another user. All writes land
 on tables that are temporally versioned (SOC 2), so changes are auto-audited.
 
 Sub-areas (built incrementally): Organization, Roles & Access, Award Categories,
-Fraud / Integrity, Payroll Integration.
+Email Templates, Fraud / Integrity, Payroll Integration, Audit & Access Review.
 """
 
 import logging
@@ -329,3 +329,46 @@ async def audit_role_history(admin: dict = Depends(require_setup_admin)):
 async def audit_impersonation(admin: dict = Depends(require_setup_admin)):
     """Impersonation audit trail for admins in the caller's tenant."""
     return {"rows": sqlhelper.get_impersonation_audit(admin["TenantId"], _AUDIT_HISTORY_LIMIT)}
+
+
+# ── Email Templates ───────────────────────────────────────────────────────────
+# Admins edit their tenant's OWN template rows (subject + body). Inherited system
+# defaults (TenantId = 1) resolve at send time and are not editable here.
+# Multi-language: each (TemplateKey, Lang) pair is its own editable row.
+
+class EmailTemplateUpdate(BaseModel):
+    subject: Optional[str] = None
+    body_template: str
+
+
+@router.get("/api/admin/setup/email-templates")
+async def list_email_templates(admin: dict = Depends(require_setup_admin)):
+    """The tenant's own email/certificate templates (not inherited defaults)."""
+    return {"templates": sqlhelper.get_tenant_email_templates(admin["TenantId"])}
+
+
+@router.put("/api/admin/setup/email-templates/{template_id}")
+async def update_email_template(
+    template_id: int,
+    payload: EmailTemplateUpdate,
+    admin: dict = Depends(require_setup_admin),
+):
+    """Update subject + body of one of the tenant's own templates."""
+    if not payload.body_template or not payload.body_template.strip():
+        raise HTTPException(status_code=422, detail="Template body cannot be empty.")
+    subject = (payload.subject or "").strip() or None
+    updated = sqlhelper.update_email_template(
+        template_id, admin["TenantId"], subject, payload.body_template,
+        admin.get("userPrincipalName", "unknown"),
+    )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found in your organization.",
+        )
+    logger.info(
+        "Email template updated",
+        extra={"tenant_id": admin["TenantId"], "template_id": template_id,
+               "by": admin.get("userPrincipalName")},
+    )
+    return updated
