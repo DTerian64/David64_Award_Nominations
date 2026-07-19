@@ -1161,6 +1161,7 @@ const EmailTemplatesPanel: React.FC = () => {
   const [subject, setSubject]     = useState('');
   const [body, setBody]           = useState('');
   const [showPreview, setShowPreview] = useState(true);
+  const [editorFocused, setEditorFocused] = useState(false);
   const [filter, setFilter]       = useState<'active' | 'all'>('active');
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
@@ -1329,6 +1330,8 @@ const EmailTemplatesPanel: React.FC = () => {
                   height="640px"
                   extensions={[html()]}
                   onChange={val => setBody(val)}
+                  onFocus={() => setEditorFocused(true)}
+                  onBlur={() => setEditorFocused(false)}
                   basicSetup={{
                     lineNumbers: true,
                     bracketMatching: true,
@@ -1341,12 +1344,20 @@ const EmailTemplatesPanel: React.FC = () => {
             </div>
             {showPreview && (
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Preview</label>
+                <label
+                  className="block text-xs font-medium mb-1 transition-colors"
+                  style={{ color: editorFocused ? 'var(--color-primary)' : undefined }}
+                >
+                  Preview{editorFocused ? ' · editing' : ''}
+                </label>
                 <iframe
                   title="Template preview"
                   sandbox=""
                   srcDoc={body}
-                  className="w-full h-[640px] border border-gray-200 rounded-md bg-white"
+                  style={editorFocused
+                    ? { boxShadow: '0 0 0 2px var(--color-primary)', borderColor: 'transparent' }
+                    : undefined}
+                  className="w-full h-[640px] border border-gray-200 rounded-md bg-white transition-shadow duration-200"
                 />
               </div>
             )}
