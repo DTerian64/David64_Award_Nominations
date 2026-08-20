@@ -229,6 +229,13 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
 STAGES = [
     {"key": "graph_pattern_detector", "label": "Graph pattern detection",  "module": "graph_pattern_detector", "post": None},
     {"key": "train_fraud_model",      "label": "RF model training",        "module": "train_fraud_model",      "post": notify_api_refresh},
+    # GNN training (ADR-0002). Placed after train_fraud_model for two reasons: it
+    # consumes the label view the RF has just refreshed, and a GNN failure can then
+    # never block the RF retrain — run_stage()'s per-stage try/except gives that
+    # isolation for free. No post-hook: the backend does not consume the GNN, so
+    # /api/internal/refresh-fraud-model is irrelevant to it; integrity-check streams
+    # the decoder itself on first use per tenant.
+    {"key": "train_gnn_model",        "label": "GNN model training",       "module": "train_gnn_model",        "post": None},
     {"key": "sync_holidays",          "label": "Holiday sync",             "module": "sync_holidays",          "post": None},
     {"key": "forecast_models",        "label": "Forecast models",          "module": "forecast_models",        "post": None},
 ]

@@ -31,6 +31,10 @@ Focused subset of queries needed by handler.py and fraud_check.py:
   Fraud score persistence:
     save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
     save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
+
+  GNN model support (ADR-0002, called by gnn_check.py):
+    get_gnn_user_embeddings()       — version-matched node embeddings for a user set
+    save_gnn_fraud_score()          — upsert into dbo.GNN_FraudScores
 """
 
 import json
@@ -716,4 +720,147 @@ def insert_nomination_logs(rows: list) -> None:
         except Exception:
             pass
         cursor.executemany(_NOMLOG_SQL, params)
+        conn.commit()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GNN model support (ADR-0002) — called by gnn_check.py
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_gnn_user_embeddings(
+    tenant_id: int,
+    user_ids: list,
+    model_version: Optional[str] = None,
+) -> dict:
+    """
+    Return {UserId: (embedding, as_of_date, model_version)} for the requested users.
+
+    Selects, per user, the NEWEST snapshot whose ModelVersion equals the caller's
+    decoder version — not the newest snapshot overall.
+
+    That distinction is what makes a decoder-only rollback work. dbo.GNN_UserEmbeddings
+    is append-only within its retention window, so restoring a previous
+    gnn_head_tenant_<N>.pt is sufficient on its own: this query then picks up that
+    decoder's own generation of embeddings. Matching on "newest overall" instead
+    would leave a rolled-back decoder permanently unable to score, because every
+    lookup would return embeddings from a version it was not trained against.
+
+    model_version=None returns the newest snapshot for each user regardless of
+    version. That is NOT a scoring path — gnn_check.py uses it only to tell a
+    genuine cold-start user (no embeddings at all) apart from a decoder whose
+    generation of embeddings is missing (rollback gone wrong, or a weekly run
+    that never published). Those need different responses, and conflating them
+    hides the second behind the first.
+
+    Users with no matching snapshot are simply absent from the result; the caller
+    decides whether that is fatal (nominator/beneficiary) or tolerable (approver).
+
+    Embedding bytes are float32 written by numpy.ndarray.tobytes() in the weekly
+    job, and are read back with the same dtype. A dimension mismatch against the
+    decoder is caught by the caller.
+    """
+    if not user_ids:
+        return {}
+
+    unique_ids = sorted(set(int(u) for u in user_ids if u is not None))
+    if not unique_ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in unique_ids)
+    version_filter = "AND ModelVersion = ?" if model_version is not None else ""
+    outer_filter   = "AND e.ModelVersion = ?" if model_version is not None else ""
+    sql = f"""
+        SELECT e.UserId, e.Embedding, e.AsOfDate, e.ModelVersion
+        FROM   dbo.GNN_UserEmbeddings e
+        JOIN  (
+                 SELECT UserId, MAX(AsOfDate) AS AsOfDate
+                 FROM   dbo.GNN_UserEmbeddings
+                 WHERE  TenantId = ?
+                   {version_filter}
+                   AND  UserId IN ({placeholders})
+                 GROUP BY UserId
+              ) latest
+          ON  latest.UserId   = e.UserId
+         AND  latest.AsOfDate = e.AsOfDate
+        WHERE e.TenantId = ?
+          {outer_filter}
+    """
+    params = [tenant_id]
+    if model_version is not None:
+        params.append(model_version)
+    params += unique_ids
+    params.append(tenant_id)
+    if model_version is not None:
+        params.append(model_version)
+
+    out: dict = {}
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        for user_id, blob, as_of, version in cursor.fetchall():
+            import numpy as _np
+            vec = _np.frombuffer(bytes(blob), dtype=_np.float32)
+            out[int(user_id)] = (vec, as_of, version)
+
+    missing = set(unique_ids) - set(out)
+    if missing:
+        logger.debug(
+            "No GNN embedding (tenant=%d, version=%s) for user(s) %s",
+            tenant_id, model_version, sorted(missing),
+        )
+    return out
+
+
+def save_gnn_fraud_score(
+    nomination_id:       int,
+    fraud_score:         int,
+    fraud_probability:   float,
+    risk_level:          str,
+    warning_flags:       Optional[str],
+    model_version:       str,
+    embedding_as_of:     Optional[object],
+    scoring_mode:        str,
+) -> None:
+    """
+    Upsert one row into dbo.GNN_FraudScores.
+
+    The unique key is (NominationId, ModelVersion), not NominationId alone — one
+    row per nomination per training run. That is what makes shadow-mode exit
+    criterion 4 (week-over-week score drift for unchanged nominations) possible;
+    a single-column key would overwrite the history it needs to be measured
+    against. See ADR-0002.
+
+    ScoredBy records which producer wrote the row. The weekly job backfills
+    historical scores as svc:fraud-analytics-job; this path is always the live
+    submission, so it writes the module-level _AUDIT_ACTOR.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            MERGE dbo.GNN_FraudScores AS target
+            USING (SELECT ? AS NominationId, ? AS ModelVersion) AS source
+                ON  target.NominationId = source.NominationId
+                AND target.ModelVersion = source.ModelVersion
+            WHEN MATCHED THEN
+                UPDATE SET FraudScore        = ?,
+                           FraudProbability  = ?,
+                           RiskLevel         = ?,
+                           FraudFlags        = ?,
+                           EmbeddingAsOfDate = ?,
+                           ScoringMode       = ?,
+                           ScoredBy          = ?
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, FraudScore, FraudProbability, RiskLevel,
+                        FraudFlags, ModelVersion, EmbeddingAsOfDate, ScoringMode, ScoredBy)
+                VALUES (?,            ?,          ?,                ?,
+                        ?,          ?,            ?,                 ?,           ?);
+        """, (
+            nomination_id, model_version,
+            # MATCHED
+            fraud_score, fraud_probability, risk_level, warning_flags,
+            embedding_as_of, scoring_mode, _AUDIT_ACTOR,
+            # NOT MATCHED
+            nomination_id, fraud_score, fraud_probability, risk_level,
+            warning_flags, model_version, embedding_as_of, scoring_mode, _AUDIT_ACTOR,
+        ))
         conn.commit()

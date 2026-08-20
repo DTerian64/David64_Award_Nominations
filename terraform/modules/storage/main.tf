@@ -22,7 +22,95 @@ resource "azurerm_storage_account" "storage" {
   # Disable public blob access — SAS tokens still work
   allow_nested_items_to_be_public = false
 
+  # ── Artifact recovery (ADR-0002) ────────────────────────────────────────────
+  # Both ML pipelines overwrite their model artifacts in place:
+  #   train_fraud_model._upload_artefact()  ->  upload_blob(..., overwrite=True)
+  #     fraud_detection_model_tenant_<N>.pkl   (Random Forest)
+  #     gnn_encoder_tenant_<N>.pt              (GNN encoder — audit/retrain)
+  #     gnn_head_tenant_<N>.pt                 (GNN decoder — read by inference)
+  #
+  # Without versioning that overwrite is destructive: a bad weekly run replaces
+  # the last known-good model and there is no way back except retraining, which
+  # reproduces the same bad model from the same bad inputs. integrity-check
+  # picks the replacement up within one cache eviction.
+  #
+  # Versioning makes every overwrite recoverable — promote a prior version back
+  # to current with a single `az storage blob copy`. Soft delete covers the
+  # other failure mode, an accidental delete rather than an overwrite.
+  #
+  # Transparent to application code: readers still get the current version, and
+  # upload_blob(overwrite=True) is unchanged. No code change accompanies this.
+  blob_properties {
+    versioning_enabled = var.blob_versioning_enabled
+
+    # Recover a deleted blob (as opposed to an overwritten one).
+    delete_retention_policy {
+      days = var.blob_soft_delete_retention_days
+    }
+
+    # Recover an accidentally deleted container. Cheap insurance: a deleted
+    # container takes every model for every tenant with it.
+    container_delete_retention_policy {
+      days = var.container_soft_delete_retention_days
+    }
+  }
+
   tags = var.tags
+}
+
+# ── Version lifecycle ─────────────────────────────────────────────────────────
+# Versioning without expiry grows without bound. The weekly job rewrites one
+# .pkl plus two .pt files per tenant per run, so ml-models accrues
+# (3 x tenants) versions a week and needs a shorter, explicit retention than the
+# write-once containers.
+#
+# Retention has to outlive the detection loop it protects: a model regression is
+# usually noticed over several weekly cycles, not immediately, so the default
+# keeps roughly a quarter of history.
+resource "azurerm_storage_management_policy" "blob_versions" {
+  count              = var.blob_versioning_enabled ? 1 : 0
+  storage_account_id = azurerm_storage_account.storage.id
+
+  # ML model artifacts — .pkl (RF) and .pt (GNN).
+  rule {
+    name    = "expire-old-model-versions"
+    enabled = true
+
+    filters {
+      prefix_match = ["ml-models/"]
+      blob_types   = ["blockBlob"]
+    }
+
+    actions {
+      version {
+        delete_after_days_since_creation = var.model_version_retention_days
+      }
+    }
+  }
+
+  # Everything else on the account: certificates, extracts, certificate
+  # templates, and tfstate. These are effectively write-once, so they accrue
+  # few versions, but an unbounded policy is still an unbounded cost line.
+  rule {
+    name    = "expire-old-non-model-versions"
+    enabled = true
+
+    filters {
+      prefix_match = [
+        "certificates/",
+        "certificate-templates/",
+        "award-nomination-extracts/",
+        "tfstate/",
+      ]
+      blob_types = ["blockBlob"]
+    }
+
+    actions {
+      version {
+        delete_after_days_since_creation = var.general_version_retention_days
+      }
+    }
+  }
 }
 
 # ── Blob containers ───────────────────────────────────────────────────────────
