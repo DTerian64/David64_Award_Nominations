@@ -20,6 +20,7 @@ resource "azurerm_container_app_job" "schema_migration" {
   resource_group_name          = var.resource_group_name
   location                     = var.location
   container_app_environment_id = var.container_app_environment_id
+  workload_profile_name        = var.workload_profile_name
   tags                         = var.tags
 
   replica_timeout_in_seconds = var.replica_timeout_in_seconds

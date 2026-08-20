@@ -5,7 +5,8 @@ Orchestrates the full fraud assessment lifecycle for a single nomination:
   1. Idempotency check (dbo.ProcessedEvents)
   2. Load nomination details + tenant desc_check_config from DB
   3. Run description_check (Check A + Check B) — pre-ML quality gates
-       Check A fail  → auto-reject + nomination.description-rejected event
+       Check A fail  → auto-reject (actor=ACTOR_DESCRIPTION_CHECK)
+                       + nomination.description-rejected event
        Check B flag  → accumulate into warning_flags, continue to ML
   4. Run fraud_check.assess() — ML behavioural fraud model
   5. Persist scores + update nomination status
@@ -28,6 +29,16 @@ from utils import db
 from utils import service_bus_publisher
 
 logger = logging.getLogger("integrity_check.handler")
+
+# RejectionActor values written by this service.
+#
+# These must stay distinct. train_fraud_model.load_data() excludes description
+# rejections from the training population (a failed quality gate is not a fraud
+# signal) but must NOT exclude ML auto-rejects. Until 2026-08 both paths wrote
+# the literal "Fraud Detection", so the exclusion silently discarded every
+# CRITICAL auto-reject as if it were a typo in a description.
+ACTOR_DESCRIPTION_CHECK = "Fraud Detection (Description)"   # Check A quality gate
+ACTOR_FRAUD_ML          = "Fraud Detection"                 # CRITICAL ML auto-reject
 
 
 def handle(message_id: str, payload: dict) -> None:
@@ -88,7 +99,9 @@ def handle(message_id: str, payload: dict) -> None:
                 "reason":        desc_result.reason,
             },
         )
-        db.reject_nomination(nomination_id, reason=desc_result.reason, actor="Fraud Detection")
+        db.reject_nomination(
+            nomination_id, reason=desc_result.reason, actor=ACTOR_DESCRIPTION_CHECK
+        )
         service_bus_publisher.publish_event(
             "nomination.description-rejected", nomination_id,
             extra={
@@ -206,7 +219,7 @@ def handle(message_id: str, payload: dict) -> None:
                "HR administrator if you believe this is an error."
         )
         db.reject_nomination(
-            nomination_id, reason=explanation, actor="Fraud Detection"
+            nomination_id, reason=explanation, actor=ACTOR_FRAUD_ML
         )
         # Persist SHAP data even though no HRBP will review this nomination —
         # analytics and audit trails read from HRBP_FraudFlags for all risk levels.

@@ -37,6 +37,20 @@ Why v1 must reproduce the existing behaviour exactly
 IsFraud here is byte-for-byte what load_data() produces today, including the
 unlabelled -> 0 convention. That is deliberate.
 
+The one intentional exception: when ConfirmedBy IS NOT NULL, the human's IsFraud
+value wins over the RiskLevel CASE. Today that exception fires on zero rows —
+dbo.P2P_FraudScores has no confirmed labels at all — so parity with load_data()
+is still exact. It exists so that a human verdict can be recorded WITHOUT
+overwriting the model's score.
+
+That distinction is not cosmetic. backend.utils.sqlhelper2.upsert_p2p_fraud_label
+currently slams FraudScore to 100/0 and RiskLevel to CRITICAL/NONE when an HRBP
+decides. The moment a human labels a nomination, the model's prediction for that
+nomination is destroyed — so the set of rows with ground truth and the set of
+rows with a comparable model output are disjoint by construction, and the
+ADR-0002 evaluation gate can never be computed. Preserving the score and writing
+the verdict alongside it is what makes the gate possible at all.
+
 The rollout for this module is a strangler, not a swap: it runs alongside the
 existing CASE, read-only, and the job logs any row-level divergence while the old
 path stays authoritative. Only after several weekly runs report zero divergence
@@ -77,14 +91,17 @@ SOURCE_UNLABELLED = "unlabelled"
 # Inclusion rules — lifted verbatim from train_fraud_model.load_data() so the two
 # paths select the same population. Any change here changes the Random Forest.
 #
-#   PendingHRBPReview             excluded — no confirmed label yet
-#   Rejected by 'Fraud Detection' excluded — that is the Check A description
-#                                 quality gate, not a fraud signal
-#   Rejected by 'HRBP Review'     INCLUDED — the most valuable labels there are
-#   everything else               included
+#   PendingHRBPReview                     excluded — no confirmed label yet
+#   Rejected by 'Fraud Detection (Description)'
+#                                         excluded — Check A description quality
+#                                         gate, not a fraud signal
+#   Rejected by 'Fraud Detection'         INCLUDED — CRITICAL ML auto-reject.
+#                                         LabelSource='model': the RF's own output.
+#   Rejected by 'HRBP Review'             INCLUDED — the most valuable labels there are
+#   everything else                       included
 _INCLUSION_SQL = """
       n.Status NOT IN ('PendingHRBPReview')
-  AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection')
+  AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection (Description)')
 """
 
 
@@ -101,7 +118,8 @@ def load_labels(
     NominationId  int
     IsFraud       int   0/1 — identical to what load_data() computes today
     LabelSource   str   'hrbp' | 'model' | 'unlabelled'
-    RiskLevel     str   the underlying P2P risk level, or None
+    RiskLevel     str   the model's own risk level, preserved even where a
+                        human has overridden the label
     ConfirmedBy   str   HRBP actor when human-confirmed, else None
     ConfirmedAt   datetime | None
 
@@ -125,6 +143,10 @@ def load_labels(
             p2p.ConfirmedBy,
             p2p.ConfirmedAt,
             CASE
+                -- A human verdict is authoritative and does NOT overwrite the
+                -- model's score, so model-vs-human agreement stays measurable.
+                WHEN p2p.ConfirmedBy IS NOT NULL AND p2p.IsFraud IS NOT NULL
+                    THEN p2p.IsFraud
                 WHEN p2p.RiskLevel IN ('HIGH', 'CRITICAL') THEN 1
                 ELSE 0
             END AS IsFraud,
@@ -195,6 +217,10 @@ def compare_with_legacy(
     Forest over is safe — evidence from the real production label distribution,
     which no fixture can supply.
 
+    Rows where a human has overridden the legacy CASE (LabelSource='hrbp') are
+    reported separately as hrbp_overrides and do NOT fail parity — see the module
+    docstring. Everything else must be zero.
+
     legacy_df needs NominationId and IsFraud. Returns a dict; never raises, so a
     problem in the check can never take down the training stage it is watching.
     """
@@ -209,19 +235,30 @@ def compare_with_legacy(
         both        = merged[merged["_merge"] == "both"]
         differing   = both[both["IsFraud_new"] != both["IsFraud_legacy"]]
 
+        # A divergence on an hrbp-sourced row is the module working as designed:
+        # a human said something the RiskLevel CASE disagrees with. Counting it
+        # as a parity failure would mean the safety net goes red exactly when the
+        # data gets good, and would be switched off. Only model/unlabelled
+        # divergence indicates a genuine defect in this module.
+        expected    = differing[differing["LabelSource"] == SOURCE_HRBP]
+        unexpected  = differing[differing["LabelSource"] != SOURCE_HRBP]
+
         result = {
-            "rows_new":        int(len(labels_df)),
-            "rows_legacy":     int(len(legacy_df)),
-            "only_in_new":     int(len(only_new)),
-            "only_in_legacy":  int(len(only_legacy)),
-            "label_mismatch":  int(len(differing)),
-            "identical":       bool(len(only_new) == 0 and len(only_legacy) == 0 and len(differing) == 0),
+            "rows_new":         int(len(labels_df)),
+            "rows_legacy":      int(len(legacy_df)),
+            "only_in_new":      int(len(only_new)),
+            "only_in_legacy":   int(len(only_legacy)),
+            "label_mismatch":   int(len(unexpected)),
+            "hrbp_overrides":   int(len(expected)),
+            "identical":        bool(len(only_new) == 0 and len(only_legacy) == 0
+                                     and len(unexpected) == 0),
         }
 
         if result["identical"]:
             logger.info(
-                "[Tenant %d] label parity OK — %d rows identical to load_data().",
-                tenant_id, result["rows_new"],
+                "[Tenant %d] label parity OK — %d rows, %d human overrides of the "
+                "legacy CASE (expected, not a failure).",
+                tenant_id, result["rows_new"], result["hrbp_overrides"],
             )
         else:
             logger.error(
@@ -231,12 +268,12 @@ def compare_with_legacy(
                 tenant_id, result["label_mismatch"],
                 result["only_in_new"], result["only_in_legacy"],
             )
-            if len(differing):
-                by_source = differing["LabelSource"].value_counts().to_dict()
+            if len(unexpected):
+                by_source = unexpected["LabelSource"].value_counts().to_dict()
                 logger.error("[Tenant %d]   mismatches by LabelSource: %s", tenant_id, by_source)
                 logger.error(
                     "[Tenant %d]   sample NominationIds: %s",
-                    tenant_id, differing["NominationId"].head(10).tolist(),
+                    tenant_id, unexpected["NominationId"].head(10).tolist(),
                 )
         return result
 

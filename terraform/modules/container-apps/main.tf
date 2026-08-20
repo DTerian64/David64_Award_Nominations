@@ -61,6 +61,7 @@ resource "azurerm_container_app" "primary" {
   name                         = var.app_name_primary
   resource_group_name          = var.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.primary.id
+  workload_profile_name        = var.workload_profile_name
   revision_mode                = "Single"
   tags                         = var.tags
 
@@ -202,6 +203,7 @@ resource "azurerm_container_app" "secondary" {
   name                         = var.app_name_secondary
   resource_group_name          = var.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.secondary.id
+  workload_profile_name        = var.workload_profile_name
   revision_mode                = "Single"
   tags                         = var.tags
 

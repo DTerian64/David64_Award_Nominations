@@ -333,7 +333,12 @@ def reject_nomination(nomination_id: int, reason: str, actor: str) -> None:
     Args:
         nomination_id: The nomination to reject.
         reason:        Human-readable explanation surfaced to the nominator.
-        actor:         "Fraud Detection" for auto-rejects from this service.
+        actor:         one of handler.ACTOR_DESCRIPTION_CHECK (Check A quality
+                       gate) or handler.ACTOR_FRAUD_ML (CRITICAL ML auto-reject).
+                       These two must stay distinct: load_data() in
+                       fraud-analytics-job excludes the former from training and
+                       keeps the latter. Rendered verbatim to the nominator as
+                       "Rejected by: {actor}", so keep it human-readable.
     """
     with _get_conn() as conn:
         cursor = conn.cursor()

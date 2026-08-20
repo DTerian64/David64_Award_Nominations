@@ -808,6 +808,24 @@ module "fraud_analytics_job" {
     { name = "LOGGING_LEVEL",             value = var.logging_level },
     { name = "DETECTION_WINDOW_DAYS",     value = tostring(var.fraud_analytics_detection_window_days) },
     { name = "RING_MAX_CLUSTER_SIZE",     value = tostring(var.fraud_analytics_ring_max_cluster_size) },
+
+    # ── GNN training stage (ADR-0002) ─────────────────────────────────────────
+    # Defaults in train_gnn_model.py match these; they are declared explicitly
+    # so the operative values are visible in the plan rather than buried in code.
+    # GNN_ENABLED is the kill switch: set false to skip the stage without
+    # redeploying the image.
+    { name = "GNN_ENABLED",                  value = tostring(var.gnn_enabled) },
+    { name = "GNN_HIDDEN_DIM",               value = tostring(var.gnn_hidden_dim) },
+    { name = "GNN_EMBED_DIM",                value = tostring(var.gnn_embed_dim) },
+    { name = "GNN_EPOCHS",                   value = tostring(var.gnn_epochs) },
+    { name = "GNN_WINDOW_DAYS",              value = tostring(var.gnn_window_days) },
+    { name = "GNN_EMBEDDING_RETENTION_DAYS", value = tostring(var.gnn_embedding_retention_days) },
+    # Sample gates. Below any of these the tenant is skipped rather than trained
+    # on too little signal — see the ablation results in ADR-0002, where a
+    # 50-user tenant scored WORSE with message passing than without it.
+    { name = "GNN_MIN_TRAINING_SAMPLES",     value = tostring(var.gnn_min_training_samples) },
+    { name = "GNN_MIN_USERS",                value = tostring(var.gnn_min_users) },
+    { name = "GNN_MIN_POSITIVES",            value = tostring(var.gnn_min_positives) },
     # Post-training cache-refresh callback — job POSTs here after uploading new pkls.
     # Uses the primary app's internal FQDN (ACA-to-ACA routing within the same CAE).
     { name = "API_BASE_URL",              value = "https://${var.app_name_primary}.internal.${module.container_apps.cae_primary_default_domain}" },

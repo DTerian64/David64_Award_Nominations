@@ -35,6 +35,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import resource
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -80,6 +81,63 @@ MIN_POSITIVES   = int(os.getenv("GNN_MIN_POSITIVES", "10"))
 
 
 # ── Tenant discovery ──────────────────────────────────────────────────────────
+
+def _container_memory_limit_bytes() -> int | None:
+    """
+    The cgroup memory ceiling this process is actually running under.
+
+    Read from cgroup rather than inferred from Terraform, because those two are
+    exactly the pair that drifts. /proc/meminfo reports the HOST's memory in a
+    container, so it cannot be used here.
+    """
+    for path, parse in (
+        ("/sys/fs/cgroup/memory.max", lambda v: None if v.strip() == "max" else int(v)),
+        ("/sys/fs/cgroup/memory/memory.limit_in_bytes", int),
+    ):
+        try:
+            with open(path) as fh:
+                limit = parse(fh.read())
+            # cgroup v1 reports a sentinel near 2^63 when unlimited.
+            if limit and limit < (1 << 62):
+                return limit
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _log_peak_rss(label: str) -> float:
+    """
+    Log peak RSS against the container limit and return peak GiB.
+
+    ADR-0002 sized this job at 4 vCPU / 8 GiB. That number was a precaution, not
+    a measurement — nobody had observed what the stage actually uses. Azure bills
+    allocated resources, not utilisation, and Consumption locks memory at 2 GiB
+    per vCPU, so the memory figure drags the vCPU count along with it. This line
+    is what makes the next sizing decision evidence rather than another guess.
+
+    ru_maxrss is high-water for the whole process, so it includes the RF stage
+    and the sentence-transformer that ran before this one. That is the right
+    number for sizing a container, which is billed on the peak, not on the GNN's
+    marginal share.
+    """
+    peak_gib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 ** 2)  # ru_maxrss is KiB on Linux
+    limit = _container_memory_limit_bytes()
+    if limit:
+        limit_gib = limit / (1024 ** 3)
+        pct = peak_gib / limit_gib * 100
+        logger.info("MEMORY %s — peak RSS %.2f GiB of %.2f GiB limit (%.0f%%)",
+                    label, peak_gib, limit_gib, pct)
+        if pct >= 85:
+            logger.warning(
+                "MEMORY %s — peak RSS is %.0f%% of the container limit. The next "
+                "tenant or a larger graph may OOM. Raise cpu/memory in the "
+                "fraud-analytics-job Terraform module before that happens.",
+                label, pct,
+            )
+    else:
+        logger.info("MEMORY %s — peak RSS %.2f GiB (no cgroup limit visible)", label, peak_gib)
+    return peak_gib
+
 
 def _get_tenants(conn) -> list[int]:
     cur = conn.cursor()
@@ -424,10 +482,13 @@ def main(tenants_to_process: list | None = None) -> None:
                 logger.error("Tenant %d failed: %s", tenant_id, exc, exc_info=True)
                 results[tenant_id] = f"FAILED — {exc}"
                 failed.append(tenant_id)
+            finally:
+                _log_peak_rss(f"after tenant {tenant_id}")
     finally:
         conn.close()
 
     logger.info("")
+    _log_peak_rss("stage total")
     logger.info("GNN TRAINING SUMMARY")
     for tenant_id, status in results.items():
         logger.info("  Tenant %s: %s", tenant_id, status)

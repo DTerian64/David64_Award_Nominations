@@ -40,6 +40,7 @@ resource "azurerm_container_app_job" "fraud_analytics" {
   resource_group_name          = var.resource_group_name
   location                     = var.location
   container_app_environment_id = var.container_app_environment_id
+  workload_profile_name        = var.workload_profile_name
   tags                         = var.tags
 
   # ── Trigger — weekly cron; job is also always manually startable ─────────
@@ -107,6 +108,17 @@ resource "azurerm_container_app_job" "fraud_analytics" {
       env {
         name  = "MI_CLIENT_ID"
         value = var.analytics_identity_client_id
+      }
+      # Thread cap for torch / OpenMP.
+      #
+      # Without this, torch reads the HOST's core count rather than the cgroup
+      # quota and spawns that many OpenMP threads inside a 4-vCPU container.
+      # The result is oversubscription: more context switching than compute, and
+      # a GNN training stage that gets slower as the node gets bigger. Tied to
+      # var.cpu so the two can never drift apart.
+      env {
+        name  = "OMP_NUM_THREADS"
+        value = tostring(var.cpu)
       }
       env {
         name  = "OTEL_SERVICE_NAME"

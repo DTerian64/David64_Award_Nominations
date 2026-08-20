@@ -176,8 +176,14 @@ def load_data(tenant_id: int) -> pd.DataFrame:
 
     Inclusion rules:
       • PendingHRBPReview — excluded (no confirmed label yet; don't train on ambiguous cases)
-      • Rejected by 'Fraud Detection' (auto-reject, Check A) — excluded (description quality
-        gate, not a fraud signal; would corrupt IsFraud labels)
+      • Rejected by 'Fraud Detection (Description)' (auto-reject, Check A) — excluded
+        (description quality gate, not a fraud signal; would corrupt IsFraud labels)
+      • Rejected by 'Fraud Detection' (CRITICAL ML auto-reject) — INCLUDED. Before
+        2026-08 both rejection paths wrote the same actor string, so this exclusion
+        also discarded every ML auto-reject. Tenant 1 has zero such rows today, so
+        splitting the actor is behaviour-preserving on current data — but note that
+        once these rows appear they carry LabelSource='model', i.e. the Random Forest
+        training on its own unreviewed output. See ADR-0002.
       • Rejected by 'HRBP Review' — INCLUDED; these have a confirmed IsFraud=1 label written
         by upsert_p2p_fraud_label and are the most valuable training examples
       • All other statuses (Pending, Approved, Paid, Submitted) — included
@@ -287,7 +293,7 @@ def load_data(tenant_id: int) -> pd.DataFrame:
     ) apf
 
     WHERE n.Status NOT IN ('PendingHRBPReview')
-      AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection')
+      AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection (Description)')
       AND u.TenantId = ?
     ORDER BY n.NominationDate
     """
