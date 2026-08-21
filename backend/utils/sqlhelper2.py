@@ -1844,6 +1844,19 @@ def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
     n_confirmed = int(confirmed[0] or 0)
     n_confirmed_fraud = int(confirmed[1] or 0)
 
+    # A precision-recall comparison needs confirmed examples of BOTH classes.
+    # It can be blocked three different ways, and the client must be able to say
+    # which — telling someone with zero confirmations that they have "only
+    # confirmed what the model flagged" is nonsense.
+    if n_confirmed == 0:
+        gate_reason = "no_confirmations"
+    elif n_confirmed_fraud == 0:
+        gate_reason = "no_confirmed_fraud"
+    elif n_confirmed == n_confirmed_fraud:
+        gate_reason = "no_confirmed_legitimate"
+    else:
+        gate_reason = None
+
     return {
         "modelVersion":     model_version,
         "scoringMode":      scoring_mode,
@@ -1856,9 +1869,8 @@ def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
         "gnnLower":         gnn_lower,
         "confirmed":        n_confirmed,
         "confirmedFraud":   n_confirmed_fraud,
-        # Both classes are required for a precision-recall comparison. All-fraud
-        # confirmations cannot produce one, however many there are.
-        "gateComputable":   n_confirmed_fraud > 0 and n_confirmed > n_confirmed_fraud,
+        "gateComputable":   gate_reason is None,
+        "gateReason":       gate_reason,
         "matrix":           cells,
         "divergent": [
             {

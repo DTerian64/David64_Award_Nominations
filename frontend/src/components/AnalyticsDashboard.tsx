@@ -102,6 +102,7 @@ interface GnnShadowComparison {
   confirmed?: number;
   confirmedFraud?: number;
   gateComputable?: boolean;
+  gateReason?: 'no_confirmations' | 'no_confirmed_fraud' | 'no_confirmed_legitimate' | null;
   matrix?: GnnMatrixCell[];
   divergent?: GnnDivergentRow[];
 }
@@ -1766,10 +1767,18 @@ export const AnalyticsDashboard: React.FC = () => {
                   {gnnShadow.confirmed ?? 0} human-confirmed label
                   {(gnnShadow.confirmed ?? 0) === 1 ? '' : 's'} in the compared population,
                   of which {gnnShadow.confirmedFraud ?? 0} are fraud.
-                  {!gnnShadow.gateComputable && (
-                    <> A precision-recall comparison needs confirmations of <strong>both</strong> classes.
-                    Confirming only the nominations the model flagged says nothing about
-                    false positives, however many are confirmed.</>
+                  {gnnShadow.gateReason === 'no_confirmations' && (
+                    <> Nothing in this population has been adjudicated, so every label the
+                    models are measured against is the Random Forest&rsquo;s own prior output.</>
+                  )}
+                  {gnnShadow.gateReason === 'no_confirmed_fraud' && (
+                    <> Every confirmation is <strong>legitimate</strong>. Recall cannot be
+                    measured without at least one confirmed fraud case.</>
+                  )}
+                  {gnnShadow.gateReason === 'no_confirmed_legitimate' && (
+                    <> Every confirmation is <strong>fraud</strong>. Confirming only what the
+                    model flagged says nothing about false positives, however many are
+                    confirmed &mdash; precision needs at least one confirmed-legitimate case.</>
                   )}
                 </p>
               </div>
