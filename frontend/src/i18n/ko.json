@@ -54,7 +54,8 @@
       "forecast": "예측",
       "fraud": "부정 알림",
       "diversity": "다양성 지표",
-      "integrity": "무결성"
+      "integrity": "무결성",
+      "gnn": "GNN (섀도)"
     }
   },
   "status": {

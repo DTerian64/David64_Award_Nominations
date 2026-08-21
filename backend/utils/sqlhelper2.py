@@ -1731,6 +1731,154 @@ def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
         ).fetchall()
 
 
+def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
+    """
+    Compare the GNN's scores against the Random Forest's, for the tenant's most
+    recent GNN model version (ADR-0002 shadow evaluation).
+
+    The GNN runs in shadow mode: dbo.GNN_FraudScores is written every week but
+    nothing reads it for routing. The only thing that makes shadow mode worth
+    running is this comparison — where the two models agree, and more usefully
+    where they do not.
+
+    Scoped to ONE ModelVersion deliberately. GNN_FraudScores is unique on
+    (NominationId, ModelVersion), so a tenant accumulates one row per nomination
+    per training run; comparing across versions would double-count.
+
+    Returns {} when the tenant has no GNN scores at all — a tenant below the
+    sample gate never trains, and that is a normal state, not an error.
+    """
+    with get_db_context() as session:
+        latest = session.execute(
+            text("""
+                SELECT TOP 1 g.ModelVersion, g.ScoringMode, g.EmbeddingAsOfDate, g.CreatedAt
+                FROM   dbo.GNN_FraudScores g
+                JOIN   dbo.Nominations n ON n.NominationId = g.NominationId
+                JOIN   dbo.Users u       ON u.UserId       = n.NominatorId
+                WHERE  u.TenantId = :tenant_id
+                ORDER  BY g.CreatedAt DESC
+            """),
+            {"tenant_id": tenant_id},
+        ).fetchone()
+
+        if latest is None:
+            return {}
+
+        model_version, scoring_mode, embedding_as_of, scored_at = latest
+        params = {"tenant_id": tenant_id, "mv": model_version}
+
+        # Agreement matrix: RF risk level x GNN risk level.
+        matrix = session.execute(
+            text("""
+                SELECT p.RiskLevel AS RfRisk, g.RiskLevel AS GnnRisk, COUNT(*) AS Cnt
+                FROM   dbo.GNN_FraudScores g
+                JOIN   dbo.Nominations n      ON n.NominationId = g.NominationId
+                JOIN   dbo.Users u            ON u.UserId       = n.NominatorId
+                JOIN   dbo.P2P_FraudScores p  ON p.NominationId = g.NominationId
+                WHERE  u.TenantId    = :tenant_id
+                  AND  g.ModelVersion = :mv
+                GROUP  BY p.RiskLevel, g.RiskLevel
+            """),
+            params,
+        ).fetchall()
+
+        # Nominations where the two models disagree most, by raw 0-100 score.
+        # Score rather than risk level: the levels are thresholded, so two rows a
+        # point apart can straddle a boundary and look like a bigger disagreement
+        # than they are.
+        divergent = session.execute(
+            text("""
+                SELECT TOP (:limit)
+                    g.NominationId,
+                    p.FraudScore  AS RfScore,
+                    p.RiskLevel   AS RfRisk,
+                    g.FraudScore  AS GnnScore,
+                    g.RiskLevel   AS GnnRisk,
+                    ABS(g.FraudScore - p.FraudScore) AS Delta,
+                    nom.FirstName + ' ' + nom.LastName AS NominatorName,
+                    ben.FirstName + ' ' + ben.LastName AS BeneficiaryName,
+                    n.Amount,
+                    n.NominationDate,
+                    n.Status
+                FROM   dbo.GNN_FraudScores g
+                JOIN   dbo.Nominations n      ON n.NominationId  = g.NominationId
+                JOIN   dbo.Users u            ON u.UserId        = n.NominatorId
+                JOIN   dbo.Users nom          ON nom.UserId      = n.NominatorId
+                JOIN   dbo.Users ben          ON ben.UserId      = n.BeneficiaryId
+                JOIN   dbo.P2P_FraudScores p  ON p.NominationId  = g.NominationId
+                WHERE  u.TenantId     = :tenant_id
+                  AND  g.ModelVersion = :mv
+                ORDER  BY ABS(g.FraudScore - p.FraudScore) DESC, g.NominationId
+            """),
+            {**params, "limit": limit},
+        ).fetchall()
+
+        # Human-confirmed labels present in the compared population. This is the
+        # number that decides whether the ADR-0002 evaluation gate can run at all,
+        # so the UI should show it even though it is not a comparison statistic.
+        confirmed = session.execute(
+            text("""
+                SELECT
+                    SUM(CASE WHEN p.ConfirmedBy IS NOT NULL THEN 1 ELSE 0 END) AS Confirmed,
+                    SUM(CASE WHEN p.ConfirmedBy IS NOT NULL AND p.IsFraud = 1 THEN 1 ELSE 0 END) AS ConfirmedFraud
+                FROM   dbo.GNN_FraudScores g
+                JOIN   dbo.Nominations n      ON n.NominationId = g.NominationId
+                JOIN   dbo.Users u            ON u.UserId       = n.NominatorId
+                JOIN   dbo.P2P_FraudScores p  ON p.NominationId = g.NominationId
+                WHERE  u.TenantId     = :tenant_id
+                  AND  g.ModelVersion = :mv
+            """),
+            params,
+        ).fetchone()
+
+    cells = [{"rfRisk": r[0], "gnnRisk": r[1], "count": int(r[2])} for r in matrix]
+    total = sum(c["count"] for c in cells)
+    agreed = sum(c["count"] for c in cells if c["rfRisk"] == c["gnnRisk"])
+
+    order = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+    gnn_higher = sum(c["count"] for c in cells
+                     if order.get(c["gnnRisk"], -1) > order.get(c["rfRisk"], -1))
+    gnn_lower = sum(c["count"] for c in cells
+                    if order.get(c["gnnRisk"], -1) < order.get(c["rfRisk"], -1))
+
+    n_confirmed = int(confirmed[0] or 0)
+    n_confirmed_fraud = int(confirmed[1] or 0)
+
+    return {
+        "modelVersion":     model_version,
+        "scoringMode":      scoring_mode,
+        "embeddingAsOf":    embedding_as_of.isoformat() if embedding_as_of else None,
+        "scoredAt":         scored_at.isoformat() if scored_at else None,
+        "compared":         total,
+        "agreed":           agreed,
+        "agreementRate":    round(agreed / total * 100, 1) if total else None,
+        "gnnHigher":        gnn_higher,
+        "gnnLower":         gnn_lower,
+        "confirmed":        n_confirmed,
+        "confirmedFraud":   n_confirmed_fraud,
+        # Both classes are required for a precision-recall comparison. All-fraud
+        # confirmations cannot produce one, however many there are.
+        "gateComputable":   n_confirmed_fraud > 0 and n_confirmed > n_confirmed_fraud,
+        "matrix":           cells,
+        "divergent": [
+            {
+                "nominationId":    int(r[0]),
+                "rfScore":         int(r[1]),
+                "rfRisk":          r[2],
+                "gnnScore":        int(r[3]),
+                "gnnRisk":         r[4],
+                "delta":           int(r[5]),
+                "nominatorName":   r[6],
+                "beneficiaryName": r[7],
+                "amount":          float(r[8]) if r[8] is not None else None,
+                "nominationDate":  r[9].isoformat() if r[9] else None,
+                "status":          r[10],
+            }
+            for r in divergent
+        ],
+    }
+
+
 def get_approval_metrics(tenant_id: int) -> dict:
     """Get approval/rejection metrics for a tenant."""
     with get_db_context() as session:
