@@ -223,7 +223,10 @@ def train_gnn(
             logger.info("Early stop at epoch %d (best epoch %d).", epoch, best["epoch"])
             break
         if log_every and epoch % log_every == 0:
-            logger.info("epoch %3d  loss %.4f  eval PR-AUC %.4f", epoch, float(loss), ev_pr)
+            # .detach() before float(): torch warns about converting a tensor
+            # that still carries requires_grad to a Python scalar.
+            logger.info("epoch %3d  loss %.4f  eval PR-AUC %.4f",
+                        epoch, float(loss.detach()), ev_pr)
 
     if best["state"] is not None:
         model.load_state_dict(best["state"])

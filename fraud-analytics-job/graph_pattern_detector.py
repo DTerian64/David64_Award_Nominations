@@ -1267,7 +1267,7 @@ def main(tenants_to_process: list | None = None) -> None:
     total_findings = 0
 
     for tenant_id in tenants:
-        logger.info("── Tenant %d ──────────────────────────────────────", tenant_id)
+        logger.info("Tenant %d", tenant_id)
 
         # Per-tenant detection window — falls back to global default if not set
         # in integrity_config.graph_pattern.detection_window_days.

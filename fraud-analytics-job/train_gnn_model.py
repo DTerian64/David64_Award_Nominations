@@ -35,13 +35,21 @@ from __future__ import annotations
 import io
 import logging
 import os
-import resource
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import torch
+
+# Unix-only stdlib. Absent on Windows, where developers run this stage against
+# the sandbox database by hand. A hard import here made the whole module
+# unimportable on a dev box while working fine in the Linux container — the
+# memory reporting below degrades instead.
+try:
+    import resource
+except ImportError:          # Windows
+    resource = None
 from dotenv import load_dotenv
 
 # Same .env loading as the other stages so this can be run standalone locally.
@@ -105,9 +113,12 @@ def _container_memory_limit_bytes() -> int | None:
     return None
 
 
-def _log_peak_rss(label: str) -> float:
+def _log_peak_rss(label: str) -> float | None:
     """
     Log peak RSS against the container limit and return peak GiB.
+
+    Returns None where the platform cannot report it (Windows), so callers must
+    not assume a float.
 
     ADR-0002 sized this job at 4 vCPU / 8 GiB. That number was a precaution, not
     a measurement — nobody had observed what the stage actually uses. Azure bills
@@ -120,6 +131,14 @@ def _log_peak_rss(label: str) -> float:
     number for sizing a container, which is billed on the peak, not on the GNN's
     marginal share.
     """
+    if resource is None:
+        logger.info(
+            "MEMORY %s — peak RSS unavailable on this platform (the stdlib "
+            "'resource' module is Unix-only). Container runs still report it.",
+            label,
+        )
+        return None
+
     peak_gib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 ** 2)  # ru_maxrss is KiB on Linux
     limit = _container_memory_limit_bytes()
     if limit:
@@ -169,7 +188,6 @@ def _publish_embeddings(
     as_of: date, model_version: str,
 ) -> int:
     cur = conn.cursor()
-    cur.fast_executemany = True
 
     cur.execute("""
         CREATE TABLE #gnn_emb (
@@ -181,6 +199,22 @@ def _publish_embeddings(
         (int(uid), as_of, z[i].astype(np.float32).tobytes(), int(z.shape[1]), model_version)
         for i, uid in enumerate(user_ids)
     ]
+    # fast_executemany OFF for this one statement.
+    #
+    # fast_executemany makes pyodbc pre-bind a single fixed-width buffer per
+    # column rather than describing each row, and for a bytes parameter that
+    # buffer defaults to 255. A float32 embedding is 4 bytes per dimension, so
+    # GNN_EMBED_DIM=64 is exactly 256 bytes and overflows it by one float:
+    #     ('String data, right truncation: length 256 buffer 255', 'HY000')
+    # The column is VARBINARY(MAX); the limit was entirely client-side. Any
+    # embed_dim >= 64 hits it, which is to say the shipped default did.
+    #
+    # Binding per row costs a round trip per row — a few seconds for a tenant
+    # with thousands of users, once a week. If that ever matters, the faster fix
+    # is cur.setinputsizes() with an explicit VARBINARY width, but verify the
+    # exact call against the pyodbc version in the image first: the placeholder
+    # and MAX-size semantics are not documented on the wiki.
+    cur.fast_executemany = False   # see note above
     cur.executemany(
         "INSERT INTO #gnn_emb (UserId, AsOfDate, Embedding, EmbeddingDim, ModelVersion) "
         "VALUES (?, ?, ?, ?, ?)",
@@ -232,6 +266,9 @@ def _save_scores(
          model_version, embedding_as_of, scoring_mode, "svc:fraud-analytics-job")
         for i, nid in enumerate(nomination_ids)
     ]
+    # fast_executemany stays ON here: every parameter is an int, float, date or
+    # short string, all well inside the 255-byte default bind buffer. Adding a
+    # wide column to this table would hit the same truncation as the embeddings.
     cur.executemany(
         "INSERT INTO #gnn_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows
     )
@@ -456,9 +493,7 @@ def main(tenants_to_process: list | None = None) -> None:
         logger.info("GNN_ENABLED=false — skipping GNN training stage.")
         return
 
-    logger.info("=" * 60)
-    logger.info("GNN MODEL TRAINING — Multi-Tenant (ADR-0002)")
-    logger.info("=" * 60)
+    logger.info("GNN MODEL TRAINING - Multi-Tenant (ADR-0002)")
     logger.info("Window: %d days | hidden %d | emb %d | epochs %d | retention %d days",
                 GNN_WINDOW_DAYS, GNN_HIDDEN_DIM, GNN_EMBED_DIM,
                 GNN_EPOCHS, GNN_EMBEDDING_RETENTION_DAYS)
@@ -475,7 +510,7 @@ def main(tenants_to_process: list | None = None) -> None:
 
         results, failed = {}, []
         for tenant_id in tenants:
-            logger.info("── Tenant %d ─────────────────────────────────", tenant_id)
+            logger.info("Tenant %d", tenant_id)
             try:
                 results[tenant_id] = _process_tenant(conn, tenant_id)
             except Exception as exc:

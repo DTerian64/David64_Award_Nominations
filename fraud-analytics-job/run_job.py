@@ -1,7 +1,8 @@
 """
 run_job.py — Fraud Analytics Job entrypoint
 ============================================
-Orchestrates the weekly fraud analytics pipeline in dependency order:
+Orchestrates the weekly analytics pipeline in dependency order. The registry
+below (STAGES) is the single source of truth; this list documents it.
 
   Stage 1: graph_pattern_detector.py
       Syncs the Azure SQL Graph tables (NomGraph_Person, NomGraph_Nominated).
@@ -19,12 +20,60 @@ Orchestrates the weekly fraud analytics pipeline in dependency order:
       Upserts updated fraud scores into dbo.P2P_FraudScores / dbo.Appr_FraudScores.
       Uploads the retrained .pkl model to Azure Blob Storage.
 
-  IMPORTANT: graph_pattern_detector must run before train_fraud_model so that
-  the UserGraphFlags / ApproverPairFlags snapshots are current before training.
+  Stage 3: train_gnn_model.py                              (ADR-0002)
+      Per-tenant heterogeneous GNN — HeteroConv + SAGEConv over user and
+      nomination nodes, trained on a three-window temporal split so message
+      passing, training targets and evaluation targets never overlap.
+
+      Split encoder/decoder by design: the encoder runs HERE and persists one
+      embedding per user to dbo.GNN_UserEmbeddings; only the ~15k-parameter
+      decoder head ships to integrity-check. That is what keeps PyTorch
+      Geometric out of the inference image.
+
+      Writes scores to dbo.GNN_FraudScores tagged with ScoringMode. Shadow mode
+      is the default and nothing the GNN produces influences routing until a
+      tenant's Tenants.Config -> gnn.mode is set to 'active' — a per-tenant risk
+      decision, deliberately not a deploy-time flag.
+
+      Reads graph topology straight from dbo.Nominations / dbo.Users, NOT from
+      dbo.UserGraphFlags. That independence is the point: a GNN fed the Random
+      Forest's engineered graph features would just be relearning the detector
+      it is meant to be a second opinion on.
+
+      Skips a tenant rather than failing it when below GNN_MIN_TRAINING_SAMPLES
+      / GNN_MIN_USERS / GNN_MIN_POSITIVES. Those gates are empirical: in the
+      ADR-0002 ablation a 50-user tenant scored WORSE with message passing than
+      without it, so training a small tenant is not a neutral act.
+
+      Requires the tables from Alembic revision 0040. Set GNN_ENABLED=false to
+      skip the stage without rebuilding the image.
+
+  Stage 4: sync_holidays.py
+      Refreshes dbo.Holidays from the Nager.Date API, falling back to the
+      offline `holidays` library per country/year, so Stage 5's is_holiday
+      calendar feature stays correct per tenant locale.
+
+  Stage 5: forecast_models.py
+      Per-tenant bake-off (Seasonal-Naive vs ETS vs LightGBM, ranked by
+      rolling-origin MASE) writing to dbo.ForecastRuns / dbo.Forecasts.
+
+  ORDERING
+    Stage 1 before Stage 2 — the UserGraphFlags / ApproverPairFlags snapshots
+      must be current before the RF engineers features from them.
+    Stage 2 before Stage 3 — the GNN's labels come from dbo.P2P_FraudScores,
+      which Stage 2 has just rewritten. (Worth naming plainly: outside the
+      human-confirmed rows, those labels are the RF's own prior output, so the
+      GNN is partly learning from the model it is meant to check. See ADR-0002.)
+    Stage 4 before Stage 5 — the forecast reads the holiday calendar.
+
+  ISOLATION
+    run_stage() catches per-stage exceptions, so one failing stage does not stop
+    the others; the job still exits 1 at the end. A GNN failure can therefore
+    never block the Random Forest retrain.
 
 Exit codes:
-  0  — both stages succeeded
-  1  — one or both stages failed (Container Apps Job reports execution failure;
+  0  — all stages succeeded
+  1  — one or more stages failed (Container Apps Job reports execution failure;
        Azure Monitor alert rule fires on non-zero exit)
 
 Logging:
@@ -97,11 +146,9 @@ def wake_database(
     database = os.getenv("SQL_DATABASE", "(not set)")
     from db_conn import connect  # Managed Identity token auth (ADR-0001)
 
-    logger.info("──────────────────────────────────────────────────")
     logger.info("DB WAKE-UP  server=%s  database=%s", server, database)
     logger.info("  Serverless auto-pause means the DB may be cold.")
     logger.info("  Will poll up to %d times (timeout %ds each).", max_attempts, attempt_timeout_s)
-    logger.info("──────────────────────────────────────────────────")
 
     t_start = time.monotonic()
     last_exc: Exception | None = None
@@ -118,7 +165,6 @@ def wake_database(
                 "DB WAKE-UP  ✓ database is awake  (total wait: %.1f s, attempts: %d)",
                 elapsed, attempt,
             )
-            logger.info("──────────────────────────────────────────────────")
             return
         except Exception as exc:
             last_exc = exc
@@ -206,9 +252,7 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
     tenants_to_process is forwarded to mod.main() — stages that are not
     tenant-scoped (e.g. sync_holidays) accept but ignore it.
     """
-    logger.info("=" * 60)
     logger.info("STAGE: %s", name)
-    logger.info("=" * 60)
     t0 = time.monotonic()
     try:
         import importlib
@@ -261,9 +305,7 @@ def main() -> None:
     selected = [s for s in STAGES if args.only is None or s["key"] == args.only]
     tenants_to_process = [args.tenant] if args.tenant is not None else None
 
-    logger.info("╔══════════════════════════════════════════════════╗")
-    logger.info("║        WEEKLY ANALYTICS JOB — START              ║")
-    logger.info("╚══════════════════════════════════════════════════╝")
+    logger.info("WEEKLY ANALYTICS JOB - START")
     logger.info("Environment : %s", os.getenv("ENVIRONMENT", "unknown"))
     logger.info("SQL Server  : %s", os.getenv("SQL_SERVER", "(not set)"))
     logger.info("Storage acct: %s", os.getenv("AZURE_STORAGE_ACCOUNT", "(not set)"))
@@ -292,10 +334,7 @@ def main() -> None:
             stage["post"]()
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    logger.info("")
-    logger.info("╔══════════════════════════════════════════════════╗")
-    logger.info("║        FRAUD ANALYTICS JOB — SUMMARY             ║")
-    logger.info("╚══════════════════════════════════════════════════╝")
+    logger.info("FRAUD ANALYTICS JOB - SUMMARY")
     all_passed = True
     for stage, passed in results.items():
         status = "✓  PASS" if passed else "✗  FAIL"

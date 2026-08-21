@@ -79,11 +79,26 @@ class JSONFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key not in _STANDARD_ATTRS and not key.startswith("_"):
                 log_data[key] = value
-        return json.dumps(log_data, default=str)
+        # ensure_ascii=False: the default escapes every non-ASCII character, so
+        # a check mark arrives in Log Analytics as \u2713 and a rule of box-drawing
+        # characters as fifty copies of \u2500. JSON is UTF-8 by definition, so
+        # emitting the characters directly is both valid and readable. Requires the
+        # stdout reconfiguration in setup_logging() below.
+        return json.dumps(log_data, default=str, ensure_ascii=False)
 
 
 def setup_logging():
     """Configure structured stdout logging for the whole job process."""
+    # Force UTF-8 on stdout before anything can write to it. Containers are
+    # already UTF-8, but a Windows console defaults to the legacy code page, and
+    # with ensure_ascii=False a single "✓" would raise UnicodeEncodeError from
+    # inside the logging handler. errors="replace" degrades to "?" rather than
+    # letting a log line take down the stage it is reporting on.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass  # non-reconfigurable stream (pytest capture, redirected pipe)
+
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(JSONFormatter())
 
