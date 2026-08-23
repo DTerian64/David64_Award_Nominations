@@ -3,7 +3,7 @@
 # The Dockerfile ends with `COPY . .`, so without this file every path in the
 # build context lands in the production job image.
 #
-# Added 2026-08-14 alongside the GNN work (ADR-0002), which introduced the
+# Added 2026-08-14 alongside the GNN work, which introduced the
 # repository's first pytest suite in tests/. Unit tests and their synthetic data
 # generator have no business in a production fraud-detection image.
 #
@@ -13,7 +13,7 @@
 # does not. That divergence is exactly what this file removes.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Tests (ADR-0002) — must not ship ─────────────────────────────────────────
+# ── Tests — must not ship ─────────────────────────────────────────────────────
 tests/
 
 # ── Secrets ──────────────────────────────────────────────────────────────────

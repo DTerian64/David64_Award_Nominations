@@ -1,6 +1,6 @@
 """
-gnn_check.py — GNN fraud assessment for the integrity-check worker (ADR-0002)
-==============================================================================
+gnn_check.py — GNN fraud assessment for the integrity-check worker
+===================================================================
 
 Structural twin of fraud_check.py, for the third fraud model.
 
@@ -29,12 +29,6 @@ models uniformly, plus two provenance fields:
 
 Never raises. Every failure path returns model_available=False, which the
 caller treats as "no GNN opinion" — not as "clean".
-
-Shadow mode
------------
-While integrity_config.gnn.mode is "shadow" (the default), the score is
-persisted to dbo.GNN_FraudScores and logged, and has no influence on routing.
-Routing stays with the Random Forest until the ADR-0002 evaluation gate is met.
 
 Rollback semantics — why the lookup is version-matched
 -------------------------------------------------------
@@ -275,27 +269,16 @@ def _thresholds(tenant_id: int) -> dict:
     whichever model was not calibrated for it.
     """
     cfg = db.get_tenant_integrity_config(tenant_id) or {}
-    gnn = cfg.get("gnn", {}) or {}
-    routing = gnn.get("score_routing", {}) or {}
+    gnn = cfg.get("gnn", {}) if isinstance(cfg, dict) else {}
+    gnn = gnn if isinstance(gnn, dict) else {}
+    routing = gnn.get("score_routing", {})
+    routing = routing if isinstance(routing, dict) else {}
     return {
         "critical": int(routing.get("critical_threshold", 85)),
         "high":     int(routing.get("high_threshold",     65)),
         "medium":   int(routing.get("medium_threshold",   45)),
         "low":      int(routing.get("low_threshold",      25)),
     }
-
-
-def get_mode(tenant_id: int) -> str:
-    """Return 'shadow' or 'active' for this tenant. Unknown values fail closed."""
-    cfg = db.get_tenant_integrity_config(tenant_id) or {}
-    mode = str((cfg.get("gnn", {}) or {}).get("mode", "shadow")).lower()
-    if mode not in ("shadow", "active"):
-        logger.warning(
-            "Tenant %d has unrecognised gnn.mode=%r — treating as shadow.",
-            tenant_id, mode,
-        )
-        return "shadow"
-    return mode
 
 
 def _risk_level(score: int, t: dict) -> str:

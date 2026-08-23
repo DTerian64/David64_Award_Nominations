@@ -87,11 +87,10 @@ interface GnnDivergentRow {
   status: string;
 }
 
-interface GnnShadowComparison {
+interface GnnComparison {
   available: boolean;
   reason?: string;
   modelVersion?: string;
-  scoringMode?: string;
   embeddingAsOf?: string | null;
   scoredAt?: string | null;
   compared?: number;
@@ -246,7 +245,7 @@ export const AnalyticsDashboard: React.FC = () => {
   // Annual recognition budget for the pacing projection (admin-supplied). Blank = pacing omitted.
   const [budgetInput, setBudgetInput] = useState<string>('');
   const [appliedBudget, setAppliedBudget] = useState<number | null>(null);
-  const [gnnShadow, setGnnShadow] = useState<GnnShadowComparison | null>(null);
+  const [gnnComparison, setGnnComparison] = useState<GnnComparison | null>(null);
   const [gnnLoading, setGnnLoading] = useState(false);
   const [integrityRuns, setIntegrityRuns] = useState<IntegrityRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -366,13 +365,13 @@ export const AnalyticsDashboard: React.FC = () => {
     await fetchForecast(budget);
   };
 
-  const fetchGnnShadow = async () => {
+  const fetchGnnComparison = async () => {
     setGnnLoading(true);
     try {
-      const data = await apiFetch<GnnShadowComparison>(
-        '/api/admin/analytics/gnn/shadow-comparison?limit=25'
+      const data = await apiFetch<GnnComparison>(
+        '/api/admin/analytics/gnn/comparison?limit=25'
       );
-      setGnnShadow(data);
+      setGnnComparison(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load GNN comparison');
     } finally {
@@ -459,7 +458,7 @@ export const AnalyticsDashboard: React.FC = () => {
     // GNN tab has its own fetch path
     if (tabId === 'gnn') {
       if (!loadedTabs.has('gnn')) {
-        await fetchGnnShadow();
+        await fetchGnnComparison();
         setLoadedTabs(prev => new Set([...prev, 'gnn']));
       }
       return;
@@ -1695,19 +1694,17 @@ export const AnalyticsDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* ── GNN Shadow Comparison Tab ──────────────────────────────── */}
+      {/* ── GNN Comparison Tab ─────────────────────────────────────── */}
       {selectedTab === 'gnn' && (
         <div className="space-y-6">
 
-          {/* The GNN does not route anything. Say so before any number is read. */}
-          <div className="flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-lg p-4">
-            <ShieldAlert className="text-amber-600 shrink-0 mt-0.5" size={20} />
-            <div className="text-sm text-amber-900">
-              <p className="font-semibold">Shadow model — these scores decide nothing.</p>
+          <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <ShieldAlert className="text-blue-600 shrink-0 mt-0.5" size={20} />
+            <div className="text-sm text-blue-900">
+              <p className="font-semibold">Independent model comparison</p>
               <p className="mt-1">
-                The GNN is scored weekly and stored for evaluation only. Routing, HRBP
-                queueing and auto-rejection are driven entirely by the Random Forest.
-                Nothing on this tab has affected a single nomination.
+                This view compares GNN and Random Forest component opinions. When available,
+                both participate independently in the final integrity decision.
               </p>
             </div>
           </div>
@@ -1716,66 +1713,65 @@ export const AnalyticsDashboard: React.FC = () => {
             <div className="text-center py-12 text-gray-500">Loading GNN comparison…</div>
           )}
 
-          {!gnnLoading && gnnShadow && !gnnShadow.available && (
+          {!gnnLoading && gnnComparison && !gnnComparison.available && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-sm text-gray-700">
               <p className="font-semibold text-gray-900">No GNN scores for this tenant yet</p>
-              <p className="mt-2">{gnnShadow.reason}</p>
+              <p className="mt-2">{gnnComparison.reason}</p>
             </div>
           )}
 
-          {!gnnLoading && gnnShadow && gnnShadow.available && (
+          {!gnnLoading && gnnComparison && gnnComparison.available && (
             <>
               {/* Provenance — which model produced these numbers */}
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600 border-b border-gray-200 pb-3">
-                <span><span className="font-semibold">Model:</span> {gnnShadow.modelVersion}</span>
-                <span><span className="font-semibold">Mode:</span> {gnnShadow.scoringMode}</span>
-                {gnnShadow.embeddingAsOf && (
-                  <span><span className="font-semibold">Embeddings as of:</span> {gnnShadow.embeddingAsOf}</span>
+                <span><span className="font-semibold">Model:</span> {gnnComparison.modelVersion}</span>
+                {gnnComparison.embeddingAsOf && (
+                  <span><span className="font-semibold">Embeddings as of:</span> {gnnComparison.embeddingAsOf}</span>
                 )}
-                {gnnShadow.scoredAt && (
-                  <span><span className="font-semibold">Scored:</span> {new Date(gnnShadow.scoredAt).toLocaleString()}</span>
+                {gnnComparison.scoredAt && (
+                  <span><span className="font-semibold">Scored:</span> {new Date(gnnComparison.scoredAt).toLocaleString()}</span>
                 )}
               </div>
 
               {/* Headline agreement numbers */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <MetricCard icon={BarChart3}  label="Nominations compared"
-                            value={String(gnnShadow.compared ?? 0)}
+                            value={String(gnnComparison.compared ?? 0)}
                             change="scored by both models" />
                 <MetricCard icon={GitCompare} label="Same risk level"
-                            value={gnnShadow.agreementRate != null ? `${gnnShadow.agreementRate}%` : '—'}
-                            change={`${gnnShadow.agreed ?? 0} of ${gnnShadow.compared ?? 0}`} />
+                            value={gnnComparison.agreementRate != null ? `${gnnComparison.agreementRate}%` : '—'}
+                            change={`${gnnComparison.agreed ?? 0} of ${gnnComparison.compared ?? 0}`} />
                 <MetricCard icon={TrendingUp} label="GNN scored higher"
-                            value={String(gnnShadow.gnnHigher ?? 0)}
+                            value={String(gnnComparison.gnnHigher ?? 0)}
                             change="more suspicious than RF" warning />
                 <MetricCard icon={AlertCircle} label="GNN scored lower"
-                            value={String(gnnShadow.gnnLower ?? 0)}
+                            value={String(gnnComparison.gnnLower ?? 0)}
                             change="less suspicious than RF" />
               </div>
 
               {/* Evaluation gate status — the number that decides whether any of
                   this can be turned into a precision/recall claim. */}
               <div className={`rounded-lg border p-4 text-sm ${
-                gnnShadow.gateComputable
+                gnnComparison.gateComputable
                   ? 'bg-green-50 border-green-300 text-green-900'
                   : 'bg-gray-50 border-gray-300 text-gray-800'
               }`}>
                 <p className="font-semibold">
-                  Human-label evaluation: {gnnShadow.gateComputable ? 'computable' : 'not computable'}
+                  Human-label evaluation: {gnnComparison.gateComputable ? 'computable' : 'not computable'}
                 </p>
                 <p className="mt-1">
-                  {gnnShadow.confirmed ?? 0} human-confirmed label
-                  {(gnnShadow.confirmed ?? 0) === 1 ? '' : 's'} in the compared population,
-                  of which {gnnShadow.confirmedFraud ?? 0} are fraud.
-                  {gnnShadow.gateReason === 'no_confirmations' && (
+                  {gnnComparison.confirmed ?? 0} human-confirmed label
+                  {(gnnComparison.confirmed ?? 0) === 1 ? '' : 's'} in the compared population,
+                  of which {gnnComparison.confirmedFraud ?? 0} are fraud.
+                  {gnnComparison.gateReason === 'no_confirmations' && (
                     <> Nothing in this population has been adjudicated, so every label the
                     models are measured against is the Random Forest&rsquo;s own prior output.</>
                   )}
-                  {gnnShadow.gateReason === 'no_confirmed_fraud' && (
+                  {gnnComparison.gateReason === 'no_confirmed_fraud' && (
                     <> Every confirmation is <strong>legitimate</strong>. Recall cannot be
                     measured without at least one confirmed fraud case.</>
                   )}
-                  {gnnShadow.gateReason === 'no_confirmed_legitimate' && (
+                  {gnnComparison.gateReason === 'no_confirmed_legitimate' && (
                     <> Every confirmation is <strong>fraud</strong>. Confirming only what the
                     model flagged says nothing about false positives, however many are
                     confirmed &mdash; precision needs at least one confirmed-legitimate case.</>
@@ -1787,7 +1783,7 @@ export const AnalyticsDashboard: React.FC = () => {
               <div>
                 <h3 className="text-sm font-semibold text-gray-900 mb-1">Risk level agreement</h3>
                 <p className="text-xs text-gray-500 mb-3">
-                  Rows: Random Forest (authoritative). Columns: GNN (shadow).
+                  Rows: Random Forest. Columns: GNN.
                   The diagonal is agreement.
                 </p>
                 <div className="overflow-x-auto">
@@ -1805,7 +1801,7 @@ export const AnalyticsDashboard: React.FC = () => {
                         <tr key={rf}>
                           <td className="p-2 text-xs font-semibold text-gray-700">{rf}</td>
                           {RISK_LEVELS.map(g => {
-                            const n = gnnShadow.matrix?.find(
+                            const n = gnnComparison.matrix?.find(
                               c => c.rfRisk === rf && c.gnnRisk === g
                             )?.count ?? 0;
                             const same = rf === g;
@@ -1834,7 +1830,7 @@ export const AnalyticsDashboard: React.FC = () => {
                   Ranked by raw score gap, not risk level — two scores a point apart can
                   straddle a threshold and look like a bigger disagreement than they are.
                 </p>
-                {(gnnShadow.divergent?.length ?? 0) === 0 ? (
+                {(gnnComparison.divergent?.length ?? 0) === 0 ? (
                   <p className="text-sm text-gray-500">No overlapping scores to compare.</p>
                 ) : (
                   <div className="overflow-x-auto">
@@ -1850,7 +1846,7 @@ export const AnalyticsDashboard: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {gnnShadow.divergent?.map(row => (
+                        {gnnComparison.divergent?.map(row => (
                           <tr key={row.nominationId} className="border-t border-gray-100">
                             <td className="p-2 font-mono text-xs">#{row.nominationId}</td>
                             <td className="p-2 text-xs">

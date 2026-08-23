@@ -1,7 +1,7 @@
 """
 gnn_model.py — encoder / decoder for the GNN fraud model
 =========================================================
-Stage 3 of the fraud-analytics-job pipeline (ADR-0002).
+Stage 3 of the fraud-analytics-job pipeline.
 
 The model is trained as one network and deployed as two pieces:
 
@@ -175,9 +175,8 @@ def train_gnn(
     Note on early stopping: selecting the epoch by evaluation PR-AUC does let the
     evaluation window influence model selection, so the returned eval metric is
     mildly optimistic. It is retained because with the label volumes involved a
-    third split would leave too little to select on — but the shadow-mode gate in
-    ADR-0002 is judged on live weekly runs against human-confirmed labels, not on
-    this number.
+    third split would leave too little to select on. Model value is judged on
+    live outcomes against human-confirmed labels, not on this number alone.
     """
     torch.manual_seed(seed)
     np.random.seed(seed)

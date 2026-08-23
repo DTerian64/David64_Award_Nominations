@@ -1731,15 +1731,14 @@ def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
         ).fetchall()
 
 
-def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
+def get_gnn_comparison(tenant_id: int, limit: int = 25) -> dict:
     """
     Compare the GNN's scores against the Random Forest's, for the tenant's most
     recent GNN model version.
 
-    The GNN runs in shadow mode: dbo.GNN_FraudScores is written every week but
-    nothing reads it for routing. The only thing that makes shadow mode worth
-    running is this comparison — where the two models agree, and more usefully
-    where they do not.
+    This comparison is diagnostic: it shows where two independent component
+    opinions agree and, more usefully, where they do not. Both scores remain
+    eligible for routing when available.
 
     Scoped to ONE ModelVersion deliberately. GNN_FraudScores is unique on
     (NominationId, ModelVersion), so a tenant accumulates one row per nomination
@@ -1751,7 +1750,7 @@ def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
     with get_db_context() as session:
         latest = session.execute(
             text("""
-                SELECT TOP 1 g.ModelVersion, g.ScoringMode, g.EmbeddingAsOfDate, g.CreatedAt
+                SELECT TOP 1 g.ModelVersion, g.EmbeddingAsOfDate, g.CreatedAt
                 FROM   dbo.GNN_FraudScores g
                 JOIN   dbo.Nominations n ON n.NominationId = g.NominationId
                 JOIN   dbo.Users u       ON u.UserId       = n.NominatorId
@@ -1764,7 +1763,7 @@ def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
         if latest is None:
             return {}
 
-        model_version, scoring_mode, embedding_as_of, scored_at = latest
+        model_version, embedding_as_of, scored_at = latest
         params = {"tenant_id": tenant_id, "mv": model_version}
 
         # Agreement matrix: RF risk level x GNN risk level.
@@ -1859,7 +1858,6 @@ def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
 
     return {
         "modelVersion":     model_version,
-        "scoringMode":      scoring_mode,
         "embeddingAsOf":    embedding_as_of.isoformat() if embedding_as_of else None,
         "scoredAt":         scored_at.isoformat() if scored_at else None,
         "compared":         total,

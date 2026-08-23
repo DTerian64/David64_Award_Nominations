@@ -53,7 +53,7 @@
      nomination, the model's prediction on it is gone. The rows that have ground
      truth and the rows that have a comparable model output become disjoint sets,
      and no precision/recall figure can ever be computed against human labels —
-     which is exactly the ADR-0002 evaluation gate.
+     which is exactly what the human-label evaluation requires.
 
      This script writes IsFraud + ConfirmedBy + ConfirmedAt and leaves FraudScore
      and RiskLevel alone. labels.py reads it that way: a non-null ConfirmedBy wins

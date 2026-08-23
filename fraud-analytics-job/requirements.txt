@@ -32,7 +32,7 @@ networkx>=3.2.0
 torch>=2.2.0
 sentence-transformers>=2.6.0
 
-# ── GNN — third fraud model (train_gnn_model.py stage, ADR-0002) ─────────────
+# ── GNN — third fraud model (train_gnn_model.py stage) ───────────────────────
 # Depends on the CPU-only torch pinned above; must stay below it in this file
 # so pip resolves torch from the CPU index first.
 #
@@ -46,7 +46,7 @@ sentence-transformers>=2.6.0
 #
 # Adds ~40 MB to the image on top of the torch already pulled in by
 # sentence-transformers. NOT required by integrity-check: only the decoder head
-# ships to inference, and it is plain torch.nn (see ADR-0002).
+# ships to inference, and it is plain torch.nn.
 torch-geometric>=2.5.0,<3.0.0
 
 # ── Azure ─────────────────────────────────────────────────────────────────────

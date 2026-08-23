@@ -20,7 +20,7 @@ below (STAGES) is the single source of truth; this list documents it.
       Upserts updated fraud scores into dbo.P2P_FraudScores / dbo.Appr_FraudScores.
       Uploads the retrained .pkl model to Azure Blob Storage.
 
-  Stage 3: train_gnn_model.py                              (ADR-0002)
+  Stage 3: train_gnn_model.py
       Per-tenant heterogeneous GNN — HeteroConv + SAGEConv over user and
       nomination nodes, trained on a three-window temporal split so message
       passing, training targets and evaluation targets never overlap.
@@ -30,10 +30,9 @@ below (STAGES) is the single source of truth; this list documents it.
       decoder head ships to integrity-check. That is what keeps PyTorch
       Geometric out of the inference image.
 
-      Writes scores to dbo.GNN_FraudScores tagged with ScoringMode. Shadow mode
-      is the default and nothing the GNN produces influences routing until a
-      tenant's Tenants.Config -> gnn.mode is set to 'active' — a per-tenant risk
-      decision, deliberately not a deploy-time flag.
+      Writes independent component scores to dbo.GNN_FraudScores. Whenever a
+      trained artifact and matching embeddings are available, integrity-check
+      includes the GNN opinion in nomination routing.
 
       Reads graph topology straight from dbo.Nominations / dbo.Users, NOT from
       dbo.UserGraphFlags. That independence is the point: a GNN fed the Random
@@ -42,7 +41,7 @@ below (STAGES) is the single source of truth; this list documents it.
 
       Skips a tenant rather than failing it when below GNN_MIN_TRAINING_SAMPLES
       / GNN_MIN_USERS / GNN_MIN_POSITIVES. Those gates are empirical: in the
-      ADR-0002 ablation a 50-user tenant scored WORSE with message passing than
+      The synthetic ablation found that a 50-user tenant scored WORSE with message passing than
       without it, so training a small tenant is not a neutral act.
 
       Requires the tables from Alembic revision 0040. Set GNN_ENABLED=false to
@@ -63,7 +62,7 @@ below (STAGES) is the single source of truth; this list documents it.
     Stage 2 before Stage 3 — the GNN's labels come from dbo.P2P_FraudScores,
       which Stage 2 has just rewritten. (Worth naming plainly: outside the
       human-confirmed rows, those labels are the RF's own prior output, so the
-      GNN is partly learning from the model it is meant to check. See ADR-0002.)
+      GNN is partly learning from the model it is meant to check.)
     Stage 4 before Stage 5 — the forecast reads the holiday calendar.
 
   ISOLATION
@@ -273,7 +272,7 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
 STAGES = [
     {"key": "graph_pattern_detector", "label": "Graph pattern detection",  "module": "graph_pattern_detector", "post": None},
     {"key": "train_fraud_model",      "label": "RF model training",        "module": "train_fraud_model",      "post": notify_api_refresh},
-    # GNN training (ADR-0002). Placed after train_fraud_model for two reasons: it
+    # GNN training. Placed after train_fraud_model for two reasons: it
     # consumes the label view the RF has just refreshed, and a GNN failure can then
     # never block the RF retrain — run_stage()'s per-stage try/except gives that
     # isolation for free. No post-hook: the backend does not consume the GNN, so

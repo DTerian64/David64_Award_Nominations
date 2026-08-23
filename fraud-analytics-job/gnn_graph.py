@@ -1,14 +1,14 @@
 """
 gnn_graph.py — per-tenant heterogeneous graph construction for the GNN stage
 ============================================================================
-Stage 3 of the fraud-analytics-job pipeline (ADR-0002).
+Stage 3 of the fraud-analytics-job pipeline.
 
 Turns rows from dbo.Nominations / dbo.Users into a PyTorch Geometric
 HeteroData object, and applies the temporal split that keeps message passing
 from seeing the future.
 
-Design constraints from ADR-0002
---------------------------------
+Design constraints
+------------------
 1. Topology is read DIRECTLY from dbo.Nominations and dbo.Users. The
    NomGraph_Person / NomGraph_Nominated tables are a verbatim copy of the same
    data; reading them would create an ordering dependency on
@@ -30,13 +30,13 @@ all unit-testable without a database connection.
 
 Temporal split
 --------------
-Three windows rather than the two described in ADR-0002:
+The graph uses three temporal windows:
 
     NomDate <  t_graph                message-passing graph
     t_graph <= NomDate < t_cut        training targets
     NomDate >= t_cut                  evaluation targets
 
-ADR-0002 specifies a two-way split, which leaves training targets inside the
+An earlier two-way split left training targets inside the
 message-passing graph — a nomination then participates in producing the
 embeddings used to score it, and training metrics are inflated. The three-way
 split removes that. Evaluation targets are out-of-graph under both schemes, so
@@ -231,7 +231,7 @@ def build_user_features(
     """
     Behavioural aggregates over the MESSAGE-PASSING window only.
 
-    Deliberately excludes every dbo.UserGraphFlags column (ADR-0002).
+    Deliberately excludes every dbo.UserGraphFlags column.
     """
     made         = defaultdict(int)
     received     = defaultdict(int)

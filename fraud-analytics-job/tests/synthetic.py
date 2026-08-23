@@ -28,7 +28,7 @@ UniqueBeneficiaries, ReciprocalPairCount and activity. The ONLY thing that
 separates them is whether the concentration chains onward into a cycle — which
 is visible at two hops and invisible to any per-user aggregate.
 
-That is precisely the capability ADR-0002 claims a GNN has and the flattened
+That is precisely the capability the GNN is intended to add beyond the flattened
 UserGraphFlags booleans do not, so the ablation in demo_train.py is a real test
 of the ADR's premise rather than a formality.
 

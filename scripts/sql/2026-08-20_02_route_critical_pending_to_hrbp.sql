@@ -37,7 +37,7 @@
      dbo.P2P_FraudScores has zero rows with ConfirmedBy IS NOT NULL. Every label
      both models train on today is the Random Forest's own prior output, or the
      unlabelled -> 0 convention. labels.py will report n_hrbp = 0 and warn that
-     the ADR-0002 evaluation gate cannot be evaluated. This script is how that
+     the human-label evaluation cannot be performed. This script is how that
      number stops being zero.
 
    WHAT IT DOES

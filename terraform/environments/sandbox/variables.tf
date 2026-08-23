@@ -234,10 +234,9 @@ variable "gnn_enabled" {
     Kill switch for the GNN training stage. When false, run_job.py skips the
     stage and the rest of the weekly run is unaffected — no image rebuild needed.
 
-    This does NOT control inference. Whether a tenant's scores influence routing
-    is per-tenant DB config (Tenants.integrity_config -> gnn.mode, read by
-    integrity-check/gnn_check.get_mode), deliberately not an environment
-    variable: shadow-to-active is a per-tenant risk decision, not a deploy.
+    This does NOT selectively disable inference. A trained, available GNN always
+    participates in routing; when training is disabled or no artifact exists it
+    contributes no opinion.
   EOT
   type    = bool
   default = true

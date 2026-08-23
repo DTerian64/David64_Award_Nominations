@@ -124,7 +124,7 @@ def test_edge_counts_and_reverse_relations_match():
 
 
 def test_no_userGraphFlags_column_leaks_into_user_features():
-    """ADR-0002 commitment 2, asserted mechanically rather than by review."""
+    """Model-independence constraint, asserted mechanically rather than by review."""
     forbidden = {
         "IsInRing", "RingMaxUserCount", "RingMaxNominationCount", "IsSuperNominator",
         "IsInCopyPasteCluster", "CopyPasteClusterSize", "HasTransactionalLanguage",

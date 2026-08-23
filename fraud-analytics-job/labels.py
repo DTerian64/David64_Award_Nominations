@@ -1,6 +1,6 @@
 """
-labels.py — one definition of "fraud" for every model (ADR-0002)
-================================================================
+labels.py — one definition of "fraud" for every model
+======================================================
 
 Both the Random Forest and the GNN need a training label. Today that label is a
 CASE expression buried in a 500-line SQL string inside train_fraud_model.load_data():
@@ -48,7 +48,7 @@ currently slams FraudScore to 100/0 and RiskLevel to CRITICAL/NONE when an HRBP
 decides. The moment a human labels a nomination, the model's prediction for that
 nomination is destroyed — so the set of rows with ground truth and the set of
 rows with a comparable model output are disjoint by construction, and the
-ADR-0002 evaluation gate can never be computed. Preserving the score and writing
+the human-label evaluation can never be computed. Preserving the score and writing
 the verdict alongside it is what makes the gate possible at all.
 
 The rollout for this module is a strangler, not a swap: it runs alongside the
@@ -70,7 +70,7 @@ in train_fraud_model.py as an RF-only cold-start path.
 
 The GNN does not inherit it. Training a GNN on labels produced by an anomaly
 detector fitted to the Random Forest's feature space would be a particularly
-circular way to violate the independence commitment in ADR-0002 — so the GNN
+circular way to violate model independence — so the GNN
 requires real labels or skips the tenant, which the sample gate already handles.
 """
 
@@ -172,7 +172,7 @@ def load_labels(
 
 def summarise(df: pd.DataFrame, tenant_id: int) -> dict:
     """
-    Per-source counts, for logging and for the ADR-0002 evaluation gate.
+    Per-source counts, for logging and human-label evaluation.
 
     n_hrbp is the number that actually matters: it is the size of the only subset
     on which a GNN-versus-Random-Forest comparison means anything. If it is small,
@@ -197,10 +197,30 @@ def summarise(df: pd.DataFrame, tenant_id: int) -> dict:
         logger.warning(
             "[Tenant %d] NO human-confirmed labels. Every label is the Random Forest's "
             "own prior output, so reported model quality is self-referential and the "
-            "ADR-0002 evaluation gate cannot be evaluated for this tenant.",
+            "human-label evaluation cannot be performed for this tenant.",
             tenant_id,
         )
     return stats
+
+
+def human_confirmed(df: pd.DataFrame) -> pd.DataFrame:
+    """Return the only rows that are valid independent GNN training targets.
+
+    ``SOURCE_MODEL`` rows are Random Forest outputs and ``SOURCE_UNLABELLED``
+    rows have no outcome evidence.  Keeping this filter in the label module
+    makes it difficult for a future trainer refactor to accidentally reintroduce
+    either source into the GNN loss function.
+    """
+    required = {"NominationId", "IsFraud", "LabelSource"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Label frame is missing required columns: {sorted(missing)}")
+
+    confirmed = df.loc[df["LabelSource"] == SOURCE_HRBP].copy()
+    if confirmed["IsFraud"].isna().any():
+        raise ValueError("Human-confirmed labels must have a non-null IsFraud value")
+    confirmed["IsFraud"] = confirmed["IsFraud"].astype(int)
+    return confirmed
 
 
 def compare_with_legacy(

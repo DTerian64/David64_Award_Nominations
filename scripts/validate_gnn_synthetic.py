@@ -10,9 +10,9 @@ It exists to answer one question before any of this touches real data:
     does message passing actually contribute, or would a plain MLP over the
     same flat per-user features do just as well?
 
-That is the empirical core of ADR-0002. If the ablation matches the full model,
-the GNN is an expensive reimplementation of features the Random Forest already
-has, and the ADR's premise is wrong.
+That is the empirical test of whether message passing adds value. If the
+ablation matches the full model, the GNN is an expensive reimplementation of
+features the Random Forest already has.
 
 Run:  python scripts/validate_gnn_synthetic.py
 """

@@ -8,11 +8,12 @@ Orchestrates the full fraud assessment lifecycle for a single nomination:
        Check A fail  → auto-reject (actor=ACTOR_DESCRIPTION_CHECK)
                        + nomination.description-rejected event
        Check B flag  → accumulate into warning_flags, continue to ML
-  4. Run fraud_check.assess() — ML behavioural fraud model
-  5. Persist scores + update nomination status
+  4. Run RF, graph analytics, and GNN as separate component scorers
+  5. Persist each component score and the fused routing decision
   6. Re-publish nomination.created or nomination.fraud-flagged
 
-All ML logic lives in fraud_check.py.
+Component logic lives in fraud_check.py, graph_check.py, and gnn_check.py.
+The routing policy lives in fraud_fusion.py.
 All description quality logic lives in description_check.py.
 This file is pure orchestration.
 """
@@ -25,6 +26,9 @@ from datetime import datetime, timezone
 
 import description_check
 import fraud_check
+import fraud_fusion
+import gnn_check
+import graph_check
 from utils import db
 from utils import service_bus_publisher
 
@@ -39,6 +43,16 @@ logger = logging.getLogger("integrity_check.handler")
 # CRITICAL auto-reject as if it were a typo in a description.
 ACTOR_DESCRIPTION_CHECK = "Fraud Detection (Description)"   # Check A quality gate
 ACTOR_FRAUD_ML          = "Fraud Detection"                 # CRITICAL ML auto-reject
+
+
+def _component_summary(result: dict) -> dict:
+    """JSON-safe audit view without model internals or large arrays."""
+    keys = (
+        "model_available", "unavailable_reason", "fraud_score", "fraud_prob",
+        "risk_level", "warning_flags", "flagged", "model_version",
+        "embedding_as_of", "snapshot_as_of", "affected_user_ids",
+    )
+    return {key: result.get(key) for key in keys if key in result}
 
 
 def handle(message_id: str, payload: dict) -> None:
@@ -128,72 +142,70 @@ def handle(message_id: str, payload: dict) -> None:
             extra={"nomination_id": nomination_id},
         )
 
-    # ── ML fraud assessment ───────────────────────────────────────────────────
-    result = fraud_check.assess(details, tenant_id)
+    # ── Independent component assessments ────────────────────────────────────
+    rf_result = fraud_check.assess(details, tenant_id)
+    graph_result = graph_check.assess_graph(details, tenant_id)
+    gnn_result = gnn_check.assess_gnn(details, tenant_id)
 
-    if not result["model_available"]:
-        # No trained model yet for this tenant.  Description flags are still
-        # actionable even without ML — route to HRBP review if any exist,
-        # otherwise pass through to manager approval as normal.
-        if pre_ml_flags:
-            logger.warning(
-                "No fraud model for tenant %d — routing to HRBP review due to description flags",
-                tenant_id,
-                extra={"nomination_id": nomination_id, "pre_ml_flags": pre_ml_flags},
-            )
-            db.save_hrbp_fraud_flags(
-                nomination_id=nomination_id,
-                fraud_score=0,
-                fraud_probability=0.0,
-                risk_level="UNKNOWN",
-                warning_flags=", ".join(pre_ml_flags),
-                shap_explanations_json=None,
-                feature_summary_json=json.dumps({
-                    "fraud_score":       0,
-                    "fraud_probability": 0.0,
-                    "risk_level":        "UNKNOWN",
-                    "description_flags": pre_ml_flags,
-                }),
-            )
-            db.set_nomination_status(nomination_id, "PendingHRBPReview")
-            service_bus_publisher.publish_event(
-                "nomination.fraud-flagged", nomination_id,
-                extra={"risk_level": "UNKNOWN"},
-            )
-        else:
-            logger.warning(
-                "No fraud model for tenant %d — routing as clean", tenant_id,
-                extra={"nomination_id": nomination_id},
-            )
-            db.set_nomination_status(nomination_id, "Pending")
-            service_bus_publisher.publish_event("nomination.created", nomination_id)
-        db.update_processed_event_result(message_id, "success")
-        return
+    # Persist every available opinion in its own component table. Every available
+    # component participates in fusion; unavailable means no opinion.
+    if rf_result["model_available"]:
+        rf_flags = fraud_fusion.component_flags("RF", rf_result)
+        db.save_p2p_fraud_score(
+            nomination_id=nomination_id,
+            fraud_score=rf_result["fraud_score"],
+            risk_level=rf_result["risk_level"],
+            warning_flags=", ".join(rf_flags),
+        )
 
-    # Merge pre-ML description flags with ML warning flags.
-    all_flags = pre_ml_flags + result["warning_flags"]
+    if graph_result["model_available"]:
+        db.save_graph_fraud_score(
+            nomination_id=nomination_id,
+            graph_score=graph_result["fraud_score"],
+            risk_level=graph_result["risk_level"],
+            graph_flags=", ".join(graph_result["warning_flags"]) or None,
+            snapshot_as_of=graph_result["snapshot_as_of"],
+        )
+
+    if gnn_result["model_available"]:
+        db.save_gnn_fraud_score(
+            nomination_id=nomination_id,
+            fraud_score=gnn_result["fraud_score"],
+            fraud_probability=gnn_result["fraud_prob"],
+            risk_level=gnn_result["risk_level"],
+            warning_flags=", ".join(gnn_result["warning_flags"]) or None,
+            model_version=gnn_result["model_version"],
+            embedding_as_of=gnn_result["embedding_as_of"],
+        )
+
+    decision = fraud_fusion.combine(rf_result, graph_result, gnn_result)
+    db.save_fraud_decision_result(
+        nomination_id=nomination_id,
+        policy_version=decision["policy_version"],
+        rf_result=rf_result,
+        graph_result=graph_result,
+        gnn_result=gnn_result,
+        decision=decision,
+    )
+
+    all_flags = pre_ml_flags + decision["warning_flags"]
 
     logger.info(
-        "Fraud assessment complete",
+        "Three-component fraud assessment complete",
         extra={
-            "nomination_id":   nomination_id,
-            "fraud_score":     result["fraud_score"],
-            "risk_level":      result["risk_level"],
-            "warning_flags":   all_flags,
-            "shap_available":  bool(result["shap_explanations"]),
+            "nomination_id": nomination_id,
+            "rf_risk": rf_result["risk_level"] if rf_result["model_available"] else "UNAVAILABLE",
+            "graph_risk": graph_result["risk_level"] if graph_result["model_available"] else "UNAVAILABLE",
+            "gnn_risk": gnn_result["risk_level"] if gnn_result["model_available"] else "UNAVAILABLE",
+            "final_risk": decision["risk_level"],
+            "decisive_models": decision["decisive_models"],
+            "warning_flags": all_flags,
         },
     )
 
-    # ── Persist P2P fraud score ───────────────────────────────────────────────
-    db.save_p2p_fraud_score(
-        nomination_id=nomination_id,
-        fraud_score=result["fraud_score"],
-        risk_level=result["risk_level"],
-        warning_flags=", ".join(all_flags),
-    )
-
     # ── Route ─────────────────────────────────────────────────────────────────
-    # CRITICAL  → auto-reject immediately; LLM-generated explanation goes into
+    # CRITICAL  → auto-reject immediately; the RF explanation (when RF is
+    #             decisive) or a neutral multi-model explanation goes into
     #             RejectionReason so the nominator sees it in My Nominations.
     #             No HRBP queue entry — score is too high to warrant manual review.
     #
@@ -202,21 +214,58 @@ def handle(message_id: str, payload: dict) -> None:
     #
     # LOW / NONE → pass through to manager approval as normal.
 
-    risk_level = result["risk_level"]
-    shap_json  = json.dumps(result["shap_explanations"]) if result["shap_explanations"] else None
+    risk_level = decision["risk_level"]
+    shap_json = (json.dumps(rf_result["shap_explanations"])
+                 if rf_result.get("shap_explanations") else None)
     feature_summary = json.dumps({
-        "fraud_score":       result["fraud_score"],
-        "fraud_probability": result["fraud_prob"],
-        "risk_level":        risk_level,
+        "policy_version": decision["policy_version"],
+        "final_score": decision["final_score"],
+        "final_risk_level": risk_level,
+        "participating_models": decision["participating_models"],
+        "decisive_models": decision["decisive_models"],
+        "rf": _component_summary(rf_result),
+        "graph": _component_summary(graph_result),
+        "gnn": _component_summary(gnn_result),
         "description_flags": pre_ml_flags,
-    })
+    }, default=str)
+    decision_probability = float(decision["decision_probability"] or 0.0)
+
+    if not decision["decision_available"]:
+        # No component produced an opinion. Description flags remain
+        # independently actionable.
+        if pre_ml_flags:
+            db.save_hrbp_fraud_flags(
+                nomination_id=nomination_id,
+                fraud_score=0,
+                fraud_probability=0.0,
+                risk_level="UNKNOWN",
+                warning_flags=", ".join(all_flags),
+                shap_explanations_json=shap_json,
+                feature_summary_json=feature_summary,
+            )
+            db.set_nomination_status(nomination_id, "PendingHRBPReview")
+            service_bus_publisher.publish_event(
+                "nomination.fraud-flagged", nomination_id,
+                extra={"risk_level": "UNKNOWN"},
+            )
+        else:
+            logger.warning(
+                "No active fraud component available for tenant %d — routing to manager",
+                tenant_id, extra={"nomination_id": nomination_id},
+            )
+            db.set_nomination_status(nomination_id, "Pending")
+            service_bus_publisher.publish_event("nomination.created", nomination_id)
+        db.update_processed_event_result(message_id, "success")
+        return
 
     if risk_level == "CRITICAL":
         explanation = (
-            result["fraud_explanation"]
-            or "Your nomination was automatically declined because our fraud prevention "
-               "system detected unusual patterns in this submission. Please contact your "
-               "HR administrator if you believe this is an error."
+            rf_result.get("fraud_explanation")
+            if "RF" in decision["decisive_models"] else None
+        ) or (
+            "Your nomination was automatically declined because independent fraud "
+            "screening detected an unusually high-risk pattern in this submission. "
+            "Please contact your HR administrator if you believe this is an error."
         )
         db.reject_nomination(
             nomination_id, reason=explanation, actor=ACTOR_FRAUD_ML
@@ -225,8 +274,8 @@ def handle(message_id: str, payload: dict) -> None:
         # analytics and audit trails read from HRBP_FraudFlags for all risk levels.
         db.save_hrbp_fraud_flags(
             nomination_id=nomination_id,
-            fraud_score=result["fraud_score"],
-            fraud_probability=result["fraud_prob"],
+            fraud_score=decision["final_score"],
+            fraud_probability=decision_probability,
             risk_level=risk_level,
             warning_flags=", ".join(all_flags),
             shap_explanations_json=shap_json,
@@ -240,15 +289,16 @@ def handle(message_id: str, payload: dict) -> None:
             "Nomination auto-rejected (CRITICAL fraud score)",
             extra={
                 "nomination_id": nomination_id,
-                "fraud_score":   result["fraud_score"],
+                "fraud_score": decision["final_score"],
+                "decisive_models": decision["decisive_models"],
             },
         )
 
-    elif result["flagged"] or bool(pre_ml_flags):
+    elif decision["flagged"] or bool(pre_ml_flags):
         db.save_hrbp_fraud_flags(
             nomination_id=nomination_id,
-            fraud_score=result["fraud_score"],
-            fraud_probability=result["fraud_prob"],
+            fraud_score=decision["final_score"],
+            fraud_probability=decision_probability,
             risk_level=risk_level,
             warning_flags=", ".join(all_flags),
             shap_explanations_json=shap_json,
@@ -264,6 +314,7 @@ def handle(message_id: str, payload: dict) -> None:
             extra={
                 "nomination_id": nomination_id,
                 "risk_level":    risk_level,
+                "decisive_models": decision["decisive_models"],
                 "pre_ml_flags":  pre_ml_flags,
             },
         )
@@ -273,7 +324,8 @@ def handle(message_id: str, payload: dict) -> None:
         service_bus_publisher.publish_event("nomination.created", nomination_id)
         logger.info(
             "Nomination routed to manager for approval",
-            extra={"nomination_id": nomination_id, "fraud_score": result["fraud_score"]},
+            extra={"nomination_id": nomination_id,
+                   "fraud_score": decision["final_score"]},
         )
 
     db.update_processed_event_result(message_id, "success")

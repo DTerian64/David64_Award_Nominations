@@ -1,6 +1,6 @@
 """
-train_gnn_model.py — GNN training stage (ADR-0002)
-===================================================
+train_gnn_model.py — GNN training stage
+=========================================
 Stage 3 of the fraud-analytics-job pipeline, registered in run_job.py STAGES
 after train_fraud_model.
 
@@ -20,14 +20,9 @@ refreshed, and so a GNN failure can never block the Random Forest retrain — th
 per-stage try/except in run_job.run_stage() provides that isolation. The cost is
 that sync_holidays and forecast_models run later in the weekly window.
 
-No post-hook. The backend does not consume the GNN, so
+No post-hook. The backend does not load model artifacts, so
 /api/internal/refresh-fraud-model is not called; integrity-check streams the
 decoder itself on first use per tenant.
-
-Shadow mode
------------
-Rows are written with ScoringMode from the tenant's integrity_config
-(default 'shadow'). Nothing here influences routing.
 """
 
 from __future__ import annotations
@@ -36,7 +31,7 @@ import io
 import logging
 import os
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +55,7 @@ load_dotenv(env_path)
 import gnn_graph as G
 import labels as labels_mod
 from db_conn import connect
-from gnn_model import pr_auc, roc_auc, train_gnn
+from gnn_model import train_gnn
 
 # Reuse the Random Forest's blob upload helper rather than duplicating the auth
 # and error handling. Both stages run in the same process under run_job.py.
@@ -120,7 +115,7 @@ def _log_peak_rss(label: str) -> float | None:
     Returns None where the platform cannot report it (Windows), so callers must
     not assume a float.
 
-    ADR-0002 sized this job at 4 vCPU / 8 GiB. That number was a precaution, not
+    The initial deployment sized this job at 4 vCPU / 8 GiB. That number was a precaution, not
     a measurement — nobody had observed what the stage actually uses. Azure bills
     allocated resources, not utilisation, and Consumption locks memory at 2 GiB
     per vCPU, so the memory figure drags the vCPU count along with it. This line
@@ -164,19 +159,40 @@ def _get_tenants(conn) -> list[int]:
     return [r[0] for r in cur.fetchall()]
 
 
-def _scoring_mode(conn, tenant_id: int) -> str:
-    """Read integrity_config.gnn.mode. Anything unrecognised means shadow."""
+def _gnn_routing_thresholds(conn, tenant_id: int) -> dict:
+    """
+    Return this tenant's GNN-specific score-to-risk-level cut points.
+
+    Random Forest thresholds live at integrity_config.score_routing. GNN
+    thresholds live independently at integrity_config.gnn.score_routing because
+    the two models can have different score distributions and calibration.
+    These defaults match integrity-check/gnn_check.py.
+    """
     import json
     cur = conn.cursor()
     cur.execute("SELECT integrity_config FROM dbo.Tenants WHERE TenantId = ?", tenant_id)
     row = cur.fetchone()
-    if not row or not row[0]:
-        return "shadow"
-    try:
-        mode = str((json.loads(row[0]).get("gnn", {}) or {}).get("mode", "shadow")).lower()
-    except (json.JSONDecodeError, TypeError, AttributeError):
-        return "shadow"
-    return mode if mode in ("shadow", "active") else "shadow"
+    routing = {}
+    if row and row[0]:
+        try:
+            config = json.loads(row[0])
+            if isinstance(config, dict):
+                gnn = config.get("gnn", {})
+                if isinstance(gnn, dict):
+                    candidate = gnn.get("score_routing", {})
+                    if isinstance(candidate, dict):
+                        routing = candidate
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            logger.warning(
+                "[Tenant %d] integrity_config unreadable — using system default "
+                "GNN routing thresholds.", tenant_id,
+            )
+    return {
+        "critical": int(routing.get("critical_threshold", 85)),
+        "high":     int(routing.get("high_threshold",     65)),
+        "medium":   int(routing.get("medium_threshold",   45)),
+        "low":      int(routing.get("low_threshold",      25)),
+    }
 
 
 # ── Persistence ───────────────────────────────────────────────────────────────
@@ -242,7 +258,7 @@ def _publish_embeddings(
 
 def _save_scores(
     conn, nomination_ids: list[int], probs: np.ndarray, thresholds: dict,
-    model_version: str, embedding_as_of: date, scoring_mode: str,
+    model_version: str, embedding_as_of: date,
 ) -> int:
     cur = conn.cursor()
     cur.fast_executemany = True
@@ -258,19 +274,19 @@ def _save_scores(
         CREATE TABLE #gnn_scores (
             NominationId INT, FraudScore INT, FraudProbability FLOAT,
             RiskLevel VARCHAR(20), ModelVersion VARCHAR(64),
-            EmbeddingAsOfDate DATE, ScoringMode VARCHAR(10), ScoredBy NVARCHAR(256)
+            EmbeddingAsOfDate DATE, ScoredBy NVARCHAR(256)
         )
     """)
     rows = [
         (int(nid), int(scores[i]), float(probs[i]), str(levels[i]),
-         model_version, embedding_as_of, scoring_mode, "svc:fraud-analytics-job")
+         model_version, embedding_as_of, "svc:fraud-analytics-job")
         for i, nid in enumerate(nomination_ids)
     ]
     # fast_executemany stays ON here: every parameter is an int, float, date or
     # short string, all well inside the 255-byte default bind buffer. Adding a
     # wide column to this table would hit the same truncation as the embeddings.
     cur.executemany(
-        "INSERT INTO #gnn_scores VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows
+        "INSERT INTO #gnn_scores VALUES (?, ?, ?, ?, ?, ?, ?)", rows
     )
     cur.execute("""
         MERGE dbo.GNN_FraudScores AS target
@@ -280,12 +296,12 @@ def _save_scores(
         WHEN MATCHED THEN
             UPDATE SET FraudScore = src.FraudScore, FraudProbability = src.FraudProbability,
                        RiskLevel = src.RiskLevel, EmbeddingAsOfDate = src.EmbeddingAsOfDate,
-                       ScoringMode = src.ScoringMode, ScoredBy = src.ScoredBy
+                       ScoredBy = src.ScoredBy
         WHEN NOT MATCHED THEN
             INSERT (NominationId, FraudScore, FraudProbability, RiskLevel,
-                    ModelVersion, EmbeddingAsOfDate, ScoringMode, ScoredBy)
+                    ModelVersion, EmbeddingAsOfDate, ScoredBy)
             VALUES (src.NominationId, src.FraudScore, src.FraudProbability, src.RiskLevel,
-                    src.ModelVersion, src.EmbeddingAsOfDate, src.ScoringMode, src.ScoredBy);
+                    src.ModelVersion, src.EmbeddingAsOfDate, src.ScoredBy);
     """)
     cur.execute("DROP TABLE #gnn_scores")
     conn.commit()
@@ -353,17 +369,16 @@ def _process_tenant(conn, tenant_id: int) -> str:
                 f"need {MIN_NOMINATIONS}/{MIN_USERS})")
 
     label_df = labels_mod.load_labels(conn, tenant_id, window_days=GNN_WINDOW_DAYS)
-    stats = labels_mod.summarise(label_df, tenant_id)
+    labels_mod.summarise(label_df, tenant_id)
 
-    # The GNN excludes unlabelled rows from its TARGETS — deliberately diverging
-    # from the Random Forest, which treats them as legitimate. They remain in the
-    # graph as edges; they simply are not trained against. See labels.py: a row
-    # with no P2P score is unlabelled, not clean, and this model has no legacy
-    # behaviour to preserve.
-    labelled = label_df[label_df["LabelSource"] != labels_mod.SOURCE_UNLABELLED]
+    # True training independence: only human-confirmed HRBP outcomes may enter
+    # the GNN loss. Random Forest scores and unexamined rows remain graph edges,
+    # but neither is a target. A tenant without enough human outcomes is skipped
+    # rather than silently teaching the GNN to reproduce the RF.
+    labelled = labels_mod.human_confirmed(label_df)
     label_map = dict(zip(labelled["NominationId"], labelled["IsFraud"]))
     if not label_map:
-        return "SKIPPED (no labelled nominations)"
+        return "SKIPPED (no human-confirmed nominations)"
 
     graph = G.build_hetero_data(users, nominations)
 
@@ -379,52 +394,32 @@ def _process_tenant(conn, tenant_id: int) -> str:
         graph[split]["x"]       = graph[split]["x"][keep]
         graph[split]["triples"] = graph[split]["triples"][keep]
 
-    if int(y_tr.sum()) < MIN_POSITIVES or int(y_ev.sum()) < MIN_POSITIVES:
-        return (f"SKIPPED (too few positives: train {int(y_tr.sum())}, "
-                f"eval {int(y_ev.sum())}, need {MIN_POSITIVES} each)")
+    train_pos = int(y_tr.sum())
+    eval_pos = int(y_ev.sum())
+    train_neg = int(len(y_tr) - train_pos)
+    eval_neg = int(len(y_ev) - eval_pos)
+    if train_pos < MIN_POSITIVES or eval_pos < MIN_POSITIVES:
+        return (f"SKIPPED (too few human-confirmed fraud labels: train {train_pos}, "
+                f"eval {eval_pos}, need {MIN_POSITIVES} each)")
+    if train_neg == 0 or eval_neg == 0:
+        return (f"SKIPPED (human-confirmed labels need both classes: "
+                f"train {train_pos} fraud/{train_neg} legitimate, "
+                f"eval {eval_pos} fraud/{eval_neg} legitimate)")
 
     model, metrics = train_gnn(
         graph, y_tr, y_ev,
         hidden_dim=GNN_HIDDEN_DIM, emb_dim=GNN_EMBED_DIM, epochs=GNN_EPOCHS,
     )
 
-    # Stratified metrics — ADR-0002 criterion 2. PR-AUC on the human-confirmed
-    # subset is the only number that establishes the GNN adds anything; PR-AUC on
-    # model-derived labels measures agreement with the Random Forest and nothing
-    # more. They are reported separately so they can never be conflated.
-    hrbp_ids = set(labelled.loc[labelled["LabelSource"] == labels_mod.SOURCE_HRBP, "NominationId"])
-    with torch.no_grad():
-        z_all     = model.embed_users(graph["data"])
-        ev_logits = model.score(z_all, graph["eval"]["triples"], graph["eval"]["x"]).numpy()
-    mask = np.array([nid in hrbp_ids for nid in graph["eval"]["nom_ids"]])
-
-    # Gate on POSITIVES, not on rows. A hundred human-confirmed rows that are all
-    # legitimate cannot produce a PR-AUC — the metric is undefined with one class —
-    # and gating on row count lets that through as a silent nan in the summary
-    # line. This is ADR-0002 criterion 2, the only metric that establishes the GNN
-    # adds anything, so it fails out loud or not at all.
-    n_hrbp_rows = int(mask.sum())
-    n_hrbp_pos  = int(y_ev[mask].sum()) if n_hrbp_rows else 0
-    if n_hrbp_pos >= MIN_POSITIVES and n_hrbp_pos < n_hrbp_rows:
-        metrics["eval_pr_auc_hrbp"] = pr_auc(y_ev[mask], ev_logits[mask])
-    else:
-        metrics["eval_pr_auc_hrbp"] = float("nan")
-        logger.warning(
-            "[Tenant %d] human-confirmed PR-AUC NOT COMPUTABLE — %d confirmed rows in the "
-            "evaluation window carrying %d fraud labels (need >= %d, and at least one of "
-            "each class). Until this is satisfiable the ADR-0002 evaluation gate cannot be "
-            "assessed for this tenant, whatever the all-label metric says.",
-            tenant_id, n_hrbp_rows, n_hrbp_pos, MIN_POSITIVES,
-        )
-    metrics["n_eval_hrbp"]     = n_hrbp_rows
-    metrics["n_eval_hrbp_pos"] = n_hrbp_pos
-
-    _hrbp_str = (f"{metrics['eval_pr_auc_hrbp']:.4f}"
-                 if not np.isnan(metrics["eval_pr_auc_hrbp"]) else "n/a")
+    # Every target is now human-confirmed, so the ordinary training metrics are
+    # the independent metrics. Keep the explicit aliases for existing reports.
+    metrics["eval_pr_auc_hrbp"] = metrics["eval_pr_auc"]
+    metrics["n_eval_hrbp"] = int(len(y_ev))
+    metrics["n_eval_hrbp_pos"] = eval_pos
     logger.info(
-        "[Tenant %d] PR-AUC eval %.4f (all labels) | %s (human-confirmed, n=%d, pos=%d) | ROC %.4f",
-        tenant_id, metrics["eval_pr_auc"], _hrbp_str,
-        n_hrbp_rows, n_hrbp_pos, metrics["eval_roc_auc"],
+        "[Tenant %d] human-confirmed PR-AUC %.4f (n=%d, fraud=%d) | ROC %.4f",
+        tenant_id, metrics["eval_pr_auc"], len(y_ev), eval_pos,
+        metrics["eval_roc_auc"],
     )
 
     as_of = date.today()
@@ -435,8 +430,8 @@ def _process_tenant(conn, tenant_id: int) -> str:
     user_ids = sorted(graph["user_index"], key=lambda u: graph["user_index"][u])
     n_emb = _publish_embeddings(conn, tenant_id, user_ids, z, as_of, model_version)
 
-    # Score every in-window nomination, not just the eval split — historical
-    # coverage is what the shadow-mode comparison is run against.
+    # Score every in-window nomination, not just the eval split, so component
+    # comparisons and historical calibration have complete coverage.
     # Collect ids, rows and triples in one pass so the three stay index-aligned
     # by construction. Rebuilding the row list from a separate filter would work
     # today only because both preserve `nominations` order — a silent coupling
@@ -456,13 +451,13 @@ def _process_tenant(conn, tenant_id: int) -> str:
         graph["nomination_scaler"]["mean"], graph["nomination_scaler"]["std"],
     ))
     with torch.no_grad():
+        z_all = model.embed_users(graph["data"])
         probs = torch.sigmoid(
             model.score(z_all, torch.tensor(all_triples, dtype=torch.long), all_x)
         ).numpy()
 
-    mode = _scoring_mode(conn, tenant_id)
-    thresholds = {"critical": 85, "high": 65, "medium": 45, "low": 25}
-    n_scores = _save_scores(conn, all_ids, probs, thresholds, model_version, as_of, mode)
+    thresholds = _gnn_routing_thresholds(conn, tenant_id)
+    n_scores = _save_scores(conn, all_ids, probs, thresholds, model_version, as_of)
 
     enc_path  = OUTPUT_DIR / f"gnn_encoder_tenant_{tenant_id}.pt"
     head_path = OUTPUT_DIR / f"gnn_head_tenant_{tenant_id}.pt"
@@ -480,9 +475,8 @@ def _process_tenant(conn, tenant_id: int) -> str:
     n_evicted = _evict_stale_embeddings(conn, tenant_id, GNN_EMBEDDING_RETENTION_DAYS)
 
     return (f"OK ({model_version}, {n_emb} embeddings, {n_scores} scores, "
-            f"{n_evicted} evicted, PR-AUC {metrics['eval_pr_auc']:.4f}, "
-            f"human-label PR-AUC {_hrbp_str}, "
-            f"mode={mode}, {time.monotonic() - t0:.1f}s)")
+            f"{n_evicted} evicted, human-label PR-AUC "
+            f"{metrics['eval_pr_auc']:.4f}, {time.monotonic() - t0:.1f}s)")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -493,7 +487,7 @@ def main(tenants_to_process: list | None = None) -> None:
         logger.info("GNN_ENABLED=false — skipping GNN training stage.")
         return
 
-    logger.info("GNN MODEL TRAINING - Multi-Tenant (ADR-0002)")
+    logger.info("GNN MODEL TRAINING - Multi-Tenant")
     logger.info("Window: %d days | hidden %d | emb %d | epochs %d | retention %d days",
                 GNN_WINDOW_DAYS, GNN_HIDDEN_DIM, GNN_EMBED_DIM,
                 GNN_EPOCHS, GNN_EMBEDDING_RETENTION_DAYS)

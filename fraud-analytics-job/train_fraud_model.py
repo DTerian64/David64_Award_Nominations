@@ -183,7 +183,7 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         also discarded every ML auto-reject. Tenant 1 has zero such rows today, so
         splitting the actor is behaviour-preserving on current data — but note that
         once these rows appear they carry LabelSource='model', i.e. the Random Forest
-        training on its own unreviewed output. See ADR-0002.
+        training on its own unreviewed output.
       • Rejected by 'HRBP Review' — INCLUDED; these have a confirmed IsFraud=1 label written
         by upsert_p2p_fraud_label and are the most valuable training examples
       • All other statuses (Pending, Approved, Paid, Submitted) — included

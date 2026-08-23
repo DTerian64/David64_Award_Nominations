@@ -16,7 +16,7 @@ GET  /api/admin/analytics/approval-metrics
 GET  /api/admin/analytics/diversity-metrics
 GET  /api/admin/analytics/category-breakdown
 
-GET  /api/admin/analytics/gnn/shadow-comparison
+GET  /api/admin/analytics/gnn/comparison
 
 GET  /api/admin/analytics/integrity/runs
 GET  /api/admin/analytics/integrity/findings
@@ -217,8 +217,8 @@ async def get_fraud_alerts(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/admin/analytics/gnn/shadow-comparison")
-async def get_gnn_shadow_comparison(
+@router.get("/api/admin/analytics/gnn/comparison")
+async def get_gnn_comparison(
     limit: int = Query(default=25, ge=1, le=100),
     current_user: User = Depends(get_current_user_with_impersonation),
     _: None = Depends(require_role("AWard_Nomination_Admin"))
@@ -226,10 +226,8 @@ async def get_gnn_shadow_comparison(
     """
     Random Forest vs GNN agreement for the tenant's latest GNN model version.
 
-    The GNN is a shadow model: its scores are persisted weekly but
-    never routed on. This endpoint is the evaluation surface for that shadow run.
-    The response always carries scoringMode so the client can label it — a GNN
-    score displayed without that label reads as an operative decision.
+    This is a diagnostic comparison between two independent component opinions;
+    it does not make either model subordinate to the other.
 
     Returns 200 with {"available": false} rather than 404 when the tenant has no
     GNN scores. A tenant below the sample gate simply never trains, which is a
@@ -237,7 +235,7 @@ async def get_gnn_shadow_comparison(
     """
     tenant_id = current_user["effective_user"]["TenantId"]
     try:
-        data = sqlhelper.get_gnn_shadow_comparison(tenant_id, limit=limit)
+        data = sqlhelper.get_gnn_comparison(tenant_id, limit=limit)
         if not data:
             return {
                 "available": False,
@@ -247,7 +245,7 @@ async def get_gnn_shadow_comparison(
             }
         return {"available": True, **data}
     except Exception as e:
-        logger.error(f"Error fetching GNN shadow comparison: {e}")
+        logger.error(f"Error fetching GNN comparison: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

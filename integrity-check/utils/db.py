@@ -27,12 +27,15 @@ Focused subset of queries needed by handler.py and fraud_check.py:
   Graph flag lookups (called by fraud_check.py):
     get_user_graph_flags()          — latest UserGraphFlags for nominator + beneficiary
     get_approver_graph_flags()      — latest UserGraphFlags + ApproverPairFlags for approver
+    get_graph_component_snapshot()  — latest complete snapshot for independent graph scoring
 
   Fraud score persistence:
     save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
+    save_graph_fraud_score()        — upsert into dbo.Graph_FraudScores
+    save_fraud_decision_result()    — upsert component opinions + final route
     save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
 
-  GNN model support (ADR-0002, called by gnn_check.py):
+  GNN model support (called by gnn_check.py):
     get_gnn_user_embeddings()       — version-matched node embeddings for a user set
     save_gnn_fraud_score()          — upsert into dbo.GNN_FraudScores
 """
@@ -224,6 +227,14 @@ def get_tenant_integrity_config(tenant_id: int) -> dict:
           "high_threshold":     60,
           "medium_threshold":   40,
           "low_threshold":      20
+      },
+      "gnn": {
+          "score_routing": {
+              "critical_threshold": 85,
+              "high_threshold":     65,
+              "medium_threshold":   45,
+              "low_threshold":      25
+          }
       }
     }
 
@@ -581,6 +592,66 @@ def get_approver_graph_flags(
     }
 
 
+def get_graph_component_snapshot(tenant_id: int, user_ids: list[int]) -> Optional[dict]:
+    """Return the latest completed graph snapshot for the requested users.
+
+    The latest date is selected across both graph snapshot tables.  A missing
+    user row on that date means the user had no finding in that run; it does not
+    fall back to an older finding.  Falling back would keep a resolved graph
+    pattern alive forever and would make the live graph opinion incorrect.
+
+    ``None`` means the tenant has never produced a graph snapshot, which callers
+    must treat as "no opinion" rather than a clean score.
+    """
+    unique_ids = list(dict.fromkeys(int(uid) for uid in user_ids if uid is not None))
+
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT MAX(AsOfDate)
+            FROM (
+                SELECT MAX(AsOfDate) AS AsOfDate
+                FROM dbo.UserGraphFlags
+                WHERE TenantId = ?
+                UNION ALL
+                SELECT MAX(AsOfDate) AS AsOfDate
+                FROM dbo.ApproverPairFlags
+                WHERE TenantId = ?
+            ) snapshots
+        """, (tenant_id, tenant_id))
+        row = cursor.fetchone()
+        as_of = row[0] if row else None
+        if as_of is None:
+            return None
+
+        users: dict[int, dict] = {}
+        if unique_ids:
+            placeholders = ", ".join("?" for _ in unique_ids)
+            cursor.execute(f"""
+                SELECT UserId,
+                       IsInRing, IsSuperNominator,
+                       IsInCopyPasteCluster, CopyPasteClusterSize,
+                       HasTransactionalLanguage, IsApproverAffinity,
+                       HighestSeverity
+                FROM dbo.UserGraphFlags
+                WHERE TenantId = ?
+                  AND AsOfDate = ?
+                  AND UserId IN ({placeholders})
+            """, [tenant_id, as_of, *unique_ids])
+            for found in cursor.fetchall():
+                users[int(found[0])] = {
+                    "is_in_ring": bool(found[1]),
+                    "is_super_nominator": bool(found[2]),
+                    "is_in_copy_paste_cluster": bool(found[3]),
+                    "copy_paste_cluster_size": int(found[4] or 0),
+                    "has_transactional_language": bool(found[5]),
+                    "is_approver_affinity": bool(found[6]),
+                    "highest_severity": found[7],
+                }
+
+    return {"snapshot_as_of": as_of, "users": users}
+
+
 # ── Fraud score persistence ───────────────────────────────────────────────────
 
 def save_p2p_fraud_score(
@@ -604,6 +675,84 @@ def save_p2p_fraud_score(
             nomination_id,
             fraud_score, risk_level, warning_flags,
             nomination_id, fraud_score, risk_level, warning_flags,
+        ))
+        conn.commit()
+
+
+def save_graph_fraud_score(
+    nomination_id: int,
+    graph_score: int,
+    risk_level: str,
+    graph_flags: Optional[str],
+    snapshot_as_of: object,
+) -> None:
+    """Upsert the graph analytics component score for one snapshot."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            MERGE dbo.Graph_FraudScores AS target
+            USING (SELECT ? AS NominationId, ? AS SnapshotAsOfDate) AS source
+                ON  target.NominationId = source.NominationId
+                AND target.SnapshotAsOfDate = source.SnapshotAsOfDate
+            WHEN MATCHED THEN
+                UPDATE SET GraphScore = ?, RiskLevel = ?, GraphFlags = ?,
+                           ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, GraphScore, RiskLevel, GraphFlags,
+                        SnapshotAsOfDate, ScoredBy)
+                VALUES (?, ?, ?, ?, ?, ?);
+        """, (
+            nomination_id, snapshot_as_of,
+            graph_score, risk_level, graph_flags, _AUDIT_ACTOR,
+            nomination_id, graph_score, risk_level, graph_flags,
+            snapshot_as_of, _AUDIT_ACTOR,
+        ))
+        conn.commit()
+
+
+def save_fraud_decision_result(
+    nomination_id: int,
+    policy_version: str,
+    rf_result: dict,
+    graph_result: dict,
+    gnn_result: dict,
+    decision: dict,
+) -> None:
+    """Persist the three component opinions and the resulting route decision."""
+    decisive = ",".join(decision.get("decisive_models", [])) or None
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            MERGE dbo.FraudDecisionResults AS target
+            USING (SELECT ? AS NominationId) AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN UPDATE SET
+                PolicyVersion = ?,
+                RfAvailable = ?, RfScore = ?, RfRiskLevel = ?,
+                GraphAvailable = ?, GraphScore = ?, GraphRiskLevel = ?,
+                GnnAvailable = ?, GnnScore = ?, GnnRiskLevel = ?,
+                FinalScore = ?, FinalRiskLevel = ?, DecisiveModels = ?,
+                ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN INSERT (
+                NominationId, PolicyVersion,
+                RfAvailable, RfScore, RfRiskLevel,
+                GraphAvailable, GraphScore, GraphRiskLevel,
+                GnnAvailable, GnnScore, GnnRiskLevel,
+                FinalScore, FinalRiskLevel, DecisiveModels, ScoredBy
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            nomination_id,
+            policy_version,
+            int(bool(rf_result.get("model_available"))), rf_result.get("fraud_score"), rf_result.get("risk_level"),
+            int(bool(graph_result.get("model_available"))), graph_result.get("fraud_score"), graph_result.get("risk_level"),
+            int(bool(gnn_result.get("model_available"))), gnn_result.get("fraud_score"), gnn_result.get("risk_level"),
+            decision.get("final_score"), decision.get("risk_level"), decisive,
+            _AUDIT_ACTOR,
+            nomination_id, policy_version,
+            int(bool(rf_result.get("model_available"))), rf_result.get("fraud_score"), rf_result.get("risk_level"),
+            int(bool(graph_result.get("model_available"))), graph_result.get("fraud_score"), graph_result.get("risk_level"),
+            int(bool(gnn_result.get("model_available"))), gnn_result.get("fraud_score"), gnn_result.get("risk_level"),
+            decision.get("final_score"), decision.get("risk_level"), decisive, _AUDIT_ACTOR,
         ))
         conn.commit()
 
@@ -729,7 +878,7 @@ def insert_nomination_logs(rows: list) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GNN model support (ADR-0002) — called by gnn_check.py
+# GNN model support — called by gnn_check.py
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_gnn_user_embeddings(
@@ -824,16 +973,13 @@ def save_gnn_fraud_score(
     warning_flags:       Optional[str],
     model_version:       str,
     embedding_as_of:     Optional[object],
-    scoring_mode:        str,
 ) -> None:
     """
     Upsert one row into dbo.GNN_FraudScores.
 
     The unique key is (NominationId, ModelVersion), not NominationId alone — one
-    row per nomination per training run. That is what makes shadow-mode exit
-    criterion 4 (week-over-week score drift for unchanged nominations) possible;
-    a single-column key would overwrite the history it needs to be measured
-    against. See ADR-0002.
+    row per nomination per training run, preserving week-over-week score drift;
+    a single-column key would overwrite the history needed for calibration.
 
     ScoredBy records which producer wrote the row. The weekly job backfills
     historical scores as svc:fraud-analytics-job; this path is always the live
@@ -852,20 +998,19 @@ def save_gnn_fraud_score(
                            RiskLevel         = ?,
                            FraudFlags        = ?,
                            EmbeddingAsOfDate = ?,
-                           ScoringMode       = ?,
                            ScoredBy          = ?
             WHEN NOT MATCHED THEN
                 INSERT (NominationId, FraudScore, FraudProbability, RiskLevel,
-                        FraudFlags, ModelVersion, EmbeddingAsOfDate, ScoringMode, ScoredBy)
+                        FraudFlags, ModelVersion, EmbeddingAsOfDate, ScoredBy)
                 VALUES (?,            ?,          ?,                ?,
-                        ?,          ?,            ?,                 ?,           ?);
+                        ?,          ?,            ?,                 ?);
         """, (
             nomination_id, model_version,
             # MATCHED
             fraud_score, fraud_probability, risk_level, warning_flags,
-            embedding_as_of, scoring_mode, _AUDIT_ACTOR,
+            embedding_as_of, _AUDIT_ACTOR,
             # NOT MATCHED
             nomination_id, fraud_score, fraud_probability, risk_level,
-            warning_flags, model_version, embedding_as_of, scoring_mode, _AUDIT_ACTOR,
+            warning_flags, model_version, embedding_as_of, _AUDIT_ACTOR,
         ))
         conn.commit()
