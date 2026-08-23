@@ -1,4 +1,4 @@
-"""Adopt HRBP confirmation columns; create dbo.GNN_UserEmbeddings and dbo.GNN_FraudScores (ADR-0002)
+"""Adopt HRBP confirmation columns; create GNN embeddings and score tables.
 
 Revision ID: 0040
 Revises: 0039
@@ -7,8 +7,8 @@ Create Date: 2026-08-14
 Context
 -------
 This revision does two things. They are unrelated in subject but both are
-prerequisites for the GNN work in ADR-0002, and neither has been applied to any
-environment through the migration chain.
+prerequisites for reliable GNN training and evaluation, and neither has been
+applied to any environment through the migration chain.
 
 PART 1 — adopt the HRBP confirmation columns into the chain
 -----------------------------------------------------------
@@ -31,8 +31,8 @@ through schema-migration.
 Why it matters beyond compliance: ConfirmedBy is the only thing in the schema
 that distinguishes a human fraud label from one the Random Forest wrote about
 itself. train_fraud_model.load_data() currently reads RiskLevel and cannot tell
-them apart. Every model-quality claim, and the whole GNN evaluation gate in
-ADR-0002, depends on that distinction being available.
+them apart. Reliable model-quality claims and GNN evaluation against human
+labels depend on that distinction being available.
 
 PART 2 — the GNN tables
 ------------------------
@@ -53,17 +53,16 @@ dbo.GNN_FraudScores — one row per (NominationId, ModelVersion). Parallel in
   inputs, was it allowed to affect routing, and which service wrote it" —
   required for model governance and the SOC 2 evidence trail.
 
-Deviation from ADR-0002 as originally written
----------------------------------------------
-ADR-0002 specified UNIQUE (NominationId), matching P2P_FraudScores. That makes
+GNN score history design
+------------------------
+A single-column UNIQUE (NominationId), matching P2P_FraudScores, would make
 shadow-mode exit criterion 4 (week-over-week score drift for unchanged
 nominations) unmeasurable, because each weekly rescore would overwrite the
 previous value and no history would survive.
 
 The constraint is therefore UNIQUE (NominationId, ModelVersion). ModelVersion
 changes on every retrain, so this yields exactly one row per nomination per
-training run — bounded, and directly measurable for drift. ADR-0002 has been
-updated to match.
+training run — bounded, and directly measurable for drift.
 
 Asymmetric downgrade — deliberate
 ----------------------------------
@@ -161,7 +160,7 @@ def upgrade() -> None:
             """)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # PART 2 — GNN tables (ADR-0002)
+    # PART 2 — GNN tables
     # ═══════════════════════════════════════════════════════════════════════════
 
     if not _table_exists("GNN_UserEmbeddings"):
@@ -203,7 +202,7 @@ def upgrade() -> None:
                 RiskLevel         VARCHAR(20)    NOT NULL,   -- NONE/LOW/MEDIUM/HIGH/CRITICAL/UNKNOWN
                 FraudFlags        NVARCHAR(500)  NULL,       -- comma-separated warning flags
 
-                -- ── Provenance (ADR-0002) ────────────────────────────────────
+                -- ── Provenance ───────────────────────────────────────────────
                 -- Which decoder produced this score.
                 ModelVersion      VARCHAR(64)    NOT NULL,
                 -- How stale the node embeddings were when this score was computed.
