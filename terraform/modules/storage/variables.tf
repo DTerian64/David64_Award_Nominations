@@ -42,7 +42,7 @@ variable "private_dns_zone_id" {
   type        = string
 }
 
-# ── Artifact recovery (ADR-0002) ──────────────────────────────────────────────
+# ── Artifact recovery ─────────────────────────────────────────────────────────
 # Defaults are deliberately safe, so no environment has to opt in to being
 # recoverable. Override per environment in terraform.tfvars if prod wants longer
 # retention than sandbox.

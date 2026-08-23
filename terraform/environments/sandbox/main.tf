@@ -809,7 +809,7 @@ module "fraud_analytics_job" {
     { name = "DETECTION_WINDOW_DAYS",     value = tostring(var.fraud_analytics_detection_window_days) },
     { name = "RING_MAX_CLUSTER_SIZE",     value = tostring(var.fraud_analytics_ring_max_cluster_size) },
 
-    # ── GNN training stage (ADR-0002) ─────────────────────────────────────────
+    # ── GNN training stage ────────────────────────────────────────────────────
     # Defaults in train_gnn_model.py match these; they are declared explicitly
     # so the operative values are visible in the plan rather than buried in code.
     # GNN_ENABLED is the kill switch: set false to skip the stage without
@@ -821,7 +821,7 @@ module "fraud_analytics_job" {
     { name = "GNN_WINDOW_DAYS",              value = tostring(var.gnn_window_days) },
     { name = "GNN_EMBEDDING_RETENTION_DAYS", value = tostring(var.gnn_embedding_retention_days) },
     # Sample gates. Below any of these the tenant is skipped rather than trained
-    # on too little signal — see the ablation results in ADR-0002, where a
+    # on too little signal — the synthetic ablation found that a
     # 50-user tenant scored WORSE with message passing than without it.
     { name = "GNN_MIN_TRAINING_SAMPLES",     value = tostring(var.gnn_min_training_samples) },
     { name = "GNN_MIN_USERS",                value = tostring(var.gnn_min_users) },

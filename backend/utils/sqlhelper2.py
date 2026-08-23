@@ -1734,7 +1734,7 @@ def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
 def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
     """
     Compare the GNN's scores against the Random Forest's, for the tenant's most
-    recent GNN model version (ADR-0002 shadow evaluation).
+    recent GNN model version.
 
     The GNN runs in shadow mode: dbo.GNN_FraudScores is written every week but
     nothing reads it for routing. The only thing that makes shadow mode worth
@@ -1814,7 +1814,7 @@ def get_gnn_shadow_comparison(tenant_id: int, limit: int = 25) -> dict:
         ).fetchall()
 
         # Human-confirmed labels present in the compared population. This is the
-        # number that decides whether the ADR-0002 evaluation gate can run at all,
+        # number that decides whether the human-label evaluation can run at all,
         # so the UI should show it even though it is not a comparison statistic.
         confirmed = session.execute(
             text("""
@@ -3088,6 +3088,8 @@ def get_fraud_settings(tenant_id: int) -> dict:
     ic  = _parse(row[1]) if row else {}
     routing = ic.get("score_routing") if isinstance(ic.get("score_routing"), dict) else {}
     graph   = ic.get("graph_pattern") if isinstance(ic.get("graph_pattern"), dict) else {}
+    gnn     = ic.get("gnn") if isinstance(ic.get("gnn"), dict) else {}
+    gnn_routing = gnn.get("score_routing") if isinstance(gnn.get("score_routing"), dict) else {}
     phrases = dcc.get("boilerplate_phrases")
     return {
         # Fraud score routing (0..100 cutoffs)
@@ -3095,6 +3097,11 @@ def get_fraud_settings(tenant_id: int) -> dict:
         "medium_threshold":               int(routing.get("medium_threshold", 40)),
         "high_threshold":                 int(routing.get("high_threshold", 60)),
         "critical_threshold":             int(routing.get("critical_threshold", 80)),
+        # GNN score routing (independently calibrated 0..100 cutoffs)
+        "gnn_low_threshold":              int(gnn_routing.get("low_threshold", 25)),
+        "gnn_medium_threshold":           int(gnn_routing.get("medium_threshold", 45)),
+        "gnn_high_threshold":             int(gnn_routing.get("high_threshold", 65)),
+        "gnn_critical_threshold":         int(gnn_routing.get("critical_threshold", 85)),
         "detection_window_days":          int(graph.get("detection_window_days", 365)),
         # Description quality
         "use_char_count":                 bool(dcc.get("use_char_count", False)),
@@ -3144,6 +3151,14 @@ def update_fraud_settings(tenant_id: int, data: dict, actor: str) -> None:
         routing["high_threshold"]     = int(data["high_threshold"])
         routing["critical_threshold"] = int(data["critical_threshold"])
         ic["score_routing"] = routing
+        gnn = ic.get("gnn") if isinstance(ic.get("gnn"), dict) else {}
+        gnn_routing = gnn.get("score_routing") if isinstance(gnn.get("score_routing"), dict) else {}
+        gnn_routing["low_threshold"]      = int(data["gnn_low_threshold"])
+        gnn_routing["medium_threshold"]   = int(data["gnn_medium_threshold"])
+        gnn_routing["high_threshold"]     = int(data["gnn_high_threshold"])
+        gnn_routing["critical_threshold"] = int(data["gnn_critical_threshold"])
+        gnn["score_routing"] = gnn_routing
+        ic["gnn"] = gnn
         graph = ic.get("graph_pattern") if isinstance(ic.get("graph_pattern"), dict) else {}
         graph["detection_window_days"] = int(data["detection_window_days"])
         ic["graph_pattern"] = graph

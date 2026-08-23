@@ -232,6 +232,10 @@ class FraudConfig(BaseModel):
     medium_threshold:   int
     high_threshold:     int
     critical_threshold: int
+    gnn_low_threshold:      int = 25
+    gnn_medium_threshold:   int = 45
+    gnn_high_threshold:     int = 65
+    gnn_critical_threshold: int = 85
     detection_window_days: int
     # Description quality
     use_char_count:                 bool
@@ -252,6 +256,16 @@ def _validate_fraud(p: "FraudConfig") -> None:
     if not (p.low_threshold <= p.medium_threshold <= p.high_threshold <= p.critical_threshold):
         raise HTTPException(status_code=422,
                             detail="Score thresholds must be non-decreasing: low <= medium <= high <= critical.")
+    gnn_routing = [p.gnn_low_threshold, p.gnn_medium_threshold,
+                   p.gnn_high_threshold, p.gnn_critical_threshold]
+    if not all(0 <= x <= 100 for x in gnn_routing):
+        raise HTTPException(status_code=422, detail="GNN score thresholds must be between 0 and 100.")
+    if not (p.gnn_low_threshold <= p.gnn_medium_threshold
+            <= p.gnn_high_threshold <= p.gnn_critical_threshold):
+        raise HTTPException(
+            status_code=422,
+            detail="GNN score thresholds must be non-decreasing: low <= medium <= high <= critical.",
+        )
     for name, val in (("Category alignment", p.category_alignment_threshold),
                       ("Duplicate similarity", p.duplicate_similarity_threshold),
                       ("LLM fit", p.llm_fit_threshold)):

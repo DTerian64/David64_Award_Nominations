@@ -573,6 +573,10 @@ interface FraudSettings {
   medium_threshold: number;
   high_threshold: number;
   critical_threshold: number;
+  gnn_low_threshold: number;
+  gnn_medium_threshold: number;
+  gnn_high_threshold: number;
+  gnn_critical_threshold: number;
   detection_window_days: number;
   use_char_count: boolean;
   min_char_count: number;
@@ -683,7 +687,7 @@ const FraudPanel: React.FC = () => {
 
       {/* Fraud score routing */}
       <div>
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">Fraud score routing (0–100)</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Random Forest score routing (0–100)</h3>
         <p className="text-xs text-gray-500 mb-3">A nomination's fraud score maps to a risk level at these cutoffs; they must be non-decreasing.</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {numField('low_threshold', 'Low', { min: 0, max: 100 })}
@@ -692,6 +696,18 @@ const FraudPanel: React.FC = () => {
           {numField('critical_threshold', 'Critical', { min: 0, max: 100 })}
         </div>
         <div className="mt-3 sm:w-1/2">{numField('detection_window_days', 'Graph detection window (days)', { min: 1 })}</div>
+      </div>
+
+      {/* GNN score routing */}
+      <div className="pt-2 border-t border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">GNN score routing (0–100)</h3>
+        <p className="text-xs text-gray-500 mb-3">GNN cutoffs are configured independently because its scores can have a different calibration from the Random Forest.</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {numField('gnn_low_threshold', 'Low', { min: 0, max: 100 })}
+          {numField('gnn_medium_threshold', 'Medium', { min: 0, max: 100 })}
+          {numField('gnn_high_threshold', 'High', { min: 0, max: 100 })}
+          {numField('gnn_critical_threshold', 'Critical', { min: 0, max: 100 })}
+        </div>
       </div>
 
       {/* Description quality */}

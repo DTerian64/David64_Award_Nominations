@@ -226,7 +226,7 @@ async def get_gnn_shadow_comparison(
     """
     Random Forest vs GNN agreement for the tenant's latest GNN model version.
 
-    The GNN is a shadow model (ADR-0002): its scores are persisted weekly but
+    The GNN is a shadow model: its scores are persisted weekly but
     never routed on. This endpoint is the evaluation surface for that shadow run.
     The response always carries scoringMode so the client can label it — a GNN
     score displayed without that label reads as an operative decision.

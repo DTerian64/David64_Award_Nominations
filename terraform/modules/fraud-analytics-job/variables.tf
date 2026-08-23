@@ -121,7 +121,7 @@ variable "cpu" {
     vCPU allocation per replica.
 
     Was 2, which covered scikit-learn + networkx. Raised to 4 for the GNN
-    training stage (ADR-0002): PyTorch Geometric message passing over the
+    training stage: PyTorch Geometric message passing over the
     heterogeneous graph is the job's new peak, and 300 epochs on 2 vCPU push
     that stage into dominating the weekly run.
 

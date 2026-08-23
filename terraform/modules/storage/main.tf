@@ -22,7 +22,7 @@ resource "azurerm_storage_account" "storage" {
   # Disable public blob access — SAS tokens still work
   allow_nested_items_to_be_public = false
 
-  # ── Artifact recovery (ADR-0002) ────────────────────────────────────────────
+  # ── Artifact recovery ───────────────────────────────────────────────────────
   # Both ML pipelines overwrite their model artifacts in place:
   #   train_fraud_model._upload_artefact()  ->  upload_blob(..., overwrite=True)
   #     fraud_detection_model_tenant_<N>.pkl   (Random Forest)

@@ -1761,7 +1761,7 @@ export const AnalyticsDashboard: React.FC = () => {
                   : 'bg-gray-50 border-gray-300 text-gray-800'
               }`}>
                 <p className="font-semibold">
-                  ADR-0002 evaluation gate: {gnnShadow.gateComputable ? 'computable' : 'not computable'}
+                  Human-label evaluation: {gnnShadow.gateComputable ? 'computable' : 'not computable'}
                 </p>
                 <p className="mt-1">
                   {gnnShadow.confirmed ?? 0} human-confirmed label

@@ -224,7 +224,7 @@ variable "fraud_analytics_ring_max_cluster_size" {
   default = 4
 }
 
-# ── GNN training stage (ADR-0002) ─────────────────────────────────────────────
+# ── GNN training stage ────────────────────────────────────────────────────────
 # These mirror the defaults in fraud-analytics-job/train_gnn_model.py. They are
 # surfaced as variables so a value change shows up in `terraform plan` instead of
 # requiring an image rebuild.
@@ -235,7 +235,7 @@ variable "gnn_enabled" {
     stage and the rest of the weekly run is unaffected — no image rebuild needed.
 
     This does NOT control inference. Whether a tenant's scores influence routing
-    is per-tenant DB config (Tenants.Config -> gnn.mode, read by
+    is per-tenant DB config (Tenants.integrity_config -> gnn.mode, read by
     integrity-check/gnn_check.get_mode), deliberately not an environment
     variable: shadow-to-active is a per-tenant risk decision, not a deploy.
   EOT
@@ -294,7 +294,7 @@ variable "gnn_min_users" {
   description = <<-EOT
     Minimum distinct users before a tenant is trained.
 
-    Not arbitrary. The ADR-0002 ablation ran 3 seeds x 2 tenant sizes: the
+    Not arbitrary. The synthetic ablation ran 3 seeds x 2 tenant sizes: the
     100-user tenant gained +0.12/+0.12/+0.26 PR-AUC from message passing, while
     the 50-user tenant LOST -0.02/-0.05/-0.04. Below roughly this size the graph
     structure is noise and the GNN is worse than the flat-feature baseline.
