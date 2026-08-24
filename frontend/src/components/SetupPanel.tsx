@@ -577,6 +577,10 @@ interface FraudSettings {
   gnn_medium_threshold: number;
   gnn_high_threshold: number;
   gnn_critical_threshold: number;
+  graph_low_threshold: number;
+  graph_medium_threshold: number;
+  graph_high_threshold: number;
+  graph_critical_threshold: number;
   detection_window_days: number;
   use_char_count: boolean;
   min_char_count: number;
@@ -686,8 +690,11 @@ const FraudPanel: React.FC = () => {
       </div>
 
       {/* Fraud score routing */}
-      <div>
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">Random Forest score routing (0–100)</h3>
+      <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-4 sm:p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="rounded bg-blue-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-blue-700">RF</span>
+          <h3 className="text-sm font-semibold text-gray-800">Random Forest score routing (0–100)</h3>
+        </div>
         <p className="text-xs text-gray-500 mb-3">A nomination's fraud score maps to a risk level at these cutoffs; they must be non-decreasing.</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {numField('low_threshold', 'Low', { min: 0, max: 100 })}
@@ -695,12 +702,30 @@ const FraudPanel: React.FC = () => {
           {numField('high_threshold', 'High', { min: 0, max: 100 })}
           {numField('critical_threshold', 'Critical', { min: 0, max: 100 })}
         </div>
-        <div className="mt-3 sm:w-1/2">{numField('detection_window_days', 'Graph detection window (days)', { min: 1 })}</div>
+      </div>
+
+      {/* Graph analytics score routing */}
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-4 sm:p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-emerald-700">GRAPH</span>
+          <h3 className="text-sm font-semibold text-gray-800">Graph analytics score routing (0–100)</h3>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">Graph component scores map to routing levels independently from RF and GNN.</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {numField('graph_low_threshold', 'Low', { min: 0, max: 100 })}
+          {numField('graph_medium_threshold', 'Medium', { min: 0, max: 100 })}
+          {numField('graph_high_threshold', 'High', { min: 0, max: 100 })}
+          {numField('graph_critical_threshold', 'Critical', { min: 0, max: 100 })}
+        </div>
+        <div className="mt-3 sm:w-1/2">{numField('detection_window_days', 'Detection window (days)', { min: 1 })}</div>
       </div>
 
       {/* GNN score routing */}
-      <div className="pt-2 border-t border-gray-100">
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">GNN score routing (0–100)</h3>
+      <div className="rounded-xl border border-violet-200 bg-violet-50/30 p-4 sm:p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="rounded bg-violet-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-violet-700">GNN</span>
+          <h3 className="text-sm font-semibold text-gray-800">GNN score routing (0–100)</h3>
+        </div>
         <p className="text-xs text-gray-500 mb-3">GNN cutoffs are configured independently because its scores can have a different calibration from the Random Forest.</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {numField('gnn_low_threshold', 'Low', { min: 0, max: 100 })}
@@ -711,8 +736,12 @@ const FraudPanel: React.FC = () => {
       </div>
 
       {/* Description quality */}
-      <div className="pt-2 border-t border-gray-100">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Description quality checks</h3>
+      <div className="rounded-xl border border-amber-200 bg-amber-50/30 p-4 sm:p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-amber-700">PRE-CHECK</span>
+          <h3 className="text-sm font-semibold text-gray-800">Semantic and description pre-checks</h3>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">Quality and semantic checks run before the three independent fraud scorers.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {numField('min_word_count', 'Minimum words')}
           {numField('min_char_count', 'Minimum characters')}

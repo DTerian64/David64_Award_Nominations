@@ -20,6 +20,33 @@ _GRAPH_SCORE = {"NONE": 0, "LOW": 25, "MEDIUM": 50, "HIGH": 75, "CRITICAL": 100}
 _STALE_SNAPSHOT_DAYS = 14
 
 
+def _thresholds(tenant_id: int) -> dict:
+    """Graph-specific cutoffs from integrity_config.graph.score_routing."""
+    cfg = db.get_tenant_integrity_config(tenant_id) or {}
+    graph = cfg.get("graph", {}) if isinstance(cfg, dict) else {}
+    graph = graph if isinstance(graph, dict) else {}
+    routing = graph.get("score_routing", {})
+    routing = routing if isinstance(routing, dict) else {}
+    return {
+        "critical": int(routing.get("critical_threshold", 100)),
+        "high": int(routing.get("high_threshold", 75)),
+        "medium": int(routing.get("medium_threshold", 50)),
+        "low": int(routing.get("low_threshold", 25)),
+    }
+
+
+def _risk_level(score: int, thresholds: dict) -> str:
+    if score >= thresholds["critical"]:
+        return "CRITICAL"
+    if score >= thresholds["high"]:
+        return "HIGH"
+    if score >= thresholds["medium"]:
+        return "MEDIUM"
+    if score >= thresholds["low"]:
+        return "LOW"
+    return "NONE"
+
+
 def _unavailable(reason: str) -> dict:
     return {
         "model_available": False,
@@ -59,7 +86,7 @@ def _assess_graph_inner(details: dict, tenant_id: int) -> dict:
         return _unavailable("no_snapshot")
 
     users = snapshot["users"]
-    risk = "NONE"
+    source_severity = "NONE"
     affected: list[int] = []
     flags: list[str] = []
 
@@ -71,8 +98,8 @@ def _assess_graph_inner(details: dict, tenant_id: int) -> dict:
         if severity not in _RISK_RANK:
             logger.warning("Ignoring unknown graph severity %r for user %d", severity, user_id)
             severity = "NONE"
-        if _RISK_RANK[severity] > _RISK_RANK[risk]:
-            risk = severity
+        if _RISK_RANK[severity] > _RISK_RANK[source_severity]:
+            source_severity = severity
         if severity != "NONE":
             affected.append(user_id)
 
@@ -89,18 +116,22 @@ def _assess_graph_inner(details: dict, tenant_id: int) -> dict:
         if row.get("is_approver_affinity"):
             flags.append(f"{prefix} has an approver-affinity finding")
 
-    if risk != "NONE" and not flags:
-        flags.append(f"[Graph] {risk.lower()} graph pattern")
+    if source_severity != "NONE" and not flags:
+        flags.append(f"[Graph] {source_severity.lower()} graph pattern")
 
     as_of = snapshot["snapshot_as_of"]
     if as_of < date.today() - timedelta(days=_STALE_SNAPSHOT_DAYS):
         flags.append(f"[Graph] snapshot is {(date.today() - as_of).days} days old")
 
+    graph_score = _GRAPH_SCORE[source_severity]
+    risk = _risk_level(graph_score, _thresholds(tenant_id))
+
     return {
         "model_available": True,
-        "fraud_score": _GRAPH_SCORE[risk],
+        "fraud_score": graph_score,
         "fraud_prob": None,
         "risk_level": risk,
+        "source_severity": source_severity,
         "warning_flags": flags,
         "flagged": risk in ("MEDIUM", "HIGH", "CRITICAL"),
         "snapshot_as_of": as_of,

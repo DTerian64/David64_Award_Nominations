@@ -235,6 +235,14 @@ def get_tenant_integrity_config(tenant_id: int) -> dict:
               "medium_threshold":   45,
               "low_threshold":      25
           }
+      },
+      "graph": {
+          "score_routing": {
+              "critical_threshold": 100,
+              "high_threshold":      75,
+              "medium_threshold":    50,
+              "low_threshold":       25
+          }
       }
     }
 

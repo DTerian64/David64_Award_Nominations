@@ -3086,6 +3086,9 @@ def get_fraud_settings(tenant_id: int) -> dict:
     ic  = _parse(row[1]) if row else {}
     routing = ic.get("score_routing") if isinstance(ic.get("score_routing"), dict) else {}
     graph   = ic.get("graph_pattern") if isinstance(ic.get("graph_pattern"), dict) else {}
+    graph_score = ic.get("graph") if isinstance(ic.get("graph"), dict) else {}
+    graph_routing = (graph_score.get("score_routing")
+                     if isinstance(graph_score.get("score_routing"), dict) else {})
     gnn     = ic.get("gnn") if isinstance(ic.get("gnn"), dict) else {}
     gnn_routing = gnn.get("score_routing") if isinstance(gnn.get("score_routing"), dict) else {}
     phrases = dcc.get("boilerplate_phrases")
@@ -3100,6 +3103,11 @@ def get_fraud_settings(tenant_id: int) -> dict:
         "gnn_medium_threshold":           int(gnn_routing.get("medium_threshold", 45)),
         "gnn_high_threshold":             int(gnn_routing.get("high_threshold", 65)),
         "gnn_critical_threshold":         int(gnn_routing.get("critical_threshold", 85)),
+        # Graph analytics routing for its independent 0..100 component score
+        "graph_low_threshold":            int(graph_routing.get("low_threshold", 25)),
+        "graph_medium_threshold":         int(graph_routing.get("medium_threshold", 50)),
+        "graph_high_threshold":           int(graph_routing.get("high_threshold", 75)),
+        "graph_critical_threshold":       int(graph_routing.get("critical_threshold", 100)),
         "detection_window_days":          int(graph.get("detection_window_days", 365)),
         # Description quality
         "use_char_count":                 bool(dcc.get("use_char_count", False)),
@@ -3157,6 +3165,15 @@ def update_fraud_settings(tenant_id: int, data: dict, actor: str) -> None:
         gnn_routing["critical_threshold"] = int(data["gnn_critical_threshold"])
         gnn["score_routing"] = gnn_routing
         ic["gnn"] = gnn
+        graph_score = ic.get("graph") if isinstance(ic.get("graph"), dict) else {}
+        graph_routing = (graph_score.get("score_routing")
+                         if isinstance(graph_score.get("score_routing"), dict) else {})
+        graph_routing["low_threshold"] = int(data["graph_low_threshold"])
+        graph_routing["medium_threshold"] = int(data["graph_medium_threshold"])
+        graph_routing["high_threshold"] = int(data["graph_high_threshold"])
+        graph_routing["critical_threshold"] = int(data["graph_critical_threshold"])
+        graph_score["score_routing"] = graph_routing
+        ic["graph"] = graph_score
         graph = ic.get("graph_pattern") if isinstance(ic.get("graph_pattern"), dict) else {}
         graph["detection_window_days"] = int(data["detection_window_days"])
         ic["graph_pattern"] = graph

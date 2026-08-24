@@ -49,7 +49,7 @@ def _component_summary(result: dict) -> dict:
     """JSON-safe audit view without model internals or large arrays."""
     keys = (
         "model_available", "unavailable_reason", "fraud_score", "fraud_prob",
-        "risk_level", "warning_flags", "flagged", "model_version",
+        "risk_level", "source_severity", "warning_flags", "flagged", "model_version",
         "embedding_as_of", "snapshot_as_of", "affected_user_ids",
     )
     return {key: result.get(key) for key in keys if key in result}
