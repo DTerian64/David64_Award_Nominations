@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Clock, Award, BarChart3, ShieldAlert, DollarSign, RefreshCw, Settings } from 'lucide-react';
+import { CheckCircle, Clock, Award, BarChart3, ShieldAlert, DollarSign, RefreshCw, Settings, Sparkles } from 'lucide-react';
 import { Toast } from './components/Toast';
 import {
   AuthenticatedTemplate,
@@ -175,12 +175,25 @@ const AwardNominationApp: React.FC = () => {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const [descriptionGenerating, setDescriptionGenerating] = useState(false);
+  const [descriptionGenerationError, setDescriptionGenerationError] = useState<string | null>(null);
 
   // Effective award limits: a selected category's own min/max narrow the tenant limits.
   const selectedCategory = config.nomination_categories.find(c => String(c.id) === selectedCategoryId);
   const effectiveMin = selectedCategory?.min_amount ?? minAmount;
   const effectiveMax = selectedCategory?.max_amount ?? maxAmount;
   const [submitStatus, setSubmitStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const demoDescriptionAvailable = Boolean(config.is_demo && isAdmin);
+  const generationAmount = Number(amount);
+  const canGenerateDescription = Boolean(
+    selectedBeneficiary &&
+    amount &&
+    Number.isFinite(generationAmount) &&
+    generationAmount >= effectiveMin &&
+    generationAmount <= effectiveMax &&
+    (config.nomination_categories.length === 0 || selectedCategoryId)
+  );
 
   useEffect(() => {
     if (accounts.length > 0) {
@@ -381,6 +394,38 @@ const AwardNominationApp: React.FC = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGenerateDemoDescription = async () => {
+    if (!demoDescriptionAvailable || !canGenerateDescription) return;
+
+    setDescriptionGenerating(true);
+    setDescriptionGenerationError(null);
+    try {
+      const payload: Record<string, number> = {
+        BeneficiaryId: Number(selectedBeneficiary),
+        Amount: generationAmount,
+      };
+      if (selectedCategoryId) payload.CategoryId = Number(selectedCategoryId);
+
+      const result = await apiFetch<{ description: string }>(
+        '/api/nominations/generate-demo-description',
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        },
+        isImpersonating ? getEffectiveUser() : undefined,
+      );
+      setDescription(result.description);
+    } catch (error: unknown) {
+      setDescriptionGenerationError(
+        error instanceof Error
+          ? error.message
+          : 'Could not generate a description right now. Please try again.',
+      );
+    } finally {
+      setDescriptionGenerating(false);
     }
   };
 
@@ -708,9 +753,23 @@ const AwardNominationApp: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    {t('nominate.description')}
-                  </label>
+                  <div className="flex items-center justify-between gap-4 mb-2">
+                    <label className="block text-sm font-semibold text-gray-700">
+                      {t('nominate.description')}
+                    </label>
+                    {demoDescriptionAvailable && (
+                      <button
+                        type="button"
+                        onClick={handleGenerateDemoDescription}
+                        disabled={!canGenerateDescription || descriptionGenerating}
+                        title="Generate synthetic but plausible content for this demo nomination"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
+                      >
+                        <Sparkles className={`h-3.5 w-3.5 ${descriptionGenerating ? 'animate-pulse' : ''}`} />
+                        {descriptionGenerating ? 'Making up…' : 'Make-up description'}
+                      </button>
+                    )}
+                  </div>
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
@@ -722,6 +781,11 @@ const AwardNominationApp: React.FC = () => {
                   <p className="mt-1 text-xs text-gray-500">
                     {t('nominate.charCount', { count: description.length })}
                   </p>
+                  {descriptionGenerationError && (
+                    <p className="mt-1 text-sm text-red-600" role="alert">
+                      {descriptionGenerationError}
+                    </p>
+                  )}
                 </div>
 
                 <button

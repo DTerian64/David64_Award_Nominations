@@ -21,6 +21,17 @@ class NominationCreate(BaseModel):
     CategoryId: Optional[int] = None
 
 
+class DemoDescriptionCreate(BaseModel):
+    """Inputs used to draft a synthetic description for a demo nomination."""
+    BeneficiaryId: int
+    Amount: int = Field(gt=0)
+    CategoryId: Optional[int] = None
+
+
+class DemoDescriptionResponse(BaseModel):
+    description: str
+
+
 class Nomination(BaseModel):
     NominationId: int
     NominatorId: int

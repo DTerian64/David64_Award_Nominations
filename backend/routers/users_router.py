@@ -122,9 +122,8 @@ async def get_users(user_context: dict = Depends(get_current_user_with_impersona
 @router.get("/api/tenant/config")
 async def get_tenant_config(user_context: dict = Depends(get_current_user_with_impersonation)):
     """
-    Return the per-tenant UI configuration (locale, currency, theme).
-    Returns an empty object when no config has been set; frontend falls back
-    to hardcoded defaults and logs a warning of its own.
+    Return the per-tenant UI configuration (locale, currency, theme and flags).
+    The frontend supplies display defaults when the Config JSON is missing.
     """
     actual_user = user_context["actual_user"]
     tenant_id   = actual_user["TenantId"]
@@ -145,16 +144,24 @@ async def get_tenant_config(user_context: dict = Depends(get_current_user_with_i
         )
         return {}
 
+    parsed = {}
     if raw is None:
         logger.warning(
             "tenant_config: no Config row found for tenant_id=%d (NULL or missing). "
-            "Returning empty config; frontend will use defaults.",
+            "Frontend will use display defaults.",
             tenant_id,
         )
-        return {}
+    else:
+        try:
+            parsed = _json.loads(raw)
+        except Exception as exc:
+            logger.error(
+                "tenant_config: invalid JSON in Config column for tenant_id=%d — %s. "
+                "Frontend will use display defaults.",
+                tenant_id, exc,
+            )
 
     try:
-        parsed = _json.loads(raw)
         logger.debug(
             "tenant_config: returning config for tenant_id=%d — "
             "locale=%s currency=%s primaryColor=%s",
@@ -170,6 +177,10 @@ async def get_tenant_config(user_context: dict = Depends(get_current_user_with_i
         if domain:
             parsed["domain"] = domain
 
+        # Used only to expose demo-specific UI affordances. Sensitive actions
+        # still enforce this flag server-side; the client flag is not trusted.
+        parsed["is_demo"] = sqlhelper.is_demo_tenant(tenant_id)
+
         # Inject custom nomination categories (Premium/Enterprise feature).
         # Empty list → tenant has no categories → frontend hides the field.
         cat_rows = sqlhelper.get_nomination_categories(tenant_id)
@@ -182,7 +193,7 @@ async def get_tenant_config(user_context: dict = Depends(get_current_user_with_i
         return parsed
     except Exception as exc:
         logger.error(
-            "tenant_config: invalid JSON in Config column for tenant_id=%d — %s. "
+            "tenant_config: error enriching config for tenant_id=%d — %s. "
             "Returning empty config; frontend will use defaults.",
             tenant_id, exc,
         )

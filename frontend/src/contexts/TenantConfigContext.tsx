@@ -48,6 +48,7 @@ export interface TenantConfig {
   currency: string;        // ISO 4217, e.g. "USD" | "KRW"
   theme:    TenantTheme;
   domain?:  string;        // canonical public hostname, e.g. "acme-awards.terianix.ai"
+  is_demo?: boolean;       // enables demo-only UI; sensitive actions are server-gated
   /** Tenant-specific award amount bounds (integer, denominated in tenant currency). */
   min_award?: number;
   max_award?: number;
@@ -154,7 +155,7 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
         console.info('[TenantConfig] Raw response from backend:', raw);
 
         // An empty object ({}) means the backend found no config row — treat as defaults
-        const hasConfig = raw.locale || raw.currency || raw.theme;
+        const hasConfig = raw.locale || raw.currency || raw.theme || raw.is_demo !== undefined;
         if (!hasConfig) {
           console.warn(
             '[TenantConfig] Backend returned empty config (no row in DB or NULL). ' +
@@ -172,6 +173,7 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
           theme:     raw.theme    ? { ...DEFAULT_CONFIG.theme, ...raw.theme }
                                   : DEFAULT_CONFIG.theme,
           domain:    raw.domain,
+          is_demo:   raw.is_demo ?? false,
           min_award: typeof raw.min_award === 'number' ? raw.min_award : undefined,
           max_award: typeof raw.max_award === 'number' ? raw.max_award : undefined,
           nomination_categories: raw.nomination_categories ?? [],

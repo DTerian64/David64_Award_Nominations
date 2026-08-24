@@ -242,6 +242,16 @@ def get_tenant_config(tenant_id: int) -> Optional[str]:
         return row[0] if row else None
 
 
+def is_demo_tenant(tenant_id: int) -> bool:
+    """Return whether *tenant_id* is explicitly marked as a demo tenant."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT is_demo FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+        return bool(row and row[0])
+
+
 def get_nomination_categories(tenant_id: int) -> List[Tuple]:
     """
     Return all nomination categories for a tenant, ordered by id.

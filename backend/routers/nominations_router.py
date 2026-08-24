@@ -20,15 +20,17 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi import Form as FastAPIForm
 from fastapi.responses import HTMLResponse
+from starlette.concurrency import run_in_threadpool
 from typing import List
 
 import utils.sqlhelper2 as sqlhelper
-from auth import get_current_user_with_impersonation, log_action_if_impersonating
+from auth import get_current_user_with_impersonation, is_admin, log_action_if_impersonating
 from routers.schemas import (
-    CertificateResponse, Nomination, NominationApproval, NominationCreate,
-    StatusResponse, User,
+    CertificateResponse, DemoDescriptionCreate, DemoDescriptionResponse,
+    Nomination, NominationApproval, NominationCreate, StatusResponse, User,
 )
 from utils.certificate import get_or_create_certificate
+from utils.demo_description_generator import generate_demo_description
 from utils.service_bus_publisher import publish_event
 from utils.token_utils import verify_action_token
 
@@ -163,6 +165,133 @@ def _warm_certificate_if_attaching(nomination_id: int) -> None:
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+async def require_demo_admin(
+    user_context: dict = Depends(get_current_user_with_impersonation),
+) -> dict:
+    """Allow generation only for a real admin in an explicit demo tenant."""
+    actual_user = user_context["actual_user"]
+    if not is_admin(actual_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AWard_Nomination_Admin access required.",
+        )
+    if not sqlhelper.is_demo_tenant(actual_user["TenantId"]):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Synthetic description generation is available only for demo tenants.",
+        )
+    return user_context
+
+
+@router.post(
+    "/api/nominations/generate-demo-description",
+    response_model=DemoDescriptionResponse,
+)
+async def create_demo_description(
+    request: DemoDescriptionCreate,
+    user_context: dict = Depends(require_demo_admin),
+):
+    """Generate an editable synthetic draft without creating a nomination."""
+    current_user = user_context["effective_user"]
+    tenant_id = current_user["TenantId"]
+    beneficiary = sqlhelper.get_user_manager_info(request.BeneficiaryId, tenant_id)
+    if not beneficiary:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Beneficiary not found",
+        )
+
+    raw_config = sqlhelper.get_tenant_config(tenant_id)
+    currency = "USD"
+    min_award = 50
+    max_award = 5000
+    if raw_config:
+        try:
+            tenant_config = _json.loads(raw_config)
+            currency = tenant_config.get("currency", currency)
+            min_award = int(tenant_config.get("min_award", min_award))
+            max_award = int(tenant_config.get("max_award", max_award))
+        except (TypeError, ValueError, _json.JSONDecodeError):
+            logger.warning("Invalid tenant Config JSON while generating a demo description")
+
+    amount = int(request.Amount)
+    if not min_award <= amount <= max_award:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Award amount must be between {min_award} and {max_award} {currency} for this tenant.",
+        )
+
+    categories = sqlhelper.get_nomination_categories(tenant_id)
+    category_description = "General Employee Recognition"
+    if categories:
+        if request.CategoryId is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CategoryId is required for this tenant",
+            )
+        category = next((row for row in categories if row[0] == request.CategoryId), None)
+        if not category:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"CategoryId {request.CategoryId} is not valid for this tenant",
+            )
+        category_description = category[1]
+        category_min = category[2] if category[2] is not None else min_award
+        category_max = category[3] if category[3] is not None else max_award
+        if not category_min <= amount <= category_max:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"For this award category, the amount must be between "
+                    f"{category_min} and {category_max} {currency}."
+                ),
+            )
+    elif request.CategoryId is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This tenant does not use award categories",
+        )
+
+    nominator_name = " ".join(
+        value for value in (current_user.get("FirstName"), current_user.get("LastName")) if value
+    ) or current_user.get("userPrincipalName", "Tenant administrator")
+    nominee_name = " ".join(value for value in (beneficiary[1], beneficiary[2]) if value)
+
+    try:
+        description = await run_in_threadpool(
+            generate_demo_description,
+            nominator_name=nominator_name,
+            nominee_name=nominee_name,
+            category=category_description,
+            amount=amount,
+            currency=currency,
+        )
+    except RuntimeError as exc:
+        logger.error("Demo description generation is unavailable: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Description generation is not configured. Please contact the administrator.",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Azure OpenAI failed to generate a demo nomination description")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not generate a description right now. Please try again.",
+        ) from exc
+
+    logger.info(
+        "Synthetic demo description generated",
+        extra={
+            "tenant_id": tenant_id,
+            "nominator_id": current_user["UserId"],
+            "beneficiary_id": request.BeneficiaryId,
+            "category_id": request.CategoryId,
+            "amount": amount,
+        },
+    )
+    return DemoDescriptionResponse(description=description)
+
 
 @router.post("/api/nominations", status_code=status.HTTP_201_CREATED, response_model=StatusResponse)
 async def create_nomination(
