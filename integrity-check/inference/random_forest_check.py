@@ -23,6 +23,8 @@ Public API
         flagged             bool        True when risk_level in MEDIUM/HIGH/CRITICAL
         model_available     bool        False when no pkl exists yet for the tenant
         shap_explanations   list[dict]  Top-5 SHAP contributions (flagged only, else [])
+        shap_status         str         COMPLETED | FAILED | SKIPPED
+        shap_reason         str | None  Why SHAP was skipped or failed
         fraud_explanation   str | None  LLM-generated human text (CRITICAL only, else None)
 
 Called exclusively by handler.py.
@@ -219,12 +221,12 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
     # ── Approver behaviour ────────────────────────────────────────────────────
     appr_hist = db.get_approver_history(approver_id)
     if appr_hist:
-        appr_total    = len(appr_hist)
+        _appr_total   = len(appr_hist)
         appr_times    = [r[1] for r in appr_hist if r[1] is not None]
-        appr_avg_time = float(np.mean(appr_times)) if appr_times else 24.0
+        _appr_avg_time = float(np.mean(appr_times)) if appr_times else 24.0
     else:
-        appr_total    = 0
-        appr_avg_time = 24.0
+        _appr_total    = 0
+        _appr_avg_time = 24.0
 
     # ── Relationship features ─────────────────────────────────────────────────
     has_reciprocal = db.check_reciprocal_nomination(nominator_id, beneficiary_id)
@@ -339,10 +341,14 @@ def _risk_level(score: int, thresholds: dict) -> str:
     thresholds must contain keys: critical, high, medium, low.
     Use _score_routing_thresholds(tenant_id) to build the dict.
     """
-    if score >= thresholds["critical"]: return "CRITICAL"
-    if score >= thresholds["high"]:     return "HIGH"
-    if score >= thresholds["medium"]:   return "MEDIUM"
-    if score >= thresholds["low"]:      return "LOW"
+    if score >= thresholds["critical"]:
+        return "CRITICAL"
+    if score >= thresholds["high"]:
+        return "HIGH"
+    if score >= thresholds["medium"]:
+        return "MEDIUM"
+    if score >= thresholds["low"]:
+        return "LOW"
     return "NONE"
 
 
@@ -352,7 +358,6 @@ def _warning_flags(
     desc_cosine_sim: float,
     feature_vals:  dict,
 ) -> list[str]:
-    feat  = dict(zip(model_data["p2p_feature_columns"], X_scaled[0]))
     flags = []
     # Behavioural flags (thresholds applied to raw feature_vals for readability)
     if feature_vals.get("NominatorTotalNominations", 0) > 50:
@@ -556,6 +561,7 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
     the caller routes the nomination as clean.
     SHAP / LLM errors are caught internally; the result always has both keys.
     """
+    nomination_id = details.get("nomination_id")
     model_data = _get_model(tenant_id)
 
     if model_data is None:
@@ -567,9 +573,20 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
             "warning_flags":     [],
             "flagged":           False,
             "shap_explanations": [],
+            "shap_status":       "SKIPPED",
+            "shap_reason":       "model_unavailable",
             "fraud_explanation": None,
             "model_version":     None,
         }
+        logger.info(
+            "RF SHAP assessment skipped",
+            extra={
+                "nomination_id": nomination_id,
+                "tenant_id": tenant_id,
+                "shap_status": "SKIPPED",
+                "shap_reason": "model_unavailable",
+            },
+        )
         result.update(component_availability.unavailable_metadata(
             "RF", "NO_MODEL", component_status, source_missing=True
         ))
@@ -588,15 +605,58 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
 
     # ── SHAP attribution (flagged nominations only) ───────────────────────────
     shap_explanations: list[dict] = []
+    shap_status = "SKIPPED"
+    shap_reason: str | None = "risk_below_medium"
     if flagged:
+        logger.info(
+            "RF SHAP assessment starting",
+            extra={
+                "nomination_id": nomination_id,
+                "tenant_id": tenant_id,
+                "fraud_score": fraud_score,
+                "risk_level": risk,
+            },
+        )
         try:
             shap_explanations = _compute_shap(model_data, X_scaled, feature_vals)
+            shap_status = "COMPLETED"
+            shap_reason = None
+            logger.info(
+                "RF SHAP assessment completed",
+                extra={
+                    "nomination_id": nomination_id,
+                    "tenant_id": tenant_id,
+                    "shap_status": shap_status,
+                    "shap_feature_count": len(shap_explanations),
+                    "top_features": shap_explanations,
+                },
+            )
         except Exception as exc:
+            shap_status = "FAILED"
+            shap_reason = "computation_error"
             logger.warning(
-                "SHAP computation failed for nomination %s: %s",
-                details.get("nomination_id"), exc,
+                "RF SHAP assessment failed",
+                extra={
+                    "nomination_id": nomination_id,
+                    "tenant_id": tenant_id,
+                    "shap_status": shap_status,
+                    "shap_reason": shap_reason,
+                    "error": str(exc),
+                },
                 exc_info=True,
             )
+    else:
+        logger.info(
+            "RF SHAP assessment skipped",
+            extra={
+                "nomination_id": nomination_id,
+                "tenant_id": tenant_id,
+                "shap_status": shap_status,
+                "shap_reason": shap_reason,
+                "fraud_score": fraud_score,
+                "risk_level": risk,
+            },
+        )
 
     # ── LLM explanation (CRITICAL auto-rejects only) ──────────────────────────
     # MEDIUM / HIGH go to HRBP review — the reviewer writes their own reason.
@@ -614,6 +674,8 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
         "warning_flags":     flags,
         "flagged":           flagged,
         "shap_explanations": shap_explanations,
+        "shap_status":       shap_status,
+        "shap_reason":       shap_reason,
         "fraud_explanation": fraud_explanation,
         "model_version":     model_data.get("model_version"),
     }

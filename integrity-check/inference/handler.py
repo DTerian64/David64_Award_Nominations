@@ -193,6 +193,11 @@ def handle(message_id: str, payload: dict) -> None:
             "last_attempt_status": rf_result.get("last_attempt_status"),
             "fraud_score": rf_result.get("fraud_score"),
             "risk_level": rf_result.get("risk_level"),
+            "shap_status": rf_result.get("shap_status"),
+            "shap_reason": rf_result.get("shap_reason"),
+            "shap_attempted": rf_result.get("shap_status") in ("COMPLETED", "FAILED"),
+            "shap_feature_count": len(rf_result.get("shap_explanations") or []),
+            "explanation_generated": bool(rf_result.get("fraud_explanation")),
         },
     )
 
