@@ -16,7 +16,7 @@ Why separate files?
       production scoring for other tenants.
 
 After training, each .pkl is uploaded directly to Azure Blob Storage under
-the same filename.  The backend FraudDetector streams models directly from
+the same filename. The backend RandomForestModelCache streams models directly from
 blob (no local copy); idle models are evicted from the in-process cache after
 MODEL_IDLE_TTL_SECONDS.  The next request after eviction re-streams the blob,
 so fresh models propagate automatically within one TTL period of upload — no
@@ -1079,7 +1079,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         # Category target encoding
         'category_fraud_rate':  category_fraud_rate,
         'global_fraud_rate':    float(global_fraud_rate),
-        # Sentence-transformer model name — fraud_ml.py loads the same model
+        # Sentence-transformer model name — integrity-check inference loads the same model
         'embed_model_name':     embed_model_name,
     }
 

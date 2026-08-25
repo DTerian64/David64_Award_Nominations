@@ -348,19 +348,14 @@ Used exclusively by the AI Analytics Agent to answer natural language questions 
 3.  AFD routes to award-api-eastus (private VNet path)
 4.  FastAPI validates Bearer JWT with Microsoft Entra ID
 5.  TenantId resolved from JWT tid claim
-6.  fraud_ml.get_fraud_assessment() called:
-    ├─ Download ML model from Blob Storage (private endpoint, cached)
-    ├─ Query historical data from SQL (private endpoint)
-    ├─ Calculate 20+ fraud features
-    ├─ Run SQL rule-based checks (stored procedure)
-    ├─ Run Random Forest prediction
-    └─ Return fraud score (0–100) + risk level
-7.  CRITICAL risk (70–100) → nomination blocked, 400 returned
-8.  Acceptable risk → INSERT into SQL Nominations table
-9.  INSERT fraud score into FraudScores table
-10. Fetch manager email from SQL Users table
-11. Send approval email via Gmail SMTP / SendGrid
-12. Return 201 Created to frontend
+6.  INSERT nomination with `Submitted` status
+7.  Publish `nomination.submitted` to Azure Service Bus
+8.  Return the submitted result to the frontend
+9.  integrity-check consumes the event and runs description checks plus the
+    independent Random Forest, Graph Analytics, and GNN assessments
+10. Persist component scores and the combined `FraudDecisionResults` record
+11. Apply rules-based routing to Reject, PendingHRBPReview, or Pending
+12. Publish the resulting downstream event for notification and approval handling
 ```
 
 ### Manager Approves via Email Link

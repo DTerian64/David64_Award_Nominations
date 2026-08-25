@@ -1,6 +1,6 @@
 """
-Fraud Detection Integration for FastAPI  —  Multi-Tenant Blob-Direct Edition
-=============================================================================
+Random Forest Model Cache — Multi-Tenant Blob-Direct Edition
+=============================================================
 
 One Random Forest model per tenant is trained by train_fraud_model.py and
 stored in Azure Blob Storage as:
@@ -8,7 +8,7 @@ stored in Azure Blob Storage as:
     ml-models/random_forest_tenant_2.pkl
     ...
 
-Models are loaded ON DEMAND: the first predict_fraud() call for a given tenant
+Models are loaded ON DEMAND: the first get_model() call for a given tenant
 streams the pkl DIRECTLY from blob into memory (pickle.loads(bytes)) — no local
 copy is written to disk.  Models that have not been used within
 MODEL_IDLE_TTL_SECONDS (default: 1800 = 30 min) are evicted from memory by the
@@ -42,7 +42,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 
 import logging
 
@@ -60,14 +60,14 @@ class _ModelEntry:
 
 
 # ============================================================================
-# FRAUD DETECTOR  —  lazy-loading, multi-tenant, blob-direct
+# RANDOM FOREST MODEL CACHE — lazy-loading, multi-tenant, blob-direct
 # ============================================================================
 
-class FraudDetector:
+class RandomForestModelCache:
     """
     Multi-tenant fraud detection wrapper with lazy, blob-direct model loading.
 
-    Models are streamed from Azure Blob Storage on the first predict_fraud()
+    Models are streamed from Azure Blob Storage on the first get_model()
     call for a tenant and evicted from memory after MODEL_IDLE_TTL_SECONDS of
     inactivity.  No pkl file is ever written to local disk.
     """
@@ -87,7 +87,7 @@ class FraudDetector:
         self._tenant_load_locks_lock = threading.Lock()
 
         logger.info(
-            "FraudDetector initialised (blob-direct lazy-load mode). "
+            "RandomForestModelCache initialised (blob-direct lazy-load mode). "
             "Models stream from blob on first request per tenant; "
             "idle TTL = %ds.", self.idle_ttl
         )
@@ -317,18 +317,18 @@ class FraudDetector:
 
         return updated_any
 
-    # ── Feature engineering and inference moved to auxiliary-service ────────
-    # nomination_submitted.py in the auxiliary service owns the full fraud
-    # assessment pipeline (feature engineering, embedding, RF inference).
-    # The backend retains only model management: loading, caching, eviction,
-    # and refresh — used by admin endpoints and the analytics agent.
+    # ── Feature engineering and inference live in integrity-check ────────────
+    # integrity-check/inference/random_forest_check.py owns nomination-time
+    # feature engineering, embedding, and RF scoring. The backend retains only
+    # model-artifact management: loading, caching, eviction, and refresh — used
+    # by admin endpoints and the analytics agent.
 
 
 # ============================================================================
 # GLOBAL INSTANCE
 # ============================================================================
 
-fraud_detector = FraudDetector()
+rf_model_cache = RandomForestModelCache()
 
 
 # ============================================================================
@@ -345,4 +345,4 @@ def refresh_model(tenant_id: Optional[int] = None) -> bool:
 
     Returns True if at least one model was successfully refreshed.
     """
-    return fraud_detector.check_for_updates(tenant_id=tenant_id)
+    return rf_model_cache.check_for_updates(tenant_id=tenant_id)

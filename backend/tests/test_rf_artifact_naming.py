@@ -8,13 +8,13 @@ Usage (PowerShell):
 
 import unittest
 
-import fraud_ml
+from utils.rf_model_cache import RandomForestModelCache
 
 
 class RfArtifactNamingTests(unittest.TestCase):
     def test_canonical_name_is_random_forest(self):
         self.assertEqual(
-            fraud_ml.FraudDetector._blob_name(3),
+            RandomForestModelCache._blob_name(3),
             "random_forest_tenant_3.pkl",
         )
 

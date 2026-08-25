@@ -16,7 +16,7 @@ import os
 from fastapi import APIRouter, Header, HTTPException
 
 import utils.sqlhelper2 as sqlhelper
-import fraud_ml
+from utils.rf_model_cache import rf_model_cache
 from utils.service_bus_publisher import publish_event
 
 logger = logging.getLogger(__name__)
@@ -50,10 +50,10 @@ async def internal_refresh_fraud_model(x_internal_key: str = Header(default=""))
     if _FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET and x_internal_key != _FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid internal key")
 
-    updated = fraud_ml.fraud_detector.check_for_updates()
+    updated = rf_model_cache.check_for_updates()
     tenant_summaries = {
         tid: str(entry.model["training_date"]) if entry.model else "not loaded"
-        for tid, entry in fraud_ml.fraud_detector.loaded_tenants().items()
+        for tid, entry in rf_model_cache.loaded_tenants().items()
     }
     logger.info(
         "internal_refresh_fraud_model: updated=%s tenants=%s",

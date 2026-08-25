@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 from auth import require_role
 
 import utils.sqlhelper2 as sqlhelper  # Database helper functions for Azure SQL
-import fraud_ml
+from utils.rf_model_cache import rf_model_cache
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 from routers.demo_router        import router as demo_router
@@ -67,7 +67,7 @@ async def _model_eviction_loop() -> None:
     while True:
         await asyncio.sleep(interval)
         try:
-            n = fraud_ml.fraud_detector.evict_idle()
+            n = rf_model_cache.evict_idle()
             if n:
                 logger.info("Model eviction: removed %d idle tenant model(s).", n)
         except Exception as exc:

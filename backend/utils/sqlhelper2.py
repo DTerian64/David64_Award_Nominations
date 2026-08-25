@@ -1207,10 +1207,10 @@ def get_beneficiary_descriptions(beneficiary_id: int) -> List[str]:
     Return the NominationDescriptions from past nominations WRITTEN BY
     the beneficiary (i.e. where they were the nominator).
 
-    Used by fraud_ml.py to build the beneficiary's "voice" embedding at
-    inference time — the same logic add_semantic_features() uses during
-    training.  Returns an empty list when the beneficiary has never made
-    a nomination, in which case the semantic features fall back to neutral.
+    Legacy backend helper for building the beneficiary's "voice" embedding.
+    Nomination-time RF inference now uses the equivalent query in
+    integrity-check/utils/db.py. Returns an empty list when the beneficiary has
+    never made a nomination, in which case semantic features fall back to neutral.
     """
     with get_db_context() as session:
         rows = session.execute(

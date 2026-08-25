@@ -438,8 +438,8 @@ async def create_nomination(
                 )
 
     # ── Save nomination — status starts as Submitted ──────────────────────────
-    # Fraud detection runs asynchronously in the auxiliary service after the
-    # nomination.submitted event is consumed. The auxiliary service moves the
+    # Integrity inference runs asynchronously in integrity-check after the
+    # nomination.submitted event is consumed. The integrity-check worker moves the
     # status to Pending (clean) or PendingHRBPReview (flagged) and publishes
     # the appropriate downstream event (nomination.created / nomination.fraud-flagged).
     nomination_id = sqlhelper.create_nomination(

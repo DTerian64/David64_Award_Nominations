@@ -18,10 +18,10 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-import fraud_ml
 import utils.sqlhelper2 as sqlhelper
 from auth import get_current_user, is_admin, require_role
 from routers.schemas import AuditLog
+from utils.rf_model_cache import refresh_model, rf_model_cache
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +64,11 @@ async def refresh_fraud_model(current_user: dict = Depends(require_role("AWard_N
     Checks if there's a newer version in blob storage and downloads it if available.
     """
     try:
-        updated = fraud_ml.refresh_model()
+        updated = refresh_model()
 
         tenant_summaries = {
             tid: str(entry.model['training_date']) if entry.model else "not loaded"
-            for tid, entry in fraud_ml.fraud_detector.loaded_tenants().items()
+            for tid, entry in rf_model_cache.loaded_tenants().items()
         }
 
         return {
@@ -88,7 +88,7 @@ async def refresh_fraud_model(current_user: dict = Depends(require_role("AWard_N
 @router.get("/api/admin/fraud-model-info")
 async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_Nomination_Admin"))):
     """Get information about the currently loaded fraud detection model (Admin only)"""
-    loaded = fraud_ml.fraud_detector.loaded_tenants()
+    loaded = rf_model_cache.loaded_tenants()
     if not any(entry.model is not None for entry in loaded.values()):
         return {
             "status": "not_loaded",

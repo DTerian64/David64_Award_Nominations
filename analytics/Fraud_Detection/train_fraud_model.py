@@ -16,7 +16,7 @@ Why separate files?
       production scoring for other tenants.
 
 After training, upload each .pkl from Output/ to Azure Blob Storage under
-the same filename so the backend FraudDetector picks them up on next restart.
+the same filename for integrity-check inference and backend model metadata.
 """
 
 import os
@@ -521,7 +521,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> dict:
         'training_samples':   len(df_train),
         'auc':                auc,
         'feature_importance': feature_importance,
-        # Amount stats for this tenant — used by fraud_ml.py to compute
+        # Amount stats for this tenant — used by integrity-check inference to compute
         # z-scores at inference time without crossing tenant boundaries.
         'amount_mean': float(df['Amount'].mean()),
         'amount_std':  float(df['Amount'].std()),
