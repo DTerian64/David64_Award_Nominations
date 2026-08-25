@@ -10,7 +10,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Settings, Users as UsersIcon, Tag, ShieldAlert, DollarSign,
   Save, RefreshCw, AlertCircle, CheckCircle, X, Plus,
-  ShieldCheck, History, UserCheck, Eye, Download, Mail,
+  ShieldCheck, History, UserCheck, Eye, Download, Mail, Activity,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
 import CodeMirror from '@uiw/react-codemirror';
@@ -18,7 +18,7 @@ import { html } from '@codemirror/lang-html';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-type SubTab = 'organization' | 'roles' | 'categories' | 'email' | 'fraud' | 'payroll' | 'audit';
+type SubTab = 'organization' | 'roles' | 'categories' | 'email' | 'fraud' | 'engines' | 'payroll' | 'audit';
 
 interface OrgSettings {
   tenant_name:          string;
@@ -41,6 +41,7 @@ const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
   { id: 'categories',   label: 'Award Categories', icon: <Tag className="w-4 h-4" /> },
   { id: 'email',        label: 'Email Templates',  icon: <Mail className="w-4 h-4" /> },
   { id: 'fraud',        label: 'Fraud / Integrity',icon: <ShieldAlert className="w-4 h-4" /> },
+  { id: 'engines',      label: 'Detection Engines',icon: <Activity className="w-4 h-4" /> },
   { id: 'payroll',      label: 'Payroll',          icon: <DollarSign className="w-4 h-4" /> },
   { id: 'audit',        label: 'Audit & Access',   icon: <ShieldCheck className="w-4 h-4" /> },
 ];
@@ -50,7 +51,7 @@ export const SetupPanel: React.FC = () => {
   return (
     <div className="bg-white rounded-lg shadow-md p-4 sm:p-6">
       {/* Sub-tab nav — 2-col grid on mobile, row on sm+ (same responsive pattern as the main tabs) */}
-      <div className="grid grid-cols-2 gap-1 sm:flex sm:gap-1 mb-6 border-b border-gray-200 pb-3">
+      <div className="grid grid-cols-2 gap-1 sm:flex sm:flex-wrap sm:gap-1 mb-6 border-b border-gray-200 pb-3">
         {SUB_TABS.map(tab => {
           const active = sub === tab.id;
           return (
@@ -74,8 +75,226 @@ export const SetupPanel: React.FC = () => {
       {sub === 'categories'   && <CategoriesPanel />}
       {sub === 'email'        && <EmailTemplatesPanel />}
       {sub === 'fraud'        && <FraudPanel />}
+      {sub === 'engines'      && <DetectionEnginesPanel />}
       {sub === 'payroll'      && <PayrollPanel />}
       {sub === 'audit'        && <AuditPanel />}
+    </div>
+  );
+};
+
+// ── Detection Engines ───────────────────────────────────────────────────────
+// Operational state only. Routing thresholds remain under Fraud / Integrity.
+
+interface DetectionEngineStatus {
+  component: string;
+  serving_status: string;
+  serving_version: string | null;
+  serving_as_of: string | null;
+  last_attempt_status: string;
+  reason_code: string | null;
+  reason_detail: string | null;
+  diagnostics: Record<string, unknown>;
+  last_attempt_at: string | null;
+  last_successful_at: string | null;
+  run_id: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+const ENGINE_NAMES: Record<string, { name: string; description: string }> = {
+  RF: {
+    name: 'Random Forest',
+    description: 'Independent behavioural and semantic fraud model',
+  },
+  GRAPH: {
+    name: 'Graph Analytics',
+    description: 'Independent graph-pattern detection engine',
+  },
+  GNN: {
+    name: 'Graph Neural Network',
+    description: 'Independent graph neural-network fraud model',
+  },
+};
+
+const statusClass = (status: string): string => {
+  switch (status.toUpperCase()) {
+    case 'AVAILABLE':
+    case 'SUCCEEDED':
+      return 'bg-green-50 text-green-700 border-green-200';
+    case 'FAILED':
+    case 'UNAVAILABLE':
+      return 'bg-red-50 text-red-700 border-red-200';
+    case 'SKIPPED':
+    case 'STALE':
+      return 'bg-amber-50 text-amber-700 border-amber-200';
+    case 'DISABLED':
+      return 'bg-gray-100 text-gray-600 border-gray-200';
+    default:
+      return 'bg-gray-50 text-gray-600 border-gray-200';
+  }
+};
+
+const diagnosticLabel = (key: string): string =>
+  key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+const diagnosticValue = (value: unknown): string => {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'number') return value.toLocaleString();
+  return String(value);
+};
+
+const DetectionEnginesPanel: React.FC = () => {
+  const [rows, setRows] = useState<DetectionEngineStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/detection-engines`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const body = await res.json();
+      setRows(body.rows || []);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load detection engine status');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-800">Detection Engines</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Read-only operational status for the independent fraud-detection engines.
+            Thresholds and routing remain under Fraud / Integrity.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-100 text-gray-500 text-xs">
+            <Eye className="w-3.5 h-3.5" /> Read only
+          </span>
+          <button
+            onClick={load}
+            disabled={loading}
+            className="p-2 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+            title="Refresh engine status"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+      {loading && (
+        <div className="flex items-center justify-center gap-2 text-gray-400 text-sm py-12">
+          <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="flex items-start gap-2 p-3 bg-red-50 rounded-lg text-red-700 text-sm">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><span>{error}</span>
+        </div>
+      )}
+
+      {!loading && !error && rows.length === 0 && (
+        <div className="text-center py-14 text-gray-400 text-sm">
+          No engine status has been recorded yet. Status will appear after the analytics job runs.
+        </div>
+      )}
+
+      {!loading && !error && rows.length > 0 && (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          {rows.map(row => {
+            const metadata = ENGINE_NAMES[row.component] || {
+              name: row.component,
+              description: 'Integrity detection engine',
+            };
+            const diagnostics = Object.entries(row.diagnostics || {});
+            return (
+              <section key={row.component} className="border border-gray-200 rounded-lg p-4 space-y-4">
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-semibold text-gray-800">{metadata.name}</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">{metadata.description}</p>
+                    </div>
+                    <span className={`shrink-0 px-2 py-0.5 rounded-full border text-xs font-medium ${statusClass(row.serving_status)}`}>
+                      {row.serving_status}
+                    </span>
+                  </div>
+                </div>
+
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-3 text-xs">
+                  <div>
+                    <dt className="text-gray-400">Serving version</dt>
+                    <dd className="mt-0.5 text-gray-700 font-mono break-all">{row.serving_version || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-gray-400">Serving as of</dt>
+                    <dd className="mt-0.5 text-gray-700">{fmtTime(row.serving_as_of)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-gray-400">Latest attempt</dt>
+                    <dd className="mt-0.5">
+                      <span className={`inline-block px-2 py-0.5 rounded-full border font-medium ${statusClass(row.last_attempt_status)}`}>
+                        {row.last_attempt_status}
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-gray-400">Attempted</dt>
+                    <dd className="mt-0.5 text-gray-700">{fmtTime(row.last_attempt_at)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-gray-400">Last successful</dt>
+                    <dd className="mt-0.5 text-gray-700">{fmtTime(row.last_successful_at)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-gray-400">Status updated</dt>
+                    <dd className="mt-0.5 text-gray-700">{fmtTime(row.updated_at)}</dd>
+                  </div>
+                </dl>
+
+                {(row.reason_code || row.reason_detail) && (
+                  <div className="rounded-md bg-amber-50 border border-amber-100 p-3 text-xs">
+                    {row.reason_code && <div className="font-medium text-amber-800">{diagnosticLabel(row.reason_code)}</div>}
+                    {row.reason_detail && <p className="text-amber-700 mt-1">{row.reason_detail}</p>}
+                  </div>
+                )}
+
+                {diagnostics.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-500 mb-2">Latest diagnostics</h4>
+                    <dl className="grid grid-cols-2 gap-2">
+                      {diagnostics.map(([key, value]) => (
+                        <div key={key} className="rounded bg-gray-50 px-2.5 py-2 text-xs">
+                          <dt className="text-gray-400">{diagnosticLabel(key)}</dt>
+                          <dd className="mt-0.5 font-medium text-gray-700 break-words">{diagnosticValue(value)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-gray-100 text-[11px] text-gray-400 space-y-1">
+                  {row.updated_by && <div>Reported by {row.updated_by}</div>}
+                  {row.run_id && <div className="font-mono break-all">Run {row.run_id}</div>}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

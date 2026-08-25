@@ -3288,6 +3288,53 @@ def _iso_utc(dt) -> Optional[str]:
     return s if s.endswith("Z") or "+" in s else s + "Z"
 
 
+def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
+    """Current RF, Graph Analytics, and GNN status for Setup's read-only view."""
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                SELECT Component, ServingStatus, ServingVersion, ServingAsOf,
+                       LastAttemptStatus, ReasonCode, ReasonDetail, DiagnosticsJson,
+                       LastAttemptAt, LastSuccessfulAt, RunId, UpdatedAt, UpdatedBy
+                FROM dbo.IntegrityComponentStatus
+                WHERE TenantId = :tid
+                ORDER BY CASE Component
+                    WHEN 'RF' THEN 1 WHEN 'GRAPH' THEN 2 WHEN 'GNN' THEN 3 ELSE 4
+                END
+            """),
+            {"tid": tenant_id},
+        ).fetchall()
+
+    result = []
+    for row in rows:
+        diagnostics = {}
+        if row[7]:
+            try:
+                parsed = json.loads(row[7])
+                diagnostics = parsed if isinstance(parsed, dict) else {}
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(
+                    "Invalid IntegrityComponentStatus.DiagnosticsJson",
+                    extra={"tenant_id": tenant_id, "component": row[0]},
+                )
+        result.append({
+            "component":             row[0],
+            "serving_status":        row[1],
+            "serving_version":       row[2],
+            "serving_as_of":         _iso_utc(row[3]),
+            "last_attempt_status":   row[4],
+            "reason_code":           row[5],
+            "reason_detail":         row[6],
+            "diagnostics":           diagnostics,
+            "last_attempt_at":       _iso_utc(row[8]),
+            "last_successful_at":    _iso_utc(row[9]),
+            "run_id":                row[10],
+            "updated_at":            _iso_utc(row[11]),
+            "updated_by":            row[12],
+        })
+    return result
+
+
 def get_access_review(tenant_id: int) -> List[dict]:
     """Current app-role assignments for the tenant (the 'who has access' snapshot).
 

@@ -7,7 +7,8 @@ configures the real tenant as themselves, not "as" another user. All writes land
 on tables that are temporally versioned (SOC 2), so changes are auto-audited.
 
 Sub-areas (built incrementally): Organization, Roles & Access, Award Categories,
-Email Templates, Fraud / Integrity, Payroll Integration, Audit & Access Review.
+Email Templates, Fraud / Integrity, Detection Engines, Payroll Integration,
+Audit & Access Review.
 """
 
 import logging
@@ -302,6 +303,14 @@ async def update_fraud(payload: FraudConfig, admin: dict = Depends(require_setup
     )
     logger.info("Fraud/integrity config updated", extra={"tenant_id": admin["TenantId"]})
     return sqlhelper.get_fraud_settings(admin["TenantId"])
+
+
+# ── Detection Engines (read-only) ────────────────────────────────────────────
+
+@router.get("/api/admin/setup/detection-engines")
+async def get_detection_engines(admin: dict = Depends(require_setup_admin)):
+    """Return producer-owned RF, Graph Analytics, and GNN status for this tenant."""
+    return {"rows": sqlhelper.get_integrity_component_statuses(admin["TenantId"])}
 
 
 # ── Payroll Integration ───────────────────────────────────────────────────────
