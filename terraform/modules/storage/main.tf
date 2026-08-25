@@ -25,7 +25,7 @@ resource "azurerm_storage_account" "storage" {
   # ── Artifact recovery ───────────────────────────────────────────────────────
   # Both ML pipelines overwrite their model artifacts in place:
   #   train_fraud_model._upload_artefact()  ->  upload_blob(..., overwrite=True)
-  #     fraud_detection_model_tenant_<N>.pkl   (Random Forest)
+  #     random_forest_tenant_<N>.pkl            (Random Forest)
   #     gnn_encoder_tenant_<N>.pt              (GNN encoder — audit/retrain)
   #     gnn_head_tenant_<N>.pt                 (GNN decoder — read by inference)
   #

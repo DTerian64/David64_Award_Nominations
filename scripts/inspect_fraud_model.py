@@ -1,7 +1,7 @@
 """
 inspect_fraud_model.py
 ======================
-Peek inside a fraud_detection_model_tenant_<N>.pkl without running the full
+Peek inside a random_forest_tenant_<N>.pkl without running the full
 training job.  Prints all metadata and a feature importance table.
 
 Usage:
@@ -19,7 +19,6 @@ Environment variables (only needed for --from-blob):
 """
 
 import argparse
-import io
 import os
 import pickle
 import sys
@@ -29,15 +28,15 @@ from pathlib import Path
 _repo_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_repo_root / "backend"))
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402 - backend path is established above
 load_dotenv(_repo_root / "backend" / ".env")
 
 
 def load_from_file(tenant_id: int) -> dict:
     candidates = [
-        _repo_root / "Award_Nomination_App" / "fraud-analytics-job" / "Output" /
-            f"fraud_detection_model_tenant_{tenant_id}.pkl",
-        Path(f"fraud_detection_model_tenant_{tenant_id}.pkl"),
+        _repo_root / "fraud-analytics-job" / "Output" /
+            f"random_forest_tenant_{tenant_id}.pkl",
+        Path(f"random_forest_tenant_{tenant_id}.pkl"),
     ]
     for path in candidates:
         if path.exists():
@@ -57,7 +56,7 @@ def load_from_blob(tenant_id: int) -> dict:
     account   = os.environ["AZURE_STORAGE_ACCOUNT"]
     key       = os.getenv("AZURE_STORAGE_KEY")
     container = os.getenv("MODEL_CONTAINER", "ml-models")
-    blob_name = f"fraud_detection_model_tenant_{tenant_id}.pkl"
+    blob_name = f"random_forest_tenant_{tenant_id}.pkl"
 
     if key:
         client = BlobServiceClient(
