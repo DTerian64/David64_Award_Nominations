@@ -46,7 +46,10 @@ ACTOR_FRAUD_ML          = "Fraud Detection"                 # CRITICAL ML auto-r
 def _component_summary(result: dict) -> dict:
     """JSON-safe audit view without model internals or large arrays."""
     keys = (
-        "model_available", "unavailable_reason", "fraud_score", "fraud_prob",
+        "model_available", "availability_status", "unavailable_reason",
+        "unavailable_detail", "last_attempt_status", "last_attempt_at",
+        "last_successful_at", "registry_serving_status", "status_run_id",
+        "fraud_score", "fraud_prob",
         "risk_level", "source_severity", "warning_flags", "flagged", "model_version",
         "embedding_as_of", "snapshot_as_of", "affected_user_ids",
     )
@@ -163,17 +166,31 @@ def handle(message_id: str, payload: dict) -> None:
         )
 
     # ── Independent component assessments ────────────────────────────────────
+    try:
+        component_statuses = db.get_integrity_component_statuses(tenant_id)
+    except Exception as exc:
+        # Status provenance must enrich scoring, never prevent it. This also
+        # keeps rolling deployment safe while migration 0045 is being applied.
+        logger.warning(
+            "Component availability registry could not be loaded: %s",
+            exc,
+            extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
+        )
+        component_statuses = {}
+
     logger.info(
         "RF assessment starting",
         extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
     )
-    rf_result = fraud_check.assess(details, tenant_id)
+    rf_result = fraud_check.assess(details, tenant_id, component_statuses.get("RF"))
     logger.info(
         "RF assessment completed",
         extra={
             "nomination_id": nomination_id,
             "model_available": rf_result["model_available"],
             "unavailable_reason": rf_result.get("unavailable_reason"),
+            "unavailable_detail": rf_result.get("unavailable_detail"),
+            "last_attempt_status": rf_result.get("last_attempt_status"),
             "fraud_score": rf_result.get("fraud_score"),
             "risk_level": rf_result.get("risk_level"),
         },
@@ -183,13 +200,17 @@ def handle(message_id: str, payload: dict) -> None:
         "Graph Analytics assessment starting",
         extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
     )
-    graph_result = graph_check.assess_graph(details, tenant_id)
+    graph_result = graph_check.assess_graph(
+        details, tenant_id, component_statuses.get("GRAPH")
+    )
     logger.info(
         "Graph Analytics assessment completed",
         extra={
             "nomination_id": nomination_id,
             "model_available": graph_result["model_available"],
             "unavailable_reason": graph_result.get("unavailable_reason"),
+            "unavailable_detail": graph_result.get("unavailable_detail"),
+            "last_attempt_status": graph_result.get("last_attempt_status"),
             "fraud_score": graph_result.get("fraud_score"),
             "risk_level": graph_result.get("risk_level"),
         },
@@ -199,13 +220,15 @@ def handle(message_id: str, payload: dict) -> None:
         "GNN assessment starting",
         extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
     )
-    gnn_result = gnn_check.assess_gnn(details, tenant_id)
+    gnn_result = gnn_check.assess_gnn(details, tenant_id, component_statuses.get("GNN"))
     logger.info(
         "GNN assessment completed",
         extra={
             "nomination_id": nomination_id,
             "model_available": gnn_result["model_available"],
             "unavailable_reason": gnn_result.get("unavailable_reason"),
+            "unavailable_detail": gnn_result.get("unavailable_detail"),
+            "last_attempt_status": gnn_result.get("last_attempt_status"),
             "fraud_score": gnn_result.get("fraud_score"),
             "risk_level": gnn_result.get("risk_level"),
             "model_version": gnn_result.get("model_version"),
@@ -258,8 +281,11 @@ def handle(message_id: str, payload: dict) -> None:
             "nomination_id": nomination_id,
             "policy_version": decision["policy_version"],
             "rf_available": rf_result["model_available"],
+            "rf_unavailable_reason": rf_result.get("unavailable_reason"),
             "graph_available": graph_result["model_available"],
+            "graph_unavailable_reason": graph_result.get("unavailable_reason"),
             "gnn_available": gnn_result["model_available"],
+            "gnn_unavailable_reason": gnn_result.get("unavailable_reason"),
             "final_score": decision["final_score"],
             "final_risk": decision["risk_level"],
             "decisive_models": decision["decisive_models"],

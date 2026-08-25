@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
+import component_availability
 from utils import db
 
 logger = logging.getLogger("integrity_check.graph_check")
@@ -47,10 +48,14 @@ def _risk_level(score: int, thresholds: dict) -> str:
     return "NONE"
 
 
-def _unavailable(reason: str) -> dict:
-    return {
+def _unavailable(
+    reason: str,
+    component_status: dict | None = None,
+    *,
+    source_missing: bool = False,
+) -> dict:
+    result = {
         "model_available": False,
-        "unavailable_reason": reason,
         "fraud_score": 0,
         "fraud_prob": None,
         "risk_level": "NONE",
@@ -59,21 +64,33 @@ def _unavailable(reason: str) -> dict:
         "snapshot_as_of": None,
         "affected_user_ids": [],
     }
+    result.update(component_availability.unavailable_metadata(
+        "GRAPH", reason, component_status, source_missing=source_missing
+    ))
+    return result
 
 
-def assess_graph(details: dict, tenant_id: int) -> dict:
+def assess_graph(
+    details: dict,
+    tenant_id: int,
+    component_status: dict | None = None,
+) -> dict:
     """Return the current graph component score; never raise to the handler."""
     try:
-        return _assess_graph_inner(details, tenant_id)
+        return _assess_graph_inner(details, tenant_id, component_status)
     except Exception as exc:
         logger.error(
             "Graph assessment failed for nomination %s (tenant %d): %s",
             details.get("nomination_id"), tenant_id, exc, exc_info=True,
         )
-        return _unavailable("exception")
+        return _unavailable("INFERENCE_FAILED", component_status)
 
 
-def _assess_graph_inner(details: dict, tenant_id: int) -> dict:
+def _assess_graph_inner(
+    details: dict,
+    tenant_id: int,
+    component_status: dict | None = None,
+) -> dict:
     roles = {
         details["nominator_id"]: "nominator",
         details["beneficiary_id"]: "beneficiary",
@@ -83,7 +100,7 @@ def _assess_graph_inner(details: dict, tenant_id: int) -> dict:
 
     snapshot = db.get_graph_component_snapshot(tenant_id, list(roles))
     if snapshot is None:
-        return _unavailable("no_snapshot")
+        return _unavailable("NO_SNAPSHOT", component_status, source_missing=True)
 
     users = snapshot["users"]
     source_severity = "NONE"
@@ -126,7 +143,7 @@ def _assess_graph_inner(details: dict, tenant_id: int) -> dict:
     graph_score = _GRAPH_SCORE[source_severity]
     risk = _risk_level(graph_score, _thresholds(tenant_id))
 
-    return {
+    result = {
         "model_available": True,
         "fraud_score": graph_score,
         "fraud_prob": None,
@@ -137,3 +154,5 @@ def _assess_graph_inner(details: dict, tenant_id: int) -> dict:
         "snapshot_as_of": as_of,
         "affected_user_ids": affected,
     }
+    result.update(component_availability.available_metadata(component_status))
+    return result

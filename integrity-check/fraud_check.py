@@ -38,6 +38,7 @@ from datetime import datetime
 
 import numpy as np
 
+import component_availability
 from utils import db
 
 logger = logging.getLogger("integrity_check.random_forest")
@@ -116,7 +117,7 @@ def _get_model(tenant_id: int) -> dict | None:
 
 def _stream_from_blob(tenant_id: int) -> dict | None:
     from azure.storage.blob import BlobServiceClient
-    blob_name = f"fraud_detection_model_tenant_{tenant_id}.pkl"
+    blob_name = f"random_forest_tenant_{tenant_id}.pkl"
 
     if _STORAGE_KEY:
         conn_str = (
@@ -133,18 +134,23 @@ def _stream_from_blob(tenant_id: int) -> dict | None:
             credential=credential,
         )
 
+    from azure.core.exceptions import ResourceNotFoundError
     try:
         blob = client.get_blob_client(container=_MODEL_CONTAINER, blob=blob_name)
         data = blob.download_blob().readall()
-        logger.info("Streamed fraud model from blob (%d bytes)", len(data),
-                    extra={"tenant_id": tenant_id})
+        logger.info(
+            "Streamed RF model %s from blob (%d bytes)", blob_name, len(data),
+            extra={"tenant_id": tenant_id},
+        )
         return pickle.loads(data)
+    except ResourceNotFoundError:
+        logger.warning(
+            "No RF model blob %s for tenant %d; RF will contribute no opinion",
+            blob_name, tenant_id,
+        )
+        return None
     except Exception as exc:
-        from azure.core.exceptions import ResourceNotFoundError
-        if isinstance(exc, ResourceNotFoundError):
-            logger.warning("No fraud model blob for tenant %d — will route as clean", tenant_id)
-        else:
-            logger.error("Error streaming fraud model for tenant %d: %s", tenant_id, exc)
+        logger.error("Error streaming RF model for tenant %d: %s", tenant_id, exc)
         return None
 
 
@@ -526,7 +532,7 @@ def _generate_explanation(shap_contributions: list[dict], fraud_score: int) -> s
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def assess(details: dict, tenant_id: int) -> dict:
+def assess(details: dict, tenant_id: int, component_status: dict | None = None) -> dict:
     """
     Run the full fraud assessment for a nomination.
 
@@ -553,7 +559,7 @@ def assess(details: dict, tenant_id: int) -> dict:
     model_data = _get_model(tenant_id)
 
     if model_data is None:
-        return {
+        result = {
             "model_available":   False,
             "fraud_score":       0,
             "fraud_prob":        0.0,
@@ -562,7 +568,12 @@ def assess(details: dict, tenant_id: int) -> dict:
             "flagged":           False,
             "shap_explanations": [],
             "fraud_explanation": None,
+            "model_version":     None,
         }
+        result.update(component_availability.unavailable_metadata(
+            "RF", "NO_MODEL", component_status, source_missing=True
+        ))
+        return result
 
     X_scaled, feature_vals, desc_cosine_sim = _build_features(details, model_data)
 
@@ -595,7 +606,7 @@ def assess(details: dict, tenant_id: int) -> dict:
     if risk == "CRITICAL" and shap_explanations:
         fraud_explanation = _generate_explanation(shap_explanations, fraud_score)
 
-    return {
+    result = {
         "model_available":   True,
         "fraud_score":       fraud_score,
         "fraud_prob":        round(fraud_prob, 4),
@@ -604,4 +615,7 @@ def assess(details: dict, tenant_id: int) -> dict:
         "flagged":           flagged,
         "shap_explanations": shap_explanations,
         "fraud_explanation": fraud_explanation,
+        "model_version":     model_data.get("model_version"),
     }
+    result.update(component_availability.available_metadata(component_status))
+    return result

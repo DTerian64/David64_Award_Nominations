@@ -94,6 +94,7 @@ class CompleteAssessmentTests(unittest.TestCase):
             stack.enter_context(patch("handler.db.claim_message", return_value=False))
             stack.enter_context(patch("handler.db.get_nomination_details", return_value=details))
             stack.enter_context(patch("handler.db.get_tenant_desc_check_config", return_value=object()))
+            stack.enter_context(patch("handler.db.get_integrity_component_statuses", return_value={}))
             stack.enter_context(patch("handler.description_check.check", return_value=desc_reject))
 
             rf = stack.enter_context(patch("handler.fraud_check.assess"))

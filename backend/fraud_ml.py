@@ -4,8 +4,8 @@ Fraud Detection Integration for FastAPI  —  Multi-Tenant Blob-Direct Edition
 
 One Random Forest model per tenant is trained by train_fraud_model.py and
 stored in Azure Blob Storage as:
-    ml-models/fraud_detection_model_tenant_1.pkl
-    ml-models/fraud_detection_model_tenant_2.pkl
+    ml-models/random_forest_tenant_1.pkl
+    ml-models/random_forest_tenant_2.pkl
     ...
 
 Models are loaded ON DEMAND: the first predict_fraud() call for a given tenant
@@ -96,7 +96,8 @@ class FraudDetector:
 
     @staticmethod
     def _blob_name(tenant_id: int) -> str:
-        return f"fraud_detection_model_tenant_{tenant_id}.pkl"
+        """Canonical Random Forest artifact name."""
+        return f"random_forest_tenant_{tenant_id}.pkl"
 
     # ── Blob client factory ──────────────────────────────────────────────────
 
@@ -140,15 +141,16 @@ class FraudDetector:
 
         Returns None if the blob does not exist or on any error.
         """
-        blob_name      = self._blob_name(tenant_id)
         container_name = os.getenv('MODEL_CONTAINER', 'ml-models')
 
         try:
+            from azure.core.exceptions import ResourceNotFoundError
+
             blob_service = self._blob_service_client()
-            blob_client  = blob_service.get_blob_client(
+            blob_name = self._blob_name(tenant_id)
+            blob_client = blob_service.get_blob_client(
                 container=container_name, blob=blob_name
             )
-
             logger.info(
                 "[Tenant %d] Streaming model from blob: %s/%s …",
                 tenant_id, container_name, blob_name,
@@ -168,12 +170,11 @@ class FraudDetector:
             )
             return None
         except Exception as exc:
-            from azure.core.exceptions import ResourceNotFoundError
             if isinstance(exc, ResourceNotFoundError):
                 logger.warning(
-                    "[Tenant %d] Model blob not found: %s/%s. "
+                    "[Tenant %d] RF model blob not found: %s/%s. "
                     "Run train_fraud_model.py to generate it.",
-                    tenant_id, container_name, blob_name,
+                    tenant_id, container_name, self._blob_name(tenant_id),
                 )
             else:
                 import traceback

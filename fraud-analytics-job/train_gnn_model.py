@@ -31,6 +31,7 @@ import io
 import logging
 import os
 import time
+import uuid
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -54,6 +55,7 @@ load_dotenv(env_path)
 
 import gnn_graph as G
 import labels as labels_mod
+from component_status import upsert_component_status
 from db_conn import connect
 from gnn_model import train_gnn
 
@@ -360,11 +362,24 @@ def _write_head(model, graph: dict, model_version: str, metrics: dict, path: Pat
 
 # ── Per-tenant run ────────────────────────────────────────────────────────────
 
-def _process_tenant(conn, tenant_id: int) -> str:
+def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     t0 = time.monotonic()
+    run_id = run_id or str(uuid.uuid4())
 
     users, nominations = G.fetch_tenant_rows(conn, tenant_id, GNN_WINDOW_DAYS)
     if len(nominations) < MIN_NOMINATIONS or len(users) < MIN_USERS:
+        detail = (f"{len(nominations)} nominations / {len(users)} users; "
+                  f"requires {MIN_NOMINATIONS} / {MIN_USERS}")
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+            reason_code="BELOW_MINIMUM_VOLUME", reason_detail=detail,
+            diagnostics={
+                "nomination_count": len(nominations), "user_count": len(users),
+                "minimum_nominations": MIN_NOMINATIONS, "minimum_users": MIN_USERS,
+                "window_days": GNN_WINDOW_DAYS,
+            },
+            run_id=run_id,
+        )
         return (f"SKIPPED (below gate: {len(nominations)} nominations / {len(users)} users, "
                 f"need {MIN_NOMINATIONS}/{MIN_USERS})")
 
@@ -378,6 +393,13 @@ def _process_tenant(conn, tenant_id: int) -> str:
     labelled = labels_mod.human_confirmed(label_df)
     label_map = dict(zip(labelled["NominationId"], labelled["IsFraud"]))
     if not label_map:
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+            reason_code="NO_HUMAN_CONFIRMED_LABELS",
+            reason_detail="No human-confirmed HRBP outcomes are available for GNN training.",
+            diagnostics={"human_confirmed_count": 0, "window_days": GNN_WINDOW_DAYS},
+            run_id=run_id,
+        )
         return "SKIPPED (no human-confirmed nominations)"
 
     graph = G.build_hetero_data(users, nominations)
@@ -399,9 +421,32 @@ def _process_tenant(conn, tenant_id: int) -> str:
     train_neg = int(len(y_tr) - train_pos)
     eval_neg = int(len(y_ev) - eval_pos)
     if train_pos < MIN_POSITIVES or eval_pos < MIN_POSITIVES:
+        detail = (f"train fraud labels {train_pos}, eval fraud labels {eval_pos}; "
+                  f"requires {MIN_POSITIVES} in each split")
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+            reason_code="INSUFFICIENT_FRAUD_LABELS", reason_detail=detail,
+            diagnostics={
+                "train_positive_count": train_pos, "eval_positive_count": eval_pos,
+                "minimum_positives_per_split": MIN_POSITIVES,
+                "train_negative_count": train_neg, "eval_negative_count": eval_neg,
+            },
+            run_id=run_id,
+        )
         return (f"SKIPPED (too few human-confirmed fraud labels: train {train_pos}, "
                 f"eval {eval_pos}, need {MIN_POSITIVES} each)")
     if train_neg == 0 or eval_neg == 0:
+        detail = (f"train {train_pos} fraud/{train_neg} legitimate; "
+                  f"eval {eval_pos} fraud/{eval_neg} legitimate")
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+            reason_code="MISSING_LABEL_CLASS", reason_detail=detail,
+            diagnostics={
+                "train_positive_count": train_pos, "train_negative_count": train_neg,
+                "eval_positive_count": eval_pos, "eval_negative_count": eval_neg,
+            },
+            run_id=run_id,
+        )
         return (f"SKIPPED (human-confirmed labels need both classes: "
                 f"train {train_pos} fraud/{train_neg} legitimate, "
                 f"eval {eval_pos} fraud/{eval_neg} legitimate)")
@@ -474,6 +519,18 @@ def _process_tenant(conn, tenant_id: int) -> str:
 
     n_evicted = _evict_stale_embeddings(conn, tenant_id, GNN_EMBEDDING_RETENTION_DAYS)
 
+    upsert_component_status(
+        conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
+        serving_status="AVAILABLE", serving_version=model_version,
+        serving_as_of=as_of, run_id=run_id,
+        diagnostics={
+            "embedding_count": n_emb, "score_count": n_scores,
+            "evicted_embedding_count": n_evicted,
+            "human_label_pr_auc": metrics["eval_pr_auc"],
+            "human_confirmed_eval_count": len(y_ev),
+        },
+    )
+
     return (f"OK ({model_version}, {n_emb} embeddings, {n_scores} scores, "
             f"{n_evicted} evicted, human-label PR-AUC "
             f"{metrics['eval_pr_auc']:.4f}, {time.monotonic() - t0:.1f}s)")
@@ -483,8 +540,23 @@ def _process_tenant(conn, tenant_id: int) -> str:
 
 def main(tenants_to_process: list | None = None) -> None:
     """Called by run_job.py. Signature matches every other stage."""
+    run_id = str(uuid.uuid4())
     if not GNN_ENABLED:
         logger.info("GNN_ENABLED=false — skipping GNN training stage.")
+        conn = connect()
+        try:
+            tenants = _get_tenants(conn)
+            if tenants_to_process is not None:
+                tenants = [t for t in tenants if t in tenants_to_process]
+            for tenant_id in tenants:
+                upsert_component_status(
+                    conn, tenant_id=tenant_id, component="GNN",
+                    attempt_status="DISABLED", reason_code="DISABLED",
+                    reason_detail="GNN_ENABLED=false for this analytics job run.",
+                    diagnostics={"gnn_enabled": False}, run_id=run_id,
+                )
+        finally:
+            conn.close()
         return
 
     logger.info("GNN MODEL TRAINING - Multi-Tenant")
@@ -506,11 +578,23 @@ def main(tenants_to_process: list | None = None) -> None:
         for tenant_id in tenants:
             logger.info("Tenant %d", tenant_id)
             try:
-                results[tenant_id] = _process_tenant(conn, tenant_id)
+                results[tenant_id] = _process_tenant(conn, tenant_id, run_id)
             except Exception as exc:
                 logger.error("Tenant %d failed: %s", tenant_id, exc, exc_info=True)
                 results[tenant_id] = f"FAILED — {exc}"
                 failed.append(tenant_id)
+                try:
+                    conn.rollback()
+                    upsert_component_status(
+                        conn, tenant_id=tenant_id, component="GNN",
+                        attempt_status="FAILED", reason_code="TRAINING_FAILED",
+                        reason_detail=str(exc), run_id=run_id,
+                    )
+                except Exception:
+                    logger.error(
+                        "Tenant %d GNN failure status could not be persisted",
+                        tenant_id, exc_info=True,
+                    )
             finally:
                 _log_peak_rss(f"after tenant {tenant_id}")
     finally:

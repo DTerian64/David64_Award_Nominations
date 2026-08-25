@@ -271,6 +271,40 @@ def get_tenant_integrity_config(tenant_id: int) -> dict:
         return {}
 
 
+# ── Producer-owned component availability ────────────────────────────────────
+
+def get_integrity_component_statuses(tenant_id: int) -> dict[str, dict]:
+    """Return current RF, Graph, and GNN producer status for one tenant."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT Component, ServingStatus, ServingVersion, ServingAsOf,
+                   LastAttemptStatus, ReasonCode, ReasonDetail, DiagnosticsJson,
+                   LastAttemptAt, LastSuccessfulAt, RunId, UpdatedAt
+            FROM dbo.IntegrityComponentStatus
+            WHERE TenantId = ?
+        """, tenant_id)
+        rows = cursor.fetchall()
+
+    return {
+        str(row[0]).upper(): {
+            "component": str(row[0]).upper(),
+            "serving_status": row[1],
+            "serving_version": row[2],
+            "serving_as_of": row[3],
+            "last_attempt_status": row[4],
+            "reason_code": row[5],
+            "reason_detail": row[6],
+            "diagnostics_json": row[7],
+            "last_attempt_at": row[8],
+            "last_successful_at": row[9],
+            "run_id": row[10],
+            "updated_at": row[11],
+        }
+        for row in rows
+    }
+
+
 # ── Nomination details ────────────────────────────────────────────────────────
 
 def get_nomination_details(nomination_id: int) -> Optional[dict]:
@@ -737,29 +771,41 @@ def save_fraud_decision_result(
             WHEN MATCHED THEN UPDATE SET
                 PolicyVersion = ?,
                 RfAvailable = ?, RfScore = ?, RfRiskLevel = ?,
+                RfUnavailableReasonCode = ?, RfUnavailableReasonDetail = ?,
                 GraphAvailable = ?, GraphScore = ?, GraphRiskLevel = ?,
+                GraphUnavailableReasonCode = ?, GraphUnavailableReasonDetail = ?,
                 GnnAvailable = ?, GnnScore = ?, GnnRiskLevel = ?,
+                GnnUnavailableReasonCode = ?, GnnUnavailableReasonDetail = ?,
                 FinalScore = ?, FinalRiskLevel = ?, DecisiveModels = ?,
                 ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT (
                 NominationId, PolicyVersion,
                 RfAvailable, RfScore, RfRiskLevel,
+                RfUnavailableReasonCode, RfUnavailableReasonDetail,
                 GraphAvailable, GraphScore, GraphRiskLevel,
+                GraphUnavailableReasonCode, GraphUnavailableReasonDetail,
                 GnnAvailable, GnnScore, GnnRiskLevel,
+                GnnUnavailableReasonCode, GnnUnavailableReasonDetail,
                 FinalScore, FinalRiskLevel, DecisiveModels, ScoredBy
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, (
             nomination_id,
             policy_version,
             int(bool(rf_result.get("model_available"))), rf_result.get("fraud_score"), rf_result.get("risk_level"),
+            rf_result.get("unavailable_reason"), rf_result.get("unavailable_detail"),
             int(bool(graph_result.get("model_available"))), graph_result.get("fraud_score"), graph_result.get("risk_level"),
+            graph_result.get("unavailable_reason"), graph_result.get("unavailable_detail"),
             int(bool(gnn_result.get("model_available"))), gnn_result.get("fraud_score"), gnn_result.get("risk_level"),
+            gnn_result.get("unavailable_reason"), gnn_result.get("unavailable_detail"),
             decision.get("final_score"), decision.get("risk_level"), decisive,
             _AUDIT_ACTOR,
             nomination_id, policy_version,
             int(bool(rf_result.get("model_available"))), rf_result.get("fraud_score"), rf_result.get("risk_level"),
+            rf_result.get("unavailable_reason"), rf_result.get("unavailable_detail"),
             int(bool(graph_result.get("model_available"))), graph_result.get("fraud_score"), graph_result.get("risk_level"),
+            graph_result.get("unavailable_reason"), graph_result.get("unavailable_detail"),
             int(bool(gnn_result.get("model_available"))), gnn_result.get("fraud_score"), gnn_result.get("risk_level"),
+            gnn_result.get("unavailable_reason"), gnn_result.get("unavailable_detail"),
             decision.get("final_score"), decision.get("risk_level"), decisive, _AUDIT_ACTOR,
         ))
         conn.commit()

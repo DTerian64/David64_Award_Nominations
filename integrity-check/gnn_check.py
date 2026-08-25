@@ -58,6 +58,7 @@ from datetime import date, datetime, timedelta, timezone
 import numpy as np
 import torch
 
+import component_availability
 from utils import db
 
 logger = logging.getLogger("integrity_check.gnn_check")
@@ -293,10 +294,15 @@ def _risk_level(score: int, t: dict) -> str:
     return "NONE"
 
 
-def _unavailable(reason: str, flags: list[str] | None = None) -> dict:
-    return {
+def _unavailable(
+    reason: str,
+    flags: list[str] | None = None,
+    component_status: dict | None = None,
+    *,
+    source_missing: bool = False,
+) -> dict:
+    result = {
         "model_available":  False,
-        "unavailable_reason": reason,
         "fraud_score":      0,
         "fraud_prob":       0.0,
         "risk_level":       "NONE",
@@ -305,11 +311,19 @@ def _unavailable(reason: str, flags: list[str] | None = None) -> dict:
         "model_version":    None,
         "embedding_as_of":  None,
     }
+    result.update(component_availability.unavailable_metadata(
+        "GNN", reason, component_status, source_missing=source_missing
+    ))
+    return result
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def assess_gnn(details: dict, tenant_id: int) -> dict:
+def assess_gnn(
+    details: dict,
+    tenant_id: int,
+    component_status: dict | None = None,
+) -> dict:
     """
     Score one nomination with the GNN decoder.
 
@@ -318,19 +332,25 @@ def assess_gnn(details: dict, tenant_id: int) -> dict:
     never as "clean".
     """
     try:
-        return _assess_gnn_inner(details, tenant_id)
+        return _assess_gnn_inner(details, tenant_id, component_status)
     except Exception as exc:
         logger.error(
             "GNN assessment failed for nomination %s (tenant %d): %s",
             details.get("nomination_id"), tenant_id, exc, exc_info=True,
         )
-        return _unavailable("exception")
+        return _unavailable("INFERENCE_FAILED", component_status=component_status)
 
 
-def _assess_gnn_inner(details: dict, tenant_id: int) -> dict:
+def _assess_gnn_inner(
+    details: dict,
+    tenant_id: int,
+    component_status: dict | None = None,
+) -> dict:
     head = _get_head(tenant_id)
     if head is None:
-        return _unavailable("no_model")
+        return _unavailable(
+            "NO_MODEL", component_status=component_status, source_missing=True
+        )
 
     model_version = head["model_version"]
     nominator_id   = details["nominator_id"]
@@ -374,13 +394,17 @@ def _assess_gnn_inner(details: dict, tenant_id: int) -> dict:
                 "and dbo.GNN_UserEmbeddings have diverged.",
                 details.get("nomination_id"), tenant_id, model_version, have,
             )
-            return _unavailable("version_unavailable", ["[GNN] embedding version gap"])
+            return _unavailable(
+                "VERSION_UNAVAILABLE", ["[GNN] embedding version gap"], component_status
+            )
 
         logger.info(
             "GNN cold-start: nomination %s tenant %d has no embeddings for %s",
             details.get("nomination_id"), tenant_id, who,
         )
-        return _unavailable("cold_start_user", ["[GNN] cold-start user"])
+        return _unavailable(
+            "COLD_START_USER", ["[GNN] cold-start user"], component_status
+        )
 
     emb_dim = int(head["emb_dim"])
 
@@ -453,7 +477,7 @@ def _assess_gnn_inner(details: dict, tenant_id: int) -> dict:
     thresholds = _thresholds(tenant_id)
     risk = _risk_level(fraud_score, thresholds)
 
-    return {
+    result = {
         "model_available":  True,
         "fraud_score":      fraud_score,
         "fraud_prob":       round(fraud_prob, 4),
@@ -463,3 +487,5 @@ def _assess_gnn_inner(details: dict, tenant_id: int) -> dict:
         "model_version":    model_version,
         "embedding_as_of":  embedding_as_of,
     }
+    result.update(component_availability.available_metadata(component_status))
+    return result

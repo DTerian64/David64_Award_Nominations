@@ -3,8 +3,8 @@ Fraud Detection ML Model Training  —  Multi-Tenant Edition
 ===========================================================
 
 Trains one Random Forest model per tenant and saves each to its own pickle:
-    Output/fraud_detection_model_tenant_1.pkl
-    Output/fraud_detection_model_tenant_2.pkl
+    Output/random_forest_tenant_1.pkl
+    Output/random_forest_tenant_2.pkl
     ...
 
 Why separate files?
@@ -25,9 +25,10 @@ container restart required.
 
 import json
 import os
+import uuid
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 import pyodbc
 import pickle
 from sklearn.model_selection import train_test_split
@@ -39,6 +40,8 @@ import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
+
+from component_status import upsert_component_status
 
 # Default sentence-transformer model for English tenants.
 # Per-tenant overrides are read from dbo.Tenants.desc_check_config at
@@ -54,8 +57,8 @@ load_dotenv(env_path)
 
 def _upload_artefact(local_path: Path) -> None:
     """
-    Upload a local file to Azure Blob Storage and keep it under the same
-    filename (no path prefix).  Uses the User-Assigned Managed Identity
+    Upload a local file to Azure Blob Storage under its local filename.
+    Uses the User-Assigned Managed Identity
     injected via MI_CLIENT_ID; falls back to env-var key auth when
     running locally with AZURE_STORAGE_KEY set.
 
@@ -922,7 +925,7 @@ def score_and_save_historical(
 def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     """
     Train a Random Forest for one tenant and persist it to
-    Output/fraud_detection_model_tenant_{tenant_id}.pkl.
+    Output/random_forest_tenant_{tenant_id}.pkl.
     """
     print(f"\n[Tenant {tenant_id}] Training model ...")
 
@@ -1059,7 +1062,9 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         appr_scaler = None
 
     # ── Persist pkl ───────────────────────────────────────────────────────────
+    model_version = f"rf-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-t{tenant_id}"
     model_data = {
+        'model_version':         model_version,
         # P2P model — used for live submission-time fraud scoring
         'p2p_model':            p2p_rf,
         'p2p_scaler':           p2p_scaler,
@@ -1078,7 +1083,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         'embed_model_name':     embed_model_name,
     }
 
-    pkl_filename = OUTPUT_DIR / f"fraud_detection_model_tenant_{tenant_id}.pkl"
+    pkl_filename = OUTPUT_DIR / f"random_forest_tenant_{tenant_id}.pkl"
     with open(pkl_filename, 'wb') as f:
         pickle.dump(model_data, f)
 
@@ -1104,7 +1109,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
 
     return model_data, {
         'p2p_auc': p2p_auc, 'appr_auc': appr_auc,
-        'training_samples': len(df_train)
+        'training_samples': len(df_train), 'model_version': model_version,
     }
 
 
@@ -1151,7 +1156,7 @@ def create_visualizations(
         ax.legend()
 
     plt.tight_layout()
-    png_filename = OUTPUT_DIR / f"fraud_detection_analysis_tenant_{tenant_id}.png"
+    png_filename = OUTPUT_DIR / f"random_forest_tenant_{tenant_id}.png"
     plt.savefig(png_filename, dpi=300, bbox_inches='tight')
     print(f"✓ Visualisation saved to '{png_filename}'")
     _upload_artefact(png_filename)
@@ -1161,6 +1166,15 @@ def create_visualizations(
 # ============================================================================
 # MAIN — iterate over all tenants
 # ============================================================================
+
+def _record_rf_status(**kwargs) -> None:
+    """Write RF producer status with a short, independent DB connection."""
+    status_conn = get_db_connection()
+    try:
+        upsert_component_status(status_conn, component="RF", **kwargs)
+    finally:
+        status_conn.close()
+
 
 def main(tenants_to_process: list | None = None) -> None:
     """Entry point called by run_job.py (Stage 1)."""
@@ -1180,6 +1194,7 @@ def main(tenants_to_process: list | None = None) -> None:
 
     print(f"\nFound {len(tenants)} tenant(s): {[t[0] for t in tenants]}")
 
+    run_id = str(uuid.uuid4())
     results = {}
     failed = []
     for tenant_id, tenant_name in tenants:
@@ -1196,18 +1211,46 @@ def main(tenants_to_process: list | None = None) -> None:
                     f"(minimum {MIN_TRAINING_SAMPLES} required)."
                 )
                 results[tenant_id] = "SKIPPED (insufficient data)"
+                _record_rf_status(
+                    tenant_id=tenant_id, attempt_status="SKIPPED",
+                    reason_code="BELOW_MINIMUM_VOLUME",
+                    reason_detail=(f"{len(df)} nominations; requires "
+                                   f"{MIN_TRAINING_SAMPLES}"),
+                    diagnostics={
+                        "nomination_count": len(df),
+                        "minimum_training_samples": MIN_TRAINING_SAMPLES,
+                    },
+                    run_id=run_id,
+                )
                 continue
 
-            _, stats = train_model(df, tenant_id)
+            model_data, stats = train_model(df, tenant_id)
             if stats.get('skipped'):
                 print(f"⚠  Tenant {tenant_id} skipped — no fraud patterns found.")
                 results[tenant_id] = "SKIPPED (no fraud patterns — model will be trained once patterns emerge)"
+                _record_rf_status(
+                    tenant_id=tenant_id, attempt_status="SKIPPED",
+                    reason_code="NO_FRAUD_PATTERNS",
+                    reason_detail="No bootstrap fraud patterns were available to train the RF.",
+                    diagnostics={"nomination_count": len(df)}, run_id=run_id,
+                )
                 continue
             p2p_auc_str  = f"{stats['p2p_auc']:.4f}"  if stats.get('p2p_auc')  else "n/a"
             appr_auc_str = f"{stats['appr_auc']:.4f}" if stats.get('appr_auc') else "n/a"
             results[tenant_id] = (
                 f"OK  ({stats['training_samples']} samples, "
                 f"P2P AUC={p2p_auc_str}, Approver AUC={appr_auc_str})"
+            )
+            _record_rf_status(
+                tenant_id=tenant_id, attempt_status="SUCCEEDED",
+                serving_status="AVAILABLE",
+                serving_version=model_data.get("model_version"),
+                diagnostics={
+                    "training_samples": stats["training_samples"],
+                    "p2p_auc": stats.get("p2p_auc"),
+                    "approver_auc": stats.get("appr_auc"),
+                },
+                run_id=run_id,
             )
 
         except Exception as exc:
@@ -1216,6 +1259,14 @@ def main(tenants_to_process: list | None = None) -> None:
             print(traceback.format_exc())
             results[tenant_id] = f"FAILED — {exc}"
             failed.append(tenant_id)
+            try:
+                _record_rf_status(
+                    tenant_id=tenant_id, attempt_status="FAILED",
+                    reason_code="TRAINING_FAILED", reason_detail=str(exc),
+                    run_id=run_id,
+                )
+            except Exception:
+                print(f"❌  Tenant {tenant_id} RF failure status could not be persisted")
 
     print("\n" + "=" * 60)
     print("TRAINING SUMMARY")

@@ -56,7 +56,7 @@ class GraphCheckTests(unittest.TestCase):
     def test_missing_snapshot_is_no_opinion_not_clean(self, _lookup):
         result = graph_check.assess_graph(DETAILS, tenant_id=7)
         self.assertFalse(result["model_available"])
-        self.assertEqual(result["unavailable_reason"], "no_snapshot")
+        self.assertEqual(result["unavailable_reason"], "NO_SNAPSHOT")
 
     @patch("graph_check.db.get_tenant_integrity_config", return_value={})
     @patch("graph_check.db.get_graph_component_snapshot")

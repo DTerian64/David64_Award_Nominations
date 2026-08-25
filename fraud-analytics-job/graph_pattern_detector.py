@@ -45,6 +45,8 @@ import pyodbc
 from pathlib import Path
 from dotenv import load_dotenv
 
+from component_status import upsert_component_status
+
 # Same .env loading as train_fraud_model.py / forecast_models.py so this stage
 # can be run standalone locally. No-op in Container Apps (env injected).
 env_path = Path(__file__).resolve().parent.parent / ".env"
@@ -1225,6 +1227,100 @@ def _populate_graph_flag_snapshots(
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _process_tenant(
+    conn,
+    tenant_id: int,
+    findings_table: str,
+    default_window_days: int,
+    ring_max_cluster: int,
+    run_id: str,
+) -> int:
+    """Detect and persist one tenant's graph snapshot and component status."""
+    logger.info("Tenant %d", tenant_id)
+
+    tenant_config = _load_tenant_integrity_config(conn, tenant_id)
+    window_days = int(
+        tenant_config.get("graph_pattern", {})
+                     .get("detection_window_days", default_window_days)
+    )
+    if tenant_config.get("graph_pattern", {}).get("detection_window_days"):
+        logger.info("  Detection window: %d days (tenant config)", window_days)
+    else:
+        logger.info("  Detection window: %d days (default)", window_days)
+
+    nominations = _load_nominations(conn, tenant_id, window_days)
+    users = _load_users(conn, tenant_id)
+    ever_active_ids = _load_ever_active_user_ids(conn, tenant_id)
+    logger.info(
+        "  Nominations (last %d days): %d  |  Users: %d  |  Ever-active: %d",
+        window_days, len(nominations), len(users), len(ever_active_ids),
+    )
+    if not nominations:
+        logger.info("  No nominations in window — skipping.")
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GRAPH", attempt_status="SKIPPED",
+            reason_code="NO_NOMINATIONS_IN_WINDOW",
+            reason_detail=f"No nominations were found in the {window_days}-day detection window.",
+            diagnostics={
+                "nomination_count": 0, "user_count": len(users),
+                "window_days": window_days,
+            },
+            run_id=run_id,
+        )
+        return 0
+
+    existing_hashes = _load_existing_hashes(conn, tenant_id, findings_table)
+    logger.info("  Existing hashes in table: %d", len(existing_hashes))
+
+    detected_findings: list[dict] = []
+    detected_findings.extend(detect_rings(nominations, users, tenant_id, run_id, ring_max_cluster))
+    detected_findings.extend(detect_super_nominators(nominations, tenant_id, run_id))
+    detected_findings.extend(detect_deserts(ever_active_ids, users, tenant_id, run_id))
+    detected_findings.extend(detect_approver_affinity(nominations, tenant_id, run_id))
+    detected_findings.extend(detect_copy_paste(nominations, tenant_id, run_id, conn))
+    detected_findings.extend(detect_transactional(nominations, tenant_id, run_id))
+    detected_findings.extend(detect_hidden_candidate(nominations, users, tenant_id, run_id))
+
+    _save_findings(conn, detected_findings, findings_table, existing_hashes)
+    logger.info("  Tenant %d total findings: %d", tenant_id, len(detected_findings))
+
+    as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if not _has_user_graph_flags(conn, tenant_id):
+        snapshot_source = _load_all_findings_for_snapshot(conn, tenant_id, findings_table)
+        logger.info(
+            "  Bootstrap: no prior UserGraphFlags for tenant %d — "
+            "loading %d finding(s) from %s",
+            tenant_id, len(snapshot_source), findings_table,
+        )
+    else:
+        snapshot_source = detected_findings
+        logger.info(
+            "  Snapshot source: %d detected finding(s) (pre-dedup, window-bounded)",
+            len(detected_findings),
+        )
+
+    _populate_graph_flag_snapshots(
+        conn, tenant_id, snapshot_source, nominations, as_of_date
+    )
+    upsert_component_status(
+        conn, tenant_id=tenant_id, component="GRAPH", attempt_status="SUCCEEDED",
+        serving_status="AVAILABLE",
+        serving_version=f"graph-{as_of_date}-{run_id[:8]}",
+        serving_as_of=as_of_date,
+        diagnostics={
+            "nomination_count": len(nominations), "user_count": len(users),
+            "finding_count": len(detected_findings), "window_days": window_days,
+        },
+        run_id=run_id,
+    )
+
+    finding_count = len(detected_findings)
+    del nominations, users, detected_findings, snapshot_source
+    gc.collect()
+    logger.info("  Tenant %d memory freed.", tenant_id)
+    return finding_count
+
+
 def main(tenants_to_process: list | None = None) -> None:
     log_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
     logging.basicConfig(
@@ -1261,107 +1357,42 @@ def main(tenants_to_process: list | None = None) -> None:
         tenants = [t for t in tenants if t in tenants_to_process]
         if not tenants:
             logger.warning("Tenant(s) %s not found in database. Exiting.", tenants_to_process)
+            conn.close()
             return
     logger.info("Tenants to process: %s", tenants)
 
     total_findings = 0
+    failed: list[int] = []
 
     for tenant_id in tenants:
-        logger.info("Tenant %d", tenant_id)
-
-        # Per-tenant detection window — falls back to global default if not set
-        # in integrity_config.graph_pattern.detection_window_days.
-        tenant_config = _load_tenant_integrity_config(conn, tenant_id)
-        window_days = int(
-            tenant_config.get("graph_pattern", {})
-                         .get("detection_window_days", default_window_days)
-        )
-        if tenant_config.get("graph_pattern", {}).get("detection_window_days"):
-            logger.info("  Detection window: %d days (tenant config)", window_days)
-        else:
-            logger.info("  Detection window: %d days (default)", window_days)
-
-        # Windowed nominations for all detectors except deserts
-        nominations = _load_nominations(conn, tenant_id, window_days)
-        users       = _load_users(conn, tenant_id)
-
-        # All-time active set for desert detection — unaffected by the window
-        ever_active_ids = _load_ever_active_user_ids(conn, tenant_id)
-
-        logger.info(
-            "  Nominations (last %d days): %d  |  Users: %d  |  Ever-active: %d",
-            window_days, len(nominations), len(users), len(ever_active_ids),
-        )
-        if not nominations:
-            logger.info("  No nominations in window — skipping.")
-            continue
-
-        # Load hashes of findings already in the table for this tenant.
-        # All seven detectors share this set — a finding produced by any
-        # detector is skipped if its hash already exists.
-        existing_hashes = _load_existing_hashes(conn, tenant_id, findings_table)
-        logger.info("  Existing hashes in table: %d", len(existing_hashes))
-
-        # detected_findings — ALL patterns found this run (pre-dedup).
-        # This is what gets passed to _save_findings (which deduplicates
-        # internally) AND to _populate_graph_flag_snapshots on normal runs.
-        # Keeping it pre-dedup means the snapshot always reflects every pattern
-        # currently detectable in the window, not just ones new to the DB.
-        detected_findings: list[dict] = []
-
-        detected_findings.extend(detect_rings(nominations, users, tenant_id, run_id, ring_max_cluster))
-        detected_findings.extend(detect_super_nominators(nominations, tenant_id, run_id))
-        detected_findings.extend(detect_deserts(ever_active_ids, users, tenant_id, run_id))
-        detected_findings.extend(detect_approver_affinity(nominations, tenant_id, run_id))
-        detected_findings.extend(detect_copy_paste(nominations, tenant_id, run_id, conn))
-        detected_findings.extend(detect_transactional(nominations, tenant_id, run_id))
-        detected_findings.extend(detect_hidden_candidate(nominations, users, tenant_id, run_id))
-
-        # Persist — dedup against existing_hashes before inserting
-        _save_findings(conn, detected_findings, findings_table, existing_hashes)
-        total_findings += len(detected_findings)
-        logger.info("  Tenant %d total findings: %d", tenant_id, len(detected_findings))
-
-        # ── Snapshot source selection ─────────────────────────────────────────
-        # Bootstrap (first run after migration 0028): UserGraphFlags is empty
-        #   for this tenant → load all historical findings from GraphPatternFindings
-        #   to capture patterns detected in previous runs / wider windows.
-        # Normal run: use detected_findings (pre-dedup, window-bounded) — cost
-        #   stays proportional to the detection window, never grows with the table.
-        as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        if not _has_user_graph_flags(conn, tenant_id):
-            snapshot_source = _load_all_findings_for_snapshot(
-                conn, tenant_id, findings_table
+        try:
+            total_findings += _process_tenant(
+                conn, tenant_id, findings_table, default_window_days,
+                ring_max_cluster, run_id,
             )
-            logger.info(
-                "  Bootstrap: no prior UserGraphFlags for tenant %d — "
-                "loading %d finding(s) from %s",
-                tenant_id, len(snapshot_source), findings_table,
-            )
-        else:
-            snapshot_source = detected_findings
-            logger.info(
-                "  Snapshot source: %d detected finding(s) (pre-dedup, window-bounded)",
-                len(detected_findings),
-            )
-
-        _populate_graph_flag_snapshots(
-            conn, tenant_id, snapshot_source, nominations, as_of_date
-        )
-
-        # Free all tenant-scoped data before loading the next tenant.
-        # nominations and users can be large (11 K+ rows); tenant data is
-        # never shared across tenants so there is no reason to keep it.
-        del nominations, users, detected_findings, snapshot_source
-        gc.collect()
-        logger.info("  Tenant %d memory freed.", tenant_id)
+        except Exception as exc:
+            logger.error("Tenant %d graph analytics failed: %s", tenant_id, exc, exc_info=True)
+            failed.append(tenant_id)
+            try:
+                conn.rollback()
+                upsert_component_status(
+                    conn, tenant_id=tenant_id, component="GRAPH",
+                    attempt_status="FAILED", reason_code="ANALYTICS_FAILED",
+                    reason_detail=str(exc), run_id=run_id,
+                )
+            except Exception:
+                logger.error(
+                    "Tenant %d Graph failure status could not be persisted",
+                    tenant_id, exc_info=True,
+                )
 
     conn.close()
     logger.info(
         "graph_pattern_detector — done. RunId=%s  Total findings=%d",
         run_id, total_findings,
     )
+    if failed:
+        raise RuntimeError(f"Graph analytics failed for tenant(s): {failed}")
 
 
 if __name__ == "__main__":
