@@ -30,20 +30,19 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import uuid
 import warnings
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyodbc
 from dotenv import load_dotenv
 
-# Same .env loading as train_fraud_model.py / graph_pattern_detector.py so this
+# Same .env loading as train_rf_model.py / graph_analytics.py so this
 # stage can be run standalone locally. No-op in Container Apps (env injected).
-env_path = Path(__file__).resolve().parent.parent / ".env"
+JOB_DIR = Path(__file__).resolve().parents[1]
+env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
 warnings.filterwarnings("ignore")
@@ -67,11 +66,11 @@ _HOLIDAY_SET: set = set()
 
 # ── DB ──────────────────────────────────────────────────────────────────────────
 
-from db_conn import connect
+from utils.db_conn import connect  # noqa: E402 - .env must load before credential setup
 
 
 def get_db_connection():
-    """Open an Azure SQL connection via Managed Identity (see db_conn.connect)."""
+    """Open an Azure SQL connection via Managed Identity (see utils.db_conn.connect)."""
     return connect()
 
 
@@ -207,7 +206,8 @@ def smape(y_true, y_pred):
     """
     y_true, y_pred = np.asarray(y_true, float), np.asarray(y_pred, float)
     # Denominator |actual| + |forecast|; clamp exact zeros to 1e-9 to avoid 0/0.
-    d = np.abs(y_true) + np.abs(y_pred); d[d == 0] = 1e-9
+    d = np.abs(y_true) + np.abs(y_pred)
+    d[d == 0] = 1e-9
     return float(100 * np.mean(2 * np.abs(y_pred - y_true) / d))
 
 
@@ -399,7 +399,8 @@ def rolling_backtest(y, model_fn, folds, h, m):
     A fold is skipped when there isn't enough history left of the cut (cut <= m)
     for MASE's seasonal denominator, so short series simply yield fewer folds.
     """
-    y = np.asarray(y, float); n = len(y)
+    y = np.asarray(y, float)
+    n = len(y)
     # Adaptive seasonal period for scoring: only trust the annual season (m) when
     # there are >= 2 full cycles of history to validate it; otherwise fall back to a
     # non-seasonal MASE (m_eff = 1, scored vs a lag-1 naive). Without this, a tenant
@@ -414,13 +415,17 @@ def rolling_backtest(y, model_fn, folds, h, m):
         train, test = y[:cut], y[cut:cut + h]
         if len(test) < h:               # not a full horizon left to score
             continue
-        pt, lo, up = model_fn(train, h); pt = pt[:len(test)]
-        mae.append(float(np.mean(np.abs(test - pt)))); sm.append(smape(test, pt))
-        rm.append(rmse(test, pt)); ma.append(mase(test, pt, train, m_eff))
+        pt, lo, up = model_fn(train, h)
+        pt = pt[:len(test)]
+        mae.append(float(np.mean(np.abs(test - pt))))
+        sm.append(smape(test, pt))
+        rm.append(rmse(test, pt))
+        ma.append(mase(test, pt, train, m_eff))
         # coverage = fraction of actuals that fell inside the prediction band
         # (a calibrated 80% interval should land near 0.80).
         cov.append(float(np.mean((test >= lo[:len(test)]) & (test <= up[:len(test)]))))
-    agg = lambda a: round(float(np.mean(a)), 4) if a else None
+    def agg(a):
+        return round(float(np.mean(a)), 4) if a else None
     return {"MASE": agg(ma), "sMAPE": agg(sm), "RMSE": agg(rm),
             "coverage": agg(cov), "folds": len(ma)}
 

@@ -7,7 +7,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import labels
+from modeling import labels
 
 
 class HumanConfirmedLabelTests(unittest.TestCase):

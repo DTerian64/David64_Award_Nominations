@@ -3,7 +3,7 @@ labels.py — one definition of "fraud" for every model
 ======================================================
 
 Both the Random Forest and the GNN need a training label. Today that label is a
-CASE expression buried in a 500-line SQL string inside train_fraud_model.load_data():
+CASE expression buried in a 500-line SQL string inside train_rf_model.load_data():
 
     IsFraud = CASE WHEN p2p.RiskLevel IN ('HIGH','CRITICAL') THEN 1 ELSE 0 END
 
@@ -66,7 +66,7 @@ Scope
 Bootstrap labels are NOT produced here. bootstrap_fraud_labels() runs an
 IsolationForest over P2P_FEATURE_COLUMNS, so it needs the Random Forest's
 engineered feature matrix, which this module has no business computing. It stays
-in train_fraud_model.py as an RF-only cold-start path.
+in train_rf_model.py as an RF-only cold-start path.
 
 The GNN does not inherit it. Training a GNN on labels produced by an anomaly
 detector fitted to the Random Forest's feature space would be a particularly
@@ -88,7 +88,7 @@ SOURCE_HRBP       = "hrbp"
 SOURCE_MODEL      = "model"
 SOURCE_UNLABELLED = "unlabelled"
 
-# Inclusion rules — lifted verbatim from train_fraud_model.load_data() so the two
+# Inclusion rules — lifted verbatim from train_rf_model.load_data() so the two
 # paths select the same population. Any change here changes the Random Forest.
 #
 #   PendingHRBPReview                     excluded — no confirmed label yet
@@ -229,7 +229,7 @@ def compare_with_legacy(
     tenant_id: int,
 ) -> dict:
     """
-    Read-only parity check against train_fraud_model.load_data()'s own IsFraud.
+    Read-only parity check against train_rf_model.load_data()'s own IsFraud.
 
     This is the safety net for the strangler rollout: while the legacy CASE stays
     authoritative, the job runs both and reports divergence. A clean run across

@@ -1,5 +1,5 @@
 """
-fraud-analytics-job/db_conn.py -- shared Azure SQL connection (ADR-0001).
+fraud-analytics-job/utils/db_conn.py -- shared Azure SQL connection.
 
 Entra token via DefaultAzureCredential: the job's Managed Identity in Azure
 (selected by MI_CLIENT_ID) or the developer's az / VS Code login locally.

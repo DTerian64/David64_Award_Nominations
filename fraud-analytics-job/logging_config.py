@@ -21,8 +21,8 @@ import sys
 from datetime import datetime
 
 # Absolute path of this job's directory. Records whose pathname falls outside
-# this dir are treated as third-party. All stage modules (run_job,
-# forecast_models, train_fraud_model, graph_pattern_detector) live here.
+# this dir are treated as third-party. The entrypoint and stage modules under
+# modeling/ all live beneath this directory.
 _APP_DIR = os.path.abspath(os.path.dirname(__file__))
 
 _STANDARD_ATTRS = frozenset({

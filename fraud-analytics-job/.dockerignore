@@ -27,7 +27,7 @@ tests/
 
 # ── Build / run artefacts ────────────────────────────────────────────────────
 # Output/ holds trained .pkl models and .png charts from local runs. It is
-# recreated at runtime by train_fraud_model.py (OUTPUT_DIR.mkdir), so shipping a
+# recreated at runtime by modeling/train_rf_model.py (OUTPUT_DIR.mkdir), so shipping a
 # stale local copy is pure weight — and a stale local model in the image would
 # be actively confusing during an incident.
 Output/

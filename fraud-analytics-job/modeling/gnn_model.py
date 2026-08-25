@@ -127,7 +127,7 @@ class GNNFraudModel(nn.Module):
 def pr_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     """
     Average precision. Implemented here rather than pulled from sklearn so this
-    module has no sklearn dependency; train_fraud_model.py already owns that.
+    module has no sklearn dependency; train_rf_model.py already owns that.
     Returns nan when only one class is present.
     """
     y_true = np.asarray(y_true).astype(int)

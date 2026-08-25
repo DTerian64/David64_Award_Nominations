@@ -11,10 +11,10 @@ graph signals at both training time and inference time without scanning the JSON
 columns of dbo.GraphPatternFindings.
 
 dbo.UserGraphFlags — one row per (TenantId, UserId, AsOfDate).
-  Populated by graph_pattern_detector.py after each weekly run.  The batch job
+  Populated by modeling/graph_analytics.py after each weekly run. The batch job
   APPENDS a new row rather than overwriting, producing a time-series of snapshots.
 
-  At training time, train_fraud_model.py uses a point-in-time OUTER APPLY to
+  At training time, modeling/train_rf_model.py uses a point-in-time OUTER APPLY to
   join the closest snapshot whose AsOfDate is ≤ each nomination's NominationDate,
   eliminating data leakage from future graph findings.
 

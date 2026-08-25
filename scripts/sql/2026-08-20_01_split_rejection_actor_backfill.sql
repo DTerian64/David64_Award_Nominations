@@ -9,7 +9,7 @@
        handler.py:91   Check A description quality gate  -> "Fraud Detection"
        handler.py:209  CRITICAL ML auto-reject           -> "Fraud Detection"
 
-   train_fraud_model.load_data() excludes Rejected + 'Fraud Detection' rows on
+   modeling.train_rf_model.load_data() excludes Rejected + 'Fraud Detection' rows on
    the grounds that a failed description gate is not a fraud signal. Because the
    two paths shared a string, that exclusion also discarded every genuine ML
    auto-reject.

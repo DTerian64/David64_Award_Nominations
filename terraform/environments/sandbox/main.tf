@@ -810,7 +810,7 @@ module "fraud_analytics_job" {
     { name = "RING_MAX_CLUSTER_SIZE",     value = tostring(var.fraud_analytics_ring_max_cluster_size) },
 
     # ── GNN training stage ────────────────────────────────────────────────────
-    # Defaults in train_gnn_model.py match these; they are declared explicitly
+    # Defaults in modeling/train_gnn_model.py match these; they are declared explicitly
     # so the operative values are visible in the plan rather than buried in code.
     # GNN_ENABLED is the kill switch: set false to skip the stage without
     # redeploying the image.

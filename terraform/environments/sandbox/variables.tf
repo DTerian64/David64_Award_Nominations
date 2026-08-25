@@ -225,7 +225,7 @@ variable "fraud_analytics_ring_max_cluster_size" {
 }
 
 # ── GNN training stage ────────────────────────────────────────────────────────
-# These mirror the defaults in fraud-analytics-job/train_gnn_model.py. They are
+# These mirror the defaults in fraud-analytics-job/modeling/train_gnn_model.py. They are
 # surfaced as variables so a value change shows up in `terraform plan` instead of
 # requiring an image rebuild.
 

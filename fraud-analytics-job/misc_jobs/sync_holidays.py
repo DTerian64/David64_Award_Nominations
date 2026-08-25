@@ -22,18 +22,17 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import urllib.error
 import urllib.request
 from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
-import pyodbc
 from dotenv import load_dotenv
 
 # Same .env loading as the other stages so this can be run standalone locally.
-env_path = Path(__file__).resolve().parent.parent / ".env"
+JOB_DIR = Path(__file__).resolve().parents[1]
+env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
 logger = logging.getLogger("sync_holidays")
@@ -44,7 +43,7 @@ YEARS_AHEAD = 1
 NAGER_URL = "https://date.nager.at/api/v3/PublicHolidays/{year}/{cc}"
 
 
-from db_conn import connect
+from utils.db_conn import connect  # noqa: E402 - .env must load before credential setup
 
 
 def get_db_connection():

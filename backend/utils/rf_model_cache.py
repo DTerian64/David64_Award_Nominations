@@ -2,7 +2,7 @@
 Random Forest Model Cache — Multi-Tenant Blob-Direct Edition
 =============================================================
 
-One Random Forest model per tenant is trained by train_fraud_model.py and
+One Random Forest model per tenant is trained by modeling/train_rf_model.py and
 stored in Azure Blob Storage as:
     ml-models/random_forest_tenant_1.pkl
     ml-models/random_forest_tenant_2.pkl
@@ -173,7 +173,7 @@ class RandomForestModelCache:
             if isinstance(exc, ResourceNotFoundError):
                 logger.warning(
                     "[Tenant %d] RF model blob not found: %s/%s. "
-                    "Run train_fraud_model.py to generate it.",
+                    "Run modeling/train_rf_model.py to generate it.",
                     tenant_id, container_name, self._blob_name(tenant_id),
                 )
             else:
@@ -230,7 +230,7 @@ class RandomForestModelCache:
             else:
                 logger.warning(
                     "[Tenant %d] ⚠️  Model unavailable — returning None. "
-                    "Run train_fraud_model.py to generate a per-tenant model.",
+                    "Run modeling/train_rf_model.py to generate a per-tenant model.",
                     tenant_id,
                 )
             return model

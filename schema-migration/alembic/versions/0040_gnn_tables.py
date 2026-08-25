@@ -30,7 +30,7 @@ through schema-migration.
 
 Why it matters beyond compliance: ConfirmedBy is the only thing in the schema
 that distinguishes a human fraud label from one the Random Forest wrote about
-itself. train_fraud_model.load_data() currently reads RiskLevel and cannot tell
+itself. modeling.train_rf_model.load_data() currently reads RiskLevel and cannot tell
 them apart. Reliable model-quality claims and GNN evaluation against human
 labels depend on that distinction being available.
 

@@ -10,8 +10,8 @@ Introduces the Azure SQL Graph layer and the GraphPatternFindings results table
 that back the fraud-analytics-job weekly pipeline.
 
 The pipeline runs two stages:
-  1. train_fraud_model.py   — Random Forest retrain → dbo.FraudScores
-  2. graph_pattern_detector.py — graph + NLP detection → dbo.GraphPatternFindings
+  1. modeling/train_rf_model.py — Random Forest retrain → dbo.FraudScores
+  2. modeling/graph_analytics.py — graph + NLP detection → dbo.GraphPatternFindings
 
 Changes
 -------

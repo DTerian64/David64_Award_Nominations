@@ -1,8 +1,8 @@
 # fraud-analytics-job/requirements.txt
 # ─────────────────────────────────────────────────────────────────────────────
 # Combined dependencies for:
-#   analytics/Fraud_Detection/train_fraud_model.py  (Random Forest pipeline)
-#   scripts/graph_pattern_detector.py               (Graph + NLP pipeline)
+#   modeling/train_rf_model.py                      (Random Forest pipeline)
+#   modeling/graph_analytics.py                     (Graph + NLP pipeline)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Data / ML ─────────────────────────────────────────────────────────────────
@@ -11,12 +11,12 @@ numpy>=1.24.0
 scikit-learn==1.8.0
 matplotlib>=3.8.0
 
-# ── Forecasting (forecast_models.py stage) ───────────────────────────────────
+# ── Forecasting (modeling/forecast_models.py stage) ──────────────────────────
 # statsmodels → ETS / Holt-Winters; lightgbm → gradient-boosted lag-feature model
 statsmodels>=0.14.0
 lightgbm>=4.0.0
 
-# ── Holiday sync (sync_holidays.py stage) ────────────────────────────────────
+# ── Holiday sync (misc_jobs/sync_holidays.py stage) ──────────────────────────
 # Offline fallback when the Nager.Date API is unreachable.
 holidays>=0.50
 
@@ -32,7 +32,7 @@ networkx>=3.2.0
 torch>=2.2.0
 sentence-transformers>=2.6.0
 
-# ── GNN — third fraud model (train_gnn_model.py stage) ───────────────────────
+# ── GNN — third fraud model (modeling/train_gnn_model.py stage) ──────────────
 # Depends on the CPU-only torch pinned above; must stay below it in this file
 # so pip resolves torch from the CPU index first.
 #

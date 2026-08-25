@@ -12,7 +12,7 @@ Design constraints
 1. Topology is read DIRECTLY from dbo.Nominations and dbo.Users. The
    NomGraph_Person / NomGraph_Nominated tables are a verbatim copy of the same
    data; reading them would create an ordering dependency on
-   graph_pattern_detector for no modelling benefit.
+   graph_analytics for no modelling benefit.
 
 2. dbo.UserGraphFlags is NOT a feature source. The GNN must rediscover ring and
    approver-affinity structure from raw topology. If it were handed the
@@ -53,7 +53,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import torch
@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Feature specs ─────────────────────────────────────────────────────────────
-# Declared as module constants so train_gnn_model.py can persist them into the
+# Declared as module constants so modeling/train_gnn_model.py can persist them into the
 # artifact and gnn_check.py can assert the inference-time layout matches.
 
 USER_FEATURE_COLUMNS = [
@@ -102,7 +102,7 @@ def fetch_tenant_rows(conn, tenant_id: int, window_days: int) -> tuple[list[dict
     """
     Load users and nominations for one tenant, directly from the source tables.
 
-    Tenant scoping mirrors graph_pattern_detector._load_nominations(): the
+    Tenant scoping mirrors graph_analytics._load_nominations(): the
     nomination is attributed to the NOMINATOR's tenant, because dbo.Nominations
     carries no TenantId of its own.
 
@@ -343,7 +343,7 @@ def build_hetero_data(
     user_index = {uid: i for i, uid in enumerate(user_ids)}
 
     # Amount statistics from the graph window only — same leakage rule as the
-    # user features. Matches the tenant-scoped z-score in train_fraud_model.py.
+    # user features. Matches the tenant-scoped z-score in train_rf_model.py.
     g_amounts = np.array([float(n.get("Amount") or 0.0) for n in graph_rows], dtype=np.float64)
     amount_mean = float(g_amounts.mean()) if g_amounts.size else 0.0
     amount_std = float(g_amounts.std()) if g_amounts.size > 1 else 0.0
@@ -371,10 +371,13 @@ def build_hetero_data(
     approves_src,  approves_dst  = [], []
     for n in graph_rows:
         ni = nom_index[n["NominationId"]]
-        nominates_src.append(user_index[n["NominatorId"]]); nominates_dst.append(ni)
-        benefits_src.append(ni); benefits_dst.append(user_index[n["BeneficiaryId"]])
+        nominates_src.append(user_index[n["NominatorId"]])
+        nominates_dst.append(ni)
+        benefits_src.append(ni)
+        benefits_dst.append(user_index[n["BeneficiaryId"]])
         if n.get("ApproverId") is not None:
-            approves_src.append(user_index[n["ApproverId"]]); approves_dst.append(ni)
+            approves_src.append(user_index[n["ApproverId"]])
+            approves_dst.append(ni)
 
     def _ei(src, dst):
         return torch.tensor([src, dst], dtype=torch.long) if src else torch.zeros((2, 0), dtype=torch.long)

@@ -28,7 +28,7 @@ async def _get_fraud_model_info(tenant_id: int = 0) -> dict[str, Any]:
             "tenant_id": tenant_id,
             "message": (
                 f"No fraud detection model loaded for tenant {tenant_id}. "
-                "Run train_fraud_model.py and upload the resulting .pkl to blob storage."
+                "Run modeling/train_rf_model.py and upload the resulting .pkl to blob storage."
             ),
         }
 

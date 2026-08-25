@@ -11,7 +11,7 @@ Without deduplication, re-running the job inserts identical findings with
 a new RunId, polluting the table and the Integrity tab run selector.
 
 A deterministic SHA-256 fingerprint (truncated to 64 hex chars) is computed
-in graph_pattern_detector.py from:
+in modeling/graph_analytics.py from:
 
     TenantId | PatternType | AffectedUsers (sorted JSON) | NominationIds (sorted JSON)
 

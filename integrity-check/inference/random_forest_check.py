@@ -6,7 +6,7 @@ Owns the full fraud detection pipeline:
   • Per-tenant RF model cache (blob-direct, lazy-loaded, process-lifetime)
   • Per-tenant SHAP TreeExplainer cache (lazy-created alongside model)
   • Sentence-transformer embedding cache (module singleton)
-  • Feature engineering — behavioural + semantic, mirrors train_fraud_model.py
+  • Feature engineering — behavioural + semantic, mirrors modeling/train_rf_model.py
   • RF inference — predict_proba → fraud_score / risk_level / warning_flags
   • SHAP attribution — top-5 feature contributions for flagged nominations
   • LLM explanation — human-readable rejection reason (CRITICAL auto-rejects)
@@ -182,7 +182,7 @@ def _get_embed_model(model_name: str = "all-MiniLM-L6-v2"):
 def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, float]:
     """
     Build and scale the feature vector from nomination details + DB lookups.
-    Mirrors train_fraud_model.py extract_features() so training and inference
+    Mirrors modeling/train_rf_model.py extract_features() so training and inference
     stay aligned.
 
     Returns (X_scaled, feature_vals, desc_cosine_sim).

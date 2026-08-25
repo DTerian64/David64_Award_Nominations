@@ -1381,7 +1381,7 @@ def upsert_p2p_fraud_label(
     The row is created if it doesn't exist yet (nomination skipped the ML
     pipeline because no model was available at submission time).
 
-    These confirmed labels are picked up by load_data() in train_fraud_model.py
+    These confirmed labels are picked up by load_data() in modeling/train_rf_model.py
     during the next weekly retrain:
         WHERE RiskLevel IN ('HIGH', 'CRITICAL')  →  IsFraud = 1
     so CRITICAL rows written here feed directly into supervised RF training.

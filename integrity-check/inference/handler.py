@@ -34,7 +34,7 @@ logger = logging.getLogger("integrity_check.handler")
 
 # RejectionActor values written by this service.
 #
-# These must stay distinct. train_fraud_model.load_data() excludes description
+# These must stay distinct. modeling.train_rf_model.load_data() excludes description
 # rejections from the training population (a failed quality gate is not a fraud
 # signal) but must NOT exclude ML auto-rejects. Until 2026-08 both paths wrote
 # the literal "Fraud Detection", so the exclusion silently discarded every

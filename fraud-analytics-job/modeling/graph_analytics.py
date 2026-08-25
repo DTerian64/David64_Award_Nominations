@@ -1,7 +1,7 @@
 """
-graph_pattern_detector.py
-=========================
-Stage 2 of the fraud-analytics-job pipeline.
+graph_analytics.py
+==================
+Stage 1 of the fraud-analytics-job pipeline.
 
 Detects seven structural and semantic behavioural patterns in the Nominations
 graph for each tenant and upserts findings into dbo.GraphPatternFindings.
@@ -45,11 +45,12 @@ import pyodbc
 from pathlib import Path
 from dotenv import load_dotenv
 
-from component_status import upsert_component_status
+from utils.component_status import upsert_component_status
 
-# Same .env loading as train_fraud_model.py / forecast_models.py so this stage
+# Same .env loading as train_rf_model.py / forecast_models.py so this stage
 # can be run standalone locally. No-op in Container Apps (env injected).
-env_path = Path(__file__).resolve().parent.parent / ".env"
+JOB_DIR = Path(__file__).resolve().parents[1]
+env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
 logger = logging.getLogger(__name__)
@@ -82,11 +83,11 @@ def _load_tenant_integrity_config(conn: pyodbc.Connection, tenant_id: int) -> di
         return {}
 
 
-from db_conn import connect
+from utils.db_conn import connect  # noqa: E402 - .env must load before credential setup
 
 
 def _get_connection() -> pyodbc.Connection:
-    """Connect to Azure SQL via Managed Identity (see db_conn.connect)."""
+    """Connect to Azure SQL via Managed Identity (see utils.db_conn.connect)."""
     return connect()
 
 
@@ -1013,7 +1014,7 @@ def _load_all_findings_for_snapshot(
     Load all findings from GraphPatternFindings for this tenant.
 
     Used ONCE as a bootstrap when UserGraphFlags has no rows for the tenant —
-    i.e. the first time graph_pattern_detector runs after migration 0028.
+    i.e. the first time graph_analytics runs after migration 0028.
     Subsequent runs use the in-memory detected_findings list (pre-dedup,
     window-bounded) so the snapshot never needs a full table scan.
     """
@@ -1328,7 +1329,7 @@ def main(tenants_to_process: list | None = None) -> None:
         format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
-    logger.info("graph_pattern_detector — starting")
+    logger.info("graph_analytics — starting")
 
     findings_table      = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
     default_window_days = int(os.getenv("DETECTION_WINDOW_DAYS", "180"))
@@ -1388,7 +1389,7 @@ def main(tenants_to_process: list | None = None) -> None:
 
     conn.close()
     logger.info(
-        "graph_pattern_detector — done. RunId=%s  Total findings=%d",
+        "graph_analytics — done. RunId=%s  Total findings=%d",
         run_id, total_findings,
     )
     if failed:

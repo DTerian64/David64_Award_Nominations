@@ -37,8 +37,8 @@ jobs:
     # ------------------------------------------------------------------
     # Build & push
     # Build context is analytics/fraud-analytics-job/ — fully self-contained.
-    # All scripts (train_fraud_model.py, graph_pattern_detector.py, run_job.py)
-    # live in that directory alongside the Dockerfile and requirements.txt.
+    # The run_job.py entrypoint plus modeling/ and utils/ packages live in that
+    # directory alongside the Dockerfile and requirements.txt.
     # Tagging convention mirrors all other images:
     #   Prod:    latest  + latest-<sha>
     #   Sandbox: sandbox + sandbox-<sha>

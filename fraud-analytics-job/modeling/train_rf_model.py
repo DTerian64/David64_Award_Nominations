@@ -1,6 +1,6 @@
 """
-Fraud Detection ML Model Training  —  Multi-Tenant Edition
-===========================================================
+train_rf_model.py — Random Forest Training, Multi-Tenant Edition
+================================================================
 
 Trains one Random Forest model per tenant and saves each to its own pickle:
     Output/random_forest_tenant_1.pkl
@@ -29,19 +29,18 @@ import uuid
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
-import pyodbc
 import pickle
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
 
-from component_status import upsert_component_status
+from utils.component_status import upsert_component_status
 
 # Default sentence-transformer model for English tenants.
 # Per-tenant overrides are read from dbo.Tenants.desc_check_config at
@@ -50,7 +49,8 @@ from component_status import upsert_component_status
 # for Korean / Japanese / other non-English tenants).
 DEFAULT_EMBED_MODEL_NAME = 'all-MiniLM-L6-v2'
 
-env_path = Path(__file__).resolve().parent.parent / ".env"
+JOB_DIR = Path(__file__).resolve().parents[1]
+env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
 # ── Blob Storage upload helper ─────────────────────────────────────────────────
@@ -109,7 +109,7 @@ def _upload_artefact(local_path: Path) -> None:
 MIN_TRAINING_SAMPLES = 50
 
 # All generated artefacts (.pkl models, .png charts) are written here.
-OUTPUT_DIR = Path(__file__).resolve().parent / "Output"
+OUTPUT_DIR = JOB_DIR / "Output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -117,7 +117,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # DATABASE CONNECTION
 # ============================================================================
 
-from db_conn import connect
+from utils.db_conn import connect  # noqa: E402 - .env must load before credential setup
 
 
 def get_db_connection():
@@ -712,10 +712,14 @@ APPR_FEATURE_COLUMNS = [
 
 
 def _risk_level(score: int) -> str:
-    if score >= 80: return 'CRITICAL'
-    if score >= 60: return 'HIGH'
-    if score >= 40: return 'MEDIUM'
-    if score >= 20: return 'LOW'
+    if score >= 80:
+        return 'CRITICAL'
+    if score >= 60:
+        return 'HIGH'
+    if score >= 40:
+        return 'MEDIUM'
+    if score >= 20:
+        return 'LOW'
     return 'NONE'
 
 

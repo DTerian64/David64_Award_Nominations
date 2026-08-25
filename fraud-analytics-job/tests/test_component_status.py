@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from component_status import upsert_component_status
+from utils.component_status import upsert_component_status
 
 
 class _Cursor:

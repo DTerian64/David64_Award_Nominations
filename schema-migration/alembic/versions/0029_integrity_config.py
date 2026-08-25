@@ -14,7 +14,7 @@ namespaces:
 
   graph_pattern
       detection_window_days  — rolling window (in days) used by
-                               graph_pattern_detector.py when loading
+                               modeling/graph_analytics.py when loading
                                Approved/Paid nominations.  Determines how far
                                back each pattern detector looks.
                                Default (env var): 180 days.

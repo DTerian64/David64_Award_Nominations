@@ -19,7 +19,7 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import gnn_graph as G
+from modeling import gnn_graph as G
 from tests.synthetic import make_tenant, make_two_tenants
 
 

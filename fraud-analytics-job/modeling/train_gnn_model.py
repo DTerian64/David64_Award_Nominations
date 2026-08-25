@@ -2,7 +2,7 @@
 train_gnn_model.py — GNN training stage
 =========================================
 Stage 3 of the fraud-analytics-job pipeline, registered in run_job.py STAGES
-after train_fraud_model.
+after train_rf_model.
 
 Per tenant:
     1. Load labels via labels.py (shared with the Random Forest).
@@ -15,7 +15,7 @@ Per tenant:
 
 Ordering rationale
 ------------------
-Runs after train_fraud_model so it sees the label view the Random Forest just
+Runs after train_rf_model so it sees the label view the Random Forest just
 refreshed, and so a GNN failure can never block the Random Forest retrain — the
 per-stage try/except in run_job.run_stage() provides that isolation. The cost is
 that sync_holidays and forecast_models run later in the weekly window.
@@ -50,22 +50,23 @@ from dotenv import load_dotenv
 
 # Same .env loading as the other stages so this can be run standalone locally.
 # No-op in Container Apps, where env is injected by the platform.
-env_path = Path(__file__).resolve().parent.parent / ".env"
+JOB_DIR = Path(__file__).resolve().parents[1]
+env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
-import gnn_graph as G
-import labels as labels_mod
-from component_status import upsert_component_status
-from db_conn import connect
-from gnn_model import train_gnn
+from . import gnn_graph as G  # noqa: E402 - .env must load before model imports
+from . import labels as labels_mod  # noqa: E402
+from utils.component_status import upsert_component_status  # noqa: E402
+from utils.db_conn import connect  # noqa: E402
+from .gnn_model import train_gnn  # noqa: E402
 
 # Reuse the Random Forest's blob upload helper rather than duplicating the auth
 # and error handling. Both stages run in the same process under run_job.py.
-from train_fraud_model import _upload_artefact
+from .train_rf_model import _upload_artefact  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path(__file__).resolve().parent / "Output"
+OUTPUT_DIR = JOB_DIR / "Output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Tunables (Terraform-injected) ─────────────────────────────────────────────

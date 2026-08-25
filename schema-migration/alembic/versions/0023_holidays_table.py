@@ -8,13 +8,14 @@ Context
 -------
 The forecast models use an ``is_holiday`` calendar feature so the bake-off can
 learn the dips around public holidays. Holidays were previously a hardcoded US
-set in forecast_models.py — this table replaces that with per-country data so
+set in modeling/forecast_models.py — this table replaces that with per-country data so
 the multi-country rollout works for any tenant.
 
 Keyed by **country** (not tenant): holidays are national, so every US tenant
 shares the 'US' rows. A tenant's country is derived from its Config.locale
-region (e.g. 'en-US' → 'US', 'ko-KR' → 'KR'). The weekly job's sync_holidays
-stage refreshes this table from the internet (Nager.Date) with an offline
+region (e.g. 'en-US' → 'US', 'ko-KR' → 'KR'). The weekly job's
+misc_jobs/sync_holidays.py stage refreshes this table from the internet
+(Nager.Date) with an offline
 fallback; the forecast models only ever read from here, so a failed sync can
 never break a run.
 

@@ -4,7 +4,7 @@ run_job.py — Fraud Analytics Job entrypoint
 Orchestrates the weekly analytics pipeline in dependency order. The registry
 below (STAGES) is the single source of truth; this list documents it.
 
-  Stage 1: graph_pattern_detector.py
+  Stage 1: modeling/graph_analytics.py
       Syncs the Azure SQL Graph tables (NomGraph_Person, NomGraph_Nominated).
       Runs MATCH queries for ring detection and approver affinity.
       Runs networkx analysis for super-nominators and nomination deserts.
@@ -13,14 +13,14 @@ below (STAGES) is the single source of truth; this list documents it.
       Materialises per-user graph flag snapshots into dbo.UserGraphFlags
       and dbo.ApproverPairFlags — required by Stage 2 for RF feature engineering.
 
-  Stage 2: train_fraud_model.py
+  Stage 2: modeling/train_rf_model.py
       Per-tenant Random Forest retrain on Nominations + FraudScores tables.
       Point-in-time joins dbo.UserGraphFlags and dbo.ApproverPairFlags to
       include graph pattern features without data leakage.
       Upserts updated fraud scores into dbo.P2P_FraudScores / dbo.Appr_FraudScores.
       Uploads the retrained .pkl model to Azure Blob Storage.
 
-  Stage 3: train_gnn_model.py
+  Stage 3: modeling/train_gnn_model.py
       Per-tenant heterogeneous GNN — HeteroConv + SAGEConv over user and
       nomination nodes, trained on a three-window temporal split so message
       passing, training targets and evaluation targets never overlap.
@@ -47,12 +47,12 @@ below (STAGES) is the single source of truth; this list documents it.
       Requires the tables from Alembic revision 0040. Set GNN_ENABLED=false to
       skip the stage without rebuilding the image.
 
-  Stage 4: sync_holidays.py
+  Stage 4: misc_jobs/sync_holidays.py
       Refreshes dbo.Holidays from the Nager.Date API, falling back to the
       offline `holidays` library per country/year, so Stage 5's is_holiday
       calendar feature stays correct per tenant locale.
 
-  Stage 5: forecast_models.py
+  Stage 5: modeling/forecast_models.py
       Per-tenant bake-off (Seasonal-Naive vs ETS vs LightGBM, ranked by
       rolling-origin MASE) writing to dbo.ForecastRuns / dbo.Forecasts.
 
@@ -90,7 +90,6 @@ import urllib.error
 import json
 from pathlib import Path
 
-import pyodbc
 from dotenv import load_dotenv
 
 # ── Environment ───────────────────────────────────────────────────────────────
@@ -107,15 +106,15 @@ load_dotenv(env_path)
 # can be isolated in Log Analytics with `| where message startswith "App_Log:"`.
 # Mirrors backend/logging_config.py. run_job.py is the container entrypoint, so
 # its directory is on sys.path[0] and logging_config imports cleanly.
-from logging_config import setup_logging
+from logging_config import setup_logging  # noqa: E402 - .env configures logging
 setup_logging()
 logger = logging.getLogger("fraud_analytics_job")
 
 # ── Path setup ───────────────────────────────────────────────────────────────
 # WORKDIR in the container is /app, which is also the build context
-# (analytics/fraud-analytics-job/).  All pipeline scripts live in the same
-# directory, so they are importable as flat top-level modules — no dotted
-# package paths, no cross-directory COPY gymnastics in the Dockerfile.
+# (fraud-analytics-job/). Modeling stages live in the modeling package; shared
+# infrastructure lives in utils. The full job directory is copied into the
+# image, so dotted package imports work without cross-directory COPY steps.
 JOB_DIR = Path(__file__).parent.resolve()   # /app  (same dir as this file)
 sys.path.insert(0, str(JOB_DIR))
 
@@ -143,7 +142,7 @@ def wake_database(
     """
     server   = os.getenv("SQL_SERVER", "(not set)")
     database = os.getenv("SQL_DATABASE", "(not set)")
-    from db_conn import connect  # Managed Identity token auth (ADR-0001)
+    from utils.db_conn import connect  # Managed Identity token auth
 
     logger.info("DB WAKE-UP  server=%s  database=%s", server, database)
     logger.info("  Serverless auto-pause means the DB may be cold.")
@@ -267,20 +266,20 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
 
 
 # ── Stage registry ───────────────────────────────────────────────────────────
-# Single source of truth. `key` is what --only accepts (and the module name);
+# Single source of truth. `key` is what --only accepts; `module` is its import path.
 # `post` is an optional hook run only if the stage succeeded.
 STAGES = [
-    {"key": "graph_pattern_detector", "label": "Graph pattern detection",  "module": "graph_pattern_detector", "post": None},
-    {"key": "train_fraud_model",      "label": "RF model training",        "module": "train_fraud_model",      "post": notify_api_refresh},
-    # GNN training. Placed after train_fraud_model for two reasons: it
+    {"key": "graph_analytics", "label": "Graph Analytics",   "module": "modeling.graph_analytics", "post": None},
+    {"key": "train_rf_model",  "label": "RF model training", "module": "modeling.train_rf_model",  "post": notify_api_refresh},
+    # GNN training. Placed after train_rf_model for two reasons: it
     # consumes the label view the RF has just refreshed, and a GNN failure can then
     # never block the RF retrain — run_stage()'s per-stage try/except gives that
     # isolation for free. No post-hook: the backend does not consume the GNN, so
     # /api/internal/refresh-fraud-model is irrelevant to it; integrity-check streams
     # the decoder itself on first use per tenant.
-    {"key": "train_gnn_model",        "label": "GNN model training",       "module": "train_gnn_model",        "post": None},
-    {"key": "sync_holidays",          "label": "Holiday sync",             "module": "sync_holidays",          "post": None},
-    {"key": "forecast_models",        "label": "Forecast models",          "module": "forecast_models",        "post": None},
+    {"key": "train_gnn_model",        "label": "GNN model training",       "module": "modeling.train_gnn_model", "post": None},
+    {"key": "sync_holidays",          "label": "Holiday sync",             "module": "misc_jobs.sync_holidays", "post": None},
+    {"key": "forecast_models",        "label": "Forecast models",          "module": "modeling.forecast_models", "post": None},
 ]
 _STAGE_KEYS = [s["key"] for s in STAGES]
 
