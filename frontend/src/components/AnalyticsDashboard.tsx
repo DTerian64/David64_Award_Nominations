@@ -224,7 +224,11 @@ interface ForecastResponse {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-export const AnalyticsDashboard: React.FC = () => {
+interface AnalyticsDashboardProps {
+  onOpenNominationLogs: (nominationId: number) => void;
+}
+
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNominationLogs }) => {
   const { impersonatedUser } = useImpersonation();
   const { formatCurrency } = useTenantConfig();   // tenant locale + currency aware
   const { t } = useTranslation();
@@ -1180,7 +1184,7 @@ export const AnalyticsDashboard: React.FC = () => {
             </span>
             Recent Fraud Alerts
           </h2>
-          <FraudAlertsList alerts={fraudAlerts} />
+          <FraudAlertsList alerts={fraudAlerts} onOpenNominationLogs={onOpenNominationLogs} />
         </div>
       )}
 
@@ -2138,9 +2142,10 @@ const BudgetPacingChart: React.FC<BudgetPacingChartProps> = ({ points, budget, f
 
 interface FraudAlertsListProps {
   alerts: FraudAlert[];
+  onOpenNominationLogs: (nominationId: number) => void;
 }
 
-const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts }) => {
+const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts, onOpenNominationLogs }) => {
   const { formatCurrency } = useTenantConfig();
   if (!alerts.length) {
     return <p className="text-center text-gray-600 py-8">No fraud alerts detected</p>;
@@ -2148,8 +2153,8 @@ const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts }) => {
 
   return (
     <div className="space-y-3">
-      {alerts.map((alert, i) => (
-        <div key={i} className={`p-4 rounded-lg border-2 ${
+      {alerts.map((alert) => (
+        <div key={alert.NominationId} className={`p-4 rounded-lg border-2 ${
           alert.riskLevel === 'High' ? 'bg-red-50 border-red-300' : 'bg-yellow-50 border-yellow-300'
         }`}>
           <div className="flex items-start justify-between mb-2">
@@ -2158,6 +2163,15 @@ const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts }) => {
                 {alert.nominatorName} → {alert.beneficiaryName}
               </p>
               <p className="text-sm text-gray-600">{formatCurrency(alert.amount)} on {alert.nominationDate}</p>
+              <button
+                type="button"
+                onClick={() => onOpenNominationLogs(alert.NominationId)}
+                className="mt-1 rounded font-mono text-xs text-blue-700 hover:text-blue-900 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                title="View logs for this nomination"
+                aria-label={`View logs for nomination ${alert.NominationId}`}
+              >
+                Nomination #{alert.NominationId}
+              </button>
             </div>
             <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
               alert.riskLevel === 'High' 
