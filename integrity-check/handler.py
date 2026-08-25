@@ -4,13 +4,11 @@ handler.py — nomination.submitted event handler
 Orchestrates the full fraud assessment lifecycle for a single nomination:
   1. Idempotency check (dbo.ProcessedEvents)
   2. Load nomination details + tenant desc_check_config from DB
-  3. Run description_check (Check A + Check B) — pre-ML quality gates
-       Check A incoherent → auto-reject (actor=ACTOR_DESCRIPTION_CHECK)
-                            + nomination.description-rejected event
-       Check A/B concern  → accumulate into warning_flags, continue to ML
+  3. Run description_check (Check A + Check B) and retain its evidence
   4. Run RF, graph analytics, and GNN as separate component scorers
-  5. Persist each component score and the fused routing decision
-  6. Re-publish nomination.created or nomination.fraud-flagged
+  5. Persist each component score and dbo.FraudDecisionResults
+  6. Apply the explicit rules-based routing policy using all available evidence
+  7. Re-publish nomination.created, nomination.fraud-flagged, or rejection
 
 Component logic lives in fraud_check.py, graph_check.py, and gnn_check.py.
 The routing policy lives in fraud_fusion.py.
@@ -53,6 +51,47 @@ def _component_summary(result: dict) -> dict:
         "embedding_as_of", "snapshot_as_of", "affected_user_ids",
     )
     return {key: result.get(key) for key in keys if key in result}
+
+
+def _select_route(desc_result, decision: dict) -> dict:
+    """Return the final rules-based route after every assessment is persisted."""
+    if desc_result.action == "reject":
+        return {
+            "route": "REJECT_DESCRIPTION",
+            "target_status": "Rejected",
+            "routing_rule": "check_a_incoherent_reject",
+        }
+
+    if decision["decision_available"] and decision["risk_level"] == "CRITICAL":
+        return {
+            "route": "REJECT_FRAUD",
+            "target_status": "Rejected",
+            "routing_rule": "critical_component_risk_reject",
+        }
+
+    if desc_result.action == "flag" or decision["flagged"]:
+        concern_source = (
+            "description_and_fraud"
+            if desc_result.action == "flag" and decision["flagged"]
+            else "description"
+            if desc_result.action == "flag"
+            else "fraud"
+        )
+        return {
+            "route": "HRBP_REVIEW",
+            "target_status": "PendingHRBPReview",
+            "routing_rule": f"{concern_source}_concern_hrbp",
+        }
+
+    return {
+        "route": "MANAGER_APPROVAL",
+        "target_status": "Pending",
+        "routing_rule": (
+            "risk_below_review_threshold"
+            if decision["decision_available"]
+            else "no_available_fraud_opinion"
+        ),
+    }
 
 
 def handle(message_id: str, payload: dict) -> None:
@@ -103,37 +142,19 @@ def handle(message_id: str, payload: dict) -> None:
         amount=details.get("amount"),       # Check A LLM amount justification
     )
 
-    if desc_result.action == "reject":
-        # Check A found incoherent/gibberish text — auto-reject and skip ML.
-        logger.info(
-            "Description check rejected nomination",
-            extra={
-                "nomination_id": nomination_id,
-                "check":         desc_result.check,
-                "reason":        desc_result.reason,
-            },
-        )
-        db.reject_nomination(
-            nomination_id, reason=desc_result.reason, actor=ACTOR_DESCRIPTION_CHECK
-        )
-        service_bus_publisher.publish_event(
-            "nomination.description-rejected", nomination_id,
-            extra={
-                "check":  desc_result.check,
-                "reason": desc_result.reason,
-            },
-        )
-        db.update_processed_event_result(message_id, "success")
-        return
-
-    # Accumulate Check A/B concerns into the warning flags list that the ML
-    # models and HRBP will see. Each reason retains its evidence details.
+    # Retain all description evidence for the final routing policy. Even a hard
+    # description rejection no longer short-circuits component assessment.
     pre_ml_flags: list[str] = []
-    if desc_result.action == "flag":
+    if desc_result.action in ("flag", "reject"):
         pre_ml_flags.append(f"[Description] {desc_result.reason}")
         logger.info(
-            "Description check flagged nomination — continuing to ML",
-            extra={"nomination_id": nomination_id, "check": desc_result.check},
+            "Description check produced routing evidence — continuing to component assessments",
+            extra={
+                "nomination_id": nomination_id,
+                "check": desc_result.check,
+                "action": desc_result.action,
+                "reason": desc_result.reason,
+            },
         )
     else:
         logger.info(
@@ -142,9 +163,54 @@ def handle(message_id: str, payload: dict) -> None:
         )
 
     # ── Independent component assessments ────────────────────────────────────
+    logger.info(
+        "RF assessment starting",
+        extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
+    )
     rf_result = fraud_check.assess(details, tenant_id)
+    logger.info(
+        "RF assessment completed",
+        extra={
+            "nomination_id": nomination_id,
+            "model_available": rf_result["model_available"],
+            "unavailable_reason": rf_result.get("unavailable_reason"),
+            "fraud_score": rf_result.get("fraud_score"),
+            "risk_level": rf_result.get("risk_level"),
+        },
+    )
+
+    logger.info(
+        "Graph Analytics assessment starting",
+        extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
+    )
     graph_result = graph_check.assess_graph(details, tenant_id)
+    logger.info(
+        "Graph Analytics assessment completed",
+        extra={
+            "nomination_id": nomination_id,
+            "model_available": graph_result["model_available"],
+            "unavailable_reason": graph_result.get("unavailable_reason"),
+            "fraud_score": graph_result.get("fraud_score"),
+            "risk_level": graph_result.get("risk_level"),
+        },
+    )
+
+    logger.info(
+        "GNN assessment starting",
+        extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
+    )
     gnn_result = gnn_check.assess_gnn(details, tenant_id)
+    logger.info(
+        "GNN assessment completed",
+        extra={
+            "nomination_id": nomination_id,
+            "model_available": gnn_result["model_available"],
+            "unavailable_reason": gnn_result.get("unavailable_reason"),
+            "fraud_score": gnn_result.get("fraud_score"),
+            "risk_level": gnn_result.get("risk_level"),
+            "model_version": gnn_result.get("model_version"),
+        },
+    )
 
     # Persist every available opinion in its own component table. Every available
     # component participates in fusion; unavailable means no opinion.
@@ -186,6 +252,19 @@ def handle(message_id: str, payload: dict) -> None:
         gnn_result=gnn_result,
         decision=decision,
     )
+    logger.info(
+        "FraudDecisionResults persisted",
+        extra={
+            "nomination_id": nomination_id,
+            "policy_version": decision["policy_version"],
+            "rf_available": rf_result["model_available"],
+            "graph_available": graph_result["model_available"],
+            "gnn_available": gnn_result["model_available"],
+            "final_score": decision["final_score"],
+            "final_risk": decision["risk_level"],
+            "decisive_models": decision["decisive_models"],
+        },
+    )
 
     all_flags = pre_ml_flags + decision["warning_flags"]
 
@@ -202,16 +281,7 @@ def handle(message_id: str, payload: dict) -> None:
         },
     )
 
-    # ── Route ─────────────────────────────────────────────────────────────────
-    # CRITICAL  → auto-reject immediately; the RF explanation (when RF is
-    #             decisive) or a neutral multi-model explanation goes into
-    #             RejectionReason so the nominator sees it in My Nominations.
-    #             No HRBP queue entry — score is too high to warrant manual review.
-    #
-    # MEDIUM / HIGH (or any description flag) → PendingHRBPReview with full
-    #             SHAP breakdown stored for the reviewer.
-    #
-    # LOW / NONE → pass through to manager approval as normal.
+    # ── Final rules-based route (only after all persistence above) ────────────
 
     risk_level = decision["risk_level"]
     shap_json = (json.dumps(rf_result["shap_explanations"])
@@ -225,39 +295,55 @@ def handle(message_id: str, payload: dict) -> None:
         "rf": _component_summary(rf_result),
         "graph": _component_summary(graph_result),
         "gnn": _component_summary(gnn_result),
+        "description_action": desc_result.action,
+        "description_check": desc_result.check,
+        "description_reason": desc_result.reason,
         "description_flags": pre_ml_flags,
     }, default=str)
     decision_probability = float(decision["decision_probability"] or 0.0)
+    route_decision = _select_route(desc_result, decision)
 
-    if not decision["decision_available"]:
-        # No component produced an opinion. Description flags remain
-        # independently actionable.
-        if pre_ml_flags:
-            db.save_hrbp_fraud_flags(
-                nomination_id=nomination_id,
-                fraud_score=0,
-                fraud_probability=0.0,
-                risk_level="UNKNOWN",
-                warning_flags=", ".join(all_flags),
-                shap_explanations_json=shap_json,
-                feature_summary_json=feature_summary,
-            )
-            db.set_nomination_status(nomination_id, "PendingHRBPReview")
-            service_bus_publisher.publish_event(
-                "nomination.fraud-flagged", nomination_id,
-                extra={"risk_level": "UNKNOWN"},
-            )
-        else:
-            logger.warning(
-                "No active fraud component available for tenant %d — routing to manager",
-                tenant_id, extra={"nomination_id": nomination_id},
-            )
-            db.set_nomination_status(nomination_id, "Pending")
-            service_bus_publisher.publish_event("nomination.created", nomination_id)
-        db.update_processed_event_result(message_id, "success")
-        return
+    logger.info(
+        "Rules-based routing decision",
+        extra={
+            "nomination_id": nomination_id,
+            "route": route_decision["route"],
+            "target_status": route_decision["target_status"],
+            "routing_rule": route_decision["routing_rule"],
+            "description_action": desc_result.action,
+            "fraud_decision_available": decision["decision_available"],
+            "final_risk": risk_level,
+            "final_score": decision["final_score"],
+            "warning_flags": all_flags,
+        },
+    )
 
-    if risk_level == "CRITICAL":
+    if route_decision["route"] == "REJECT_DESCRIPTION":
+        db.reject_nomination(
+            nomination_id,
+            reason=desc_result.reason,
+            actor=ACTOR_DESCRIPTION_CHECK,
+        )
+        service_bus_publisher.publish_event(
+            "nomination.description-rejected",
+            nomination_id,
+            extra={
+                "check": desc_result.check,
+                "reason": desc_result.reason,
+                "routing_rule": route_decision["routing_rule"],
+            },
+        )
+        logger.info(
+            "Nomination rejected by description policy after component assessment",
+            extra={
+                "nomination_id": nomination_id,
+                "check": desc_result.check,
+                "reason": desc_result.reason,
+                "routing_rule": route_decision["routing_rule"],
+            },
+        )
+
+    elif route_decision["route"] == "REJECT_FRAUD":
         explanation = (
             rf_result.get("fraud_explanation")
             if "RF" in decision["decisive_models"] else None
@@ -282,7 +368,11 @@ def handle(message_id: str, payload: dict) -> None:
         )
         service_bus_publisher.publish_event(
             "nomination.fraud-flagged", nomination_id,
-            extra={"risk_level": risk_level, "auto_rejected": True},
+            extra={
+                "risk_level": risk_level,
+                "auto_rejected": True,
+                "routing_rule": route_decision["routing_rule"],
+            },
         )
         logger.info(
             "Nomination auto-rejected (CRITICAL fraud score)",
@@ -290,10 +380,11 @@ def handle(message_id: str, payload: dict) -> None:
                 "nomination_id": nomination_id,
                 "fraud_score": decision["final_score"],
                 "decisive_models": decision["decisive_models"],
+                "routing_rule": route_decision["routing_rule"],
             },
         )
 
-    elif decision["flagged"] or bool(pre_ml_flags):
+    elif route_decision["route"] == "HRBP_REVIEW":
         db.save_hrbp_fraud_flags(
             nomination_id=nomination_id,
             fraud_score=decision["final_score"],
@@ -306,7 +397,10 @@ def handle(message_id: str, payload: dict) -> None:
         db.set_nomination_status(nomination_id, "PendingHRBPReview")
         service_bus_publisher.publish_event(
             "nomination.fraud-flagged", nomination_id,
-            extra={"risk_level": risk_level},
+            extra={
+                "risk_level": risk_level,
+                "routing_rule": route_decision["routing_rule"],
+            },
         )
         logger.info(
             "Nomination flagged for HRBP review",
@@ -315,16 +409,30 @@ def handle(message_id: str, payload: dict) -> None:
                 "risk_level":    risk_level,
                 "decisive_models": decision["decisive_models"],
                 "pre_ml_flags":  pre_ml_flags,
+                "routing_rule": route_decision["routing_rule"],
             },
         )
 
     else:
+        if not decision["decision_available"]:
+            logger.warning(
+                "No active fraud component available for tenant %d — routing to manager",
+                tenant_id,
+                extra={"nomination_id": nomination_id},
+            )
         db.set_nomination_status(nomination_id, "Pending")
-        service_bus_publisher.publish_event("nomination.created", nomination_id)
+        service_bus_publisher.publish_event(
+            "nomination.created",
+            nomination_id,
+            extra={"routing_rule": route_decision["routing_rule"]},
+        )
         logger.info(
             "Nomination routed to manager for approval",
-            extra={"nomination_id": nomination_id,
-                   "fraud_score": decision["final_score"]},
+            extra={
+                "nomination_id": nomination_id,
+                "fraud_score": decision["final_score"],
+                "routing_rule": route_decision["routing_rule"],
+            },
         )
 
     db.update_processed_event_result(message_id, "success")

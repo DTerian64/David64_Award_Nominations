@@ -762,7 +762,7 @@ const AwardNominationApp: React.FC = () => {
                         type="button"
                         onClick={handleGenerateDemoDescription}
                         disabled={!canGenerateDescription || descriptionGenerating}
-                        title="Generate synthetic but plausible content for this demo nomination"
+                        title="This demo-tenant feature is available only to tenant administrators. It was created as part of the ELCE methodology test-bed and generates a synthetic but plausible nomination description."
                         className="inline-flex items-center gap-1.5 rounded-md border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
                       >
                         <Sparkles className={`h-3.5 w-3.5 ${descriptionGenerating ? 'animate-pulse' : ''}`} />

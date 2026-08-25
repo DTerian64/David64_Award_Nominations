@@ -2836,18 +2836,26 @@ def insert_nomination_logs(rows: list) -> None:
         session.commit()
 
 
-def get_nomination_logs(nomination_id: int) -> list:
+def get_nomination_logs(
+    nomination_id: int,
+    integrity_check_only: bool = False,
+) -> list:
     """Return persisted nomination log rows (log_time, level, service, logger, message)
-    for the drawer, oldest first."""
+    for the drawer, oldest first. When requested, restrict the result to logger
+    names beginning with the integrity_check namespace."""
     with get_db_context() as session:
         rows = session.execute(
             text("""
                 SELECT log_time, level, service, logger, message, details
                 FROM   dbo.Nomination_Logs
                 WHERE  nomination_id = :nid
+                  AND  (:integrity_only = 0 OR logger LIKE 'integrity_check%')
                 ORDER  BY log_time ASC, log_id ASC
             """),
-            {"nid": nomination_id},
+            {
+                "nid": nomination_id,
+                "integrity_only": int(integrity_check_only),
+            },
         ).fetchall()
     return [tuple(r) for r in rows]
 

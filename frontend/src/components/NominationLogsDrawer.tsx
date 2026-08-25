@@ -25,6 +25,7 @@ interface LogEntry {
 
 interface LogsResponse {
   nomination_id:   number;
+  integrity_check_only: boolean;
   log_count:       number;
   logs:            LogEntry[];
 }
@@ -64,6 +65,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
   const [data, setData]           = useState<LogsResponse | null>(null);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState<string | null>(null);
+  const [integrityCheckOnly, setIntegrityCheckOnly] = useState(false);
 
   // Drive the open/close CSS transition from nominationId.
   // requestAnimationFrame ensures the element is in the DOM before the
@@ -84,8 +86,9 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
     setData(null);
     try {
       const token = await getAccessToken();
+      const query = integrityCheckOnly ? '?integrity_check_only=true' : '';
       const res = await fetch(
-        `${API_BASE_URL}/api/admin/nominations/${nominationId}/logs`,
+        `${API_BASE_URL}/api/admin/nominations/${nominationId}/logs${query}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!res.ok) {
@@ -98,7 +101,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
     } finally {
       setLoading(false);
     }
-  }, [nominationId]);
+  }, [nominationId, integrityCheckOnly]);
 
   // Fetch whenever the drawer opens.
   useEffect(() => {
@@ -165,8 +168,25 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
         {/* Persistence note */}
         <div className="flex items-start gap-2 px-6 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-700">
           <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>The full history for this nomination across all services.</span>
+          <span>
+            {integrityCheckOnly
+              ? 'Showing integrity-check processing and its Service Bus lifecycle messages.'
+              : 'Showing the full nomination history across all services, including Service Bus activity.'}
+          </span>
         </div>
+
+        {/* Server-side logger namespace filter */}
+        <label className="flex items-center gap-2 px-6 py-3 border-b border-gray-200 bg-white text-sm text-gray-700 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={integrityCheckOnly}
+            onChange={(e) => setIntegrityCheckOnly(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300"
+            style={{ accentColor: 'var(--color-primary)' }}
+          />
+          <span className="font-medium">Integrity check only</span>
+          <span className="text-xs text-gray-400 font-mono">logger LIKE 'integrity_check%'</span>
+        </label>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">

@@ -116,6 +116,7 @@ async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_
 @router.get("/api/admin/nominations/{nomination_id}/logs")
 async def get_nomination_logs(
     nomination_id: int,
+    integrity_check_only: bool = False,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -129,7 +130,10 @@ async def get_nomination_logs(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="AWard_Nomination_Admin access required")
 
-    rows = sqlhelper.get_nomination_logs(nomination_id)
+    rows = sqlhelper.get_nomination_logs(
+        nomination_id,
+        integrity_check_only=integrity_check_only,
+    )
 
     logs = []
     for log_time, level, service, logger_name, message, details in rows:
@@ -149,11 +153,16 @@ async def get_nomination_logs(
     # "viewed logs" event to pollute the very trail being viewed.
     logger.info(
         "Admin fetched nomination logs",
-        extra={"viewed_nomination_id": nomination_id, "log_count": len(logs)},
+        extra={
+            "viewed_nomination_id": nomination_id,
+            "log_count": len(logs),
+            "integrity_check_only": integrity_check_only,
+        },
     )
 
     return {
         "nomination_id": nomination_id,
+        "integrity_check_only": integrity_check_only,
         "log_count":     len(logs),
         "logs":          logs,
     }

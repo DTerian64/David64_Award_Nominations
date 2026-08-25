@@ -40,7 +40,7 @@ import numpy as np
 
 from utils import db
 
-logger = logging.getLogger("auxiliary.fraud_check")
+logger = logging.getLogger("integrity_check.random_forest")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 _STORAGE_ACCOUNT = os.environ["AZURE_STORAGE_ACCOUNT"]
