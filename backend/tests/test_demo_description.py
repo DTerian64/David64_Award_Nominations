@@ -1,3 +1,14 @@
+"""Tests for demo nomination description generation and authorization.
+
+Usage (PowerShell):
+
+    cd "C:\\Users\\David\\source\\repos\\David64_Award_Nominations\\Award_Nomination_App\\backend"
+    python -m unittest discover -s tests -p "test_demo_description.py" -v
+
+The tests mock Azure OpenAI and the demo-tenant lookup; they do not call Azure
+OpenAI or connect to the application database.
+"""
+
 import json
 import os
 import unittest
@@ -72,6 +83,8 @@ class DemoDescriptionGeneratorTests(unittest.TestCase):
         self.assertFalse(result.endswith("”"))
         self.assertLessEqual(len(result), 500)
         self.assertEqual(client.completions.kwargs["model"], "gpt-4.1")
+        system_prompt = client.completions.kwargs["messages"][0]["content"]
+        self.assertIn("award_category value verbatim exactly once", system_prompt)
 
     def test_normalizer_enforces_database_field_limit(self):
         result = normalize_description("achievement " * 80)

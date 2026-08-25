@@ -2,15 +2,26 @@
 description_check.py — Pre-ML nomination description quality checks
 ====================================================================
 
-Runs three sequential checks before the ML fraud model, using per-tenant
+Runs two checks before the ML fraud model, using per-tenant
 thresholds from DescCheckConfig (loaded from dbo.Tenants.desc_check_config).
 
-Check A — Category Alignment  (auto-reject)
-    Embeds the nomination description and the category description, then
-    computes cosine similarity.  Nominations scoring below the tenant's
-    category_alignment_threshold are rejected outright — the HRBP never
-    sees them.  If the nomination has no category (category_description is
-    None), this check is skipped automatically.
+Check A — Description Alignment and Semantics
+    Combines two independently-produced signals into one auditable decision:
+    - embedding category alignment between the description and category label;
+    - LLM evaluation of coherence, specificity, category fit, and amount.
+
+    An embedding concern is not an automatic rejection.  A corroborating LLM
+    category concern routes to HRBP review, while an LLM pass can adjudicate a
+    weak embedding match.  If the LLM is disabled or unavailable, a weak
+    embedding match routes to HRBP rather than being auto-rejected.  Only an
+    incoherent/gibberish LLM result is a hard semantic rejection.
+
+    Check A's LLM evidence requires these env vars:
+        AZURE_OPENAI_ENDPOINT      — Azure OpenAI resource endpoint
+        AZURE_OPENAI_DEPLOYMENT    — model deployment name (default: gpt-4o-mini)
+        AZURE_OPENAI_API_VERSION   — API version  (default: 2024-08-01-preview)
+    Authentication uses DefaultAzureCredential (Managed Identity in production,
+    az login / env vars for local dev) — no API key required.
 
 Check B — Duplicate Description  (HRBP flag)
     Compares the description against the nominator's own recent descriptions.
@@ -18,24 +29,6 @@ Check B — Duplicate Description  (HRBP flag)
     HRBP review rather than causing an outright rejection, because the same
     description legitimately applies when a nominator recognises an entire team
     for the same project.
-
-Check C — LLM Semantic Evaluation  (auto-reject or HRBP flag)
-    Calls Azure OpenAI with a structured prompt to evaluate dimensions that
-    embeddings cannot reason about: coherence/gibberish, description
-    specificity, category fit quality, and award amount justification.
-    - is_coherent = false  → auto-reject  (same severity as Check A)
-    - semantic flags present OR category_fit_score < llm_fit_threshold
-                           → HRBP flag   (same severity as Check B)
-    Disabled when llm_category_check_enabled is False in the tenant config.
-    Fails open on LLM errors — a network or quota failure never blocks a
-    nomination; the error is logged and the check returns "pass".
-
-    Requires env vars:
-        AZURE_OPENAI_ENDPOINT      — Azure OpenAI resource endpoint
-        AZURE_OPENAI_DEPLOYMENT    — model deployment name (default: gpt-4o-mini)
-        AZURE_OPENAI_API_VERSION   — API version  (default: 2024-08-01-preview)
-    Authentication uses DefaultAzureCredential (Managed Identity in production,
-    az login / env vars for local dev) — no API key required.
 
 Public API
 ----------
@@ -53,7 +46,7 @@ Public API
         reason   str | None  human-readable explanation (for rejection email /
                              HRBP warning flag), None when action == "pass"
         check    str | None  pipe-separated names of checks that fired,
-                             e.g. "duplicate_description|llm_semantic"
+                             e.g. "category_alignment|duplicate_description"
 """
 
 from __future__ import annotations
@@ -97,7 +90,7 @@ _llm_client_lock = threading.Lock()
 def _get_llm_client():
     """
     Return a cached AzureOpenAI client, constructing it on first call.
-    Returns None if AZURE_OPENAI_ENDPOINT is not set (disables Check C).
+    Returns None if AZURE_OPENAI_ENDPOINT is not set (LLM evidence unavailable).
     """
     global _llm_client
     if _llm_client is not None:
@@ -110,7 +103,7 @@ def _get_llm_client():
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
         if not endpoint:
             logger.warning(
-                "AZURE_OPENAI_ENDPOINT not set — LLM semantic check (Check C) disabled"
+                "AZURE_OPENAI_ENDPOINT not set — Check A LLM semantic evidence unavailable"
             )
             return None
 
@@ -131,7 +124,7 @@ def _get_llm_client():
                     "AZURE_OPENAI_API_VERSION", "2024-08-01-preview"
                 ),
             )
-            logger.info("AzureOpenAI client initialised for LLM semantic check")
+            logger.info("AzureOpenAI client initialised for Check A LLM semantic evidence")
         except Exception as exc:
             logger.error("Failed to initialise AzureOpenAI client: %s", exc)
             return None
@@ -163,17 +156,17 @@ def _embed(model, texts: list[str]) -> np.ndarray:
     return model.encode(texts, normalize_embeddings=True)
 
 
-# ── Check A: category alignment ───────────────────────────────────────────────
+# ── Check A, evidence 1: embedding category alignment ────────────────────────
 
-def _check_category_alignment(
+def _check_embedding_category_alignment(
     description:          str,
     category_description: str,
     config:               DescCheckConfig,
     nomination_id:        Optional[int] = None,
 ) -> CheckResult:
     """
-    Returns "reject" if the description is semantically unrelated to the
-    nomination category.  Threshold of 0.0 effectively disables the check.
+    Return an HRBP concern when embedding similarity is below the configured
+    threshold. Threshold 0.0 effectively disables this evidence source.
     """
     if config.category_alignment_threshold <= 0.0:
         return _PASS
@@ -183,7 +176,7 @@ def _check_category_alignment(
     sim     = _cosine_sim(embs[0], embs[1])
 
     logger.info(
-        "Category Alignment check",
+        "Embedding Category Alignment check",
         extra={
             "nomination_id": nomination_id,
             "sim":           round(float(sim), 4),
@@ -199,7 +192,11 @@ def _check_category_alignment(
             f"Please describe a specific action or behaviour that reflects "
             f"'{category_description}'."
         )
-        return CheckResult(action="reject", reason=reason, check="category_alignment")
+        logger.info(
+            "Embedding Category Alignment check concern",
+            extra={"nomination_id": nomination_id},
+        )
+        return CheckResult(action="flag", reason=reason, check="category_alignment")
 
     return _PASS
 
@@ -254,7 +251,7 @@ def _check_duplicate_description(
     return _PASS
 
 
-# ── Check C: LLM semantic evaluation ─────────────────────────────────────────
+# ── Check A, evidence 2: LLM semantic evaluation ─────────────────────────────
 
 def _build_llm_prompt(
     description:          str,
@@ -330,16 +327,16 @@ No markdown fences, no extra keys, no explanation outside the JSON."""
     return prompt
 
 
-def _check_llm_semantic(
+def _evaluate_llm_semantics(
     description:          str,
     category_description: Optional[str],
     amount:               Optional[float],
     config:               DescCheckConfig,
     nominator_id:         int = 0,
     nomination_id:        Optional[int] = None,
-) -> CheckResult:
+) -> Optional[CheckResult]:
     """
-    Check C — LLM semantic evaluation.
+    Produce the LLM evidence used by combined Check A.
 
     Calls Azure OpenAI with a structured prompt and maps the JSON response to
     a CheckResult:
@@ -347,16 +344,17 @@ def _check_llm_semantic(
       - flags present OR fit < thresh  → "flag"    (HRBP review)
       - otherwise                      → "pass"
 
-    Fails open: any exception (network, quota, parse error) is logged and the
-    function returns _PASS so the nomination is never blocked by LLM downtime.
+    Returns None when disabled infrastructure or an LLM error makes this
+    evidence unavailable. The combined Check A policy then decides how to route
+    based on the remaining embedding evidence.
     """
     client = _get_llm_client()
     if client is None:
         logger.warning(
-            "LLM Semantic check skipped — client not initialized",
+            "Check A LLM Semantic Evaluation unavailable — client not initialized",
             extra={"nomination_id": nomination_id},
         )
-        return _PASS
+        return None
 
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
     prompt     = _build_llm_prompt(description, category_description, amount, config)
@@ -372,19 +370,19 @@ def _check_llm_semantic(
         raw    = response.choices[0].message.content
         result = _json.loads(raw)
 
-        logger.debug("LLM semantic check raw response: %s", raw)
+        logger.debug("Check A LLM semantic evaluation raw response: %s", raw)
 
     except Exception as exc:
         logger.error(
-            "LLM Semantic check failed — skipping (fail-open)",
+            "Check A LLM Semantic Evaluation failed — evidence unavailable",
             extra={"nomination_id": nomination_id, "error": str(exc)},
             exc_info=True,
         )
-        return _PASS
+        return None
 
     # ── Map response to CheckResult ───────────────────────────────────────────
 
-    # is_coherent = false → hard reject (same severity as Check A)
+    # is_coherent = false → Check A hard reject
     if not result.get("is_coherent", True):
         reasoning = result.get("reasoning", "").strip()
         reason = (
@@ -392,10 +390,14 @@ def _check_llm_semantic(
             + (reasoning if reasoning and reasoning != "No concerns." else "")
         ).strip()
         logger.info(
-            "LLM Semantic check: is_coherent=false",
-            extra={"nomination_id": nomination_id, "reason": reasoning},
+            "Check A LLM Semantic Evaluation: is_coherent=false",
+            extra={
+                "nomination_id": nomination_id,
+                "is_coherent": False,
+                "reason": reasoning,
+            },
         )
-        return CheckResult(action="reject", reason=reason, check="llm_semantic")
+        return CheckResult(action="reject", reason=reason, check="category_alignment")
 
     # Collect semantic flags
     llm_flags  = [str(f) for f in result.get("flags", []) if f]
@@ -421,16 +423,86 @@ def _check_llm_semantic(
 
         reason = " | ".join(parts)
         logger.info(
-            "LLM Semantic check flagged",
-            extra={"nomination_id": nomination_id, "reason": reason},
+            "Check A LLM Semantic Evaluation concern",
+            extra={
+                "nomination_id": nomination_id,
+                "category_fit_score": round(fit_score, 4),
+                "threshold": config.llm_fit_threshold,
+                "flags": llm_flags,
+                "is_specific": result.get("is_specific"),
+                "amount_justified": result.get("amount_justified"),
+                "reason": reason,
+            },
         )
-        return CheckResult(action="flag", reason=reason, check="llm_semantic")
+        return CheckResult(action="flag", reason=reason, check="category_alignment")
 
     logger.info(
-        "LLM Semantic check passed",
-        extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
+        "Check A LLM Semantic Evaluation passed",
+        extra={
+            "nomination_id": nomination_id,
+            "nominator_id": nominator_id,
+            "category_fit_score": round(fit_score, 4),
+            "threshold": config.llm_fit_threshold,
+            "flags": llm_flags,
+            "is_specific": result.get("is_specific"),
+            "amount_justified": result.get("amount_justified"),
+        },
     )
     return _PASS
+
+
+def _combine_check_a(
+    embedding_result: CheckResult,
+    llm_result: Optional[CheckResult],
+    *,
+    llm_enabled: bool,
+) -> tuple[CheckResult, str]:
+    """Fuse Check A's independent evidence into one explainable decision.
+
+    The decision rule intentionally avoids averaging incomparable embedding and
+    LLM scores. It combines their categorical outcomes instead.
+    """
+    if llm_result is not None and llm_result.action == "reject":
+        return llm_result, "llm_incoherent_reject"
+
+    embedding_concern = embedding_result.action == "flag"
+    llm_concern = llm_result is not None and llm_result.action == "flag"
+
+    if llm_concern:
+        reasons = []
+        if embedding_concern and embedding_result.reason:
+            reasons.append(embedding_result.reason)
+        if llm_result and llm_result.reason:
+            reasons.append(llm_result.reason)
+        rule = (
+            "embedding_and_llm_concern_hrbp"
+            if embedding_concern
+            else "llm_concern_hrbp"
+        )
+        return CheckResult(
+            action="flag",
+            reason=" | ".join(reasons),
+            check="category_alignment",
+        ), rule
+
+    if embedding_concern and llm_result is None:
+        availability = "unavailable" if llm_enabled else "disabled"
+        reason = (
+            f"{embedding_result.reason} | LLM semantic evidence was {availability}; "
+            "routed to HRBP review."
+        )
+        return CheckResult(
+            action="flag",
+            reason=reason,
+            check="category_alignment",
+        ), f"embedding_concern_llm_{availability}_hrbp"
+
+    if embedding_concern:
+        # The LLM evaluated the full context and found no semantic concern,
+        # adjudicating the weak short-label embedding match.
+        return _PASS, "llm_cleared_embedding_concern"
+
+    return _PASS, "all_available_check_a_evidence_passed"
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -444,12 +516,11 @@ def check(
     amount:               Optional[float] = None,
 ) -> CheckResult:
     """
-    Run Checks A, B, and C in sequence and return the most severe combined result.
+    Run combined Check A and duplicate Check B, returning the most severe result.
 
-    Check A (embedding category alignment) and Check C's is_coherent gate are
-    hard rejects — they short-circuit immediately.  Check B (duplicate) and
-    Check C's semantic flags are soft flags; both are accumulated and returned
-    as a single combined CheckResult so the HRBP sees all concerns together.
+    Check A combines embedding alignment and LLM semantic evidence. Only an
+    incoherent LLM result is a hard rejection. Category or quality concerns are
+    soft flags routed to HRBP. Check B remains an independent duplicate flag.
 
     Args:
         description:          The nomination description text.
@@ -460,13 +531,14 @@ def check(
         nomination_id:        The current nomination's ID — excluded from the
                               duplicate lookup so a nomination is never compared
                               against itself.
-        amount:               The award amount — passed to Check C for amount
+        amount:               The award amount — passed to Check A's LLM evidence
                               justification scoring.  None if unknown.
 
     Returns:
         CheckResult with action "reject", "flag", or "pass".
         When multiple checks flag, their reasons are joined with " | " and
-        their check names are joined with "|" (e.g. "duplicate_description|llm_semantic").
+        their check names are joined with "|"
+        (e.g. "category_alignment|duplicate_description").
     """
     desc = (description or "").strip()
 
@@ -479,18 +551,70 @@ def check(
             check="category_alignment",
         )
 
-    # ── Check A: category alignment (hard reject) ─────────────────────────────
-    if category_description:
-        result_a = _check_category_alignment(desc, category_description, config, nomination_id)
-        if result_a.action == "reject":
-            logger.info(
-                "Category Alignment check rejected",
-                extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
-            )
-            return result_a
+    # ── Check A: combine embedding and LLM semantic evidence ─────────────────
+    embedding_evaluated = bool(
+        category_description and config.category_alignment_threshold > 0.0
+    )
+    embedding_result = (
+        _check_embedding_category_alignment(
+            desc, category_description, config, nomination_id
+        )
+        if embedding_evaluated and category_description
+        else _PASS
+    )
 
-    # ── Accumulate soft flags from B and C ────────────────────────────────────
+    llm_result: Optional[CheckResult] = None
+    if config.llm_category_check_enabled:
+        llm_result = _evaluate_llm_semantics(
+            desc,
+            category_description,
+            amount,
+            config,
+            nominator_id,
+            nomination_id,
+        )
+    else:
+        logger.info(
+            "Check A LLM Semantic Evaluation disabled by tenant configuration",
+            extra={"nomination_id": nomination_id},
+        )
+
+    result_a, decision_rule = _combine_check_a(
+        embedding_result,
+        llm_result,
+        llm_enabled=config.llm_category_check_enabled,
+    )
+    embedding_state = (
+        "concern" if embedding_result.action == "flag"
+        else "pass" if embedding_evaluated
+        else "skipped"
+    )
+    llm_state = (
+        "disabled" if not config.llm_category_check_enabled
+        else "unavailable" if llm_result is None
+        else "incoherent" if llm_result.action == "reject"
+        else "concern" if llm_result.action == "flag"
+        else "pass"
+    )
+    logger.info(
+        "Check A combined decision",
+        extra={
+            "nomination_id": nomination_id,
+            "nominator_id": nominator_id,
+            "embedding_result": embedding_state,
+            "llm_result": llm_state,
+            "decision_rule": decision_rule,
+            "action": result_a.action,
+            "reason": result_a.reason,
+        },
+    )
+    if result_a.action == "reject":
+        return result_a
+
+    # ── Accumulate soft flags from A and B ────────────────────────────────────
     accumulated: list[CheckResult] = []
+    if result_a.action == "flag":
+        accumulated.append(result_a)
 
     # ── Check B: duplicate description ───────────────────────────────────────
     result_b = _check_duplicate_description(desc, nominator_id, config, nomination_id)
@@ -500,28 +624,6 @@ def check(
             extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
         )
         accumulated.append(result_b)
-
-    # ── Check C: LLM semantic evaluation ─────────────────────────────────────
-    if config.llm_category_check_enabled:
-        result_c = _check_llm_semantic(desc, category_description, amount, config, nominator_id, nomination_id)
-        if result_c.action == "reject":
-            # is_coherent = false → hard reject, same as Check A
-            logger.info(
-                "LLM Semantic check rejected",
-                extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
-            )
-            return result_c
-        if result_c.action == "flag":
-            logger.info(
-                "LLM Semantic check flagged",
-                extra={"nomination_id": nomination_id, "nominator_id": nominator_id},
-            )
-            accumulated.append(result_c)
-    else:
-        logger.info(
-            "LLM Semantic check skipped — llm_category_check_enabled=false",
-            extra={"nomination_id": nomination_id},
-        )
 
     if not accumulated:
         return _PASS

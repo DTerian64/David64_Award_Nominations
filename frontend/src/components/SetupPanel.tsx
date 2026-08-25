@@ -751,7 +751,7 @@ const FraudPanel: React.FC = () => {
         </div>
         <div className="flex flex-wrap gap-4 mt-3">
           {checkField('use_char_count', 'Use character count (CJK) instead of word count')}
-          {checkField('llm_category_check_enabled', 'Enable LLM semantic check')}
+          {checkField('llm_category_check_enabled', 'Enable Check A LLM semantic evidence')}
         </div>
         <div className="mt-3">
           <label className="block text-sm font-medium text-gray-700 mb-1">LLM instructions (optional)</label>

@@ -137,9 +137,9 @@ class DescCheckConfig:
     duplicate_similarity_threshold: float     = 0.85
     boilerplate_phrases:            List[str] = field(default_factory=list)
 
-    # ── Check C: LLM semantic evaluation ─────────────────────────────────────
+    # ── Check A: LLM semantic evidence ───────────────────────────────────────
     # llm_category_check_enabled
-    #     Master switch — when False, Check C is skipped entirely.
+    #     Master switch — when False, Check A uses embedding evidence only.
     #
     # llm_fit_threshold
     #     Nominations whose LLM category_fit_score falls below this value are

@@ -5,9 +5,9 @@ Orchestrates the full fraud assessment lifecycle for a single nomination:
   1. Idempotency check (dbo.ProcessedEvents)
   2. Load nomination details + tenant desc_check_config from DB
   3. Run description_check (Check A + Check B) — pre-ML quality gates
-       Check A fail  → auto-reject (actor=ACTOR_DESCRIPTION_CHECK)
-                       + nomination.description-rejected event
-       Check B flag  → accumulate into warning_flags, continue to ML
+       Check A incoherent → auto-reject (actor=ACTOR_DESCRIPTION_CHECK)
+                            + nomination.description-rejected event
+       Check A/B concern  → accumulate into warning_flags, continue to ML
   4. Run RF, graph analytics, and GNN as separate component scorers
   5. Persist each component score and the fused routing decision
   6. Re-publish nomination.created or nomination.fraud-flagged
@@ -100,11 +100,11 @@ def handle(message_id: str, payload: dict) -> None:
         nominator_id=details["nominator_id"],
         config=desc_config,
         nomination_id=nomination_id,
-        amount=details.get("amount"),       # passed to Check C for amount justification
+        amount=details.get("amount"),       # Check A LLM amount justification
     )
 
     if desc_result.action == "reject":
-        # Check A failed — auto-reject, skip ML entirely.
+        # Check A found incoherent/gibberish text — auto-reject and skip ML.
         logger.info(
             "Description check rejected nomination",
             extra={
@@ -126,9 +126,8 @@ def handle(message_id: str, payload: dict) -> None:
         db.update_processed_event_result(message_id, "success")
         return
 
-    # Accumulate Check B flag (if any) into the warning flags list that the
-    # ML model and HRBP will see.  A duplicate-description flag is labelled
-    # distinctly so the HRBP email can surface it separately from ML signals.
+    # Accumulate Check A/B concerns into the warning flags list that the ML
+    # models and HRBP will see. Each reason retains its evidence details.
     pre_ml_flags: list[str] = []
     if desc_result.action == "flag":
         pre_ml_flags.append(f"[Description] {desc_result.reason}")
