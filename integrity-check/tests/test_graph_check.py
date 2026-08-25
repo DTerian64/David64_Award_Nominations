@@ -10,7 +10,7 @@ os.environ.setdefault("SQL_SERVER", "test.invalid")
 os.environ.setdefault("SQL_DATABASE", "test")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import graph_check
+from inference import graph_check
 
 
 DETAILS = {
@@ -22,8 +22,8 @@ DETAILS = {
 
 
 class GraphCheckTests(unittest.TestCase):
-    @patch("graph_check.db.get_tenant_integrity_config", return_value={})
-    @patch("graph_check.db.get_graph_component_snapshot")
+    @patch("inference.graph_check.db.get_tenant_integrity_config", return_value={})
+    @patch("inference.graph_check.db.get_graph_component_snapshot")
     def test_highest_participant_severity_is_independent_graph_score(self, lookup, _config):
         lookup.return_value = {
             "snapshot_as_of": date.today(),
@@ -52,22 +52,22 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(result["fraud_score"], 100)
         self.assertEqual(result["affected_user_ids"], [1, 3])
 
-    @patch("graph_check.db.get_graph_component_snapshot", return_value=None)
+    @patch("inference.graph_check.db.get_graph_component_snapshot", return_value=None)
     def test_missing_snapshot_is_no_opinion_not_clean(self, _lookup):
         result = graph_check.assess_graph(DETAILS, tenant_id=7)
         self.assertFalse(result["model_available"])
         self.assertEqual(result["unavailable_reason"], "NO_SNAPSHOT")
 
-    @patch("graph_check.db.get_tenant_integrity_config", return_value={})
-    @patch("graph_check.db.get_graph_component_snapshot")
+    @patch("inference.graph_check.db.get_tenant_integrity_config", return_value={})
+    @patch("inference.graph_check.db.get_graph_component_snapshot")
     def test_missing_participant_row_on_current_snapshot_is_clean(self, lookup, _config):
         lookup.return_value = {"snapshot_as_of": date.today(), "users": {}}
         result = graph_check.assess_graph(DETAILS, tenant_id=7)
         self.assertTrue(result["model_available"])
         self.assertEqual(result["risk_level"], "NONE")
 
-    @patch("graph_check.db.get_tenant_integrity_config")
-    @patch("graph_check.db.get_graph_component_snapshot")
+    @patch("inference.graph_check.db.get_tenant_integrity_config")
+    @patch("inference.graph_check.db.get_graph_component_snapshot")
     def test_tenant_thresholds_control_graph_routing(self, lookup, config):
         lookup.return_value = {
             "snapshot_as_of": date.today(),

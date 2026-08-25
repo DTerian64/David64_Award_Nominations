@@ -160,7 +160,7 @@ resource "azurerm_user_assigned_identity" "payroll_broker" {
 
 # Integrity Check identity — pre-created so KV access policy and Service Bus /
 # Blob RBAC assignments can be granted before the Container App is created.
-# This container runs fraud_check.py: streams pkl from Blob, writes to SQL,
+# This container runs the integrity inference pipeline: streams model artifacts from Blob, writes to SQL,
 # re-publishes events to Service Bus.
 resource "azurerm_user_assigned_identity" "integrity_check" {
   name                = "id-award-integrity-check-${var.environment}"
@@ -623,7 +623,7 @@ module "auxiliary" {
 # ── 10b. Integrity Check Container App ───────────────────────────────────────
 # award-integrity-check-sandbox — async fraud detection worker.
 # Consumes nomination.submitted from the fraud-processor subscription,
-# runs fraud_check.py (RF + semantic features), writes scores to SQL,
+# runs the integrity inference pipeline (semantic checks + RF + Graph + GNN), writes results to SQL,
 # and re-publishes nomination.created or nomination.fraud-flagged.
 #
 # Uses the same auxiliary-container-app module as award-auxiliary-sandbox —

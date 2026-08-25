@@ -1,5 +1,5 @@
 """
-fraud_check.py — Async fraud assessment engine for the auxiliary service.
+random_forest_check.py — Random Forest nomination inference.
 =========================================================================
 
 Owns the full fraud detection pipeline:
@@ -38,7 +38,7 @@ from datetime import datetime
 
 import numpy as np
 
-import component_availability
+from . import component_availability
 from utils import db
 
 logger = logging.getLogger("integrity_check.random_forest")

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-import component_availability
+from . import component_availability
 from utils import db
 
 logger = logging.getLogger("integrity_check.graph_check")

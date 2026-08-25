@@ -18,7 +18,7 @@ dbo.UserGraphFlags — one row per (TenantId, UserId, AsOfDate).
   join the closest snapshot whose AsOfDate is ≤ each nomination's NominationDate,
   eliminating data leakage from future graph findings.
 
-  At inference time, fraud_check.py reads the row with the latest AsOfDate for
+  At inference time, inference/random_forest_check.py reads the row with the latest AsOfDate for
   each user — a simple keyed lookup on the primary key index.
 
 dbo.ApproverPairFlags — one row per (TenantId, ApproverId, NominatorId,

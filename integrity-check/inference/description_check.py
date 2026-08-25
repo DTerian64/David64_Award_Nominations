@@ -65,17 +65,17 @@ from utils.db import DescCheckConfig
 
 logger = logging.getLogger("integrity_check.description_check")
 
-# ── Embed model cache (shared with fraud_check.py via the same process) ───────
+# ── Embed model cache (shared with random_forest_check.py) ───────────────────
 # Imported lazily to avoid a hard startup dependency — the sentence-transformers
 # package may not be installed in every environment (e.g. unit test runners).
 
 def _get_embed_model(model_name: str):
     """
-    Delegate to fraud_check's per-model cache so we never load the same
+    Delegate to random_forest_check's per-model cache so we never load the same
     model twice in the same process.
     """
-    import fraud_check
-    return fraud_check._get_embed_model(model_name)
+    from . import random_forest_check
+    return random_forest_check._get_embed_model(model_name)
 
 
 # ── LLM client cache ──────────────────────────────────────────────────────────

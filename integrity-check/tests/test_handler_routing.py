@@ -23,8 +23,8 @@ os.environ.setdefault("SERVICE_BUS_FQNS", "test.servicebus.invalid")
 os.environ.setdefault("SERVICE_BUS_TOPIC_NAME", "test-topic")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import description_check
-import handler
+from inference import description_check
+from inference import handler
 
 
 def component_unavailable(reason: str) -> dict:
@@ -91,15 +91,15 @@ class CompleteAssessmentTests(unittest.TestCase):
         )
 
         with ExitStack() as stack:
-            stack.enter_context(patch("handler.db.claim_message", return_value=False))
-            stack.enter_context(patch("handler.db.get_nomination_details", return_value=details))
-            stack.enter_context(patch("handler.db.get_tenant_desc_check_config", return_value=object()))
-            stack.enter_context(patch("handler.db.get_integrity_component_statuses", return_value={}))
-            stack.enter_context(patch("handler.description_check.check", return_value=desc_reject))
+            stack.enter_context(patch("inference.handler.db.claim_message", return_value=False))
+            stack.enter_context(patch("inference.handler.db.get_nomination_details", return_value=details))
+            stack.enter_context(patch("inference.handler.db.get_tenant_desc_check_config", return_value=object()))
+            stack.enter_context(patch("inference.handler.db.get_integrity_component_statuses", return_value={}))
+            stack.enter_context(patch("inference.handler.description_check.check", return_value=desc_reject))
 
-            rf = stack.enter_context(patch("handler.fraud_check.assess"))
-            graph = stack.enter_context(patch("handler.graph_check.assess_graph"))
-            gnn = stack.enter_context(patch("handler.gnn_check.assess_gnn"))
+            rf = stack.enter_context(patch("inference.handler.random_forest_check.assess"))
+            graph = stack.enter_context(patch("inference.handler.graph_check.assess_graph"))
+            gnn = stack.enter_context(patch("inference.handler.gnn_check.assess_gnn"))
             rf.side_effect = lambda *_args: (
                 call_order.append("rf") or component_unavailable("test_rf")
             )
@@ -111,16 +111,16 @@ class CompleteAssessmentTests(unittest.TestCase):
             )
 
             save_decision = stack.enter_context(
-                patch("handler.db.save_fraud_decision_result")
+                patch("inference.handler.db.save_fraud_decision_result")
             )
             save_decision.side_effect = lambda **_kwargs: call_order.append("decision")
-            reject = stack.enter_context(patch("handler.db.reject_nomination"))
+            reject = stack.enter_context(patch("inference.handler.db.reject_nomination"))
             reject.side_effect = lambda *_args, **_kwargs: call_order.append("reject")
             publish = stack.enter_context(
-                patch("handler.service_bus_publisher.publish_event")
+                patch("inference.handler.service_bus_publisher.publish_event")
             )
             update_event = stack.enter_context(
-                patch("handler.db.update_processed_event_result")
+                patch("inference.handler.db.update_processed_event_result")
             )
 
             with self.assertLogs("integrity_check.handler", level="INFO") as logs:

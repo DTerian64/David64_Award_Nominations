@@ -1,7 +1,7 @@
 """
 Database access for the integrity-check worker.
 
-Focused subset of queries needed by handler.py and fraud_check.py:
+Focused subset of queries needed by inference/handler.py and its checks:
 
   Idempotency:
     claim_message()                 — insert into dbo.ProcessedEvents
@@ -15,7 +15,7 @@ Focused subset of queries needed by handler.py and fraud_check.py:
     get_tenant_desc_check_config()  — per-tenant description check thresholds
     get_tenant_integrity_config()   — per-tenant fraud pipeline config (windows, thresholds)
 
-  Fraud history lookups (called by fraud_check.py):
+  Fraud history lookups (called by inference/random_forest_check.py):
     get_nominator_history()         — past nominations sent by a user
     get_beneficiary_history()       — past nominations received by a user
     get_approver_history()          — past approvals by a user
@@ -24,7 +24,7 @@ Focused subset of queries needed by handler.py and fraud_check.py:
     get_beneficiary_descriptions()  — past descriptions written BY the beneficiary
     get_nominator_descriptions()    — past descriptions written BY the nominator
 
-  Graph flag lookups (called by fraud_check.py):
+  Graph flag lookups (called by inference/random_forest_check.py):
     get_user_graph_flags()          — latest UserGraphFlags for nominator + beneficiary
     get_approver_graph_flags()      — latest UserGraphFlags + ApproverPairFlags for approver
     get_graph_component_snapshot()  — latest complete snapshot for independent graph scoring

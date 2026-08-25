@@ -45,7 +45,7 @@ from component_status import upsert_component_status
 
 # Default sentence-transformer model for English tenants.
 # Per-tenant overrides are read from dbo.Tenants.desc_check_config at
-# training time and stored in the pkl so fraud_check.py loads the same
+# training time and stored in the pkl so inference/random_forest_check.py loads the same
 # model at inference time (e.g. 'paraphrase-multilingual-MiniLM-L12-v2'
 # for Korean / Japanese / other non-English tenants).
 DEFAULT_EMBED_MODEL_NAME = 'all-MiniLM-L6-v2'
@@ -142,7 +142,7 @@ def get_tenant_embed_model(tenant_id: int) -> str:
 
     Falls back to DEFAULT_EMBED_MODEL_NAME when the column is NULL, the JSON
     is malformed, or the 'embed_model' key is absent.  This ensures the model
-    stored in the pkl always matches what fraud_check.py will load at inference.
+    stored in the pkl always matches what inference/random_forest_check.py will load at inference.
     """
     import json as _json
     conn = get_db_connection()

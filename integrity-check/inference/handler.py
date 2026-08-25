@@ -10,8 +10,8 @@ Orchestrates the full fraud assessment lifecycle for a single nomination:
   6. Apply the explicit rules-based routing policy using all available evidence
   7. Re-publish nomination.created, nomination.fraud-flagged, or rejection
 
-Component logic lives in fraud_check.py, graph_check.py, and gnn_check.py.
-The routing policy lives in fraud_fusion.py.
+Component logic lives in random_forest_check.py, graph_check.py, and gnn_check.py.
+The component-result fusion policy lives in result_fusion.py.
 All description quality logic lives in description_check.py.
 This file is pure orchestration.
 """
@@ -22,11 +22,11 @@ import json
 import logging
 from datetime import datetime, timezone
 
-import description_check
-import fraud_check
-import fraud_fusion
-import gnn_check
-import graph_check
+from . import description_check
+from . import gnn_check
+from . import graph_check
+from . import random_forest_check
+from . import result_fusion
 from utils import db
 from utils import service_bus_publisher
 
@@ -182,7 +182,7 @@ def handle(message_id: str, payload: dict) -> None:
         "RF assessment starting",
         extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
     )
-    rf_result = fraud_check.assess(details, tenant_id, component_statuses.get("RF"))
+    rf_result = random_forest_check.assess(details, tenant_id, component_statuses.get("RF"))
     logger.info(
         "RF assessment completed",
         extra={
@@ -238,7 +238,7 @@ def handle(message_id: str, payload: dict) -> None:
     # Persist every available opinion in its own component table. Every available
     # component participates in fusion; unavailable means no opinion.
     if rf_result["model_available"]:
-        rf_flags = fraud_fusion.component_flags("RF", rf_result)
+        rf_flags = result_fusion.component_flags("RF", rf_result)
         db.save_p2p_fraud_score(
             nomination_id=nomination_id,
             fraud_score=rf_result["fraud_score"],
@@ -266,7 +266,7 @@ def handle(message_id: str, payload: dict) -> None:
             embedding_as_of=gnn_result["embedding_as_of"],
         )
 
-    decision = fraud_fusion.combine(rf_result, graph_result, gnn_result)
+    decision = result_fusion.combine(rf_result, graph_result, gnn_result)
     db.save_fraud_decision_result(
         nomination_id=nomination_id,
         policy_version=decision["policy_version"],

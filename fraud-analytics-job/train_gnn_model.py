@@ -168,7 +168,7 @@ def _gnn_routing_thresholds(conn, tenant_id: int) -> dict:
     Random Forest thresholds live at integrity_config.score_routing. GNN
     thresholds live independently at integrity_config.gnn.score_routing because
     the two models can have different score distributions and calibration.
-    These defaults match integrity-check/gnn_check.py.
+    These defaults match integrity-check/inference/gnn_check.py.
     """
     import json
     cur = conn.cursor()

@@ -32,7 +32,7 @@ os.environ.setdefault("SQL_SERVER", "test.invalid")
 os.environ.setdefault("SQL_DATABASE", "test")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import description_check
+from inference import description_check
 from utils.db import DescCheckConfig
 
 
@@ -117,7 +117,7 @@ class _EmbeddingModel:
 
 
 class CheckAEvidenceTests(unittest.TestCase):
-    @patch("description_check._get_embed_model", return_value=_EmbeddingModel())
+    @patch("inference.description_check._get_embed_model", return_value=_EmbeddingModel())
     def test_embedding_log_uses_explicit_name(self, _model):
         config = DescCheckConfig(category_alignment_threshold=0.12)
 
@@ -134,10 +134,10 @@ class CheckAEvidenceTests(unittest.TestCase):
         self.assertIn("Embedding Category Alignment check", messages)
         self.assertIn("Embedding Category Alignment check concern", messages)
 
-    @patch("description_check._check_duplicate_description", return_value=PASS)
-    @patch("description_check._evaluate_llm_semantics", return_value=LLM_CONCERN)
+    @patch("inference.description_check._check_duplicate_description", return_value=PASS)
+    @patch("inference.description_check._evaluate_llm_semantics", return_value=LLM_CONCERN)
     @patch(
-        "description_check._check_embedding_category_alignment",
+        "inference.description_check._check_embedding_category_alignment",
         return_value=EMBEDDING_CONCERN,
     )
     def test_public_check_returns_combined_check_a_hrbp_flag(

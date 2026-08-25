@@ -12,7 +12,7 @@ That single expression flattens four materially different things into one column
     a human HRBP decision   arrives as RiskLevel='CRITICAL' via
                             backend upsert_p2p_fraud_label -> indistinguishable
                             from a model prediction
-    a model prediction      written by fraud_check.assess() at submission, and
+    a model prediction      written by inference/random_forest_check.assess() at submission, and
                             rewritten for every historical row each week by
                             score_and_save_historical()
     a cold-start guess      bootstrap_fraud_labels(): IsolationForest at

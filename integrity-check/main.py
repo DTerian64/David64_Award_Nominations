@@ -2,7 +2,7 @@
 award-integrity-check — Service Bus fraud detection worker
 ==========================================================
 Consumes nomination.submitted events from the fraud-processor subscription,
-runs the full fraud assessment pipeline (fraud_check.py), and re-publishes
+runs the full integrity inference pipeline (inference/), and re-publishes
 the routing outcome (nomination.created or nomination.fraud-flagged) back to
 the award-events topic for the auxiliary service to pick up.
 
@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 from opentelemetry import context as otel_context
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from handler import handle
+from inference.handler import handle
 from logging_config import setup_logging
 from utils.azure_credential import credential
 

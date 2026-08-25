@@ -113,10 +113,10 @@
 <text x="123" y="419" text-anchor="middle" fill="#e76f51" font-weight="600" font-size="11" style="fill:rgb(231, 111, 81);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:11px;font-weight:600;text-anchor:middle;dominant-baseline:auto">nomination_submitted.py</text>
 <text x="123" y="432" text-anchor="middle" fill="#e76f51" font-size="10" style="fill:rgb(231, 111, 81);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:10px;font-weight:400;text-anchor:middle;dominant-baseline:auto">load nomination from DB</text>
 
-<!-- fraud_check.assess() -->
+<!-- random_forest_check.assess() -->
 <rect x="18" y="458" width="210" height="38" rx="4" fill="#e76f51" opacity=".1" style="fill:rgb(231, 111, 81);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.1;font-family:system-ui, -apple-system, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
 <rect x="18" y="458" width="210" height="38" rx="4" fill="none" stroke="#e76f51" stroke-width="1.5" style="fill:none;stroke:rgb(231, 111, 81);color:rgb(0, 0, 0);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<text x="123" y="475" text-anchor="middle" fill="#e76f51" font-weight="600" font-size="11" style="fill:rgb(231, 111, 81);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:11px;font-weight:600;text-anchor:middle;dominant-baseline:auto">fraud_check.assess()</text>
+<text x="123" y="475" text-anchor="middle" fill="#e76f51" font-weight="600" font-size="11" style="fill:rgb(231, 111, 81);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:11px;font-weight:600;text-anchor:middle;dominant-baseline:auto">random_forest_check.assess()</text>
 <text x="123" y="488" text-anchor="middle" fill="#e76f51" font-size="10" style="fill:rgb(231, 111, 81);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:10px;font-weight:400;text-anchor:middle;dominant-baseline:auto">RF model + semantic features</text>
 
 <!-- Decision diamond: center (186, 528) -->
@@ -193,7 +193,7 @@
 <line x1="268" y1="128" x2="268" y2="648" stroke="#adb5bd" stroke-width="1" stroke-dasharray="3,3" mask="url(#imagine-text-gaps-mprzjc)" style="fill:rgb(0, 0, 0);stroke:rgb(173, 181, 189);color:rgb(0, 0, 0);stroke-width:1px;stroke-dasharray:3px, 3px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
 <polygon points="264,644 268,654 272,644" fill="#adb5bd" style="fill:rgb(173, 181, 189);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
 
-<!-- fraud_check → P2P_FraudScores -->
+<!-- random_forest_check → P2P_FraudScores -->
 <line x1="123" y1="496" x2="380" y2="648" stroke="#e76f51" stroke-width="1" stroke-dasharray="3,3" mask="url(#imagine-text-gaps-mprzjc)" style="fill:rgb(0, 0, 0);stroke:rgb(231, 111, 81);color:rgb(0, 0, 0);stroke-width:1px;stroke-dasharray:3px, 3px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
 <polygon points="376,644 380,654 384,644" fill="#e76f51" style="fill:rgb(231, 111, 81);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
 

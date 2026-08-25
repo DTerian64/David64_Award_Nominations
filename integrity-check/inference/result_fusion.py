@@ -1,4 +1,4 @@
-"""Auditable routing policy for independent RF, graph, and GNN opinions."""
+"""Auditable fusion policy for independent RF, graph, and GNN results."""
 
 from __future__ import annotations
 

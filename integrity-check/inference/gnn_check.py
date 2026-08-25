@@ -2,7 +2,7 @@
 gnn_check.py — GNN fraud assessment for the integrity-check worker
 ===================================================================
 
-Structural twin of fraud_check.py, for the third fraud model.
+Structural twin of random_forest_check.py, for the third fraud model.
 
 What runs here is only the DECODER. The weekly fraud-analytics-job trains a
 heterogeneous GraphSAGE encoder, publishes per-user node embeddings to
@@ -15,7 +15,7 @@ Public API
 ----------
     result = assess_gnn(nomination_details, tenant_id)
 
-Returns the same shape as fraud_check.assess() so handler.py can treat both
+Returns the same shape as random_forest_check.assess() so handler.py can treat both
 models uniformly, plus two provenance fields:
 
     model_available    bool
@@ -58,7 +58,7 @@ from datetime import date, datetime, timedelta, timezone
 import numpy as np
 import torch
 
-import component_availability
+from . import component_availability
 from utils import db
 
 logger = logging.getLogger("integrity_check.gnn_check")
@@ -81,7 +81,7 @@ _ZERO_APPROVER = True
 # ── Per-tenant decoder cache ──────────────────────────────────────────────────
 # Streamed from blob on first assess_gnn() call per tenant and held for the
 # process lifetime. KEDA scales this container to zero when the queue drains, so
-# the cache evicts naturally between bursts — same reasoning as fraud_check.py.
+# the cache evicts naturally between bursts — same reasoning as random_forest_check.py.
 
 _head_cache: dict[int, dict | None] = {}
 _head_cache_lock = threading.Lock()

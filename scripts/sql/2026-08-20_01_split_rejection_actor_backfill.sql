@@ -3,7 +3,7 @@
    ----------------------------------------------------------------------------
    Backfill for the RejectionActor split.
 
-   Until 2026-08 both auto-reject paths in integrity-check/handler.py wrote the
+   Until 2026-08 both auto-reject paths in integrity-check/inference/handler.py wrote the
    same literal string:
 
        handler.py:91   Check A description quality gate  -> "Fraud Detection"

@@ -18,7 +18,7 @@ os.environ.setdefault("SQL_DATABASE", "test")
 os.environ.setdefault("AZURE_STORAGE_ACCOUNT", "teststorage")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import fraud_check
+from inference import random_forest_check
 
 
 class _Download:
@@ -55,11 +55,11 @@ class RfArtifactNamingTests(unittest.TestCase):
         payload = pickle.dumps({"model_version": "rf-test"})
         fake_service = _BlobService(attempts, payload)
 
-        with patch.object(fraud_check, "_STORAGE_KEY", "test-key"), patch(
+        with patch.object(random_forest_check, "_STORAGE_KEY", "test-key"), patch(
             "azure.storage.blob.BlobServiceClient.from_connection_string",
             return_value=fake_service,
         ):
-            result = fraud_check._stream_from_blob(3)
+            result = random_forest_check._stream_from_blob(3)
 
         self.assertEqual(result["model_version"], "rf-test")
         self.assertEqual(attempts, ["random_forest_tenant_3.pkl"])
