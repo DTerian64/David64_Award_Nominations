@@ -11,6 +11,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { X, RefreshCw, AlertCircle, Info } from 'lucide-react';
 import { getAccessToken } from '../services/api';
+import { SHAP_FEATURE_LABELS, parseShapContributions } from '../utils/shap';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -49,6 +50,21 @@ const SKIP_EXTRAS = new Set(['nomination_id', 'message_id', 'body', 'NominationI
 function parseDetails(raw: string | undefined): Record<string, unknown> {
   if (!raw) return {};
   try { return JSON.parse(raw); } catch { return {}; }
+}
+
+/** Render arbitrary nested details without JavaScript's "[object Object]" coercion. */
+function formatDetailValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return '';
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    if (value.every(item => item === null || typeof item !== 'object')) {
+      return value.map(item => String(item)).join(', ');
+    }
+    return JSON.stringify(value, null, 2);
+  }
+  if (typeof value === 'object') return JSON.stringify(value, null, 2);
+  return String(value);
 }
 
 // Shorten service container name for display: "award-api-primary-sandbox" → "backend"
@@ -221,8 +237,10 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                   {data.logs.map((log, i) => {
                     const text = log.message.replace(/^App_Log:\s*/, '');
                     const extras = parseDetails(log.details);
+                    const shapContributions = parseShapContributions(extras.top_features);
                     const extraEntries = Object.entries(extras).filter(
                       ([k]) => !SKIP_EXTRAS.has(k)
+                        && (k !== 'top_features' || shapContributions.length === 0)
                     );
                     return (
                       <div key={i} className="border border-gray-100 rounded-lg p-3 text-xs">
@@ -250,11 +268,40 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                             {extraEntries.map(([k, v]) => (
                               <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-50 border border-gray-200 text-xs font-mono text-gray-600">
                                 <span className="text-gray-400">{k}</span>
-                                <span className="text-gray-800">
-                                  {Array.isArray(v) ? (v.length === 0 ? '[]' : v.join(', ')) : String(v)}
+                                <span className="text-gray-800 whitespace-pre-wrap break-all">
+                                  {formatDetailValue(v)}
                                 </span>
                               </span>
                             ))}
+                          </div>
+                        )}
+                        {shapContributions.length > 0 && (
+                          <div className="mt-2 rounded border border-gray-200 bg-gray-50 p-2">
+                            <p className="mb-1.5 font-mono text-[10px] text-gray-400">top_features</p>
+                            <div className="space-y-1.5">
+                              {shapContributions.map((contribution, index) => {
+                                const isRisk = contribution.contribution > 0;
+                                const sign = isRisk ? '+' : '';
+                                return (
+                                  <div
+                                    key={`${contribution.feature}-${index}`}
+                                    className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 text-xs"
+                                  >
+                                    <div className="min-w-0">
+                                      <p className="text-gray-700">
+                                        {SHAP_FEATURE_LABELS[contribution.feature] ?? contribution.feature}
+                                      </p>
+                                      <p className="font-mono text-[10px] text-gray-400">
+                                        value {contribution.raw_value}
+                                      </p>
+                                    </div>
+                                    <span className={`font-mono ${isRisk ? 'text-orange-600' : 'text-emerald-600'}`}>
+                                      {sign}{(contribution.contribution * 100).toFixed(1)} pp
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                       </div>

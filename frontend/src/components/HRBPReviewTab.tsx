@@ -13,14 +13,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ShieldAlert, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
+import { SHAP_FEATURE_LABELS, type ShapContribution } from '../utils/shap';
 
 // ── Types ──────────────────────────────────────────────────────────────────
-
-interface ShapContribution {
-  feature:      string;
-  raw_value:    number;
-  contribution: number;
-}
 
 interface HRBPQueueItem {
   nomination_id:      number;
@@ -62,23 +57,6 @@ interface PairHistory {
 
 // ── SHAP feature label map ────────────────────────────────────────────────
 
-const FEATURE_LABELS: Record<string, string> = {
-  PairNominationCount:          'Same nominator → beneficiary pair count',
-  AmountZScore:                 'Amount deviation from tenant average (σ)',
-  NominatorConcentrationRatio:  'Nominator concentration ratio',
-  HasReciprocalNomination:      'Reciprocal nomination exists',
-  NominatorTotalNominations:    'Nominator total nominations',
-  IsHighAmount:                 'Amount statistically high',
-  BeneficiaryTotalReceived:     'Beneficiary total awards received',
-  BeneficiaryAvgAmountReceived: 'Beneficiary avg award amount',
-  DescriptionCosineSim:         'Description similarity to prior nominations',
-  DescriptionEmbDistance:       'Description semantic distance',
-  CategoryFraudRate:            'Category historical fraud rate',
-  NominatorAvgAmount:           'Nominator avg award amount',
-  NominatorStdAmount:           'Nominator amount variability',
-  NominatorUniqueBeneficiaries: 'Nominator unique beneficiaries',
-};
-
 // ── ShapPanel component ───────────────────────────────────────────────────
 
 const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFeaturesJson }) => {
@@ -104,7 +82,7 @@ const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFeaturesJs
           const pct     = Math.round((Math.abs(c.contribution) / maxAbs) * 100);
           const isRisk  = c.contribution > 0;
           const barColour = isRisk ? 'bg-orange-400' : 'bg-emerald-400';
-          const label   = FEATURE_LABELS[c.feature] ?? c.feature;
+          const label   = SHAP_FEATURE_LABELS[c.feature] ?? c.feature;
           const sign    = isRisk ? '+' : '';
 
           return (
