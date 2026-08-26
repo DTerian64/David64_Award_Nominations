@@ -923,10 +923,11 @@ def insert_nomination_logs(rows: list) -> None:
     ]
     with _get_conn() as conn:
         cursor = conn.cursor()
-        try:
-            cursor.fast_executemany = True
-        except Exception:
-            pass
+        # Do not enable pyodbc fast_executemany here. With SQL Server's
+        # NVARCHAR(MAX) details/exception columns, the ODBC driver can bind a
+        # 255-character (510-byte UTF-16) buffer and reject larger JSON records
+        # with HY000 "String data, right truncation". Nomination-log batches
+        # are small, so standard executemany is the safer correctness tradeoff.
         cursor.executemany(_NOMLOG_SQL, params)
         conn.commit()
 
