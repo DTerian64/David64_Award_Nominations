@@ -112,8 +112,8 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
       setData(await res.json());
-    } catch (e: any) {
-      setError(e.message || 'Failed to fetch logs');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to fetch logs');
     } finally {
       setLoading(false);
     }
@@ -122,7 +122,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
   // Fetch whenever the drawer opens.
   useEffect(() => {
     if (nominationId !== null) fetchLogs();
-  }, [fetchLogs]);
+  }, [fetchLogs, nominationId]);
 
   // Close on Escape.
   useEffect(() => {
