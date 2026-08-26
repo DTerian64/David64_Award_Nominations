@@ -104,7 +104,12 @@ class CompleteAssessmentTests(unittest.TestCase):
                 call_order.append("rf") or component_unavailable("test_rf")
             )
             graph.side_effect = lambda *_args: (
-                call_order.append("graph") or component_unavailable("test_graph")
+                call_order.append("graph") or {
+                    **component_unavailable("test_graph"),
+                    "warning_flags": [
+                        "[Graph] nominator is a super-nominator outlier"
+                    ],
+                }
             )
             gnn.side_effect = lambda *_args: (
                 call_order.append("gnn") or component_unavailable("test_gnn")
@@ -147,6 +152,15 @@ class CompleteAssessmentTests(unittest.TestCase):
             "Rules-based routing decision",
         ):
             self.assertIn(expected, messages)
+
+        graph_completed = next(
+            record for record in logs.records
+            if record.getMessage() == "Graph Analytics assessment completed"
+        )
+        self.assertEqual(
+            graph_completed.warning_flags,
+            ["[Graph] nominator is a super-nominator outlier"],
+        )
 
 
 if __name__ == "__main__":

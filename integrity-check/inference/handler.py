@@ -218,6 +218,7 @@ def handle(message_id: str, payload: dict) -> None:
             "last_attempt_status": graph_result.get("last_attempt_status"),
             "fraud_score": graph_result.get("fraud_score"),
             "risk_level": graph_result.get("risk_level"),
+            "warning_flags": graph_result.get("warning_flags") or [],
         },
     )
 
