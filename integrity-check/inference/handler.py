@@ -51,6 +51,7 @@ def _component_summary(result: dict) -> dict:
         "last_successful_at", "registry_serving_status", "status_run_id",
         "fraud_score", "fraud_prob",
         "risk_level", "source_severity", "warning_flags", "flagged", "model_version",
+        "llm_explanation", "llm_explanation_status", "llm_explanation_reason",
         "embedding_as_of", "snapshot_as_of", "affected_user_ids",
     )
     return {key: result.get(key) for key in keys if key in result}
@@ -197,7 +198,9 @@ def handle(message_id: str, payload: dict) -> None:
             "shap_reason": rf_result.get("shap_reason"),
             "shap_attempted": rf_result.get("shap_status") in ("COMPLETED", "FAILED"),
             "shap_feature_count": len(rf_result.get("shap_explanations") or []),
-            "explanation_generated": bool(rf_result.get("fraud_explanation")),
+            "llm_explanation_status": rf_result.get("llm_explanation_status"),
+            "llm_explanation_reason": rf_result.get("llm_explanation_reason"),
+            "llm_explanation_generated": bool(rf_result.get("llm_explanation")),
         },
     )
 
@@ -377,7 +380,7 @@ def handle(message_id: str, payload: dict) -> None:
 
     elif route_decision["route"] == "REJECT_FRAUD":
         explanation = (
-            rf_result.get("fraud_explanation")
+            rf_result.get("llm_explanation")
             if "RF" in decision["decisive_models"] else None
         ) or (
             "Your nomination was automatically declined because independent fraud "

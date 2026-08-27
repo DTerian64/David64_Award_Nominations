@@ -34,6 +34,7 @@ interface HRBPQueueItem {
   warning_flags:      string[];
   top_features:       string | null;
   feature_summary:    string | null;
+  llm_explanation:    string | null;
 }
 
 interface PairHistoryItem {
@@ -312,6 +313,18 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                           ⚠ {flag}
                         </span>
                       ))}
+                    </div>
+                  )}
+
+                  {/* LLM explanation of the RF assessment */}
+                  {nom.llm_explanation && (
+                    <div className="mb-3 rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                        LLM explanation
+                      </p>
+                      <p className="text-sm leading-relaxed text-slate-700">
+                        {nom.llm_explanation}
+                      </p>
                     </div>
                   )}
 

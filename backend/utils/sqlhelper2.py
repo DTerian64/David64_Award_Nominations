@@ -2546,6 +2546,18 @@ def set_nomination_status(nomination_id: int, status: str) -> None:
         session.commit()
 
 
+def _rf_llm_explanation(feature_summary_json: str | None) -> str | None:
+    """Extract the persisted RF LLM explanation from an assessment snapshot."""
+    if not feature_summary_json:
+        return None
+    try:
+        summary = json.loads(feature_summary_json)
+        explanation = summary.get("rf", {}).get("llm_explanation")
+        return explanation if isinstance(explanation, str) and explanation.strip() else None
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def get_hrbp_queue(tenant_id: int) -> list[dict]:
     """
     Return all nominations in PendingHRBPReview for a tenant, joined with
@@ -2600,6 +2612,7 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                 "warning_flags":      r[13].split(", ") if r[13] else [],
                 "top_features":       r[14],
                 "feature_summary":    r[15],
+                "llm_explanation":    _rf_llm_explanation(r[15]),
             }
             for r in rows
         ]

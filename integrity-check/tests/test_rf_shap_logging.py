@@ -40,7 +40,14 @@ def _find_call(mock, message: str):
 
 
 class RfShapLoggingTests(unittest.TestCase):
-    def _assess(self, probability, *, shap_result=None, shap_error=None):
+    def _assess(
+        self,
+        probability,
+        *,
+        shap_result=None,
+        shap_error=None,
+        explanation_error=None,
+    ):
         model_data = {
             "p2p_model": _RandomForest(probability),
             "model_version": "rf-test",
@@ -64,7 +71,7 @@ class RfShapLoggingTests(unittest.TestCase):
                 return_value="Generated explanation.",
             ),
         ]
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patch.object(
+        with patches[0], patches[1], patches[2], patches[3], patches[4] as generate_explanation, patch.object(
             random_forest_check, "_compute_shap", return_value=shap_result
         ) as compute_shap, patch.object(
             random_forest_check.logger, "info"
@@ -73,6 +80,8 @@ class RfShapLoggingTests(unittest.TestCase):
         ) as warning:
             if shap_error is not None:
                 compute_shap.side_effect = shap_error
+            if explanation_error is not None:
+                generate_explanation.side_effect = explanation_error
             result = random_forest_check.assess(
                 {"nomination_id": 13869}, tenant_id=3
             )
@@ -89,6 +98,9 @@ class RfShapLoggingTests(unittest.TestCase):
 
         self.assertEqual(result["shap_status"], "COMPLETED")
         self.assertIsNone(result["shap_reason"])
+        self.assertEqual(result["llm_explanation"], "Generated explanation.")
+        self.assertEqual(result["llm_explanation_status"], "COMPLETED")
+        self.assertIsNone(result["llm_explanation_reason"])
         compute_shap.assert_called_once()
         warning.assert_not_called()
 
@@ -98,6 +110,55 @@ class RfShapLoggingTests(unittest.TestCase):
         self.assertEqual(completed.kwargs["extra"]["shap_feature_count"], 2)
         self.assertEqual(completed.kwargs["extra"]["top_features"], contributions)
 
+        llm_completed = _find_call(info, "RF LLM explanation completed")
+        self.assertEqual(llm_completed.kwargs["extra"]["nomination_id"], 13869)
+        self.assertEqual(llm_completed.kwargs["extra"]["tenant_id"], 3)
+        self.assertEqual(
+            llm_completed.kwargs["extra"]["llm_explanation"],
+            "Generated explanation.",
+        )
+
+    def test_llm_explanation_is_generated_for_every_flagged_rf_risk(self):
+        contributions = [
+            {"feature": "AmountZScore", "raw_value": 2.5, "contribution": 0.31}
+        ]
+        for probability, expected_risk in (
+            (0.48, "MEDIUM"),
+            (0.68, "HIGH"),
+            (0.88, "CRITICAL"),
+        ):
+            with self.subTest(risk=expected_risk):
+                result, _compute_shap, info, warning = self._assess(
+                    probability, shap_result=contributions
+                )
+                self.assertEqual(result["risk_level"], expected_risk)
+                self.assertEqual(result["llm_explanation"], "Generated explanation.")
+                self.assertEqual(result["llm_explanation_status"], "COMPLETED")
+                self.assertIsNone(result["llm_explanation_reason"])
+                _find_call(info, "RF LLM explanation starting")
+                _find_call(info, "RF LLM explanation completed")
+                warning.assert_not_called()
+
+    def test_llm_failure_uses_logged_review_fallback_without_blocking(self):
+        contributions = [
+            {"feature": "AmountZScore", "raw_value": 2.5, "contribution": 0.31}
+        ]
+        result, _compute_shap, _info, warning = self._assess(
+            0.68,
+            shap_result=contributions,
+            explanation_error=RuntimeError("LLM unavailable"),
+        )
+
+        self.assertEqual(result["risk_level"], "HIGH")
+        self.assertEqual(result["llm_explanation_status"], "FALLBACK")
+        self.assertEqual(result["llm_explanation_reason"], "generation_error")
+        self.assertIn("Please review", result["llm_explanation"])
+
+        fallback = _find_call(warning, "RF LLM explanation fallback used")
+        self.assertEqual(fallback.kwargs["extra"]["nomination_id"], 13869)
+        self.assertEqual(fallback.kwargs["extra"]["tenant_id"], 3)
+        self.assertEqual(fallback.kwargs["extra"]["error"], "LLM unavailable")
+
     def test_failed_shap_log_is_nomination_scoped_and_result_is_explicit(self):
         result, compute_shap, _info, warning = self._assess(
             0.81, shap_error=RuntimeError("explainer failed")
@@ -106,6 +167,9 @@ class RfShapLoggingTests(unittest.TestCase):
         self.assertEqual(result["shap_status"], "FAILED")
         self.assertEqual(result["shap_reason"], "computation_error")
         self.assertEqual(result["shap_explanations"], [])
+        self.assertIsNone(result["llm_explanation"])
+        self.assertEqual(result["llm_explanation_status"], "SKIPPED")
+        self.assertEqual(result["llm_explanation_reason"], "shap_unavailable")
         compute_shap.assert_called_once()
 
         failed = _find_call(warning, "RF SHAP assessment failed")
@@ -118,6 +182,9 @@ class RfShapLoggingTests(unittest.TestCase):
 
         self.assertEqual(result["shap_status"], "SKIPPED")
         self.assertEqual(result["shap_reason"], "risk_below_medium")
+        self.assertIsNone(result["llm_explanation"])
+        self.assertEqual(result["llm_explanation_status"], "SKIPPED")
+        self.assertEqual(result["llm_explanation_reason"], "risk_below_medium")
         compute_shap.assert_not_called()
         warning.assert_not_called()
 

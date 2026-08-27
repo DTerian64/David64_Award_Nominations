@@ -9,7 +9,7 @@ Owns the full fraud detection pipeline:
   • Feature engineering — behavioural + semantic, mirrors modeling/train_rf_model.py
   • RF inference — predict_proba → fraud_score / risk_level / warning_flags
   • SHAP attribution — top-5 feature contributions for flagged nominations
-  • LLM explanation — human-readable rejection reason (CRITICAL auto-rejects)
+  • LLM explanation — human-readable rationale for every flagged RF assessment
 
 Public API
 ----------
@@ -25,7 +25,9 @@ Public API
         shap_explanations   list[dict]  Top-5 SHAP contributions (flagged only, else [])
         shap_status         str         COMPLETED | FAILED | SKIPPED
         shap_reason         str | None  Why SHAP was skipped or failed
-        fraud_explanation   str | None  LLM-generated human text (CRITICAL only, else None)
+        llm_explanation     str | None  LLM-generated explanation for flagged RF scores
+        llm_explanation_status str      COMPLETED | FALLBACK | SKIPPED
+        llm_explanation_reason str | None
 
 Called exclusively by handler.py.
 """
@@ -472,67 +474,84 @@ def _compute_shap(
 
 # ── LLM explanation ───────────────────────────────────────────────────────────
 
-_FALLBACK_EXPLANATION = (
+_CRITICAL_FALLBACK_EXPLANATION = (
     "Your nomination was automatically declined because our fraud prevention "
     "system detected unusual patterns in this submission. If you believe this "
     "is an error, please contact your HR administrator for further information."
 )
 
+_REVIEW_FALLBACK_EXPLANATION = (
+    "The RF assessment identified elevated risk signals in the nomination's "
+    "behavioral and relationship patterns. Please review the model signal "
+    "breakdown and nomination history before making a decision."
+)
 
-def _generate_explanation(shap_contributions: list[dict], fraud_score: int) -> str:
+
+def _generate_explanation(
+    shap_contributions: list[dict], fraud_score: int, risk_level: str
+) -> str:
     """
     Call Azure OpenAI to convert SHAP feature contributions into a concise,
-    non-accusatory rejection explanation suitable for the nominator.
+    non-accusatory explanation. MEDIUM/HIGH explanations support HRBP review;
+    CRITICAL explanations retain the nominator-facing auto-rejection wording.
 
-    Falls back to _FALLBACK_EXPLANATION on any error so the caller is never
-    blocked by an LLM failure.
+    Errors are handled by assess(), which records a nomination-scoped fallback.
     """
-    import os
     from openai import AzureOpenAI
 
-    try:
-        client = AzureOpenAI(
-            api_key=os.environ["AZURE_OPENAI_API_KEY"],
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
-            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    client = AzureOpenAI(
+        api_key=os.environ["AZURE_OPENAI_API_KEY"],
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    )
+
+    signal_lines = []
+    for contribution in shap_contributions:
+        label = _FEATURE_LABELS.get(
+            contribution["feature"], contribution["feature"]
+        )
+        direction = "elevated" if contribution["contribution"] > 0 else "low"
+        signal_lines.append(
+            f"- {label}: {direction} (raw value: {contribution['raw_value']})"
+        )
+    signals_text = "\n".join(signal_lines)
+
+    if risk_level == "CRITICAL":
+        audience_and_outcome = (
+            "Write for the nominator. Start with: 'Your nomination was automatically "
+            "declined because'. End with: 'If you believe this is an error, please "
+            "contact your HR administrator.'"
+        )
+    else:
+        audience_and_outcome = (
+            "Write for an HRBP reviewer. Start with: 'The RF assessment identified "
+            "elevated risk because'. State that the signals require human review; do "
+            "not say that the nomination was declined or rejected."
         )
 
-        # Build a readable summary of the top contributing signals.
-        signal_lines = []
-        for c in shap_contributions:
-            label  = _FEATURE_LABELS.get(c["feature"], c["feature"])
-            direction = "elevated" if c["contribution"] > 0 else "low"
-            signal_lines.append(f"- {label}: {direction} (raw value: {c['raw_value']})")
-        signals_text = "\n".join(signal_lines)
+    prompt = (
+        "You are an HR compliance system writing a brief, professional LLM explanation "
+        "for an award nomination's Random Forest risk assessment "
+        f"(risk level: {risk_level}, score: {fraud_score}/100).\n\n"
+        "The strongest supporting and mitigating signals are:\n"
+        f"{signals_text}\n\n"
+        "Write 2–3 sentences. Rules:\n"
+        "- Use plain English — no ML terminology, feature codes, or scores\n"
+        "- Describe patterns neutrally and factually\n"
+        "- Do not accuse anyone of fraud or misconduct\n"
+        f"- {audience_and_outcome}"
+    )
 
-        prompt = (
-            "You are an HR compliance system writing a brief, professional explanation "
-            "for why an award nomination was automatically declined by a fraud detection model "
-            f"(confidence score: {fraud_score}/100).\n\n"
-            "The top signals that contributed to this decision are:\n"
-            f"{signals_text}\n\n"
-            "Write 2–3 sentences for the nominator. Rules:\n"
-            "- Use plain English — no ML terminology, no feature names, no scores\n"
-            "- Describe the pattern in neutral, factual language (e.g. 'multiple nominations "
-            "to the same recipient' not 'you are committing fraud')\n"
-            "- Do not be accusatory — the person may have acted in good faith\n"
-            "- End with: 'If you believe this is an error, please contact your HR administrator.'\n"
-            "- Start with: 'Your nomination was automatically declined because'"
-        )
-
-        response = client.chat.completions.create(
-            model=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
-            temperature=0.2,
-        )
-        explanation = response.choices[0].message.content.strip()
-        logger.info("LLM fraud explanation generated (%d chars)", len(explanation))
-        return explanation
-
-    except Exception as exc:
-        logger.warning("LLM explanation failed — using fallback: %s", exc)
-        return _FALLBACK_EXPLANATION
+    response = client.chat.completions.create(
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=200,
+        temperature=0.2,
+    )
+    explanation = response.choices[0].message.content.strip()
+    if not explanation:
+        raise ValueError("Azure OpenAI returned an empty explanation")
+    return explanation
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -554,7 +573,9 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
             warning_flags:     list[str],
             flagged:           bool,
             shap_explanations: list[dict],   # top-5 SHAP contributions; [] if not flagged
-            fraud_explanation: str | None,   # LLM text; only set for CRITICAL auto-rejects
+            llm_explanation: str | None,     # LLM text for MEDIUM/HIGH/CRITICAL
+            llm_explanation_status: str,
+            llm_explanation_reason: str | None,
         }
 
     Never raises — on model load failure returns model_available=False and
@@ -575,7 +596,9 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
             "shap_explanations": [],
             "shap_status":       "SKIPPED",
             "shap_reason":       "model_unavailable",
-            "fraud_explanation": None,
+            "llm_explanation": None,
+            "llm_explanation_status": "SKIPPED",
+            "llm_explanation_reason": "model_unavailable",
             "model_version":     None,
         }
         logger.info(
@@ -658,13 +681,73 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
             },
         )
 
-    # ── LLM explanation (CRITICAL auto-rejects only) ──────────────────────────
-    # MEDIUM / HIGH go to HRBP review — the reviewer writes their own reason.
-    # CRITICAL bypasses HRBP, so we need a human-readable explanation for the
-    # nominator's rejection notice.
-    fraud_explanation: str | None = None
-    if risk == "CRITICAL" and shap_explanations:
-        fraud_explanation = _generate_explanation(shap_explanations, fraud_score)
+    # ── LLM explanation (all flagged RF assessments) ──────────────────────────
+    llm_explanation: str | None = None
+    llm_explanation_status = "SKIPPED"
+    llm_explanation_reason: str | None = (
+        "shap_unavailable" if flagged else "risk_below_medium"
+    )
+    if flagged and shap_explanations:
+        logger.info(
+            "RF LLM explanation starting",
+            extra={
+                "nomination_id": nomination_id,
+                "tenant_id": tenant_id,
+                "fraud_score": fraud_score,
+                "risk_level": risk,
+            },
+        )
+        try:
+            llm_explanation = _generate_explanation(
+                shap_explanations, fraud_score, risk
+            )
+            llm_explanation_status = "COMPLETED"
+            llm_explanation_reason = None
+            logger.info(
+                "RF LLM explanation completed",
+                extra={
+                    "nomination_id": nomination_id,
+                    "tenant_id": tenant_id,
+                    "fraud_score": fraud_score,
+                    "risk_level": risk,
+                    "llm_explanation_status": llm_explanation_status,
+                    "llm_explanation": llm_explanation,
+                },
+            )
+        except Exception as exc:
+            llm_explanation = (
+                _CRITICAL_FALLBACK_EXPLANATION
+                if risk == "CRITICAL"
+                else _REVIEW_FALLBACK_EXPLANATION
+            )
+            llm_explanation_status = "FALLBACK"
+            llm_explanation_reason = "generation_error"
+            logger.warning(
+                "RF LLM explanation fallback used",
+                extra={
+                    "nomination_id": nomination_id,
+                    "tenant_id": tenant_id,
+                    "fraud_score": fraud_score,
+                    "risk_level": risk,
+                    "llm_explanation_status": llm_explanation_status,
+                    "llm_explanation_reason": llm_explanation_reason,
+                    "llm_explanation": llm_explanation,
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
+    else:
+        logger.info(
+            "RF LLM explanation skipped",
+            extra={
+                "nomination_id": nomination_id,
+                "tenant_id": tenant_id,
+                "llm_explanation_status": llm_explanation_status,
+                "llm_explanation_reason": llm_explanation_reason,
+                "fraud_score": fraud_score,
+                "risk_level": risk,
+            },
+        )
 
     result = {
         "model_available":   True,
@@ -676,7 +759,9 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
         "shap_explanations": shap_explanations,
         "shap_status":       shap_status,
         "shap_reason":       shap_reason,
-        "fraud_explanation": fraud_explanation,
+        "llm_explanation": llm_explanation,
+        "llm_explanation_status": llm_explanation_status,
+        "llm_explanation_reason": llm_explanation_reason,
         "model_version":     model_data.get("model_version"),
     }
     result.update(component_availability.available_metadata(component_status))
