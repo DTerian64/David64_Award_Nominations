@@ -1364,61 +1364,6 @@ def save_p2p_fraud_score(
         return result.rowcount > 0
 
 
-def upsert_p2p_fraud_label(
-    nomination_id: int,
-    is_fraud: bool,
-    confirmed_by: str = "HRBP",
-) -> None:
-    """
-    Write an HRBP-confirmed fraud/legitimate label into dbo.P2P_FraudScores.
-
-    Called in real-time when an HRBP reviews a PendingHRBPReview nomination:
-      • is_fraud=True  (HRBP rejected)  → FraudScore=100, RiskLevel='CRITICAL',
-                                          IsFraud=1, ConfirmedBy=confirmed_by
-      • is_fraud=False (HRBP approved)  → FraudScore=0,   RiskLevel='NONE',
-                                          IsFraud=0, ConfirmedBy=confirmed_by
-
-    The row is created if it doesn't exist yet (nomination skipped the ML
-    pipeline because no model was available at submission time).
-
-    These confirmed labels are picked up by load_data() in modeling/train_rf_model.py
-    during the next weekly retrain:
-        WHERE RiskLevel IN ('HIGH', 'CRITICAL')  →  IsFraud = 1
-    so CRITICAL rows written here feed directly into supervised RF training.
-    """
-    fraud_score = 100  if is_fraud else 0
-    risk_level  = "CRITICAL" if is_fraud else "NONE"
-    is_fraud_int = 1 if is_fraud else 0
-
-    with get_db_context() as session:
-        session.execute(
-            text("""
-                MERGE dbo.P2P_FraudScores AS target
-                USING (SELECT :nomination_id AS NominationId) AS src
-                ON target.NominationId = src.NominationId
-                WHEN MATCHED THEN
-                    UPDATE SET FraudScore   = :fraud_score,
-                               RiskLevel    = :risk_level,
-                               IsFraud      = :is_fraud,
-                               ConfirmedBy  = :confirmed_by,
-                               ConfirmedAt  = SYSUTCDATETIME()
-                WHEN NOT MATCHED THEN
-                    INSERT (NominationId, FraudScore, RiskLevel, IsFraud,
-                            ConfirmedBy, ConfirmedAt)
-                    VALUES (:nomination_id, :fraud_score, :risk_level, :is_fraud,
-                            :confirmed_by, SYSUTCDATETIME());
-            """),
-            {
-                "nomination_id": nomination_id,
-                "fraud_score":   fraud_score,
-                "risk_level":    risk_level,
-                "is_fraud":      is_fraud_int,
-                "confirmed_by":  confirmed_by,
-            },
-        )
-        session.commit()
-
-
 # ===========================================================================
 # ANALYTICS QUERIES
 # ===========================================================================
@@ -1828,12 +1773,15 @@ def get_gnn_comparison(tenant_id: int, limit: int = 25) -> dict:
         confirmed = session.execute(
             text("""
                 SELECT
-                    SUM(CASE WHEN p.ConfirmedBy IS NOT NULL THEN 1 ELSE 0 END) AS Confirmed,
-                    SUM(CASE WHEN p.ConfirmedBy IS NOT NULL AND p.IsFraud = 1 THEN 1 ELSE 0 END) AS ConfirmedFraud
+                    SUM(CASE WHEN fdr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
+                             THEN 1 ELSE 0 END) AS Confirmed,
+                    SUM(CASE WHEN fdr.TrainingDisposition = 'FRAUD'
+                             THEN 1 ELSE 0 END) AS ConfirmedFraud
                 FROM   dbo.GNN_FraudScores g
                 JOIN   dbo.Nominations n      ON n.NominationId = g.NominationId
                 JOIN   dbo.Users u            ON u.UserId       = n.NominatorId
-                JOIN   dbo.P2P_FraudScores p  ON p.NominationId = g.NominationId
+                LEFT JOIN dbo.FraudDecisionResults fdr
+                       ON fdr.NominationId = g.NominationId
                 WHERE  u.TenantId     = :tenant_id
                   AND  g.ModelVersion = :mv
             """),
@@ -2464,6 +2412,103 @@ def create_demo_user(
 # HRBP REVIEW WORKFLOW
 # ===========================================================================
 
+_HRBP_ADJUDICATIONS = {
+    "CLEARED_NO_CONCERN": ("LEGITIMATE", "Pending"),
+    "CLEARED_UNSUBSTANTIATED": ("EXCLUDED", "Pending"),
+    "CONFIRMED_CONCERN": ("FRAUD", "Rejected"),
+}
+
+
+def apply_hrbp_adjudication(
+    nomination_id: int,
+    outcome: str,
+    reviewed_by: str,
+    reason: str,
+) -> dict:
+    """Atomically persist the human outcome and advance the nomination.
+
+    Component inference scores are deliberately untouched. The returned
+    TrainingDisposition is the shared, model-neutral contract used by RF and
+    GNN training; EXCLUDED records a completed review without creating a label.
+    """
+    if outcome not in _HRBP_ADJUDICATIONS:
+        raise ValueError(f"Unsupported HRBP outcome: {outcome}")
+    if not reason or not reason.strip():
+        raise ValueError("An HRBP decision reason is required")
+
+    training_disposition, target_status = _HRBP_ADJUDICATIONS[outcome]
+    reason = reason.strip()
+
+    with get_db_context() as session:
+        decision_result = session.execute(
+            text("""
+                UPDATE dbo.FraudDecisionResults
+                SET HumanReviewOutcome = :outcome,
+                    TrainingDisposition = :training_disposition,
+                    ReviewReason = :reason,
+                    ReviewedBy = :reviewed_by,
+                    ReviewedAt = SYSUTCDATETIME(),
+                    UpdatedAt = SYSUTCDATETIME()
+                WHERE NominationId = :nomination_id
+                  AND HumanReviewOutcome IS NULL
+            """),
+            {
+                "nomination_id": nomination_id,
+                "outcome": outcome,
+                "training_disposition": training_disposition,
+                "reason": reason,
+                "reviewed_by": reviewed_by,
+            },
+        )
+        if decision_result.rowcount != 1:
+            session.rollback()
+            return {"applied": False, "reason": "already_reviewed_or_missing_decision"}
+
+        if target_status == "Rejected":
+            nomination_result = session.execute(
+                text("""
+                    UPDATE dbo.Nominations
+                    SET Status = 'Rejected',
+                        RejectionReason = :reason,
+                        RejectionActor = 'HRBP Review',
+                        updated_at = SYSUTCDATETIME(),
+                        updated_by = :reviewed_by
+                    WHERE NominationId = :nomination_id
+                      AND Status = 'PendingHRBPReview'
+                """),
+                {
+                    "nomination_id": nomination_id,
+                    "reason": reason,
+                    "reviewed_by": reviewed_by,
+                },
+            )
+        else:
+            nomination_result = session.execute(
+                text("""
+                    UPDATE dbo.Nominations
+                    SET Status = 'Pending',
+                        RejectionReason = NULL,
+                        RejectionActor = NULL,
+                        updated_at = SYSUTCDATETIME(),
+                        updated_by = :reviewed_by
+                    WHERE NominationId = :nomination_id
+                      AND Status = 'PendingHRBPReview'
+                """),
+                {"nomination_id": nomination_id, "reviewed_by": reviewed_by},
+            )
+
+        if nomination_result.rowcount != 1:
+            session.rollback()
+            return {"applied": False, "reason": "nomination_not_pending_review"}
+
+        session.commit()
+        return {
+            "applied": True,
+            "status": target_status,
+            "outcome": outcome,
+            "training_disposition": training_disposition,
+        }
+
 def save_hrbp_fraud_flags(
     nomination_id:        int,
     fraud_score:          int,
@@ -2562,7 +2607,7 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
     """
     Return all nominations in PendingHRBPReview for a tenant, joined with
     nominator / beneficiary names and the FraudFlags snapshot.
-    Ordered by submission time ascending (oldest first).
+    Critical cases are listed first; each priority group is oldest first.
     """
     with get_db_context() as session:
         rows = session.execute(
@@ -2590,7 +2635,9 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                 LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 WHERE n.Status    = 'PendingHRBPReview'
                   AND nom.TenantId = :tenant_id
-                ORDER BY n.NominationDate ASC
+                ORDER BY
+                    CASE WHEN ff.RiskLevel = 'CRITICAL' THEN 0 ELSE 1 END,
+                    n.NominationDate ASC
             """),
             {"tenant_id": tenant_id},
         ).fetchall()

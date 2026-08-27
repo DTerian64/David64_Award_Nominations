@@ -474,12 +474,6 @@ def _compute_shap(
 
 # ── LLM explanation ───────────────────────────────────────────────────────────
 
-_CRITICAL_FALLBACK_EXPLANATION = (
-    "Your nomination was automatically declined because our fraud prevention "
-    "system detected unusual patterns in this submission. If you believe this "
-    "is an error, please contact your HR administrator for further information."
-)
-
 _REVIEW_FALLBACK_EXPLANATION = (
     "The RF assessment identified elevated risk signals in the nomination's "
     "behavioral and relationship patterns. Please review the model signal "
@@ -492,8 +486,8 @@ def _generate_explanation(
 ) -> str:
     """
     Call Azure OpenAI to convert SHAP feature contributions into a concise,
-    non-accusatory explanation. MEDIUM/HIGH explanations support HRBP review;
-    CRITICAL explanations retain the nominator-facing auto-rejection wording.
+    non-accusatory explanation for an HRBP reviewer. Every flagged RF risk band,
+    including CRITICAL, remains a human-review signal rather than a decision.
 
     Errors are handled by assess(), which records a nomination-scoped fallback.
     """
@@ -516,19 +510,6 @@ def _generate_explanation(
         )
     signals_text = "\n".join(signal_lines)
 
-    if risk_level == "CRITICAL":
-        audience_and_outcome = (
-            "Write for the nominator. Start with: 'Your nomination was automatically "
-            "declined because'. End with: 'If you believe this is an error, please "
-            "contact your HR administrator.'"
-        )
-    else:
-        audience_and_outcome = (
-            "Write for an HRBP reviewer. Start with: 'The RF assessment identified "
-            "elevated risk because'. State that the signals require human review; do "
-            "not say that the nomination was declined or rejected."
-        )
-
     prompt = (
         "You are an HR compliance system writing a brief, professional LLM explanation "
         "for an award nomination's Random Forest risk assessment "
@@ -539,7 +520,10 @@ def _generate_explanation(
         "- Use plain English — no ML terminology, feature codes, or scores\n"
         "- Describe patterns neutrally and factually\n"
         "- Do not accuse anyone of fraud or misconduct\n"
-        f"- {audience_and_outcome}"
+        "- Write for an HRBP reviewer\n"
+        "- Start with: 'The RF assessment identified elevated risk because'\n"
+        "- State that the signals require human review; do not say that the "
+        "nomination was declined or rejected"
     )
 
     response = client.chat.completions.create(
@@ -715,11 +699,7 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
                 },
             )
         except Exception as exc:
-            llm_explanation = (
-                _CRITICAL_FALLBACK_EXPLANATION
-                if risk == "CRITICAL"
-                else _REVIEW_FALLBACK_EXPLANATION
-            )
+            llm_explanation = _REVIEW_FALLBACK_EXPLANATION
             llm_explanation_status = "FALLBACK"
             llm_explanation_reason = "generation_error"
             logger.warning(

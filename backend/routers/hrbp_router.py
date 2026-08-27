@@ -12,17 +12,15 @@ Routes
 GET  /api/hrbp/queue
     Return all nominations in PendingHRBPReview for the tenant.
 
-POST /api/hrbp/nominations/{id}/approve
-    Approve a flagged nomination → transitions to Pending (manager flow continues).
-
-POST /api/hrbp/nominations/{id}/reject
-    Reject a flagged nomination → transitions to Rejected, nominator notified.
+POST /api/hrbp/nominations/{id}/decision
+    Record one of three model-neutral HRBP outcomes and its training disposition.
 
 GET  /api/hrbp/nominations/{id}/pair-history
     Return all prior nominations between the same nominator → beneficiary pair.
 """
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -58,7 +56,12 @@ def require_hrbp_role(
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class HRBPDecisionRequest(BaseModel):
-    reason: str = ""   # required for rejection, optional for approval
+    outcome: Literal[
+        "CLEARED_NO_CONCERN",
+        "CLEARED_UNSUBSTANTIATED",
+        "CONFIRMED_CONCERN",
+    ]
+    reason: str
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -73,16 +76,13 @@ async def get_hrbp_queue(user_context: dict = Depends(require_hrbp_role)):
     return sqlhelper.get_hrbp_queue(tenant_id)
 
 
-@router.post("/nominations/{nomination_id}/approve")
-async def hrbp_approve(
+@router.post("/nominations/{nomination_id}/decision")
+async def hrbp_decide(
     nomination_id: int,
     body: HRBPDecisionRequest,
     user_context: dict = Depends(require_hrbp_role),
 ):
-    """
-    HRBP approves a flagged nomination → transitions to Pending so the normal
-    manager-approval flow continues.  HRBP role required.
-    """
+    """Record a model-neutral HRBP adjudication and advance the workflow."""
     effective_user = user_context["effective_user"]
     details = sqlhelper.get_nomination_details_for_hrbp(nomination_id)
     if not details:
@@ -94,89 +94,67 @@ async def hrbp_approve(
         )
     if details["tenant_id"] != effective_user["TenantId"]:
         raise HTTPException(status_code=403, detail="Cross-tenant access denied")
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(status_code=400, detail="Decision reason is required")
 
-    sqlhelper.set_nomination_status(nomination_id, "Pending")
-    logger.info(
-        "HRBP approved nomination %d (reviewer=%d)",
-        nomination_id, effective_user["UserId"],
+    reviewer = f"HRBP:{effective_user['UserId']}"
+    result = sqlhelper.apply_hrbp_adjudication(
+        nomination_id=nomination_id,
+        outcome=body.outcome,
+        reviewed_by=reviewer,
+        reason=body.reason,
     )
-
-    # Write confirmed-legitimate label → feeds next RF retrain
-    try:
-        sqlhelper.upsert_p2p_fraud_label(
-            nomination_id=nomination_id,
-            is_fraud=False,
-            confirmed_by=f"HRBP:{effective_user['UserId']}",
-        )
-    except Exception as e:
-        logger.warning("upsert_p2p_fraud_label failed for nomination %d (approve): %s", nomination_id, e)
-
-    try:
-        await publish_event(
-            "nomination.hrbp-approved",
-            nomination_id,
-            extra={"reviewer_id": effective_user["UserId"]},
-        )
-        # Also fire nomination.created so the manager gets their approval email.
-        await publish_event("nomination.created", nomination_id)
-    except Exception as e:
-        logger.warning("Failed to publish hrbp-approved events for %d: %s", nomination_id, e)
-
-    return {"status": "approved", "nomination_id": nomination_id}
-
-
-@router.post("/nominations/{nomination_id}/reject")
-async def hrbp_reject(
-    nomination_id: int,
-    body: HRBPDecisionRequest,
-    user_context: dict = Depends(require_hrbp_role),
-):
-    """
-    HRBP rejects a flagged nomination → transitions to Rejected.
-    A reason is strongly recommended and will be included in the nominator email.
-    HRBP role required.
-    """
-    effective_user = user_context["effective_user"]
-    details = sqlhelper.get_nomination_details_for_hrbp(nomination_id)
-    if not details:
-        raise HTTPException(status_code=404, detail="Nomination not found")
-    if details["status"] != "PendingHRBPReview":
+    if not result["applied"]:
         raise HTTPException(
-            status_code=400,
-            detail=f"Nomination is not in PendingHRBPReview (current: {details['status']})",
+            status_code=409,
+            detail=f"HRBP decision was not applied: {result['reason']}",
         )
-    if details["tenant_id"] != effective_user["TenantId"]:
-        raise HTTPException(status_code=403, detail="Cross-tenant access denied")
 
-    sqlhelper.reject_nomination(nomination_id, reason=body.reason, actor="HRBP Review")
     logger.info(
-        "HRBP rejected nomination %d (reviewer=%d reason=%r)",
-        nomination_id, effective_user["UserId"], body.reason,
+        "HRBP adjudication recorded",
+        extra={
+            "nomination_id": nomination_id,
+            "tenant_id": effective_user["TenantId"],
+            "reviewer_id": effective_user["UserId"],
+            "human_review_outcome": result["outcome"],
+            "training_disposition": result["training_disposition"],
+            "new_status": result["status"],
+            "reason": body.reason.strip(),
+        },
     )
 
-    # Write confirmed-fraud label → feeds next RF retrain as CRITICAL
     try:
-        sqlhelper.upsert_p2p_fraud_label(
-            nomination_id=nomination_id,
-            is_fraud=True,
-            confirmed_by=f"HRBP:{effective_user['UserId']}",
-        )
+        event_extra = {
+            "reviewer_id": effective_user["UserId"],
+            "outcome": result["outcome"],
+            "training_disposition": result["training_disposition"],
+            "reason": body.reason.strip(),
+        }
+        if result["status"] == "Rejected":
+            await publish_event(
+                "nomination.hrbp-rejected", nomination_id, extra=event_extra
+            )
+        else:
+            await publish_event(
+                "nomination.hrbp-approved", nomination_id, extra=event_extra
+            )
+            # The manager receives the ordinary approval request only after HRBP
+            # has cleared the integrity concern.
+            await publish_event("nomination.created", nomination_id)
     except Exception as e:
-        logger.warning("upsert_p2p_fraud_label failed for nomination %d (reject): %s", nomination_id, e)
-
-    try:
-        await publish_event(
-            "nomination.hrbp-rejected",
+        logger.warning(
+            "Failed to publish HRBP outcome events for %d: %s",
             nomination_id,
-            extra={
-                "reviewer_id": effective_user["UserId"],
-                "reason":      body.reason,
-            },
+            e,
+            extra={"nomination_id": nomination_id},
         )
-    except Exception as e:
-        logger.warning("Failed to publish hrbp-rejected event for %d: %s", nomination_id, e)
 
-    return {"status": "rejected", "nomination_id": nomination_id}
+    return {
+        "status": result["status"],
+        "nomination_id": nomination_id,
+        "outcome": result["outcome"],
+        "training_disposition": result["training_disposition"],
+    }
 
 
 @router.get("/nominations/{nomination_id}/pair-history")

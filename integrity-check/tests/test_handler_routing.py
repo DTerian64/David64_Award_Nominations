@@ -63,10 +63,12 @@ class RoutingRuleTests(unittest.TestCase):
         route = handler._select_route(desc, decision("HIGH"))
         self.assertEqual(route["target_status"], "PendingHRBPReview")
 
-    def test_critical_model_risk_rejects(self):
+    def test_critical_model_risk_routes_to_priority_hrbp_review(self):
         desc = description_check.CheckResult("pass", None, None)
         route = handler._select_route(desc, decision("CRITICAL"))
-        self.assertEqual(route["route"], "REJECT_FRAUD")
+        self.assertEqual(route["route"], "HRBP_REVIEW")
+        self.assertEqual(route["target_status"], "PendingHRBPReview")
+        self.assertEqual(route["review_priority"], "CRITICAL")
 
     def test_clean_available_decision_routes_to_manager(self):
         desc = description_check.CheckResult("pass", None, None)

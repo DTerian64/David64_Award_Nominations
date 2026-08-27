@@ -32,15 +32,9 @@ from utils import service_bus_publisher
 
 logger = logging.getLogger("integrity_check.handler")
 
-# RejectionActor values written by this service.
-#
-# These must stay distinct. modeling.train_rf_model.load_data() excludes description
-# rejections from the training population (a failed quality gate is not a fraud
-# signal) but must NOT exclude ML auto-rejects. Until 2026-08 both paths wrote
-# the literal "Fraud Detection", so the exclusion silently discarded every
-# CRITICAL auto-reject as if it were a typo in a description.
-ACTOR_DESCRIPTION_CHECK = "Fraud Detection (Description)"   # Check A quality gate
-ACTOR_FRAUD_ML          = "Fraud Detection"                 # CRITICAL ML auto-reject
+# The description quality gate remains distinct from human fraud adjudication;
+# its rejection must never become a supervised fraud label.
+ACTOR_DESCRIPTION_CHECK = "Fraud Detection (Description)"
 
 
 def _component_summary(result: dict) -> dict:
@@ -66,13 +60,6 @@ def _select_route(desc_result, decision: dict) -> dict:
             "routing_rule": "check_a_incoherent_reject",
         }
 
-    if decision["decision_available"] and decision["risk_level"] == "CRITICAL":
-        return {
-            "route": "REJECT_FRAUD",
-            "target_status": "Rejected",
-            "routing_rule": "critical_component_risk_reject",
-        }
-
     if desc_result.action == "flag" or decision["flagged"]:
         concern_source = (
             "description_and_fraud"
@@ -85,6 +72,9 @@ def _select_route(desc_result, decision: dict) -> dict:
             "route": "HRBP_REVIEW",
             "target_status": "PendingHRBPReview",
             "routing_rule": f"{concern_source}_concern_hrbp",
+            "review_priority": (
+                "CRITICAL" if decision["risk_level"] == "CRITICAL" else "STANDARD"
+            ),
         }
 
     return {
@@ -345,6 +335,7 @@ def handle(message_id: str, payload: dict) -> None:
             "route": route_decision["route"],
             "target_status": route_decision["target_status"],
             "routing_rule": route_decision["routing_rule"],
+            "review_priority": route_decision.get("review_priority"),
             "description_action": desc_result.action,
             "fraud_decision_available": decision["decision_available"],
             "final_risk": risk_level,
@@ -378,47 +369,6 @@ def handle(message_id: str, payload: dict) -> None:
             },
         )
 
-    elif route_decision["route"] == "REJECT_FRAUD":
-        explanation = (
-            rf_result.get("llm_explanation")
-            if "RF" in decision["decisive_models"] else None
-        ) or (
-            "Your nomination was automatically declined because independent fraud "
-            "screening detected an unusually high-risk pattern in this submission. "
-            "Please contact your HR administrator if you believe this is an error."
-        )
-        db.reject_nomination(
-            nomination_id, reason=explanation, actor=ACTOR_FRAUD_ML
-        )
-        # Persist SHAP data even though no HRBP will review this nomination —
-        # analytics and audit trails read from HRBP_FraudFlags for all risk levels.
-        db.save_hrbp_fraud_flags(
-            nomination_id=nomination_id,
-            fraud_score=decision["final_score"],
-            fraud_probability=decision_probability,
-            risk_level=risk_level,
-            warning_flags=", ".join(all_flags),
-            shap_explanations_json=shap_json,
-            feature_summary_json=feature_summary,
-        )
-        service_bus_publisher.publish_event(
-            "nomination.fraud-flagged", nomination_id,
-            extra={
-                "risk_level": risk_level,
-                "auto_rejected": True,
-                "routing_rule": route_decision["routing_rule"],
-            },
-        )
-        logger.info(
-            "Nomination auto-rejected (CRITICAL fraud score)",
-            extra={
-                "nomination_id": nomination_id,
-                "fraud_score": decision["final_score"],
-                "decisive_models": decision["decisive_models"],
-                "routing_rule": route_decision["routing_rule"],
-            },
-        )
-
     elif route_decision["route"] == "HRBP_REVIEW":
         db.save_hrbp_fraud_flags(
             nomination_id=nomination_id,
@@ -435,6 +385,7 @@ def handle(message_id: str, payload: dict) -> None:
             extra={
                 "risk_level": risk_level,
                 "routing_rule": route_decision["routing_rule"],
+                "review_priority": route_decision["review_priority"],
             },
         )
         logger.info(
@@ -445,6 +396,7 @@ def handle(message_id: str, payload: dict) -> None:
                 "decisive_models": decision["decisive_models"],
                 "pre_ml_flags":  pre_ml_flags,
                 "routing_rule": route_decision["routing_rule"],
+                "review_priority": route_decision["review_priority"],
             },
         )
 

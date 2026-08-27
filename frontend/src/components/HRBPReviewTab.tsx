@@ -7,7 +7,7 @@
  *   - Nominator → Beneficiary, amount, category, description
  *   - Fraud score, risk level, and warning flags from the P2P model
  *   - All other nominations between these two people in either direction (expandable)
- *   - Approve / Reject buttons with optional reason text
+ *   - Three explicit human outcomes with their ML training disposition
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -55,6 +55,11 @@ interface PairHistory {
   pair_count:       number;
   history:          PairHistoryItem[];
 }
+
+type HRBPOutcome =
+  | 'CLEARED_NO_CONCERN'
+  | 'CLEARED_UNSUBSTANTIATED'
+  | 'CONFIRMED_CONCERN';
 
 // ── SHAP feature label map ────────────────────────────────────────────────
 
@@ -156,8 +161,8 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
   const [historyLoading, setHistoryLoading] = useState<number | null>(null);
   const [reason, setReason]         = useState<Record<number, string>>({});
   const [deciding, setDeciding]     = useState<number | null>(null);
-  const [decisionStatus, setDecisionStatus] = useState<Record<number, 'approved' | 'rejected'>>({});
-  const [rejectHint, setRejectHint] = useState<Record<number, boolean>>({});
+  const [decisionStatus, setDecisionStatus] = useState<Record<number, HRBPOutcome>>({});
+  const [decisionHint, setDecisionHint] = useState<Record<number, boolean>>({});
 
   const loadQueue = useCallback(async () => {
     try {
@@ -193,28 +198,28 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
     }
   };
 
-  const decide = async (nominationId: number, action: 'approve' | 'reject') => {
-    if (action === 'reject' && !(reason[nominationId]?.trim())) {
-      setRejectHint(prev => ({ ...prev, [nominationId]: true }));
-      window.setTimeout(() => setRejectHint(prev => {
+  const decide = async (nominationId: number, outcome: HRBPOutcome) => {
+    if (!(reason[nominationId]?.trim())) {
+      setDecisionHint(prev => ({ ...prev, [nominationId]: true }));
+      window.setTimeout(() => setDecisionHint(prev => {
         const copy = { ...prev }; delete copy[nominationId]; return copy;
       }), 4000);
       return;
     }
     setDeciding(nominationId);
     try {
-      await apiFetch(`/api/hrbp/nominations/${nominationId}/${action}`, {
+      await apiFetch(`/api/hrbp/nominations/${nominationId}/decision`, {
         method: 'POST',
-        body: JSON.stringify({ reason: reason[nominationId] || '' }),
+        body: JSON.stringify({ outcome, reason: reason[nominationId] }),
       }, impersonatedUPN);
-      setDecisionStatus(prev => ({ ...prev, [nominationId]: action === 'approve' ? 'approved' : 'rejected' }));
+      setDecisionStatus(prev => ({ ...prev, [nominationId]: outcome }));
       // Remove from queue after short delay so the user sees the confirmation
       setTimeout(() => {
         setQueue(prev => prev.filter(n => n.nomination_id !== nominationId));
         setDecisionStatus(prev => { const copy = {...prev}; delete copy[nominationId]; return copy; });
       }, 1800);
     } catch (err) {
-      alert(`Failed to ${action}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      alert(`Failed to record decision: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setDeciding(null);
     }
@@ -270,8 +275,10 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
               <div
                 key={nom.nomination_id}
                 className={`border rounded-lg overflow-hidden transition-all ${
-                  decided === 'approved' ? 'border-green-400 bg-green-50' :
-                  decided === 'rejected' ? 'border-red-400 bg-red-50'   :
+                  decided === 'CLEARED_NO_CONCERN' ? 'border-green-400 bg-green-50' :
+                  decided === 'CLEARED_UNSUBSTANTIATED' ? 'border-blue-400 bg-blue-50' :
+                  decided === 'CONFIRMED_CONCERN' ? 'border-red-400 bg-red-50' :
+                  nom.risk_level === 'CRITICAL' ? 'border-red-300' :
                   'border-gray-200'
                 }`}
               >
@@ -292,6 +299,11 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                         {formatCurrency(nom.amount)}
                       </p>
                       {riskBadge(nom.risk_level)}
+                      {nom.risk_level === 'CRITICAL' && (
+                        <p className="mt-1 text-xs font-semibold text-red-700">
+                          Priority human review
+                        </p>
+                      )}
                       {nom.fraud_score !== null && (
                         <p className="text-xs text-gray-500 mt-1">
                           Fraud score: {nom.fraud_score}
@@ -407,9 +419,15 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                   {/* Decision area */}
                   {decided ? (
                     <div className={`text-center py-3 rounded-lg font-semibold ${
-                      decided === 'approved' ? 'text-green-700' : 'text-red-700'
+                      decided === 'CLEARED_NO_CONCERN' ? 'text-green-700' :
+                      decided === 'CLEARED_UNSUBSTANTIATED' ? 'text-blue-700' :
+                      'text-red-700'
                     }`}>
-                      {decided === 'approved' ? '✅ Approved — forwarded to manager' : '❌ Rejected — nominator notified'}
+                      {decided === 'CLEARED_NO_CONCERN'
+                        ? '✅ Cleared — forwarded to manager and labelled legitimate'
+                        : decided === 'CLEARED_UNSUBSTANTIATED'
+                        ? '✅ Cleared — forwarded to manager and excluded from ML training'
+                        : '❌ Integrity concern confirmed — nomination rejected'}
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -417,36 +435,55 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                         value={reason[nom.nomination_id] || ''}
                         onChange={e => {
                           setReason(prev => ({ ...prev, [nom.nomination_id]: e.target.value }));
-                          if (e.target.value.trim()) {
-                            setRejectHint(prev => { const c = { ...prev }; delete c[nom.nomination_id]; return c; });
-                          }
+                          if (e.target.value.trim()) setDecisionHint(prev => {
+                            const copy = { ...prev };
+                            delete copy[nom.nomination_id];
+                            return copy;
+                          });
                         }}
-                        placeholder="Reason (required for rejection, optional for approval)…"
+                        placeholder="Reason required for every HRBP decision…"
                         rows={2}
                         className="w-full text-sm px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
                       />
-                      {rejectHint[nom.nomination_id] && (
+                      {decisionHint[nom.nomination_id] && (
                         <div className="flex items-center gap-2 text-sm bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
                           <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                          Please add a reason before rejecting this nomination.
+                          Please add a reason before recording the HRBP decision.
                         </div>
                       )}
-                      <div className="flex gap-3">
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
                         <button
-                          onClick={() => decide(nom.nomination_id, 'approve')}
+                          onClick={() => decide(nom.nomination_id, 'CLEARED_NO_CONCERN')}
                           disabled={deciding === nom.nomination_id}
-                          className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:bg-gray-300"
+                          className="flex flex-col items-center justify-center bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg transition-colors disabled:bg-gray-300"
                         >
-                          <CheckCircle className="w-4 h-4" />
-                          Approve — forward to manager
+                          <span className="flex items-center gap-2 font-medium">
+                            <CheckCircle className="w-4 h-4" />
+                            Clear — no integrity issue
+                          </span>
+                          <span className="mt-0.5 text-xs text-green-100">Legitimate training label</span>
                         </button>
                         <button
-                          onClick={() => decide(nom.nomination_id, 'reject')}
+                          onClick={() => decide(nom.nomination_id, 'CLEARED_UNSUBSTANTIATED')}
                           disabled={deciding === nom.nomination_id}
-                          className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                          className="flex flex-col items-center justify-center bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors disabled:bg-gray-300"
                         >
-                          <XCircle className="w-4 h-4" />
-                          Reject nomination
+                          <span className="flex items-center gap-2 font-medium">
+                            <CheckCircle className="w-4 h-4" />
+                            Clear — concern not substantiated
+                          </span>
+                          <span className="mt-0.5 text-xs text-blue-100">Excluded from ML training</span>
+                        </button>
+                        <button
+                          onClick={() => decide(nom.nomination_id, 'CONFIRMED_CONCERN')}
+                          disabled={deciding === nom.nomination_id}
+                          className="flex flex-col items-center justify-center bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                        >
+                          <span className="flex items-center gap-2 font-medium">
+                            <XCircle className="w-4 h-4" />
+                            Confirm integrity concern
+                          </span>
+                          <span className="mt-0.5 text-xs text-red-100">Reject · Fraud training label</span>
                         </button>
                       </div>
                     </div>

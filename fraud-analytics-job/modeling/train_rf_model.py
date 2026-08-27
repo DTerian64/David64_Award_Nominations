@@ -40,6 +40,10 @@ from dotenv import load_dotenv
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
 
+try:
+    from . import labels as labels_mod
+except ImportError:  # pragma: no cover - standalone ``python modeling/...`` path
+    import labels as labels_mod
 from utils.component_status import upsert_component_status
 
 # Default sentence-transformer model for English tenants.
@@ -181,14 +185,10 @@ def load_data(tenant_id: int) -> pd.DataFrame:
       • PendingHRBPReview — excluded (no confirmed label yet; don't train on ambiguous cases)
       • Rejected by 'Fraud Detection (Description)' (auto-reject, Check A) — excluded
         (description quality gate, not a fraud signal; would corrupt IsFraud labels)
-      • Rejected by 'Fraud Detection' (CRITICAL ML auto-reject) — INCLUDED. Before
-        2026-08 both rejection paths wrote the same actor string, so this exclusion
-        also discarded every ML auto-reject. Tenant 1 has zero such rows today, so
-        splitting the actor is behaviour-preserving on current data — but note that
-        once these rows appear they carry LabelSource='model', i.e. the Random Forest
-        training on its own unreviewed output.
-      • Rejected by 'HRBP Review' — INCLUDED; these have a confirmed IsFraud=1 label written
-        by upsert_p2p_fraud_label and are the most valuable training examples
+      • HRBP FRAUD / LEGITIMATE dispositions — authoritative shared human labels.
+      • HRBP EXCLUDED dispositions — retained for audit but omitted from training.
+      • Unreviewed rows retain the RF cold-start/model-label behavior until enough
+        human outcomes exist to replace that bootstrap path deliberately.
       • All other statuses (Pending, Approved, Paid, Submitted) — included
 
     Tenant isolation is achieved by joining through Users, which carries
@@ -215,10 +215,6 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         p2p.FraudScore,
         p2p.RiskLevel,
         p2p.FraudFlags,
-        CASE
-            WHEN p2p.RiskLevel IN ('HIGH', 'CRITICAL') THEN 1
-            ELSE 0
-        END AS IsFraud,
 
         -- ── Graph features: nominator snapshot (point-in-time) ──────────────
         -- OUTER APPLY picks the closest UserGraphFlags snapshot whose AsOfDate
@@ -302,7 +298,13 @@ def load_data(tenant_id: int) -> pd.DataFrame:
     """
 
     df = pd.read_sql(query, conn, params=[tenant_id])
+    label_df = labels_mod.load_labels(conn, tenant_id)
     conn.close()
+
+    # One model-neutral label contract feeds both RF and GNN. The RF still owns
+    # its feature engineering and cold-start bootstrap; it does not own HRBP
+    # ground truth or consume a GNN prediction.
+    df = labels_mod.attach_training_labels(df, label_df)
 
     print(f"[Tenant {tenant_id}] Loaded {len(df)} nominations")
     if len(df) > 0:
@@ -586,10 +588,15 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     MIN_FRAUD_BOOTSTRAP = 5
 
     df = df.copy()
-    df['IsFraud'] = 0
+    excluded_mask = df['IsFraud'].isna()
+    eligible_index = df.index[~excluded_mask]
+    if len(eligible_index) == 0:
+        print(f"[Tenant {tenant_id}] Every nomination is excluded from training.")
+        return None
+    df.loc[eligible_index, 'IsFraud'] = 0
 
     # ── Stage 1: Isolation Forest ─────────────────────────────────────────────
-    X = df[P2P_FEATURE_COLUMNS].fillna(0)
+    X = df.loc[eligible_index, P2P_FEATURE_COLUMNS].fillna(0)
 
     iso = IsolationForest(
         n_estimators=200,
@@ -601,13 +608,14 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
 
     # predict() returns -1 (anomaly) or +1 (inlier)
     if_preds = iso.predict(X)
-    df.loc[if_preds == -1, 'IsFraud'] = 1
+    anomaly_index = eligible_index[if_preds == -1]
+    df.loc[anomaly_index, 'IsFraud'] = 1
 
     if_fraud_n = int(df['IsFraud'].sum())
     print(
-        f"[Tenant {tenant_id}] ⚡ Isolation Forest pseudo-labels: "
+        f"[Tenant {tenant_id}] Isolation Forest pseudo-labels: "
         f"{if_fraud_n} anomalies ({if_fraud_n / len(df) * 100:.1f}%) "
-        f"from {len(df)} nominations  (contamination=0.10)"
+        f"from {len(eligible_index)} eligible nominations  (contamination=0.10)"
     )
 
     # ── Stage 2: graph findings supplement ────────────────────────────────────
@@ -631,7 +639,10 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
 
         if graph_nom_ids:
             before = int(df['IsFraud'].sum())
-            df.loc[df['NominationId'].isin(graph_nom_ids), 'IsFraud'] = 1
+            graph_mask = (
+                df['NominationId'].isin(graph_nom_ids) & ~excluded_mask
+            )
+            df.loc[graph_mask, 'IsFraud'] = 1
             added = int(df['IsFraud'].sum()) - before
             if added:
                 print(
@@ -639,19 +650,20 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
                     f"from {len(rows)} HIGH/CRITICAL finding(s)"
                 )
     except Exception as exc:
-        print(f"[Tenant {tenant_id}] ⚠  Graph findings query failed (non-fatal): {exc}")
+        print(f"[Tenant {tenant_id}] Graph findings query failed (non-fatal): {exc}")
 
     fraud_n = int(df['IsFraud'].sum())
-    legit_n = len(df) - fraud_n
+    legit_n = len(eligible_index) - fraud_n
 
     print(
-        f"[Tenant {tenant_id}] ⚡ Bootstrap total: "
-        f"{fraud_n} fraud ({fraud_n / len(df) * 100:.1f}%), {legit_n} legitimate"
+        f"[Tenant {tenant_id}] Bootstrap total: "
+        f"{fraud_n} fraud ({fraud_n / len(eligible_index) * 100:.1f}%), "
+        f"{legit_n} legitimate, {int(excluded_mask.sum())} excluded"
     )
 
     if fraud_n < MIN_FRAUD_BOOTSTRAP:
         print(
-            f"[Tenant {tenant_id}] ⚠  Only {fraud_n} fraud pseudo-label(s) — "
+            f"[Tenant {tenant_id}] Only {fraud_n} fraud pseudo-label(s); "
             f"need at least {MIN_FRAUD_BOOTSTRAP} for a meaningful model. "
             "Skipping. The backend will return UNKNOWN/MANUAL_REVIEW until "
             "more data accumulates."
