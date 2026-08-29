@@ -123,7 +123,7 @@ def handle(message_id: str, payload: dict) -> None:
         processed_at=datetime.now(timezone.utc),
     )
     if already_done:
-        logger.info("Already processed — skipping",
+        logger.info("Already successfully processed — skipping",
                     extra={"message_id": message_id, "nomination_id": nomination_id})
         return
 

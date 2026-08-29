@@ -24,11 +24,7 @@ import json
 import logging
 import os
 import signal
-import sys
-import time
-from contextlib import suppress
 from contextvars import ContextVar
-from datetime import datetime, timezone
 
 from azure.monitor.opentelemetry import configure_azure_monitor
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
@@ -38,6 +34,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 from inference.handler import handle
 from logging_config import setup_logging
+from utils import db
 from utils.azure_credential import credential
 
 load_dotenv()
@@ -195,12 +192,46 @@ def main() -> None:
                                     "event_type":    payload.get("event_type"),
                                 },
                             )
+                        except db.MessageClaimInProgress as exc:
+                            # Do not complete an unfinished claim and do not
+                            # overwrite the active worker's state. Leaving this
+                            # delivery unsettled lets its lock expire naturally,
+                            # after which a stale claim can be recovered.
+                            logger.warning(
+                                "Message already in progress — leaving delivery unsettled",
+                                extra={
+                                    "nomination_id": payload.get("nomination_id"),
+                                    "event_type": payload.get("event_type"),
+                                    "error": str(exc),
+                                },
+                            )
                         except Exception as exc:
                             logger.error(
                                 "Message processing failed — abandoning for retry",
-                                extra={"error": str(exc)},
+                                extra={
+                                    "nomination_id": payload.get("nomination_id"),
+                                    "event_type": payload.get("event_type"),
+                                    "error": str(exc),
+                                },
                                 exc_info=True,
                             )
+                            try:
+                                db.update_processed_event_result(
+                                    message_id,
+                                    "error",
+                                    error=str(exc),
+                                )
+                            except Exception as state_exc:
+                                logger.error(
+                                    "Failed to mark ProcessedEvents row as error",
+                                    extra={
+                                        "nomination_id": payload.get("nomination_id"),
+                                        "event_type": payload.get("event_type"),
+                                        "processing_error": str(exc),
+                                        "state_error": str(state_exc),
+                                    },
+                                    exc_info=True,
+                                )
                             receiver.abandon_message(message)
                         finally:
                             otel_context.detach(otel_token)

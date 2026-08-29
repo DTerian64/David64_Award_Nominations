@@ -46,7 +46,7 @@ import os
 import struct
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import pyodbc
@@ -57,6 +57,13 @@ logger = logging.getLogger("integrity_check.db")
 
 # created_by / updated_by marker for this service's autonomous writes (no human actor).
 _AUDIT_ACTOR = "svc:integrity-check"
+_PENDING_CLAIM_TIMEOUT_SECONDS = int(
+    os.getenv("IDEMPOTENCY_PENDING_TIMEOUT_SECONDS", "120")
+)
+
+
+class MessageClaimInProgress(RuntimeError):
+    """A prior worker still owns a non-stale idempotency claim."""
 
 # ── Connection (Entra token via Managed Identity) ─────────────────────────────
 # DefaultAzureCredential resolves the container's user-assigned MI (selected by
@@ -860,12 +867,12 @@ def save_integrity_decision_results(
                 legacy.GraphAvailable, legacy.GraphScore, legacy.GraphRiskLevel,
                 legacy.GnnAvailable, legacy.GnnScore, legacy.GnnRiskLevel,
                 legacy.FinalScore, legacy.FinalRiskLevel,
-                current.RfResultJson, current.GraphResultJson,
-                current.GnnResultJson, current.CompositeScore,
-                current.CompositeRiskLevel
+                idr.RfResultJson, idr.GraphResultJson,
+                idr.GnnResultJson, idr.CompositeScore,
+                idr.CompositeRiskLevel
             FROM dbo.FraudDecisionResults AS legacy
-            INNER JOIN dbo.IntegrityDecisionResults AS current
-                ON current.NominationId = legacy.NominationId
+            INNER JOIN dbo.IntegrityDecisionResults AS idr
+                ON idr.NominationId = legacy.NominationId
             WHERE legacy.NominationId = ?;
         """, (nomination_id,))
         persisted = cursor.fetchone()
@@ -944,8 +951,11 @@ def claim_message(
     processed_at: datetime,
 ) -> bool:
     """
-    Insert into dbo.ProcessedEvents. Returns True if already processed.
-    Re-claims messages whose prior result was 'error' (allows retry).
+    Claim a message for processing and return True only after prior success.
+
+    Failed claims are immediately reusable. A pending claim is reusable only
+    after its lease timeout; until then ``MessageClaimInProgress`` prevents the
+    Service Bus delivery from being completed as though work had succeeded.
     """
     with _get_conn() as conn:
         cursor = conn.cursor()
@@ -960,24 +970,61 @@ def claim_message(
 
         except pyodbc.IntegrityError:
             cursor.execute(
-                "SELECT Result FROM dbo.ProcessedEvents WHERE MessageId = ?",
+                "SELECT Result, ProcessedAt FROM dbo.ProcessedEvents WHERE MessageId = ?",
                 (message_id,),
             )
             existing = cursor.fetchone()
-            prior    = existing[0] if existing else None
+            prior = str(existing[0]).lower() if existing else None
+            prior_at = existing[1] if existing else None
 
-            if prior == "error":
-                cursor.execute("DELETE FROM dbo.ProcessedEvents WHERE MessageId = ?",
-                               (message_id,))
+            if prior == "success":
+                return True
+
+            stale_pending = False
+            if prior == "pending" and prior_at is not None:
+                prior_utc = (
+                    prior_at.replace(tzinfo=timezone.utc)
+                    if prior_at.tzinfo is None
+                    else prior_at.astimezone(timezone.utc)
+                )
+                current_utc = (
+                    processed_at.replace(tzinfo=timezone.utc)
+                    if processed_at.tzinfo is None
+                    else processed_at.astimezone(timezone.utc)
+                )
+                stale_pending = current_utc - prior_utc >= timedelta(
+                    seconds=_PENDING_CLAIM_TIMEOUT_SECONDS
+                )
+
+            if prior == "error" or stale_pending:
                 cursor.execute("""
-                    INSERT INTO dbo.ProcessedEvents
-                        (MessageId, EventType, NominationId, ProcessedAt, Result)
-                    VALUES (?, ?, ?, ?, 'pending')
-                """, (message_id, event_type, nomination_id, processed_at))
+                    UPDATE dbo.ProcessedEvents
+                    SET EventType = ?, NominationId = ?, ProcessedAt = ?,
+                        Result = 'pending'
+                    WHERE MessageId = ? AND Result = ? AND ProcessedAt = ?
+                """, (
+                    event_type, nomination_id, processed_at,
+                    message_id, prior, prior_at,
+                ))
+                if cursor.rowcount != 1:
+                    raise MessageClaimInProgress(
+                        f"Message {message_id} was reclaimed by another worker"
+                    )
                 conn.commit()
-                return False   # retry allowed
+                logger.warning(
+                    "Reclaimed failed or stale message",
+                    extra={
+                        "message_id": message_id,
+                        "nomination_id": nomination_id,
+                        "prior_result": prior,
+                        "stale_pending": stale_pending,
+                    },
+                )
+                return False
 
-            return True   # already done — skip
+            raise MessageClaimInProgress(
+                f"Message {message_id} has an active pending claim"
+            )
 
 
 def update_processed_event_result(

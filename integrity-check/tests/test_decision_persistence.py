@@ -115,6 +115,7 @@ class DecisionPersistenceTests(unittest.TestCase):
             self.assertEqual(sql.count("?"), len(params))
         legacy_sql, legacy_params = conn.cursor_value.calls[0]
         new_sql, new_params = conn.cursor_value.calls[1]
+        reconciliation_sql, _ = conn.cursor_value.calls[2]
         self.assertIn("GnnUnavailableReasonCode", legacy_sql)
         self.assertIn("IntegrityDecisionResults", new_sql)
         self.assertIn("BELOW_MINIMUM_VOLUME", legacy_params)
@@ -124,6 +125,8 @@ class DecisionPersistenceTests(unittest.TestCase):
         )
         self.assertIn("message-13866", new_params)
         self.assertIn('["RF","GRAPH"]', new_params)
+        self.assertNotIn(" AS current", reconciliation_sql)
+        self.assertIn(" AS idr", reconciliation_sql)
 
     def test_no_available_decision_reconciles_legacy_zero_with_new_null(self):
         unavailable_document = json.dumps({
