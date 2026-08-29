@@ -54,8 +54,8 @@
       "forecast": "Forecasting",
       "fraud": "Fraud Alerts",
       "diversity": "Diversity Metrics",
-      "integrity": "Integrity",
-      "gnn": "GNN Comparison"
+      "integrity": "Graph Analytics",
+      "gnn": "GNN Analytics"
     }
   },
   "status": {

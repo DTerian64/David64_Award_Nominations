@@ -108,7 +108,7 @@ const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFeaturesJs
   return (
     <div className="mt-3 mb-3 bg-slate-50 border border-slate-200 rounded-lg p-4">
       <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">
-        Model signal breakdown (top contributing factors)
+        RF model (SHAP) breakdown (top contributing factors)
       </p>
       <div className="space-y-2">
         {contributions.map((c, i) => {

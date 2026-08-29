@@ -377,7 +377,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
       );
       setGnnComparison(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load GNN comparison');
+      setError(err instanceof Error ? err.message : 'Failed to load GNN analytics');
     } finally {
       setGnnLoading(false);
     }
@@ -1698,7 +1698,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
         </div>
       )}
 
-      {/* ── GNN Comparison Tab ─────────────────────────────────────── */}
+      {/* ── GNN Analytics Tab ──────────────────────────────────────── */}
       {selectedTab === 'gnn' && (
         <div className="space-y-6">
 
@@ -1714,7 +1714,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
           </div>
 
           {gnnLoading && (
-            <div className="text-center py-12 text-gray-500">Loading GNN comparison…</div>
+            <div className="text-center py-12 text-gray-500">Loading GNN analytics…</div>
           )}
 
           {!gnnLoading && gnnComparison && !gnnComparison.available && (
