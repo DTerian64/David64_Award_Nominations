@@ -22,6 +22,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from . import decision_contract
 from . import description_check
 from . import gnn_check
 from . import graph_check
@@ -37,27 +38,14 @@ logger = logging.getLogger("integrity_check.handler")
 ACTOR_DESCRIPTION_CHECK = "Fraud Detection (Description)"
 
 
-def _component_summary(result: dict) -> dict:
-    """JSON-safe audit view without model internals or large arrays."""
-    keys = (
-        "model_available", "availability_status", "unavailable_reason",
-        "unavailable_detail", "last_attempt_status", "last_attempt_at",
-        "last_successful_at", "registry_serving_status", "status_run_id",
-        "fraud_score", "fraud_prob",
-        "risk_level", "source_severity", "warning_flags", "flagged", "model_version",
-        "llm_explanation", "llm_explanation_status", "llm_explanation_reason",
-        "embedding_as_of", "snapshot_as_of", "affected_user_ids",
-    )
-    return {key: result.get(key) for key in keys if key in result}
-
-
 def _select_route(desc_result, decision: dict) -> dict:
     """Return the final rules-based route after every assessment is persisted."""
     if desc_result.action == "reject":
         return {
-            "route": "REJECT_DESCRIPTION",
+            "route": "REJECT_SEMANTIC",
             "target_status": "Rejected",
             "routing_rule": "check_a_incoherent_reject",
+            "review_scope": None,
         }
 
     if desc_result.action == "flag" or decision["flagged"]:
@@ -72,6 +60,13 @@ def _select_route(desc_result, decision: dict) -> dict:
             "route": "HRBP_REVIEW",
             "target_status": "PendingHRBPReview",
             "routing_rule": f"{concern_source}_concern_hrbp",
+            "review_scope": (
+                "FRAUD_AND_SEMANTIC"
+                if concern_source == "description_and_fraud"
+                else "SEMANTIC"
+                if concern_source == "description"
+                else "FRAUD"
+            ),
             "review_priority": (
                 "CRITICAL" if decision["risk_level"] == "CRITICAL" else "STANDARD"
             ),
@@ -85,7 +80,25 @@ def _select_route(desc_result, decision: dict) -> dict:
             if decision["decision_available"]
             else "no_available_fraud_opinion"
         ),
+        "review_scope": None,
     }
+
+
+def _decisive_engines(desc_result, decision: dict, route: dict) -> list[str]:
+    """Return the engines whose evidence materially selected the final route."""
+    model_names = {"RF": "RF", "Graph": "GRAPH", "GNN": "GNN"}
+    decisive = [
+        model_names[name]
+        for name in decision.get("decisive_models", [])
+        if name in model_names
+    ]
+    if route["route"] == "REJECT_SEMANTIC":
+        return ["SEMANTIC"]
+    if desc_result.action == "flag" and not decision.get("flagged"):
+        return ["SEMANTIC"]
+    if desc_result.action == "flag" and "SEMANTIC" not in decisive:
+        decisive.append("SEMANTIC")
+    return decisive
 
 
 def handle(message_id: str, payload: dict) -> None:
@@ -266,18 +279,35 @@ def handle(message_id: str, payload: dict) -> None:
         )
 
     decision = result_fusion.combine(rf_result, graph_result, gnn_result)
-    db.save_fraud_decision_result(
+    all_flags = pre_ml_flags + decision["warning_flags"]
+    route_decision = _select_route(desc_result, decision)
+    decisive_engines = _decisive_engines(desc_result, decision, route_decision)
+    engine_results = decision_contract.build(
+        rf_result,
+        graph_result,
+        gnn_result,
+        desc_result,
+    )
+
+    db.save_integrity_decision_results(
         nomination_id=nomination_id,
+        message_id=message_id,
         policy_version=decision["policy_version"],
         rf_result=rf_result,
         graph_result=graph_result,
         gnn_result=gnn_result,
         decision=decision,
+        engine_results=engine_results,
+        final_route=route_decision["route"],
+        routing_rule=route_decision["routing_rule"],
+        review_scope=route_decision["review_scope"],
+        decisive_engines=decisive_engines,
     )
     logger.info(
-        "FraudDecisionResults persisted",
+        "Legacy and IntegrityDecisionResults persisted",
         extra={
             "nomination_id": nomination_id,
+            "decision_schema_version": decision_contract.DECISION_SCHEMA_VERSION,
             "policy_version": decision["policy_version"],
             "rf_available": rf_result["model_available"],
             "rf_unavailable_reason": rf_result.get("unavailable_reason"),
@@ -285,13 +315,16 @@ def handle(message_id: str, payload: dict) -> None:
             "graph_unavailable_reason": graph_result.get("unavailable_reason"),
             "gnn_available": gnn_result["model_available"],
             "gnn_unavailable_reason": gnn_result.get("unavailable_reason"),
-            "final_score": decision["final_score"],
-            "final_risk": decision["risk_level"],
-            "decisive_models": decision["decisive_models"],
+            "semantic_status": engine_results["semantic"].get("status"),
+            "composite_score": (
+                decision["final_score"] if decision["decision_available"] else None
+            ),
+            "composite_risk": decision["risk_level"],
+            "decisive_engines": decisive_engines,
+            "final_route": route_decision["route"],
+            "review_scope": route_decision["review_scope"],
         },
     )
-
-    all_flags = pre_ml_flags + decision["warning_flags"]
 
     logger.info(
         "Three-component fraud assessment complete",
@@ -306,7 +339,7 @@ def handle(message_id: str, payload: dict) -> None:
         },
     )
 
-    # ── Final rules-based route (only after all persistence above) ────────────
+    # ── Apply final rules-based route (only after all persistence above) ──────
 
     risk_level = decision["risk_level"]
     shap_json = (json.dumps(rf_result["shap_explanations"])
@@ -317,16 +350,16 @@ def handle(message_id: str, payload: dict) -> None:
         "final_risk_level": risk_level,
         "participating_models": decision["participating_models"],
         "decisive_models": decision["decisive_models"],
-        "rf": _component_summary(rf_result),
-        "graph": _component_summary(graph_result),
-        "gnn": _component_summary(gnn_result),
-        "description_action": desc_result.action,
-        "description_check": desc_result.check,
-        "description_reason": desc_result.reason,
-        "description_flags": pre_ml_flags,
+        "rf": engine_results["rf"],
+        "graph": engine_results["graph"],
+        "gnn": engine_results["gnn"],
+        "semantic": engine_results["semantic"],
+        "final_route": route_decision["route"],
+        "routing_rule": route_decision["routing_rule"],
+        "review_scope": route_decision["review_scope"],
+        "decisive_engines": decisive_engines,
     }, default=str)
     decision_probability = float(decision["decision_probability"] or 0.0)
-    route_decision = _select_route(desc_result, decision)
 
     logger.info(
         "Rules-based routing decision",
@@ -335,6 +368,7 @@ def handle(message_id: str, payload: dict) -> None:
             "route": route_decision["route"],
             "target_status": route_decision["target_status"],
             "routing_rule": route_decision["routing_rule"],
+            "review_scope": route_decision["review_scope"],
             "review_priority": route_decision.get("review_priority"),
             "description_action": desc_result.action,
             "fraud_decision_available": decision["decision_available"],
@@ -344,7 +378,7 @@ def handle(message_id: str, payload: dict) -> None:
         },
     )
 
-    if route_decision["route"] == "REJECT_DESCRIPTION":
+    if route_decision["route"] == "REJECT_SEMANTIC":
         db.reject_nomination(
             nomination_id,
             reason=desc_result.reason,
@@ -385,6 +419,7 @@ def handle(message_id: str, payload: dict) -> None:
             extra={
                 "risk_level": risk_level,
                 "routing_rule": route_decision["routing_rule"],
+                "review_scope": route_decision["review_scope"],
                 "review_priority": route_decision["review_priority"],
             },
         )
@@ -396,6 +431,7 @@ def handle(message_id: str, payload: dict) -> None:
                 "decisive_models": decision["decisive_models"],
                 "pre_ml_flags":  pre_ml_flags,
                 "routing_rule": route_decision["routing_rule"],
+                "review_scope": route_decision["review_scope"],
                 "review_priority": route_decision["review_priority"],
             },
         )

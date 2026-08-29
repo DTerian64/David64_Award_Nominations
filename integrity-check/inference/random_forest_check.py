@@ -743,6 +743,8 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
         "llm_explanation_status": llm_explanation_status,
         "llm_explanation_reason": llm_explanation_reason,
         "model_version":     model_data.get("model_version"),
+        "score_thresholds":  thresholds,
+        "score_derivation":  "floor(model_probability * 100)",
     }
     result.update(component_availability.available_metadata(component_status))
     return result

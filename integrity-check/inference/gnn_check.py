@@ -486,6 +486,8 @@ def _assess_gnn_inner(
         "flagged":          risk in ("MEDIUM", "HIGH", "CRITICAL"),
         "model_version":    model_version,
         "embedding_as_of":  embedding_as_of,
+        "score_thresholds": thresholds,
+        "score_derivation": "round(model_probability * 100)",
     }
     result.update(component_availability.available_metadata(component_status))
     return result

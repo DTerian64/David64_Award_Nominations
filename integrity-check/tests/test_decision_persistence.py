@@ -1,4 +1,4 @@
-"""Tests for the FraudDecisionResults component-availability snapshot.
+"""Tests for atomic legacy/new integrity decision persistence.
 
 Purpose:
     Guard the SQL parameter contract that persists each component's availability
@@ -12,6 +12,7 @@ Usage (PowerShell):
 
 import os
 import sys
+import json
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,18 +27,30 @@ from utils import db
 
 
 class _Cursor:
-    def __init__(self):
-        self.sql = None
-        self.params = None
+    def __init__(self, reconciliation_row=None):
+        self.calls = []
+        self.reconciliation_row = reconciliation_row or (
+            1, 7, "NONE",
+            1, 0, "NONE",
+            0, 0, "NONE",
+            7, "NONE",
+            json.dumps({"available": True, "score": 7, "risk_level": "NONE"}),
+            json.dumps({"available": True, "score": 0, "risk_level": "NONE"}),
+            json.dumps({"available": False, "score": None, "risk_level": "UNKNOWN"}),
+            7, "NONE",
+        )
 
     def execute(self, sql, params):
-        self.sql = sql
-        self.params = params
+        self.calls.append((sql, params))
+        return self
+
+    def fetchone(self):
+        return self.reconciliation_row
 
 
 class _Connection:
-    def __init__(self):
-        self.cursor_value = _Cursor()
+    def __init__(self, reconciliation_row=None):
+        self.cursor_value = _Cursor(reconciliation_row)
         self.committed = False
 
     def cursor(self):
@@ -68,29 +81,96 @@ class DecisionPersistenceTests(unittest.TestCase):
             "unavailable_detail": "75 nominations / 108 users; requires 300 / 50",
         }
         decision = {
+            "decision_available": True,
             "final_score": 7,
             "risk_level": "NONE",
             "decisive_models": ["RF", "Graph"],
         }
+        engine_results = {
+            "rf": {"available": True, "score": 7, "risk_level": "NONE"},
+            "graph": {"available": True, "score": 0, "risk_level": "NONE"},
+            "gnn": {"available": False, "score": None, "risk_level": "UNKNOWN"},
+            "semantic": {"engine": "SEMANTIC", "status": "SUCCEEDED"},
+        }
 
         with patch("utils.db._get_conn", return_value=_connection_context(conn)):
-            db.save_fraud_decision_result(
+            db.save_integrity_decision_results(
                 nomination_id=13866,
+                message_id="message-13866",
                 policy_version="max-severity-v1",
                 rf_result=rf,
                 graph_result=graph,
                 gnn_result=gnn,
                 decision=decision,
+                engine_results=engine_results,
+                final_route="MANAGER_APPROVAL",
+                routing_rule="risk_below_review_threshold",
+                review_scope=None,
+                decisive_engines=["RF", "GRAPH"],
             )
 
         self.assertTrue(conn.committed)
-        self.assertEqual(conn.cursor_value.sql.count("?"), len(conn.cursor_value.params))
-        self.assertIn("GnnUnavailableReasonCode", conn.cursor_value.sql)
-        self.assertIn("BELOW_MINIMUM_VOLUME", conn.cursor_value.params)
+        self.assertEqual(len(conn.cursor_value.calls), 3)
+        for sql, params in conn.cursor_value.calls:
+            self.assertEqual(sql.count("?"), len(params))
+        legacy_sql, legacy_params = conn.cursor_value.calls[0]
+        new_sql, new_params = conn.cursor_value.calls[1]
+        self.assertIn("GnnUnavailableReasonCode", legacy_sql)
+        self.assertIn("IntegrityDecisionResults", new_sql)
+        self.assertIn("BELOW_MINIMUM_VOLUME", legacy_params)
         self.assertIn(
             "75 nominations / 108 users; requires 300 / 50",
-            conn.cursor_value.params,
+            legacy_params,
         )
+        self.assertIn("message-13866", new_params)
+        self.assertIn('["RF","GRAPH"]', new_params)
+
+    def test_no_available_decision_reconciles_legacy_zero_with_new_null(self):
+        unavailable_document = json.dumps({
+            "available": False,
+            "score": None,
+            "risk_level": "UNKNOWN",
+        })
+        conn = _Connection((
+            0, 0, "NONE", 0, 0, "NONE", 0, 0, "NONE",
+            0, "UNKNOWN",
+            unavailable_document, unavailable_document, unavailable_document,
+            None, "UNKNOWN",
+        ))
+        unavailable = {
+            "model_available": False,
+            "fraud_score": 0,
+            "risk_level": "NONE",
+        }
+        engine_results = {
+            "rf": json.loads(unavailable_document),
+            "graph": json.loads(unavailable_document),
+            "gnn": json.loads(unavailable_document),
+            "semantic": {"engine": "SEMANTIC", "status": "SUCCEEDED"},
+        }
+
+        with patch("utils.db._get_conn", return_value=_connection_context(conn)):
+            db.save_integrity_decision_results(
+                nomination_id=13867,
+                message_id="message-13867",
+                policy_version="max-severity-v1",
+                rf_result=unavailable,
+                graph_result=unavailable,
+                gnn_result=unavailable,
+                decision={
+                    "decision_available": False,
+                    "final_score": 0,
+                    "risk_level": "UNKNOWN",
+                    "decisive_models": [],
+                },
+                engine_results=engine_results,
+                final_route="MANAGER_APPROVAL",
+                routing_rule="no_available_fraud_opinion",
+                review_scope=None,
+                decisive_engines=[],
+            )
+
+        self.assertTrue(conn.committed)
 
 
 if __name__ == "__main__":

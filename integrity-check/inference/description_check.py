@@ -55,7 +55,7 @@ import json as _json
 import logging
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
@@ -139,6 +139,7 @@ class CheckResult:
     action: str             # "reject" | "flag" | "pass"
     reason: Optional[str]   # human-readable; None when action == "pass"
     check:  Optional[str]   # pipe-separated check names that fired
+    evidence: dict = field(default_factory=dict)
 
 
 _PASS = CheckResult(action="pass", reason=None, check=None)
@@ -169,7 +170,19 @@ def _check_embedding_category_alignment(
     threshold. Threshold 0.0 effectively disables this evidence source.
     """
     if config.category_alignment_threshold <= 0.0:
-        return _PASS
+        return CheckResult(
+            action="pass",
+            reason=None,
+            check=None,
+            evidence={
+                "available": False,
+                "status": "DISABLED",
+                "model": config.embed_model,
+                "similarity": None,
+                "threshold": config.category_alignment_threshold,
+                "outcome": "skipped",
+            },
+        )
 
     model   = _get_embed_model(config.embed_model)
     embs    = _embed(model, [description, category_description])
@@ -196,9 +209,33 @@ def _check_embedding_category_alignment(
             "Embedding Category Alignment check concern",
             extra={"nomination_id": nomination_id},
         )
-        return CheckResult(action="flag", reason=reason, check="category_alignment")
+        return CheckResult(
+            action="flag",
+            reason=reason,
+            check="category_alignment",
+            evidence={
+                "available": True,
+                "status": "SUCCEEDED",
+                "model": config.embed_model,
+                "similarity": round(float(sim), 6),
+                "threshold": config.category_alignment_threshold,
+                "outcome": "concern",
+            },
+        )
 
-    return _PASS
+    return CheckResult(
+        action="pass",
+        reason=None,
+        check=None,
+        evidence={
+            "available": True,
+            "status": "SUCCEEDED",
+            "model": config.embed_model,
+            "similarity": round(float(sim), 6),
+            "threshold": config.category_alignment_threshold,
+            "outcome": "pass",
+        },
+    )
 
 
 # ── Check B: duplicate description ───────────────────────────────────────────
@@ -219,7 +256,19 @@ def _check_duplicate_description(
     """
     prior_descs = db.get_nominator_descriptions(nominator_id, exclude_nomination_id)
     if not prior_descs:
-        return _PASS
+        return CheckResult(
+            action="pass",
+            reason=None,
+            check=None,
+            evidence={
+                "available": True,
+                "status": "SUCCEEDED",
+                "prior_description_count": 0,
+                "max_similarity": None,
+                "threshold": config.duplicate_similarity_threshold,
+                "outcome": "pass",
+            },
+        )
 
     model    = _get_embed_model(config.embed_model)
     desc_emb = _embed(model, [description])[0]
@@ -246,9 +295,34 @@ def _check_duplicate_description(
             f"nominator (similarity {max_sim:.2f}). "
             f"Most similar previous description: \"{snippet}…\""
         )
-        return CheckResult(action="flag", reason=reason, check="duplicate_description")
+        return CheckResult(
+            action="flag",
+            reason=reason,
+            check="duplicate_description",
+            evidence={
+                "available": True,
+                "status": "SUCCEEDED",
+                "prior_description_count": len(prior_descs),
+                "max_similarity": round(float(max_sim), 6),
+                "threshold": config.duplicate_similarity_threshold,
+                "matching_description_snippet": snippet,
+                "outcome": "concern",
+            },
+        )
 
-    return _PASS
+    return CheckResult(
+        action="pass",
+        reason=None,
+        check=None,
+        evidence={
+            "available": True,
+            "status": "SUCCEEDED",
+            "prior_description_count": len(prior_descs),
+            "max_similarity": round(float(max_sim), 6),
+            "threshold": config.duplicate_similarity_threshold,
+            "outcome": "pass",
+        },
+    )
 
 
 # ── Check A, evidence 2: LLM semantic evaluation ─────────────────────────────
@@ -334,7 +408,7 @@ def _evaluate_llm_semantics(
     config:               DescCheckConfig,
     nominator_id:         int = 0,
     nomination_id:        Optional[int] = None,
-) -> Optional[CheckResult]:
+) -> CheckResult:
     """
     Produce the LLM evidence used by combined Check A.
 
@@ -344,9 +418,10 @@ def _evaluate_llm_semantics(
       - flags present OR fit < thresh  → "flag"    (HRBP review)
       - otherwise                      → "pass"
 
-    Returns None when disabled infrastructure or an LLM error makes this
-    evidence unavailable. The combined Check A policy then decides how to route
-    based on the remaining embedding evidence.
+    Returns an internal ``action='unavailable'`` result when infrastructure or
+    an LLM error makes this evidence unavailable. The public combined result
+    remains pass/flag/reject and retains the unavailable evidence in its JSON
+    contract.
     """
     client = _get_llm_client()
     if client is None:
@@ -354,7 +429,22 @@ def _evaluate_llm_semantics(
             "Check A LLM Semantic Evaluation unavailable — client not initialized",
             extra={"nomination_id": nomination_id},
         )
-        return None
+        return CheckResult(
+            action="unavailable",
+            reason="LLM client was not initialized.",
+            check="category_alignment",
+            evidence={
+                "available": False,
+                "status": "UNAVAILABLE",
+                "deployment": os.environ.get(
+                    "AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini"
+                ),
+                "unavailable_reason": "CLIENT_NOT_INITIALIZED",
+                "unavailable_detail": None,
+                "category_fit_threshold": config.llm_fit_threshold,
+                "response": None,
+            },
+        )
 
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
     prompt     = _build_llm_prompt(description, category_description, amount, config)
@@ -378,7 +468,32 @@ def _evaluate_llm_semantics(
             extra={"nomination_id": nomination_id, "error": str(exc)},
             exc_info=True,
         )
-        return None
+        return CheckResult(
+            action="unavailable",
+            reason="LLM semantic evaluation failed.",
+            check="category_alignment",
+            evidence={
+                "available": False,
+                "status": "UNAVAILABLE",
+                "deployment": deployment,
+                "unavailable_reason": "EVALUATION_FAILED",
+                "unavailable_detail": str(exc),
+                "category_fit_threshold": config.llm_fit_threshold,
+                "response": None,
+            },
+        )
+
+    evidence = {
+        "available": True,
+        "status": "SUCCEEDED",
+        "deployment": deployment,
+        "unavailable_reason": None,
+        "unavailable_detail": None,
+        "category_fit_threshold": config.llm_fit_threshold,
+        # Preserve the complete structured model response. The prompt and Azure
+        # response envelope are deliberately not persisted.
+        "response": result,
+    }
 
     # ── Map response to CheckResult ───────────────────────────────────────────
 
@@ -397,7 +512,12 @@ def _evaluate_llm_semantics(
                 "reason": reasoning,
             },
         )
-        return CheckResult(action="reject", reason=reason, check="category_alignment")
+        return CheckResult(
+            action="reject",
+            reason=reason,
+            check="category_alignment",
+            evidence={**evidence, "outcome": "incoherent"},
+        )
 
     # Collect semantic flags
     llm_flags  = [str(f) for f in result.get("flags", []) if f]
@@ -434,7 +554,12 @@ def _evaluate_llm_semantics(
                 "reason": reason,
             },
         )
-        return CheckResult(action="flag", reason=reason, check="category_alignment")
+        return CheckResult(
+            action="flag",
+            reason=reason,
+            check="category_alignment",
+            evidence={**evidence, "outcome": "concern"},
+        )
 
     logger.info(
         "Check A LLM Semantic Evaluation passed",
@@ -448,7 +573,12 @@ def _evaluate_llm_semantics(
             "amount_justified": result.get("amount_justified"),
         },
     )
-    return _PASS
+    return CheckResult(
+        action="pass",
+        reason=None,
+        check=None,
+        evidence={**evidence, "outcome": "pass"},
+    )
 
 
 def _combine_check_a(
@@ -462,11 +592,13 @@ def _combine_check_a(
     The decision rule intentionally avoids averaging incomparable embedding and
     LLM scores. It combines their categorical outcomes instead.
     """
-    if llm_result is not None and llm_result.action == "reject":
+    llm_available = llm_result is not None and llm_result.action != "unavailable"
+
+    if llm_available and llm_result is not None and llm_result.action == "reject":
         return llm_result, "llm_incoherent_reject"
 
     embedding_concern = embedding_result.action == "flag"
-    llm_concern = llm_result is not None and llm_result.action == "flag"
+    llm_concern = llm_available and llm_result is not None and llm_result.action == "flag"
 
     if llm_concern:
         reasons = []
@@ -485,7 +617,7 @@ def _combine_check_a(
             check="category_alignment",
         ), rule
 
-    if embedding_concern and llm_result is None:
+    if embedding_concern and not llm_available:
         availability = "unavailable" if llm_enabled else "disabled"
         reason = (
             f"{embedding_result.reason} | LLM semantic evidence was {availability}; "
@@ -502,7 +634,68 @@ def _combine_check_a(
         # adjudicating the weak short-label embedding match.
         return _PASS, "llm_cleared_embedding_concern"
 
+    if not llm_available:
+        availability = "unavailable" if llm_enabled else "disabled"
+        return _PASS, f"embedding_pass_llm_{availability}"
+
     return _PASS, "all_available_check_a_evidence_passed"
+
+
+def _not_evaluated(status: str = "NOT_EVALUATED") -> dict:
+    return {"available": False, "status": status, "outcome": "skipped"}
+
+
+def _complete_semantic_result(
+    result: CheckResult,
+    *,
+    embedding_result: CheckResult,
+    llm_result: Optional[CheckResult],
+    duplicate_result: Optional[CheckResult],
+    decision_rule: str,
+) -> CheckResult:
+    """Return the public result with the complete versioned engine evidence."""
+    llm_evidence = (
+        llm_result.evidence if llm_result is not None else _not_evaluated()
+    )
+    duplicate_evidence = (
+        duplicate_result.evidence
+        if duplicate_result is not None
+        else _not_evaluated()
+    )
+    evidence_statuses = {
+        str(embedding_result.evidence.get("status", "NOT_EVALUATED")),
+        str(llm_evidence.get("status", "NOT_EVALUATED")),
+        str(duplicate_evidence.get("status", "NOT_EVALUATED")),
+    }
+    status = "PARTIAL" if "UNAVAILABLE" in evidence_statuses else "SUCCEEDED"
+
+    return CheckResult(
+        action=result.action,
+        reason=result.reason,
+        check=result.check,
+        evidence={
+            "schema_version": 1,
+            "engine": "SEMANTIC",
+            "available": True,
+            "status": status,
+            "embedding": embedding_result.evidence or _not_evaluated(),
+            "llm": llm_evidence,
+            "duplicate_description": duplicate_evidence,
+            "combined_decision": {
+                "check_a_rule": decision_rule,
+                "check_a_action": (
+                    "reject"
+                    if decision_rule == "llm_incoherent_reject"
+                    else "flag"
+                    if "concern" in decision_rule and "cleared" not in decision_rule
+                    else "pass"
+                ),
+                "action": result.action,
+                "checks": result.check.split("|") if result.check else [],
+                "reason": result.reason,
+            },
+        },
+    )
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -549,6 +742,22 @@ def check(
             action="reject",
             reason="Nomination description is empty.",
             check="category_alignment",
+            evidence={
+                "schema_version": 1,
+                "engine": "SEMANTIC",
+                "available": True,
+                "status": "SUCCEEDED",
+                "embedding": _not_evaluated(),
+                "llm": _not_evaluated(),
+                "duplicate_description": _not_evaluated(),
+                "combined_decision": {
+                    "check_a_rule": "empty_description_reject",
+                    "check_a_action": "reject",
+                    "action": "reject",
+                    "checks": ["category_alignment"],
+                    "reason": "Nomination description is empty.",
+                },
+            },
         )
 
     # ── Check A: combine embedding and LLM semantic evidence ─────────────────
@@ -560,10 +769,22 @@ def check(
             desc, category_description, config, nomination_id
         )
         if embedding_evaluated and category_description
-        else _PASS
+        else CheckResult(
+            action="pass",
+            reason=None,
+            check=None,
+            evidence={
+                "available": False,
+                "status": "NOT_APPLICABLE",
+                "model": config.embed_model,
+                "similarity": None,
+                "threshold": config.category_alignment_threshold,
+                "outcome": "skipped",
+            },
+        )
     )
 
-    llm_result: Optional[CheckResult] = None
+    llm_result: Optional[CheckResult]
     if config.llm_category_check_enabled:
         llm_result = _evaluate_llm_semantics(
             desc,
@@ -574,6 +795,22 @@ def check(
             nomination_id,
         )
     else:
+        llm_result = CheckResult(
+            action="unavailable",
+            reason="LLM semantic evaluation is disabled by tenant configuration.",
+            check="category_alignment",
+            evidence={
+                "available": False,
+                "status": "DISABLED",
+                "deployment": os.environ.get(
+                    "AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini"
+                ),
+                "unavailable_reason": "DISABLED_BY_CONFIGURATION",
+                "unavailable_detail": None,
+                "category_fit_threshold": config.llm_fit_threshold,
+                "response": None,
+            },
+        )
         logger.info(
             "Check A LLM Semantic Evaluation disabled by tenant configuration",
             extra={"nomination_id": nomination_id},
@@ -591,7 +828,7 @@ def check(
     )
     llm_state = (
         "disabled" if not config.llm_category_check_enabled
-        else "unavailable" if llm_result is None
+        else "unavailable" if llm_result.action == "unavailable"
         else "incoherent" if llm_result.action == "reject"
         else "concern" if llm_result.action == "flag"
         else "pass"
@@ -609,7 +846,13 @@ def check(
         },
     )
     if result_a.action == "reject":
-        return result_a
+        return _complete_semantic_result(
+            result_a,
+            embedding_result=embedding_result,
+            llm_result=llm_result,
+            duplicate_result=None,
+            decision_rule=decision_rule,
+        )
 
     # ── Accumulate soft flags from A and B ────────────────────────────────────
     accumulated: list[CheckResult] = []
@@ -626,13 +869,25 @@ def check(
         accumulated.append(result_b)
 
     if not accumulated:
-        return _PASS
+        final_result = _PASS
 
     # Single flag — return it directly (preserves original check name / reason)
-    if len(accumulated) == 1:
-        return accumulated[0]
+    elif len(accumulated) == 1:
+        final_result = accumulated[0]
+    else:
+        # Multiple flags — merge into one combined result
+        combined_check = "|".join(r.check for r in accumulated if r.check)
+        combined_reason = " | ".join(r.reason for r in accumulated if r.reason)
+        final_result = CheckResult(
+            action="flag",
+            reason=combined_reason,
+            check=combined_check,
+        )
 
-    # Multiple flags — merge into one combined result
-    combined_check  = "|".join(r.check  for r in accumulated if r.check)
-    combined_reason = " | ".join(r.reason for r in accumulated if r.reason)
-    return CheckResult(action="flag", reason=combined_reason, check=combined_check)
+    return _complete_semantic_result(
+        final_result,
+        embedding_result=embedding_result,
+        llm_result=llm_result,
+        duplicate_result=result_b,
+        decision_rule=decision_rule,
+    )

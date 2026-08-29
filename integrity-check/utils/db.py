@@ -32,7 +32,7 @@ Focused subset of queries needed by inference/handler.py and its checks:
   Fraud score persistence:
     save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
     save_graph_fraud_score()        — upsert into dbo.Graph_FraudScores
-    save_fraud_decision_result()    — upsert component opinions + final route
+    save_integrity_decision_results() — atomically dual-write v1 and v2 decisions
     save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
 
   GNN model support (called by gnn_check.py):
@@ -752,16 +752,30 @@ def save_graph_fraud_score(
         conn.commit()
 
 
-def save_fraud_decision_result(
+def save_integrity_decision_results(
     nomination_id: int,
+    message_id: str,
     policy_version: str,
     rf_result: dict,
     graph_result: dict,
     gnn_result: dict,
     decision: dict,
+    engine_results: dict[str, dict],
+    final_route: str,
+    routing_rule: str,
+    review_scope: Optional[str],
+    decisive_engines: list[str],
 ) -> None:
-    """Persist the three component opinions and the resulting route decision."""
+    """Atomically persist and reconcile the legacy and four-engine decisions."""
     decisive = ",".join(decision.get("decisive_models", [])) or None
+    composite_score = (
+        decision.get("final_score") if decision.get("decision_available") else None
+    )
+    engine_json = {
+        name: json.dumps(payload, default=str, separators=(",", ":"))
+        for name, payload in engine_results.items()
+    }
+    decisive_json = json.dumps(decisive_engines, separators=(",", ":"))
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -808,6 +822,93 @@ def save_fraud_decision_result(
             gnn_result.get("unavailable_reason"), gnn_result.get("unavailable_detail"),
             decision.get("final_score"), decision.get("risk_level"), decisive, _AUDIT_ACTOR,
         ))
+        cursor.execute("""
+            MERGE dbo.IntegrityDecisionResults AS target
+            USING (SELECT ? AS NominationId) AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN UPDATE SET
+                DecisionSchemaVersion = ?, PolicyVersion = ?, SourceMessageId = ?,
+                RfResultJson = ?, GraphResultJson = ?, GnnResultJson = ?,
+                SemanticResultJson = ?, CompositeScore = ?,
+                CompositeRiskLevel = ?, DecisiveEnginesJson = ?,
+                FinalRoute = ?, RoutingRule = ?, ReviewScope = ?,
+                ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN INSERT (
+                NominationId, DecisionSchemaVersion, PolicyVersion,
+                SourceMessageId, RfResultJson, GraphResultJson, GnnResultJson,
+                SemanticResultJson, CompositeScore, CompositeRiskLevel,
+                DecisiveEnginesJson, FinalRoute, RoutingRule, ReviewScope,
+                ScoredBy
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            nomination_id,
+            2, policy_version, message_id,
+            engine_json["rf"], engine_json["graph"], engine_json["gnn"],
+            engine_json["semantic"], composite_score, decision.get("risk_level"),
+            decisive_json, final_route, routing_rule, review_scope, _AUDIT_ACTOR,
+            nomination_id, 2, policy_version, message_id,
+            engine_json["rf"], engine_json["graph"], engine_json["gnn"],
+            engine_json["semantic"], composite_score, decision.get("risk_level"),
+            decisive_json, final_route, routing_rule, review_scope, _AUDIT_ACTOR,
+        ))
+
+        # Read both rows back before committing. A mismatch aborts the entire
+        # transaction rather than leaving two contradictory decision records.
+        cursor.execute("""
+            SELECT
+                legacy.RfAvailable, legacy.RfScore, legacy.RfRiskLevel,
+                legacy.GraphAvailable, legacy.GraphScore, legacy.GraphRiskLevel,
+                legacy.GnnAvailable, legacy.GnnScore, legacy.GnnRiskLevel,
+                legacy.FinalScore, legacy.FinalRiskLevel,
+                current.RfResultJson, current.GraphResultJson,
+                current.GnnResultJson, current.CompositeScore,
+                current.CompositeRiskLevel
+            FROM dbo.FraudDecisionResults AS legacy
+            INNER JOIN dbo.IntegrityDecisionResults AS current
+                ON current.NominationId = legacy.NominationId
+            WHERE legacy.NominationId = ?;
+        """, (nomination_id,))
+        persisted = cursor.fetchone()
+        if persisted is None:
+            raise RuntimeError(
+                f"Decision dual-write reconciliation found no row for {nomination_id}"
+            )
+
+        values = list(persisted)
+        mismatches: list[str] = []
+        for offset, name in ((0, "rf"), (3, "graph"), (6, "gnn")):
+            available = bool(values[offset])
+            document = json.loads(values[11 + offset // 3])
+            if available != bool(document.get("available")):
+                mismatches.append(f"{name}.available")
+            if available:
+                if values[offset + 1] != document.get("score"):
+                    mismatches.append(f"{name}.score")
+                if values[offset + 2] != document.get("risk_level"):
+                    mismatches.append(f"{name}.risk_level")
+
+        # V1 encoded "no available decision" as score 0; V2 correctly uses
+        # NULL. Treat only that documented compatibility difference as equal.
+        if values[14] is None:
+            if values[9] not in (None, 0):
+                mismatches.append("composite_score")
+        elif values[9] != values[14]:
+            mismatches.append("composite_score")
+        if values[10] != values[15]:
+            mismatches.append("composite_risk_level")
+        if mismatches:
+            logger.error(
+                "Decision dual-write reconciliation failed",
+                extra={"nomination_id": nomination_id, "mismatches": mismatches},
+            )
+            raise RuntimeError(
+                "Decision dual-write reconciliation failed: " + ", ".join(mismatches)
+            )
+
+        logger.info(
+            "Decision dual-write reconciliation passed",
+            extra={"nomination_id": nomination_id},
+        )
         conn.commit()
 
 

@@ -130,6 +130,9 @@ class CheckAEvidenceTests(unittest.TestCase):
             )
 
         self.assertEqual(result.action, "flag")
+        self.assertTrue(result.evidence["available"])
+        self.assertAlmostEqual(result.evidence["similarity"], 0.10, places=4)
+        self.assertEqual(result.evidence["threshold"], 0.12)
         messages = [record.getMessage() for record in logs.records]
         self.assertIn("Embedding Category Alignment check", messages)
         self.assertIn("Embedding Category Alignment check concern", messages)
@@ -162,6 +165,10 @@ class CheckAEvidenceTests(unittest.TestCase):
         self.assertEqual(result.check, "category_alignment")
         self.assertIn(EMBEDDING_CONCERN.reason, result.reason)
         self.assertIn(LLM_CONCERN.reason, result.reason)
+        self.assertEqual(result.evidence["engine"], "SEMANTIC")
+        self.assertEqual(
+            result.evidence["combined_decision"]["action"], "flag"
+        )
         decision_log = next(
             record for record in logs.records
             if record.getMessage() == "Check A combined decision"

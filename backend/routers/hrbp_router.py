@@ -13,7 +13,7 @@ GET  /api/hrbp/queue
     Return all nominations in PendingHRBPReview for the tenant.
 
 POST /api/hrbp/nominations/{id}/decision
-    Record one of three model-neutral HRBP outcomes and its training disposition.
+    Record a scope-aware HRBP outcome and its training disposition.
 
 GET  /api/hrbp/nominations/{id}/pair-history
     Return all prior nominations between the same nominator → beneficiary pair.
@@ -60,6 +60,7 @@ class HRBPDecisionRequest(BaseModel):
         "CLEARED_NO_CONCERN",
         "CLEARED_UNSUBSTANTIATED",
         "CONFIRMED_CONCERN",
+        "CONFIRMED_SEMANTIC_CONCERN",
     ]
     reason: str
 
@@ -98,12 +99,15 @@ async def hrbp_decide(
         raise HTTPException(status_code=400, detail="Decision reason is required")
 
     reviewer = f"HRBP:{effective_user['UserId']}"
-    result = sqlhelper.apply_hrbp_adjudication(
-        nomination_id=nomination_id,
-        outcome=body.outcome,
-        reviewed_by=reviewer,
-        reason=body.reason,
-    )
+    try:
+        result = sqlhelper.apply_hrbp_adjudication(
+            nomination_id=nomination_id,
+            outcome=body.outcome,
+            reviewed_by=reviewer,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not result["applied"]:
         raise HTTPException(
             status_code=409,

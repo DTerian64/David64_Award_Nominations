@@ -2416,6 +2416,28 @@ _HRBP_ADJUDICATIONS = {
     "CLEARED_NO_CONCERN": ("LEGITIMATE", "Pending"),
     "CLEARED_UNSUBSTANTIATED": ("EXCLUDED", "Pending"),
     "CONFIRMED_CONCERN": ("FRAUD", "Rejected"),
+    "CONFIRMED_SEMANTIC_CONCERN": ("EXCLUDED", "Rejected"),
+}
+
+_OUTCOMES_BY_REVIEW_SCOPE = {
+    "FRAUD": {
+        "CLEARED_NO_CONCERN",
+        "CLEARED_UNSUBSTANTIATED",
+        "CONFIRMED_CONCERN",
+    },
+    "SEMANTIC": {
+        "CLEARED_UNSUBSTANTIATED",
+        "CONFIRMED_SEMANTIC_CONCERN",
+    },
+    "FRAUD_AND_SEMANTIC": set(_HRBP_ADJUDICATIONS),
+    # A historical decision has no persisted semantic scope. Preserve the
+    # three outcomes supported by the legacy workflow, but never infer a new
+    # semantic adjudication from incomplete evidence.
+    "LEGACY_FRAUD": {
+        "CLEARED_NO_CONCERN",
+        "CLEARED_UNSUBSTANTIATED",
+        "CONFIRMED_CONCERN",
+    },
 }
 
 
@@ -2440,7 +2462,53 @@ def apply_hrbp_adjudication(
     reason = reason.strip()
 
     with get_db_context() as session:
-        decision_result = session.execute(
+        current = session.execute(
+            text("""
+                SELECT ReviewScope, HumanReviewOutcome
+                FROM dbo.IntegrityDecisionResults
+                WHERE NominationId = :nomination_id
+            """),
+            {"nomination_id": nomination_id},
+        ).fetchone()
+        review_scope = current[0] if current else "LEGACY_FRAUD"
+        if current and current[1] is not None:
+            return {"applied": False, "reason": "already_reviewed_or_missing_decision"}
+        if outcome not in _OUTCOMES_BY_REVIEW_SCOPE.get(review_scope, set()):
+            raise ValueError(
+                f"Outcome {outcome} is not valid for review scope {review_scope}"
+            )
+
+        parameters = {
+            "nomination_id": nomination_id,
+            "outcome": outcome,
+            "training_disposition": training_disposition,
+            "reason": reason,
+            "reviewed_by": reviewed_by,
+        }
+
+        if current:
+            integrity_result = session.execute(
+                text("""
+                    UPDATE dbo.IntegrityDecisionResults
+                    SET HumanReviewOutcome = :outcome,
+                        TrainingDisposition = :training_disposition,
+                        ReviewReason = :reason,
+                        ReviewedBy = :reviewed_by,
+                        ReviewedAt = SYSUTCDATETIME(),
+                        UpdatedAt = SYSUTCDATETIME()
+                    WHERE NominationId = :nomination_id
+                      AND HumanReviewOutcome IS NULL
+                """),
+                parameters,
+            )
+            if integrity_result.rowcount != 1:
+                session.rollback()
+                return {
+                    "applied": False,
+                    "reason": "already_reviewed_or_missing_decision",
+                }
+
+        legacy_result = session.execute(
             text("""
                 UPDATE dbo.FraudDecisionResults
                 SET HumanReviewOutcome = :outcome,
@@ -2452,15 +2520,9 @@ def apply_hrbp_adjudication(
                 WHERE NominationId = :nomination_id
                   AND HumanReviewOutcome IS NULL
             """),
-            {
-                "nomination_id": nomination_id,
-                "outcome": outcome,
-                "training_disposition": training_disposition,
-                "reason": reason,
-                "reviewed_by": reviewed_by,
-            },
+            parameters,
         )
-        if decision_result.rowcount != 1:
+        if legacy_result.rowcount != 1:
             session.rollback()
             return {"applied": False, "reason": "already_reviewed_or_missing_decision"}
 
@@ -2507,6 +2569,7 @@ def apply_hrbp_adjudication(
             "status": target_status,
             "outcome": outcome,
             "training_disposition": training_disposition,
+            "review_scope": review_scope,
         }
 
 def save_hrbp_fraud_flags(
@@ -2597,10 +2660,39 @@ def _rf_llm_explanation(feature_summary_json: str | None) -> str | None:
         return None
     try:
         summary = json.loads(feature_summary_json)
-        explanation = summary.get("rf", {}).get("llm_explanation")
+        rf = summary.get("rf", {})
+        explanation = (
+            rf.get("explanation", {}).get("llm_text")
+            or rf.get("llm_explanation")
+        )
         return explanation if isinstance(explanation, str) and explanation.strip() else None
     except (TypeError, ValueError, AttributeError):
         return None
+
+
+def _json_object(value) -> dict | None:
+    """Return a JSON object from a SQL JSON column without leaking parse errors."""
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _json_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        return []
 
 
 def get_hrbp_queue(tenant_id: int) -> list[dict]:
@@ -2623,26 +2715,63 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                     nom.userEmail                        AS NominatorEmail,
                     ben.FirstName + ' ' + ben.LastName  AS BeneficiaryName,
                     ben.userEmail                        AS BeneficiaryEmail,
-                    ff.FraudScore,
+                    CASE WHEN idr.DecisionSchemaVersion IS NOT NULL
+                         THEN idr.CompositeScore ELSE ff.FraudScore END,
                     ff.FraudProbability,
-                    ff.RiskLevel,
+                    COALESCE(idr.CompositeRiskLevel, ff.RiskLevel),
                     ff.WarningFlags,
                     ff.TopFeaturesJson,
-                    ff.FeatureSummaryJson
+                    ff.FeatureSummaryJson,
+                    idr.DecisionSchemaVersion,
+                    idr.ReviewScope,
+                    idr.DecisiveEnginesJson,
+                    idr.RfResultJson,
+                    idr.GraphResultJson,
+                    idr.GnnResultJson,
+                    idr.SemanticResultJson,
+                    idr.FinalRoute,
+                    idr.RoutingRule
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId      = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId      = n.BeneficiaryId
                 LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr
+                    ON idr.NominationId = n.NominationId
                 WHERE n.Status    = 'PendingHRBPReview'
                   AND nom.TenantId = :tenant_id
                 ORDER BY
-                    CASE WHEN ff.RiskLevel = 'CRITICAL' THEN 0 ELSE 1 END,
+                    CASE WHEN COALESCE(idr.CompositeRiskLevel, ff.RiskLevel)
+                              = 'CRITICAL' THEN 0 ELSE 1 END,
                     n.NominationDate ASC
             """),
             {"tenant_id": tenant_id},
         ).fetchall()
-        return [
-            {
+        results = []
+        for r in rows:
+            engine_results = {
+                "rf": _json_object(r[19]),
+                "graph": _json_object(r[20]),
+                "gnn": _json_object(r[21]),
+                "semantic": _json_object(r[22]),
+            }
+            findings = []
+            if r[16] is not None:
+                for engine in engine_results.values():
+                    if not engine:
+                        continue
+                    findings.extend(engine.get("findings") or [])
+                    combined = engine.get("combined_decision") or {}
+                    findings.extend(combined.get("checks") or [])
+            if not findings and r[13]:
+                findings = r[13].split(", ")
+
+            rf_document = engine_results["rf"] or {}
+            new_explanation = (
+                rf_document.get("explanation", {}).get("llm_text")
+                if isinstance(rf_document.get("explanation"), dict)
+                else None
+            )
+            results.append({
                 "nomination_id":      r[0],
                 "status":             r[1],
                 "amount":             r[2],
@@ -2656,13 +2785,19 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                 "fraud_score":        r[10],
                 "fraud_probability":  r[11],
                 "risk_level":         r[12],
-                "warning_flags":      r[13].split(", ") if r[13] else [],
+                "warning_flags":      findings,
                 "top_features":       r[14],
                 "feature_summary":    r[15],
-                "llm_explanation":    _rf_llm_explanation(r[15]),
-            }
-            for r in rows
-        ]
+                "llm_explanation":    new_explanation or _rf_llm_explanation(r[15]),
+                "decision_source":    "integrity_v2" if r[16] is not None else "legacy",
+                "decision_schema_version": r[16],
+                "review_scope":       r[17] or "LEGACY_FRAUD",
+                "decisive_engines":   _json_list(r[18]),
+                "engine_results":     engine_results,
+                "final_route":        r[23],
+                "routing_rule":       r[24],
+            })
+        return results
 
 
 def get_user_roles(user_id: int) -> list[str]:
@@ -2810,11 +2945,15 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
                     ff.RiskLevel,
                     ff.WarningFlags,
                     nom.UserId                          AS NominatorId,
-                    ben.UserId                          AS BeneficiaryId
+                    ben.UserId                          AS BeneficiaryId,
+                    idr.ReviewScope,
+                    idr.DecisionSchemaVersion
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
                 LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr
+                    ON idr.NominationId = n.NominationId
                 WHERE n.NominationId = :nomination_id
             """),
             {"nomination_id": nomination_id},
@@ -2839,6 +2978,8 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
             "warning_flags":     row[14],
             "nominator_id":      row[15],
             "beneficiary_id":    row[16],
+            "review_scope":      row[17] or "LEGACY_FRAUD",
+            "decision_source":   "integrity_v2" if row[18] is not None else "legacy",
         }
 
 

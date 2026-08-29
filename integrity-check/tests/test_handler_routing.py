@@ -51,17 +51,37 @@ class RoutingRuleTests(unittest.TestCase):
     def test_description_rejection_has_final_routing_priority(self):
         desc = description_check.CheckResult("reject", "Incoherent.", "category_alignment")
         route = handler._select_route(desc, decision("CRITICAL"))
-        self.assertEqual(route["route"], "REJECT_DESCRIPTION")
+        self.assertEqual(route["route"], "REJECT_SEMANTIC")
+        self.assertIsNone(route["review_scope"])
 
     def test_description_concern_routes_to_hrbp(self):
         desc = description_check.CheckResult("flag", "Category concern.", "category_alignment")
         route = handler._select_route(desc, decision("NONE"))
         self.assertEqual(route["target_status"], "PendingHRBPReview")
+        self.assertEqual(route["review_scope"], "SEMANTIC")
 
     def test_model_concern_routes_to_hrbp(self):
         desc = description_check.CheckResult("pass", None, None)
         route = handler._select_route(desc, decision("HIGH"))
         self.assertEqual(route["target_status"], "PendingHRBPReview")
+        self.assertEqual(route["review_scope"], "FRAUD")
+
+    def test_combined_concern_has_combined_review_scope(self):
+        desc = description_check.CheckResult("flag", "Category concern.", None)
+        route = handler._select_route(desc, decision("HIGH"))
+        self.assertEqual(route["review_scope"], "FRAUD_AND_SEMANTIC")
+
+    def test_semantic_only_route_names_only_semantic_as_decisive(self):
+        desc = description_check.CheckResult("flag", "Category concern.", None)
+        fused = {
+            **decision("NONE"),
+            "decisive_models": ["RF", "Graph"],
+        }
+        route = handler._select_route(desc, fused)
+        self.assertEqual(
+            handler._decisive_engines(desc, fused, route),
+            ["SEMANTIC"],
+        )
 
     def test_critical_model_risk_routes_to_priority_hrbp_review(self):
         desc = description_check.CheckResult("pass", None, None)
@@ -118,7 +138,7 @@ class CompleteAssessmentTests(unittest.TestCase):
             )
 
             save_decision = stack.enter_context(
-                patch("inference.handler.db.save_fraud_decision_result")
+                patch("inference.handler.db.save_integrity_decision_results")
             )
             save_decision.side_effect = lambda **_kwargs: call_order.append("decision")
             reject = stack.enter_context(patch("inference.handler.db.reject_nomination"))
@@ -150,7 +170,7 @@ class CompleteAssessmentTests(unittest.TestCase):
             "Graph Analytics assessment completed",
             "GNN assessment starting",
             "GNN assessment completed",
-            "FraudDecisionResults persisted",
+            "Legacy and IntegrityDecisionResults persisted",
             "Rules-based routing decision",
         ):
             self.assertIn(expected, messages)

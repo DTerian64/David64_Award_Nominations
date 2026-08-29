@@ -5,9 +5,9 @@
  *
  * For each nomination in PendingHRBPReview the HRBP reviewer can see:
  *   - Nominator → Beneficiary, amount, category, description
- *   - Fraud score, risk level, and warning flags from the P2P model
+ *   - The complete RF, Graph, GNN, and semantic engine verdict
  *   - All other nominations between these two people in either direction (expandable)
- *   - Three explicit human outcomes with their ML training disposition
+ *   - Scope-aware human outcomes with an explicit training disposition
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -35,6 +35,32 @@ interface HRBPQueueItem {
   top_features:       string | null;
   feature_summary:    string | null;
   llm_explanation:    string | null;
+  decision_source:    'integrity_v2' | 'legacy';
+  decision_schema_version: number | null;
+  review_scope:       'FRAUD' | 'SEMANTIC' | 'FRAUD_AND_SEMANTIC' | 'LEGACY_FRAUD';
+  decisive_engines:   string[];
+  engine_results:     Record<string, EngineResult | null>;
+  final_route:        string | null;
+  routing_rule:       string | null;
+}
+
+interface EngineResult {
+  engine?: string;
+  available?: boolean;
+  status?: string;
+  unavailable_reason?: string | null;
+  unavailable_detail?: string | null;
+  score?: number | null;
+  model_probability?: number | null;
+  risk_level?: string;
+  findings?: string[];
+  combined_decision?: {
+    action?: string;
+    checks?: string[];
+    reason?: string | null;
+  };
+  embedding?: { similarity?: number; threshold?: number; outcome?: string };
+  llm?: { response?: { category_fit_score?: number; flags?: string[] }; outcome?: string };
 }
 
 interface PairHistoryItem {
@@ -59,7 +85,8 @@ interface PairHistory {
 type HRBPOutcome =
   | 'CLEARED_NO_CONCERN'
   | 'CLEARED_UNSUBSTANTIATED'
-  | 'CONFIRMED_CONCERN';
+  | 'CONFIRMED_CONCERN'
+  | 'CONFIRMED_SEMANTIC_CONCERN';
 
 // ── SHAP feature label map ────────────────────────────────────────────────
 
@@ -137,6 +164,95 @@ const riskBadge = (level: string | null) => {
     <span className={`inline-block px-2 py-0.5 rounded border text-xs font-semibold ${RISK_COLOURS[key] ?? RISK_COLOURS.UNKNOWN}`}>
       {key}
     </span>
+  );
+};
+
+const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
+  if (item.decision_source === 'legacy') {
+    return (
+      <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        Legacy decision record — a complete four-engine evidence snapshot was not captured.
+      </div>
+    );
+  }
+
+  const entries = [
+    ['RF', item.engine_results.rf],
+    ['Graph Analytics', item.engine_results.graph],
+    ['GNN', item.engine_results.gnn],
+    ['Semantic', item.engine_results.semantic],
+  ] as const;
+
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+          Detection engine verdicts
+        </p>
+        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+          Review scope: {item.review_scope.replace(/_/g, ' ')}
+        </span>
+        {item.decisive_engines.length > 0 && (
+          <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">
+            Decisive: {item.decisive_engines.join(', ')}
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {entries.map(([label, engine]) => {
+          if (!engine) return null;
+          const isSemantic = label === 'Semantic';
+          const action = engine.combined_decision?.action;
+          const findings = [
+            ...(engine.findings || []),
+            ...(engine.combined_decision?.checks || []),
+          ];
+          return (
+            <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">{label}</p>
+                {isSemantic
+                  ? <span className="text-xs font-semibold uppercase text-slate-600">{action || engine.status}</span>
+                  : riskBadge(engine.risk_level || 'UNKNOWN')}
+              </div>
+              {!isSemantic && engine.available && engine.score !== null && engine.score !== undefined && (
+                <p className="text-xs text-slate-600">
+                  Score <span className="font-semibold text-slate-900">{engine.score}</span>
+                  {engine.model_probability !== null && engine.model_probability !== undefined && (
+                    <> · Probability {(engine.model_probability * 100).toFixed(1)}%</>
+                  )}
+                </p>
+              )}
+              {!engine.available && (
+                <p className="text-xs text-slate-500">
+                  Unavailable{engine.unavailable_reason ? `: ${engine.unavailable_reason}` : ''}
+                  {engine.unavailable_detail ? ` — ${engine.unavailable_detail}` : ''}
+                </p>
+              )}
+              {isSemantic && engine.embedding?.similarity !== undefined && (
+                <p className="text-xs text-slate-600">
+                  Embedding similarity {engine.embedding.similarity}
+                  {engine.embedding.threshold !== undefined ? ` / ${engine.embedding.threshold} minimum` : ''}
+                </p>
+              )}
+              {isSemantic && engine.llm?.response?.category_fit_score !== undefined && (
+                <p className="text-xs text-slate-600">
+                  LLM category fit {engine.llm.response.category_fit_score}
+                </p>
+              )}
+              {findings.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs text-orange-700">
+                  {findings.map((finding, index) => <li key={index}>• {finding}</li>)}
+                </ul>
+              )}
+              {engine.combined_decision?.reason && (
+                <p className="mt-2 text-xs text-slate-600">{engine.combined_decision.reason}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 };
 
@@ -271,13 +387,18 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
         <div className="space-y-4">
           {queue.map(nom => {
             const decided = decisionStatus[nom.nomination_id];
+            const fraudScope = nom.review_scope !== 'SEMANTIC';
+            const semanticScope = (
+              nom.review_scope === 'SEMANTIC'
+              || nom.review_scope === 'FRAUD_AND_SEMANTIC'
+            );
             return (
               <div
                 key={nom.nomination_id}
                 className={`border rounded-lg overflow-hidden transition-all ${
                   decided === 'CLEARED_NO_CONCERN' ? 'border-green-400 bg-green-50' :
                   decided === 'CLEARED_UNSUBSTANTIATED' ? 'border-blue-400 bg-blue-50' :
-                  decided === 'CONFIRMED_CONCERN' ? 'border-red-400 bg-red-50' :
+                  decided === 'CONFIRMED_CONCERN' || decided === 'CONFIRMED_SEMANTIC_CONCERN' ? 'border-red-400 bg-red-50' :
                   nom.risk_level === 'CRITICAL' ? 'border-red-300' :
                   'border-gray-200'
                 }`}
@@ -306,7 +427,7 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                       )}
                       {nom.fraud_score !== null && (
                         <p className="text-xs text-gray-500 mt-1">
-                          Fraud score: {nom.fraud_score}
+                          Composite score: {nom.fraud_score}
                         </p>
                       )}
                     </div>
@@ -316,6 +437,8 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                   <p className="text-gray-700 text-sm bg-gray-50 rounded p-3 mb-3 border-l-4 border-blue-300">
                     {nom.description}
                   </p>
+
+                  <EngineVerdicts item={nom} />
 
                   {/* Warning flags */}
                   {nom.warning_flags.length > 0 && (
@@ -427,6 +550,8 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                         ? '✅ Cleared — forwarded to manager and labelled legitimate'
                         : decided === 'CLEARED_UNSUBSTANTIATED'
                         ? '✅ Cleared — forwarded to manager and excluded from ML training'
+                        : decided === 'CONFIRMED_SEMANTIC_CONCERN'
+                        ? '❌ Semantic concern confirmed — nomination rejected and excluded from ML training'
                         : '❌ Integrity concern confirmed — nomination rejected'}
                     </div>
                   ) : (
@@ -451,18 +576,20 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                           Please add a reason before recording the HRBP decision.
                         </div>
                       )}
-                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                        <button
-                          onClick={() => decide(nom.nomination_id, 'CLEARED_NO_CONCERN')}
-                          disabled={deciding === nom.nomination_id}
-                          className="flex flex-col items-center justify-center bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg transition-colors disabled:bg-gray-300"
-                        >
-                          <span className="flex items-center gap-2 font-medium">
-                            <CheckCircle className="w-4 h-4" />
-                            Clear — no integrity issue
-                          </span>
-                          <span className="mt-0.5 text-xs text-green-100">Legitimate training label</span>
-                        </button>
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-4">
+                        {fraudScope && (
+                          <button
+                            onClick={() => decide(nom.nomination_id, 'CLEARED_NO_CONCERN')}
+                            disabled={deciding === nom.nomination_id}
+                            className="flex flex-col items-center justify-center bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg transition-colors disabled:bg-gray-300"
+                          >
+                            <span className="flex items-center gap-2 font-medium">
+                              <CheckCircle className="w-4 h-4" />
+                              Clear — no integrity issue
+                            </span>
+                            <span className="mt-0.5 text-xs text-green-100">Legitimate training label</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => decide(nom.nomination_id, 'CLEARED_UNSUBSTANTIATED')}
                           disabled={deciding === nom.nomination_id}
@@ -474,17 +601,32 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                           </span>
                           <span className="mt-0.5 text-xs text-blue-100">Excluded from ML training</span>
                         </button>
-                        <button
-                          onClick={() => decide(nom.nomination_id, 'CONFIRMED_CONCERN')}
-                          disabled={deciding === nom.nomination_id}
-                          className="flex flex-col items-center justify-center bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-                        >
-                          <span className="flex items-center gap-2 font-medium">
-                            <XCircle className="w-4 h-4" />
-                            Confirm integrity concern
-                          </span>
-                          <span className="mt-0.5 text-xs text-red-100">Reject · Fraud training label</span>
-                        </button>
+                        {fraudScope && (
+                          <button
+                            onClick={() => decide(nom.nomination_id, 'CONFIRMED_CONCERN')}
+                            disabled={deciding === nom.nomination_id}
+                            className="flex flex-col items-center justify-center bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                          >
+                            <span className="flex items-center gap-2 font-medium">
+                              <XCircle className="w-4 h-4" />
+                              Confirm integrity concern
+                            </span>
+                            <span className="mt-0.5 text-xs text-red-100">Reject · Fraud training label</span>
+                          </button>
+                        )}
+                        {semanticScope && (
+                          <button
+                            onClick={() => decide(nom.nomination_id, 'CONFIRMED_SEMANTIC_CONCERN')}
+                            disabled={deciding === nom.nomination_id}
+                            className="flex flex-col items-center justify-center bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                          >
+                            <span className="flex items-center gap-2 font-medium">
+                              <XCircle className="w-4 h-4" />
+                              Confirm semantic concern
+                            </span>
+                            <span className="mt-0.5 text-xs text-purple-100">Reject · Excluded from ML training</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}

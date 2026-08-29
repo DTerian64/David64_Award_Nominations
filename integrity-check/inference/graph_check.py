@@ -141,7 +141,8 @@ def _assess_graph_inner(
         flags.append(f"[Graph] snapshot is {(date.today() - as_of).days} days old")
 
     graph_score = _GRAPH_SCORE[source_severity]
-    risk = _risk_level(graph_score, _thresholds(tenant_id))
+    thresholds = _thresholds(tenant_id)
+    risk = _risk_level(graph_score, thresholds)
 
     result = {
         "model_available": True,
@@ -153,6 +154,8 @@ def _assess_graph_inner(
         "flagged": risk in ("MEDIUM", "HIGH", "CRITICAL"),
         "snapshot_as_of": as_of,
         "affected_user_ids": affected,
+        "score_thresholds": thresholds,
+        "score_derivation": "rules_based_severity_mapping",
     }
     result.update(component_availability.available_metadata(component_status))
     return result

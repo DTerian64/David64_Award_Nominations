@@ -6,6 +6,7 @@ Usage (PowerShell):
     python -m unittest tests.test_hrbp_adjudication -v
 """
 
+import json
 import os
 import unittest
 from contextlib import contextmanager
@@ -117,7 +118,11 @@ class HRBPAdjudicationTests(unittest.IsolatedAsyncioTestCase):
 class HRBPAdjudicationPersistenceTests(unittest.TestCase):
     def test_excluded_outcome_updates_decision_result_without_touching_rf_score(self):
         session = MagicMock()
+        current = MagicMock()
+        current.fetchone.return_value = ("FRAUD", None)
         session.execute.side_effect = [
+            current,
+            SimpleNamespace(rowcount=1),
             SimpleNamespace(rowcount=1),
             SimpleNamespace(rowcount=1),
         ]
@@ -134,17 +139,125 @@ class HRBPAdjudicationPersistenceTests(unittest.TestCase):
                 reason="Concern not substantiated.",
             )
 
-        decision_sql = str(session.execute.call_args_list[0].args[0])
-        decision_params = session.execute.call_args_list[0].args[1]
+        integrity_sql = str(session.execute.call_args_list[1].args[0])
+        decision_sql = str(session.execute.call_args_list[2].args[0])
+        decision_params = session.execute.call_args_list[2].args[1]
         all_sql = "\n".join(str(call.args[0]) for call in session.execute.call_args_list)
 
         self.assertTrue(result["applied"])
         self.assertEqual(result["training_disposition"], "EXCLUDED")
         self.assertEqual(decision_params["training_disposition"], "EXCLUDED")
+        self.assertIn("IntegrityDecisionResults", integrity_sql)
         self.assertIn("FraudDecisionResults", decision_sql)
         self.assertNotIn("RfScore", decision_sql)
         self.assertNotIn("P2P_FraudScores", all_sql)
         session.commit.assert_called_once()
+
+    def test_semantic_only_review_cannot_create_a_fraud_training_label(self):
+        session = MagicMock()
+        current = MagicMock()
+        current.fetchone.return_value = ("SEMANTIC", None)
+        session.execute.return_value = current
+
+        @contextmanager
+        def fake_db_context():
+            yield session
+
+        with patch.object(sqlhelper2, "get_db_context", fake_db_context):
+            with self.assertRaisesRegex(ValueError, "not valid for review scope"):
+                sqlhelper2.apply_hrbp_adjudication(
+                    nomination_id=13880,
+                    outcome="CONFIRMED_CONCERN",
+                    reviewed_by="HRBP:77",
+                    reason="Concern confirmed.",
+                )
+
+        self.assertEqual(session.execute.call_count, 1)
+        session.commit.assert_not_called()
+
+    def test_confirmed_semantic_concern_is_rejected_and_excluded(self):
+        session = MagicMock()
+        current = MagicMock()
+        current.fetchone.return_value = ("SEMANTIC", None)
+        session.execute.side_effect = [
+            current,
+            SimpleNamespace(rowcount=1),
+            SimpleNamespace(rowcount=1),
+            SimpleNamespace(rowcount=1),
+        ]
+
+        @contextmanager
+        def fake_db_context():
+            yield session
+
+        with patch.object(sqlhelper2, "get_db_context", fake_db_context):
+            result = sqlhelper2.apply_hrbp_adjudication(
+                nomination_id=13880,
+                outcome="CONFIRMED_SEMANTIC_CONCERN",
+                reviewed_by="HRBP:77",
+                reason="The description concern was confirmed.",
+            )
+
+        self.assertEqual(result["status"], "Rejected")
+        self.assertEqual(result["training_disposition"], "EXCLUDED")
+        self.assertEqual(result["review_scope"], "SEMANTIC")
+
+
+class HRBPQueueProjectionTests(unittest.TestCase):
+    def test_new_decision_exposes_all_four_engine_documents(self):
+        rf = {
+            "engine": "RF",
+            "available": True,
+            "score": 48,
+            "risk_level": "MEDIUM",
+            "findings": ["[RF] Reciprocal nomination detected"],
+            "explanation": {"llm_text": "RF evidence warrants review."},
+        }
+        graph = {
+            "engine": "GRAPH",
+            "available": True,
+            "score": 50,
+            "risk_level": "MEDIUM",
+            "findings": ["[Graph] Beneficiary is an outlier"],
+        }
+        gnn = {
+            "engine": "GNN",
+            "available": False,
+            "risk_level": "UNKNOWN",
+            "findings": [],
+        }
+        semantic = {
+            "engine": "SEMANTIC",
+            "available": True,
+            "combined_decision": {"action": "pass", "checks": []},
+        }
+        row = (
+            13880, "PendingHRBPReview", 5000, "USD", "Description",
+            "2026-08-28", "Nominator", "nom@example.com", "Beneficiary",
+            "ben@example.com", 50, 0.48, "MEDIUM", None, None, None,
+            2, "FRAUD", '["GRAPH"]', json.dumps(rf), json.dumps(graph),
+            json.dumps(gnn), json.dumps(semantic), "HRBP_REVIEW",
+            "fraud_concern_hrbp",
+        )
+        session = MagicMock()
+        query = MagicMock()
+        query.fetchall.return_value = [row]
+        session.execute.return_value = query
+
+        @contextmanager
+        def fake_db_context():
+            yield session
+
+        with patch.object(sqlhelper2, "get_db_context", fake_db_context):
+            item = sqlhelper2.get_hrbp_queue(3)[0]
+
+        self.assertEqual(item["decision_source"], "integrity_v2")
+        self.assertEqual(item["review_scope"], "FRAUD")
+        self.assertEqual(item["decisive_engines"], ["GRAPH"])
+        self.assertEqual(item["engine_results"]["rf"]["score"], 48)
+        self.assertEqual(item["engine_results"]["semantic"]["engine"], "SEMANTIC")
+        self.assertEqual(item["llm_explanation"], "RF evidence warrants review.")
+        self.assertIn("[Graph] Beneficiary is an outlier", item["warning_flags"])
 
 
 if __name__ == "__main__":
