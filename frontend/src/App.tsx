@@ -1211,9 +1211,6 @@ const AwardNominationApp: React.FC = () => {
           {/* ── Model Analysis tab ───────────────────────────────────────── */}
           {activeTab === 'modelAnalysis' && canAccessModelAnalysis && (
             <div className="bg-white rounded-lg shadow-md p-4 sm:p-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">
-                {t('modelAnalysis.heading', { defaultValue: 'Model Analysis' })}
-              </h2>
               <ModelAnalysisTab
                 apiFetch={apiFetch}
                 formatCurrency={formatCurrency}

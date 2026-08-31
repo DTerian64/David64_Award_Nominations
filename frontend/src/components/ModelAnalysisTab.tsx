@@ -231,6 +231,23 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
     }
   };
 
+  const clearFilters = () => {
+    setQuery('');
+    setStatus('');
+    setRisk('');
+    setStartDate('');
+    setEndDate(todayAsLocalDate());
+    setAppliedQuery('');
+    setAppliedStatus('');
+    setAppliedRisk('');
+    setAppliedStartDate('');
+    setAppliedEndDate('');
+    setPage(1);
+    setResult(null);
+    setHasSearched(false);
+    setError(null);
+  };
+
   const totalPages = Math.max(1, Math.ceil((result?.total ?? 0) / PAGE_SIZE));
   const modelSetupReadOnly = !isAdmin || isImpersonating;
 
@@ -340,9 +357,14 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
                 {RISKS.map(value => <option key={value} value={value}>{value || 'All risk levels'}</option>)}
               </select>
             </label>
-            <button disabled={loading} type="submit" style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }} className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
-              <Search className="h-4 w-4" /> Search
-            </button>
+            <div className="flex gap-2 md:col-span-2 xl:col-span-1">
+              <button disabled={loading} type="submit" style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }} className="flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+                <Search className="h-4 w-4" /> Search
+              </button>
+              <button disabled={loading} type="button" onClick={clearFilters} className="whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                Clear filters
+              </button>
+            </div>
           </form>
 
           {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
