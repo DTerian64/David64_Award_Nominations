@@ -3,6 +3,10 @@
 // Last Updated: 2026-02-12
 // Author: David Terian
 // Category: Monitoring
+// NOTE: emails now send from the auxiliary worker (logger 'auxiliary.email',
+// app 'award-auxiliary-*'), but this query is scoped to the backend apps, so the
+// Email* columns read 0 here. Use the dedicated email/*.kql queries, or restructure
+// this with a union over the auxiliary app to populate them.
 
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(24h)
@@ -15,8 +19,8 @@ ContainerAppConsoleLogs_CL
     Warnings = countif(tostring(LogData.level) == "WARNING"),
     InfoLogs = countif(tostring(LogData.level) == "INFO"),
     Nominations = countif(tostring(LogData.message) == "Nomination created"),
-    EmailsSent = countif(tostring(LogData.logger) == "email_utils" and tostring(LogData.message) contains "successfully"),
-    EmailsFailed = countif(tostring(LogData.logger) == "email_utils" and tostring(LogData.level) == "ERROR"),
+    EmailsSent = countif(tostring(LogData.logger) == "auxiliary.email" and tostring(LogData.message) contains "sent"),
+    EmailsFailed = countif(tostring(LogData.logger) == "auxiliary.email" and tostring(LogData.level) == "ERROR"),
     FraudAssessments = countif(tostring(LogData.logger) == "fraud_ml")
     by Region = ContainerAppName_s
 | extend 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import fraud_ml
+from utils.rf_model_cache import rf_model_cache
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 # ── Tool implementation ───────────────────────────────────────────────────────
 
 async def _get_fraud_model_info(tenant_id: int = 0) -> dict[str, Any]:
-    model_data = fraud_ml.fraud_detector.tenant_models.get(tenant_id)
+    # get_model() triggers a lazy load if the model isn't cached yet
+    model_data = rf_model_cache.get_model(tenant_id)
 
     if model_data is None:
         logger.warning("tool:get_fraud_model_info — no model for tenant_id=%d", tenant_id)
@@ -27,7 +28,7 @@ async def _get_fraud_model_info(tenant_id: int = 0) -> dict[str, Any]:
             "tenant_id": tenant_id,
             "message": (
                 f"No fraud detection model loaded for tenant {tenant_id}. "
-                "Run train_fraud_model.py and upload the resulting .pkl to blob storage."
+                "Run modeling/train_rf_model.py and upload the resulting .pkl to blob storage."
             ),
         }
 

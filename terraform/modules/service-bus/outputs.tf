@@ -20,9 +20,24 @@ output "topic_name" {
   value       = azurerm_servicebus_topic.award_events.name
 }
 
+output "topic_id" {
+  description = "Resource ID of the award-events topic — used for scoped RBAC role assignments"
+  value       = azurerm_servicebus_topic.award_events.id
+}
+
 output "email_processor_subscription_name" {
   description = "Name of the email-processor subscription — used in Auxiliary Function trigger binding"
   value       = azurerm_servicebus_subscription.email_processor.name
+}
+
+output "fraud_processor_subscription_name" {
+  description = "Name of the fraud-processor subscription — used by award-integrity-check-sandbox KEDA scaler"
+  value       = azurerm_servicebus_subscription.fraud_processor.name
+}
+
+output "payroll_processor_subscription_name" {
+  description = "Name of the payroll-processor subscription — used by award-payroll-broker KEDA scaler"
+  value       = azurerm_servicebus_subscription.payroll_processor.name
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

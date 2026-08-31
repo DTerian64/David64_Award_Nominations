@@ -24,6 +24,10 @@ sql_database_name  = "AwardNominationsSandbox"
 sql_admin_login    = "YOUR_SQL_ADMIN_LOGIN"
 sql_admin_password = "YOUR_SQL_ADMIN_PASSWORD"
 
+# SQL access governance (ADR-0001)
+github_org_repo      = "YOUR_GITHUB_ORG/YOUR_REPO"  # runs the schema-migrations pipeline (OIDC)
+sql_entra_admin_only = false                        # flip to true after grants are validated (Phase 6)
+
 # ── Resource names ────────────────────────────────────────────────────────────
 acr_name             = "acrawardnomssandbox"
 storage_account_name = "awardnomssandbox"
@@ -46,7 +50,7 @@ max_replicas       = 3
 location_primary                = "eastus2"
 location_secondary              = "westus2"
 model_blob_name                 = "fraud_detection_model.pkl"
-logging_level                   = "DEBUG"
+logging_level                   = "INFO"   # DEBUG drives up Log Analytics ingestion cost — only use temporarily while troubleshooting
 blob_sas_expiry_hours           = 24
 email_action_token_expiry_hours = 72
 
@@ -56,8 +60,12 @@ afd_endpoint_name = "award-nomination-api-sandbox"
 
 # ── Static Web App ────────────────────────────────────────────────────────────
 swa_name                = "award-nomination-frontend-sandbox"
-swa_custom_domain       = "sandbox-awards.terian-services.com"  # leave empty "" to skip
-dns_zone_resource_group = "rg_platform"                         # RG holding terian-services.com DNS zone
+swa_custom_domains = [
+  "sandbox-awards.terianix.ai",   # main sandbox — existing tenants
+  "acme-awards.terianix.ai",      # ACME Corp tenant
+  "demo-awards.terianix.ai",      # public demo — self-registration
+]
+dns_zone_resource_group = "rg_platform"                         # RG holding terianix.ai DNS zone
 
 # ── Service Bus ───────────────────────────────────────────────────────────────
 service_bus_namespace_name = "sb-award-sandbox"
@@ -69,12 +77,37 @@ auxiliary_container_app_name = "award-auxiliary-sandbox"
 payout_orchestrator_name                 = "award-payout-orchestrator-sandbox"
 payout_orchestrator_storage_account_name = "stpayorchestrsbx"  # 3-24 chars, lowercase alphanumeric
 
+# ── Payroll Broker ────────────────────────────────────────────────────────────
+payroll_broker_container_app_name = "award-payroll-broker-sandbox"
+payroll_broker_custom_domain      = "payroll-broker.terianix.ai"
+# Gusto OAuth credentials — obtain from dev.gusto.com after registering the app.
+# The redirect URI registered in Gusto must be:
+#   https://payroll-broker.terianix.ai/gusto/callback
+gusto_client_id     = "YOUR_GUSTO_CLIENT_ID"
+gusto_client_secret = "YOUR_GUSTO_CLIENT_SECRET"
+# Webhook secret — set this value in the Gusto developer portal webhook config AND here.
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+gusto_webhook_secret = "REPLACE_WITH_GENERATED_SECRET"
+# AES-256 key for encrypting Gusto OAuth tokens at rest in dbo.payroll_tokens.
+# Generate: python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+payroll_token_encryption_key = "REPLACE_WITH_GENERATED_KEY"
+
 # ── Workday Proxy ─────────────────────────────────────────────────────────────
-workday_proxy_name = "workday-proxy-sandbox"
+workday_proxy_name             = "workday-proxy-sandbox"
+workday_webhook_secret         = "REPLACE_WITH_GENERATED_SECRET"  # python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# ── Fraud Analytics Job ────────────────────────────────────────────────────────
+fraud_analytics_job_webhook_secret = "REPLACE_WITH_GENERATED_SECRET"  # python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# ── HRBP SLA Logic App ────────────────────────────────────────────────────────
+hrbp_sla_webhook_secret = "REPLACE_WITH_GENERATED_SECRET"  # python -c "import secrets; print(secrets.token_urlsafe(32))"
+hrbp_sla_hours          = 72
 
 # ── Log Analytics ─────────────────────────────────────────────────────────────
 workspace_name_primary   = "workspace-award-primary-sandbox"
 workspace_name_secondary = "workspace-award-secondary-sandbox"
+daily_quota_gb            = 3   # hard cap on daily ingestion (GB) — cost safety net for sandbox; -1 = unlimited
+daily_data_cap_gb         = 5   # same cap, applied directly to both App Insights resources; -1 = Azure default (100)
 
 # ── Admin RBAC ────────────────────────────────────────────────────────────────
 # Users to receive the AWard_Nomination_Admin app role.
@@ -105,8 +138,7 @@ email_action_secret_key = "YOUR_EMAIL_ACTION_SECRET_KEY"
 secrets = {
   SQL-USER           = "YOUR_SQL_ADMIN_LOGIN"
   SQL-PASSWORD       = "YOUR_SQL_ADMIN_PASSWORD"
-  GMAIL-APP-PASSWORD = "YOUR_GMAIL_APP_PASSWORD"
-  GMAIL-USER         = "YOUR_GMAIL_ADDRESS"
+  SMTP-PASSWORD = "YOUR_ZOHO_APP_PASSWORD"
   FROM-EMAIL         = "YOUR_FROM_EMAIL"
   FROM-NAME          = "Award Nominations"
 }

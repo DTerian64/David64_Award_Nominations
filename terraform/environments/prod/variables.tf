@@ -65,6 +65,16 @@ variable "email_action_token_expiry_hours" {
   type    = number
   default = 24
 }
+variable "model_idle_ttl_seconds" {
+  description = "Seconds a per-tenant fraud model can sit idle before being evicted from memory. Default: 1800 (30 min)."
+  type        = number
+  default     = 1800
+}
+variable "model_eviction_interval_seconds" {
+  description = "How often the eviction background loop runs. Default: 300 (5 min)."
+  type        = number
+  default     = 300
+}
 
 # Front Door
 variable "afd_profile_name"     { type = string }

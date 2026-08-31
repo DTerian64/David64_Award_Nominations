@@ -16,6 +16,17 @@ variable "sql_admin_password" {
   sensitive = true
 }
 
+# SQL access governance (ADR-0001)
+variable "github_org_repo" {
+  description = "GitHub 'org/repo' running the schema-migrations pipeline (OIDC federated credential subject)."
+  type        = string
+}
+variable "sql_entra_admin_only" {
+  description = "Disable SQL authentication (Entra-only). Keep false until contained users + grants are validated (ADR-0001 Phase 6)."
+  type        = bool
+  default     = false
+}
+
 # ACR
 variable "acr_name"             { type = string }
 
@@ -44,6 +55,16 @@ variable "email_action_token_expiry_hours" {
   type    = number
   default = 72
 }
+variable "model_idle_ttl_seconds" {
+  description = "Seconds a per-tenant fraud model can sit idle before being evicted from memory. Shorter in sandbox to make eviction observable during development."
+  type        = number
+  default     = 600
+}
+variable "model_eviction_interval_seconds" {
+  description = "How often the eviction background loop runs. Faster in sandbox for easier testing."
+  type        = number
+  default     = 120
+}
 variable "email_action_secret_key" {
   description = "Secret key used to sign and verify email action tokens"
   type        = string
@@ -57,14 +78,14 @@ variable "afd_endpoint_name"    { type = string }
 # Static Web App
 variable "swa_name"             { type = string }
 
-variable "swa_custom_domain" {
-  description = "Optional custom domain for the SWA (e.g. dev-awards.terian-services.com). Leave empty to skip."
-  type        = string
-  default     = ""
+variable "swa_custom_domains" {
+  description = "Custom domains to bind to the SWA. Each entry creates a DNS CNAME record and an SWA domain binding. Free SKU supports 2; Standard SKU supports 5."
+  type        = list(string)
+  default     = []
 }
 
 variable "dns_zone_resource_group" {
-  description = "Resource group containing the terian-services.com Azure DNS zone."
+  description = "Resource group containing the terianix.ai Azure DNS zone."
   type        = string
   default     = "rg_platform"
 }
@@ -104,6 +125,18 @@ variable "workspace_name_primary" {
 variable "workspace_name_secondary" {
   description = "Log Analytics workspace name — Secondary region"
   type        = string
+}
+
+variable "daily_quota_gb" {
+  description = "Daily ingestion cap (GB) for the Log Analytics workspaces — cost safety net for sandbox. -1 = unlimited."
+  type        = number
+  default     = 3
+}
+
+variable "daily_data_cap_gb" {
+  description = "Daily ingestion cap (GB) for the Application Insights resources — cost safety net independent of the Log Analytics workspace cap. -1 = Azure default (100)."
+  type        = number
+  default     = 5
 }
 
 # Container Apps
@@ -160,6 +193,12 @@ variable "auxiliary_container_app_name" {
   type        = string
 }
 
+variable "integrity_check_container_app_name" {
+  description = "Integrity Check Container App name. Convention: award-integrity-check-{env}"
+  type        = string
+  default     = "award-integrity-check-sandbox"
+}
+
 # ── Fraud Analytics Job ───────────────────────────────────────────────────────
 variable "fraud_analytics_job_name" {
   description = "Container Apps Job name for the fraud analytics pipeline. Convention: award-fraud-analytics-{env}"
@@ -185,6 +224,94 @@ variable "fraud_analytics_ring_max_cluster_size" {
   default = 4
 }
 
+# ── GNN training stage ────────────────────────────────────────────────────────
+# These mirror the defaults in fraud-analytics-job/modeling/train_gnn_model.py. They are
+# surfaced as variables so a value change shows up in `terraform plan` instead of
+# requiring an image rebuild.
+
+variable "gnn_enabled" {
+  description = <<-EOT
+    Kill switch for the GNN training stage. When false, run_job.py skips the
+    stage and the rest of the weekly run is unaffected — no image rebuild needed.
+
+    This does NOT selectively disable inference. A trained, available GNN always
+    participates in routing; when training is disabled or no artifact exists it
+    contributes no opinion.
+  EOT
+  type    = bool
+  default = true
+}
+
+variable "gnn_hidden_dim" {
+  description = "Hidden dimension of the HeteroConv/SAGEConv encoder."
+  type        = number
+  default     = 64
+}
+
+variable "gnn_embed_dim" {
+  description = <<-EOT
+    Dimension of the per-user embedding persisted to dbo.GNN_UserEmbeddings.
+    Changing this invalidates every stored embedding, because the decoder shipped
+    to integrity-check is built for a fixed input width. The version-matched
+    lookup in gnn_check handles the transition, but the first run after a change
+    will report cold_start_user for every user until the encoder repopulates.
+  EOT
+  type    = number
+  default = 64
+}
+
+variable "gnn_epochs" {
+  description = "Training epochs per tenant. The dominant term in stage runtime."
+  type        = number
+  default     = 300
+}
+
+variable "gnn_window_days" {
+  description = <<-EOT
+    Rolling lookback for the GNN's graph. Separate from
+    fraud_analytics_detection_window_days: the graph detector wants a long window
+    to find slow rings, while the GNN needs a window short enough that the three
+    temporal splits (message-passing / train / eval) each hold recent behaviour.
+  EOT
+  type    = number
+  default = 180
+}
+
+variable "gnn_embedding_retention_days" {
+  description = "Age at which stored user embeddings are evicted."
+  type        = number
+  default     = 90
+}
+
+variable "gnn_min_training_samples" {
+  description = "Minimum in-window nominations before a tenant is trained."
+  type        = number
+  default     = 300
+}
+
+variable "gnn_min_users" {
+  description = <<-EOT
+    Minimum distinct users before a tenant is trained.
+
+    Not arbitrary. The synthetic ablation ran 3 seeds x 2 tenant sizes: the
+    100-user tenant gained +0.12/+0.12/+0.26 PR-AUC from message passing, while
+    the 50-user tenant LOST -0.02/-0.05/-0.04. Below roughly this size the graph
+    structure is noise and the GNN is worse than the flat-feature baseline.
+  EOT
+  type    = number
+  default = 50
+}
+
+variable "gnn_min_positives" {
+  description = <<-EOT
+    Minimum positive labels before a tenant is trained. Gates on positives, not
+    on row count: a tenant can clear the sample gate and still yield a silent
+    NaN PR-AUC if almost nothing is labelled fraud.
+  EOT
+  type    = number
+  default = 10
+}
+
 variable "fraud_analytics_detection_window_days" {
   description = <<-EOT
     Rolling lookback window (in days) for graph pattern detection.
@@ -200,9 +327,150 @@ variable "fraud_analytics_detection_window_days" {
   default     = 180
 }
 
+# ── Payroll Broker ────────────────────────────────────────────────────────────
+variable "payroll_broker_container_app_name" {
+  description = "Payroll Broker Container App name. Convention: award-payroll-broker-{env}"
+  type        = string
+  default     = "award-payroll-broker-sandbox"
+}
+
+variable "payroll_broker_custom_domain" {
+  description = "Custom domain for the Payroll Broker routed via AFD. A CNAME record is created in the terianix.ai DNS zone pointing to the AFD endpoint. Must match the domain registered in Gusto's developer portal as the redirect/webhook base URL."
+  type        = string
+  default     = "payroll-broker.terianix.ai"
+}
+
+# Gusto OAuth credentials — stored in Key Vault; never appear in tfvars in plaintext.
+# Set via environment variable or a secrets.auto.tfvars (gitignored).
+variable "gusto_client_id" {
+  description = "Gusto OAuth application client ID — obtained from dev.gusto.com after registering the app. Not sensitive in Gusto's model but stored in KV for consistency."
+  type        = string
+  sensitive   = true
+}
+
+variable "gusto_client_secret" {
+  description = "Gusto OAuth application client secret — obtained from dev.gusto.com. Stored in Key Vault as GUSTO-CLIENT-SECRET."
+  type        = string
+  sensitive   = true
+}
+
+variable "gusto_webhook_secret" {
+  description = "Shared secret used to validate X-Gusto-Signature on inbound Gusto webhook callbacks. Set this in the Gusto developer portal webhook config AND here. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}
+
+variable "rippling_client_id" {
+  description = "Rippling OAuth application client ID — obtained from the Rippling developer portal after App Shop approval."
+  type        = string
+  sensitive   = true
+}
+
+variable "rippling_client_secret" {
+  description = "Rippling OAuth application client secret — obtained from the Rippling developer portal. Stored in Key Vault as RIPPLING-CLIENT-SECRET."
+  type        = string
+  sensitive   = true
+}
+
+variable "rippling_webhook_secret" {
+  description = "Shared secret used to validate X-Rippling-Signature on inbound Rippling webhook callbacks. Set in the Rippling developer portal AND here. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}
+
 # ── Workday Proxy ─────────────────────────────────────────────────────────────
 variable "workday_webhook_secret" {
   description = "Shared secret sent as X-Api-Key by Workday_Proxy when calling the Award API webhook. Must match WORKDAY_WEBHOOK_SECRET on the Workday_Proxy container. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
   type        = string
   sensitive   = true
+}
+
+# ── Fraud Analytics Job callback ───────────────────────────────────────────────
+variable "fraud_analytics_job_webhook_secret" {
+  description = "Shared secret sent as X-Internal-Key by the fraud-analytics-job when calling /api/internal/refresh-fraud-model after uploading new model pkls. Must match JOB_CALLBACK_SECRET on both the API container apps and the fraud-analytics-job. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}
+
+# ── HRBP SLA Logic App ────────────────────────────────────────────────────────
+variable "hrbp_sla_webhook_secret" {
+  description = "Shared secret sent as X-Internal-Key by la-award-hrbp-sla when calling /api/internal/checkPendingHRBPReview. Must match HRBP_SLA_WEBHOOK_SECRET on the backend container apps. Generate once: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  sensitive   = true
+}
+
+variable "hrbp_sla_hours" {
+  description = "Hours a nomination can sit in PendingHRBPReview before it is considered SLA-breached and escalation emails are sent. Default: 72 hours (3 business days)."
+  type        = number
+  default     = 72
+}
+
+# ── Demo tenant — self-registration (graph_admin.py / demo_router.py) ─────────
+variable "demo_aad_tenant_id" {
+  description = "Azure AD tenant GUID for the Demo Terian Services tenant (DEMO_AAD_TENANT_ID). Non-sensitive — it appears in token tid claims."
+  type        = string
+  default     = ""
+}
+
+variable "demo_graph_client_id" {
+  description = "Client ID of the Award Nomination Seeder app registration in the Demo tenant (DEMO_GRAPH_CLIENT_ID). Non-sensitive."
+  type        = string
+  default     = ""
+}
+
+variable "demo_graph_client_secret" {
+  description = "Client secret for the Award Nomination Seeder app in the Demo tenant (DEMO_GRAPH_CLIENT_SECRET). Stored in Key Vault as DEMO-GRAPH-CLIENT-SECRET."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "demo_allowed_emails" {
+  description = "Comma-separated personal email addresses that bypass the work-email domain block on the demo registration form (owner/developer test accounts). Passed to backend as DEMO_ALLOWED_EMAILS and to the SWA as VITE_DEMO_ALLOWED_EMAILS."
+  type        = string
+  default     = ""
+}
+
+variable "payroll_token_encryption_key" {
+  description = "Base64-encoded 32-byte AES-256 key used to encrypt Gusto OAuth tokens stored in dbo.payroll_tokens. Generate once: python -c \"import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())\""
+  type        = string
+  sensitive   = true
+}
+
+variable "corporate_support_email" {
+  description = "Fallback email address for payroll failure alerts when no Support-role users are configured for a tenant in dbo.UserRoles. Passed to the auxiliary service as CORPORATE_SUPPORT_EMAIL."
+  type        = string
+  default     = "support@terian-services.com"
+}
+
+# ── terianix.ai domain migration ──────────────────────────────────────────────
+
+variable "swa_terianix_domains" {
+  description = "New custom domains under terianix.ai to bind to the SWA. A CNAME record is created in the terianix.ai DNS zone for each entry, pointing to the SWA default hostname."
+  type        = list(string)
+  default     = []
+}
+
+variable "dns_zone_terianix_resource_group" {
+  description = "Resource group containing the terianix.ai Azure DNS zone."
+  type        = string
+  default     = "rg_platform"
+}
+
+variable "cloudflare_api_token" {
+  description = "Cloudflare API token with Zone:DNS:Edit permission for terianix.ai. terianix.ai is delegated to Cloudflare (not Azure DNS), so all public DNS records must be managed here."
+  type        = string
+  sensitive   = true
+}
+
+variable "legacy_redirect_domains" {
+  description = "Map of old terianix.ai hostname → new terianix.ai hostname. CNAME records for old hosts are updated to point to the AFD endpoint; AFD Rules Engine issues a 301 redirect to the mapped new hostname."
+  type        = map(string)
+  default     = {}
+  # Example:
+  # {
+  #   "sandbox-awards.terianix.ai" = "sandbox-awards.terianix.ai"
+  #   "acme-awards.terianix.ai"    = "acme-awards.terianix.ai"
+  #   "demo-awards.terianix.ai"    = "demo-awards.terianix.ai"
+  # }
 }

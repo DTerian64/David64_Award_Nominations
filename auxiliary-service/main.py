@@ -31,39 +31,33 @@ import sys
 import time
 from contextvars import ContextVar
 
-from azure.identity import DefaultAzureCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
+from dotenv import load_dotenv
+from opentelemetry import context as otel_context
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from dispatcher import dispatch
+from logging_config import setup_logging
+from utils.azure_credential import credential
 
 # ── Message-ID context ────────────────────────────────────────────────────────
 # Holds the Service Bus message_id for the message currently being processed.
 # Set in the receive loop before dispatch; reset after. Propagates automatically
 # to every logger in every module via _MessageIdFilter — no need to thread
 # message_id through function signatures or add it to every extra={} call.
-#
-# Usage in the receive loop:
-#   _token = _current_message_id.set(message_id)
-#   try:
-#       ...
-#   finally:
-#       _current_message_id.reset(_token)
 _current_message_id: ContextVar[str] = ContextVar("message_id", default="")
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 class _MessageIdFilter(logging.Filter):
-    """Injects the current message_id into every LogRecord.
+    """Injects the current Service Bus message_id into every LogRecord.
 
-    This means every log line emitted while processing a Service Bus message —
-    regardless of which module emits it — contains message_id in its extras.
-    KQL queries can then filter by message_id across the entire processing chain:
-
+    Combined with setup_logging()'s _ExtrasToMessageFilter, the message_id
+    is merged into the JSON message body — searchable in KQL as:
         | where Log_s has "4dffae70-baef-451f-808c-522636bbd3d7"
     """
     def filter(self, record: logging.LogRecord) -> bool:
-        # Only inject if not already explicitly set by the caller.
         if not hasattr(record, "message_id"):
             mid = _current_message_id.get()
             if mid:
@@ -71,50 +65,15 @@ class _MessageIdFilter(logging.Filter):
         return True
 
 
-class _ExtraFormatter(logging.Formatter):
-    """Appends any extra fields as key=value pairs after the log message.
+load_dotenv()
 
-    Python's format string only renders built-in LogRecord attributes — extra
-    fields are attached to the record but never printed unless a formatter
-    explicitly reads them. This formatter does that automatically.
-    """
-    _BUILTIN = frozenset({
-        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
-        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
-        "created", "msecs", "relativeCreated", "thread", "threadName",
-        "processName", "process", "message", "asctime", "taskName",
-    })
-
-    def format(self, record: logging.LogRecord) -> str:
-        base = super().format(record)
-        extras = {
-            k: v for k, v in record.__dict__.items()
-            if k not in self._BUILTIN
-        }
-        if extras:
-            pairs = "  ".join(f"{k}={v!r}" for k, v in sorted(extras.items()))
-            return f"{base}  {pairs}"
-        return base
-
-
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(_ExtraFormatter(
-    fmt="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-))
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
-
-# Attach the filter to the handler (not the root logger) so it applies to
-# every module. Child loggers propagate by calling parent.callHandlers()
-# directly — which bypasses the parent logger's own .filter() check.
-# Filters on a Handler ARE run for every record the handler emits,
-# regardless of which child logger originated the record.
-_handler.addFilter(_MessageIdFilter())
+# setup_logging() installs JSONFormatter + App_Log prefix + extras-to-message.
+# We then attach _MessageIdFilter so every log line also carries message_id.
+setup_logging()
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_MessageIdFilter())
 
 logger = logging.getLogger("auxiliary.main")
-
-from dotenv import load_dotenv
-load_dotenv()
 
 # ── Application Insights (optional — graceful if not configured) ──────────────
 _ai_conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
@@ -153,8 +112,6 @@ def main() -> None:
             "subscription": SERVICE_BUS_SUBSCRIPTION,
         }
     )
-
-    credential = DefaultAzureCredential()
 
     with ServiceBusClient(
         fully_qualified_namespace=SERVICE_BUS_FQNS,
@@ -197,6 +154,7 @@ def main() -> None:
                     # (db, dispatcher, handlers) — no need to pass it through
                     # function args or add it to every extra={} call.
                     _mid_token = _current_message_id.set(message_id)
+                    otel_token = None   # assigned after JSON decode; guard finally
                     try:
                         # Reassemble body — handle both AMQP encodings:
                         #   data section  (bytes) → publisher used .encode("utf-8")
@@ -215,10 +173,7 @@ def main() -> None:
                                 extra={"error": str(body_exc)},
                             )
 
-                        logger.info(
-                            "Message received",
-                            extra={"body": body_str[:200]},
-                        )
+                        logger.info("Message received", extra={"body": body_str[:200]})
 
                         try:
                             payload = json.loads(body_str)
@@ -234,12 +189,28 @@ def main() -> None:
                             )
                             continue
 
+                        # Restore the OTel trace context published by the
+                        # upstream service (backend or integrity-check) so
+                        # all spans emitted during dispatch are linked as
+                        # children of the originating trace in App Insights.
+                        carrier = {
+                            k: v for k, v in
+                            (message.application_properties or {}).items()
+                            if isinstance(k, str)
+                        }
+                        parent_ctx = TraceContextTextMapPropagator().extract(carrier)
+                        otel_token = otel_context.attach(parent_ctx)
+
                         try:
                             result = dispatch(message_id, payload)
                             receiver.complete_message(message)
                             logger.info(
                                 "Message completed",
-                                extra={"result": result},
+                                extra={
+                                    "nomination_id": payload.get("nomination_id"),
+                                    "event_type":    payload.get("event_type"),
+                                    "result":        result,
+                                },
                             )
                         except Exception as exc:
                             logger.error(
@@ -252,8 +223,12 @@ def main() -> None:
                             receiver.abandon_message(message)
 
                     finally:
-                        # Always clear the message_id context, even on exception,
-                        # so the next message starts with a clean logging context.
+                        # Always clear both contexts, even on exception,
+                        # so the next message starts clean.
+                        # otel_token is None when JSON decode failed (dead-lettered
+                        # before the OTel attach call) — nothing to detach in that case.
+                        if otel_token is not None:
+                            otel_context.detach(otel_token)
                         _current_message_id.reset(_mid_token)
 
     logger.info("Auxiliary worker shut down cleanly")

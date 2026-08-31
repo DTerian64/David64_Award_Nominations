@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download } from 'lucide-react';
+import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download, LineChart, GitCompare } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
+import { useTenantConfig } from '../contexts/TenantConfigContext';
+import { useTranslation } from 'react-i18next';
 import { getAccessToken } from '../services/api';
 
 interface AnalyticsOverview {
@@ -61,6 +63,49 @@ interface DiversityMetrics {
   topRecipientPercent: number;
 }
 
+interface CategoryBreakdown {
+  categoryDescription: string;
+  nominationCount: number;
+  totalAmount: number;
+  avgAmount: number;
+}
+
+// Risk levels in severity order — used to lay out the agreement matrix axes.
+const RISK_LEVELS = ['NONE', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as const;
+
+interface GnnMatrixCell { rfRisk: string; gnnRisk: string; count: number; }
+
+interface GnnDivergentRow {
+  nominationId: number;
+  rfScore: number;  rfRisk: string;
+  gnnScore: number; gnnRisk: string;
+  delta: number;
+  nominatorName: string;
+  beneficiaryName: string;
+  amount: number | null;
+  nominationDate: string | null;
+  status: string;
+}
+
+interface GnnComparison {
+  available: boolean;
+  reason?: string;
+  modelVersion?: string;
+  embeddingAsOf?: string | null;
+  scoredAt?: string | null;
+  compared?: number;
+  agreed?: number;
+  agreementRate?: number | null;
+  gnnHigher?: number;
+  gnnLower?: number;
+  confirmed?: number;
+  confirmedFraud?: number;
+  gateComputable?: boolean;
+  gateReason?: 'no_confirmations' | 'no_confirmed_fraud' | 'no_confirmed_legitimate' | null;
+  matrix?: GnnMatrixCell[];
+  divergent?: GnnDivergentRow[];
+}
+
 interface IntegrityRun {
   runId: string;
   runDate: string;
@@ -96,10 +141,97 @@ const SEVERITY_STYLES: Record<string, { card: string; badge: string }> = {
   Low:      { card: 'bg-blue-50 border-blue-300',   badge: 'bg-blue-200 text-blue-800' },
 };
 
+interface ForecastWeek {
+  weekStart: string;
+  weekIndex: number;
+  projectedNominations: number;
+  projectedNominationsLower: number;
+  projectedNominationsUpper: number;
+  projectedReviews: number;
+  projectedReviewsLower: number;
+  projectedReviewsUpper: number;
+  projectedQueueDepth: number;
+  projectedQueueDepthLower: number;
+  projectedQueueDepthUpper: number;
+}
+interface ForecastHistoryWeek { weekStart: string; nominations: number; reviews: number; }
+interface BudgetCumulativePoint {
+  weekStart: string;
+  actual: number | null;
+  projected: number | null;
+  lower: number | null;
+  upper: number | null;
+}
+interface ForecastSeriesPoint { weekStart?: string; date?: string; point: number; lower: number; upper: number; model?: string; }
+interface DeptSeriesPoint { weekStart: string; point: number; lower: number; upper: number; }
+interface DepartmentForecast {
+  title: string;
+  nominationsModel?: string;
+  spendModel?: string;
+  nominations: DeptSeriesPoint[];
+  spend: DeptSeriesPoint[];
+}
+interface ModelMetric { MASE: number | null; sMAPE: number | null; RMSE: number | null; coverage: number | null; folds: number; }
+interface ForecastResponse {
+  generatedAt: string;
+  horizonWeeks: number;
+  historyDays: number;
+  confidence: number;
+  source?: string;
+  runId?: string | null;
+  modelComparison?: {
+    nominations_total?: Record<string, ModelMetric | string>;
+    spend_total?: Record<string, ModelMetric | string>;
+    departments?: Record<string, Record<string, number>>;
+  } | null;
+  forecasts?: {
+    nominationsWeekly: ForecastSeriesPoint[];
+    spendWeekly: ForecastSeriesPoint[];
+    nominationsDaily: ForecastSeriesPoint[];
+    spendHistory?: { weekStart: string; amount: number }[];
+    departments: DepartmentForecast[];
+  } | null;
+  inputs: {
+    reviewRate: number;
+    reviewRateIsDefault: boolean;
+    flaggedNominations: number;
+    totalNominationsWindow: number;
+    avgDaysToApproval: number;
+    avgDaysToApprovalIsDefault: boolean;
+    weeklyObservations: number;
+    seasonalityUsed: boolean;
+    note: string;
+  };
+  reviewLoad: {
+    history: ForecastHistoryWeek[];
+    forecast: ForecastWeek[];
+    model: { name: string; alpha: number; beta: number; residualSigma: number; weeklyObservations: number; degradedToFlat: boolean; };
+  };
+  budgetPacing: {
+    annualBudget: number;
+    fiscalYearStart: string;
+    spentToDate: number;
+    projectedHorizonSpend: number;
+    projectedHorizonLower: number;
+    projectedHorizonUpper: number;
+    budgetUtilizationAtHorizon: number | null;
+    exhaustionDate: string | null;
+    exhaustionDateEarliest: string | null;
+    exhaustionDateLatest: string | null;
+    cumulative: BudgetCumulativePoint[];
+  } | null;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-export const AnalyticsDashboard: React.FC = () => {
+interface AnalyticsDashboardProps {
+  onOpenNominationLogs: (nominationId: number) => void;
+}
+
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNominationLogs }) => {
   const { impersonatedUser } = useImpersonation();
+  const { formatCurrency } = useTenantConfig();   // tenant locale + currency aware
+  const { t } = useTranslation();
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
   const [trends, setTrends] = useState<SpendingTrend[]>([]);
   const [departments, setDepartments] = useState<DepartmentSpending[]>([]);
@@ -108,9 +240,17 @@ export const AnalyticsDashboard: React.FC = () => {
   const [fraudAlerts, setFraudAlerts] = useState<FraudAlert[]>([]);
   const [approvalMetrics, setApprovalMetrics] = useState<ApprovalMetrics | null>(null);
   const [diversityMetrics, setDiversityMetrics] = useState<DiversityMetrics | null>(null);
+  const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask' | 'integrity'>('ask');
+  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask' | 'integrity' | 'forecast' | 'gnn'>('ask');
+  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
+  // Annual recognition budget for the pacing projection (admin-supplied). Blank = pacing omitted.
+  const [budgetInput, setBudgetInput] = useState<string>('');
+  const [appliedBudget, setAppliedBudget] = useState<number | null>(null);
+  const [gnnComparison, setGnnComparison] = useState<GnnComparison | null>(null);
+  const [gnnLoading, setGnnLoading] = useState(false);
   const [integrityRuns, setIntegrityRuns] = useState<IntegrityRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [integrityFindings, setIntegrityFindings] = useState<IntegrityFinding[]>([]);
@@ -177,16 +317,17 @@ export const AnalyticsDashboard: React.FC = () => {
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
-      const [ovData, trendsData, deptData, topRecData, topNomData, fraudData, approvalData, divData] = 
+      const [ovData, trendsData, deptData, topRecData, topNomData, fraudData, approvalData, divData, catData] =
         await Promise.all([
           apiFetch<AnalyticsOverview>('/api/admin/analytics/overview'),
-          apiFetch<SpendingTrend[]>('/api/admin/analytics/spending-trends?days=90'),
+          apiFetch<SpendingTrend[]>('/api/admin/analytics/spending-trends?days=30'),
           apiFetch<DepartmentSpending[]>('/api/admin/analytics/department-spending'),
           apiFetch<TopRecipient[]>('/api/admin/analytics/top-recipients?limit=10'),
           apiFetch<TopRecipient[]>('/api/admin/analytics/top-nominators?limit=10'),
           apiFetch<FraudAlert[]>('/api/admin/analytics/fraud-alerts?limit=20'),
           apiFetch<ApprovalMetrics>('/api/admin/analytics/approval-metrics'),
-          apiFetch<DiversityMetrics>('/api/admin/analytics/diversity-metrics')
+          apiFetch<DiversityMetrics>('/api/admin/analytics/diversity-metrics'),
+          apiFetch<CategoryBreakdown[]>('/api/admin/analytics/category-breakdown'),
         ]);
 
       setOverview(ovData);
@@ -197,11 +338,48 @@ export const AnalyticsDashboard: React.FC = () => {
       setFraudAlerts(fraudData);
       setApprovalMetrics(approvalData);
       setDiversityMetrics(divData);
+      setCategoryBreakdown(catData);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load analytics');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchForecast = async (budget?: number | null) => {
+    setForecastLoading(true);
+    try {
+      const params = new URLSearchParams({ weeks: '8', history_days: '180', confidence: '0.8' });
+      if (budget && budget > 0) params.set('annual_budget', String(budget));
+      const data = await apiFetch<ForecastResponse>(`/api/admin/analytics/forecast?${params.toString()}`);
+      setForecast(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load forecast');
+    } finally {
+      setForecastLoading(false);
+    }
+  };
+
+  const applyBudget = async () => {
+    const parsed = parseFloat(budgetInput.replace(/[^0-9.]/g, ''));
+    const budget = isNaN(parsed) || parsed <= 0 ? null : parsed;
+    setAppliedBudget(budget);
+    await fetchForecast(budget);
+  };
+
+  const fetchGnnComparison = async () => {
+    setGnnLoading(true);
+    try {
+      const data = await apiFetch<GnnComparison>(
+        '/api/admin/analytics/gnn/comparison?limit=25'
+      );
+      setGnnComparison(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load GNN analytics');
+    } finally {
+      setGnnLoading(false);
     }
   };
 
@@ -277,6 +455,24 @@ export const AnalyticsDashboard: React.FC = () => {
       if (!loadedTabs.has('integrity')) {
         await fetchIntegrityRuns();
         setLoadedTabs(prev => new Set([...prev, 'integrity']));
+      }
+      return;
+    }
+
+    // GNN tab has its own fetch path
+    if (tabId === 'gnn') {
+      if (!loadedTabs.has('gnn')) {
+        await fetchGnnComparison();
+        setLoadedTabs(prev => new Set([...prev, 'gnn']));
+      }
+      return;
+    }
+
+    // Forecast tab has its own fetch path
+    if (tabId === 'forecast') {
+      if (!loadedTabs.has('forecast')) {
+        await fetchForecast(appliedBudget);
+        setLoadedTabs(prev => new Set([...prev, 'forecast']));
       }
       return;
     }
@@ -478,12 +674,14 @@ export const AnalyticsDashboard: React.FC = () => {
       {/* Tab Navigation */}
       <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
         {[
-          { id: 'ask', label: 'Ask Analytics', icon: Send },
-          { id: 'overview', label: 'Overview', icon: BarChart3 },
-          { id: 'spending', label: 'Spending Trends', icon: TrendingUp },
-          { id: 'fraud', label: 'Fraud Alerts', icon: AlertTriangle },
-          { id: 'diversity', label: 'Diversity Metrics', icon: Users },
-          { id: 'integrity', label: 'Integrity', icon: ShieldAlert }
+          { id: 'ask', label: t('analytics.tabs.ask'), icon: Send },
+          { id: 'overview', label: t('analytics.tabs.overview'), icon: BarChart3 },
+          { id: 'spending', label: t('analytics.tabs.spending'), icon: TrendingUp },
+          { id: 'forecast', label: t('analytics.tabs.forecast'), icon: LineChart },
+          { id: 'fraud', label: t('analytics.tabs.fraud'), icon: AlertTriangle },
+          { id: 'diversity', label: t('analytics.tabs.diversity'), icon: Users },
+          { id: 'integrity', label: t('analytics.tabs.integrity'), icon: ShieldAlert },
+          { id: 'gnn', label: t('analytics.tabs.gnn'), icon: GitCompare }
         ].map(tab => {
           const TabIcon = tab.icon;
           const isActive = selectedTab === (tab.id as any);
@@ -519,7 +717,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <MetricCard
               icon={DollarSign}
               label="Total Spent"
-              value={`$${(overview.totalAmountSpent / 1000).toFixed(1)}K`}
+              value={formatCurrency(overview.totalAmountSpent)}
               change="+12% vs last month"
               positive
             />
@@ -534,7 +732,7 @@ export const AnalyticsDashboard: React.FC = () => {
               icon={Clock}
               label="Pending Approvals"
               value={overview.pendingNominations.toString()}
-              change={`Avg award: $${Math.round(overview.averageAwardAmount)}`}
+              change={`Avg award: ${formatCurrency(Math.round(overview.averageAwardAmount))}`}
             />
             <MetricCard
               icon={AlertTriangle}
@@ -544,6 +742,50 @@ export const AnalyticsDashboard: React.FC = () => {
               warning={overview.fraudAlertsThisMonth > 0}
             />
           </div>
+
+          {/* Category Breakdown — only shown when tenant has categories */}
+          {categoryBreakdown.length > 0 && (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <BarChart3 size={20} />
+                Nominations by Category
+              </h2>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-gray-500 text-xs uppercase tracking-wide">
+                    <th className="pb-2 font-medium">Category</th>
+                    <th className="pb-2 font-medium text-right">Nominations</th>
+                    <th className="pb-2 font-medium text-right">Total Spend</th>
+                    <th className="pb-2 font-medium text-right">Avg Award</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {categoryBreakdown.map((cat, i) => {
+                    const maxCount = categoryBreakdown[0]?.nominationCount || 1;
+                    const barWidth = Math.round((cat.nominationCount / maxCount) * 100);
+                    return (
+                      <tr key={i} className="border-b border-gray-100 last:border-0">
+                        <td className="py-3 pr-4">
+                          <div className="flex flex-col gap-1">
+                            <span className="font-medium text-gray-800">{cat.categoryDescription}</span>
+                            <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden w-48">
+                              <div
+                                className="h-full rounded-full"
+                                style={{ width: `${barWidth}%`, backgroundColor: 'var(--color-primary)' }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 text-right font-semibold text-gray-700">{cat.nominationCount}</td>
+                        <td className="py-3 text-right text-gray-600">{formatCurrency(cat.totalAmount)}</td>
+                        <td className="py-3 text-right text-gray-600">{formatCurrency(cat.avgAmount)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Department Spending */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -596,8 +838,340 @@ export const AnalyticsDashboard: React.FC = () => {
       {/* Spending Trends Tab */}
       {selectedTab === 'spending' && !loading && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-4">90-Day Spending Trends</h2>
-          <SpendingTrendChart trends={trends} />
+          <h2 className="text-lg font-semibold mb-4">30-Day Spending Trends</h2>
+          <SpendingTrendChart trends={trends} formatCurrency={formatCurrency} />
+        </div>
+      )}
+
+      {/* Forecasting Tab */}
+      {selectedTab === 'forecast' && (
+        <div className="space-y-6">
+          {/* Full spinner only on the initial load; on a re-fetch (Project /
+              Refresh) we keep the existing cards mounted so the page doesn't
+              collapse to a spinner and jump to the top. */}
+          {forecastLoading && !forecast && (
+            <div className="flex justify-center py-12">
+              <RefreshCw className="animate-spin text-blue-600" size={28} />
+            </div>
+          )}
+
+          {forecast && (
+            <>
+              {/* Model comparison (bake-off) */}
+              {forecast.modelComparison && (
+                <div className="bg-white rounded-lg border border-gray-200 p-6">
+                  <div className="flex items-start justify-between gap-4">
+                    <h3 className="text-base font-semibold mb-1">Model comparison (backtest)</h3>
+                    <button
+                      type="button"
+                      onClick={() => fetchForecast(appliedBudget)}
+                      disabled={forecastLoading}
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      <RefreshCw size={14} className={forecastLoading ? 'animate-spin' : ''} /> Refresh
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-4">
+                    Rolling-origin backtest error per model; lowest MASE wins (★). Seasonal-Naive
+                    and ETS run weekly; LightGBM uses lag + calendar features.
+                  </p>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {(['nominations_total', 'spend_total'] as const).map(seriesKey => {
+                      const block = forecast.modelComparison?.[seriesKey];
+                      if (!block) return null;
+                      const chosen = block['chosen'] as string;
+                      const models = Object.keys(block).filter(k => k !== 'chosen');
+                      return (
+                        <div key={seriesKey}>
+                          <p className="text-sm font-medium mb-2">
+                            {seriesKey === 'nominations_total' ? 'Nominations / week' : 'Spend / week'}
+                          </p>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-gray-500 border-b">
+                                <th className="py-1.5 pr-3">Model</th>
+                                <th className="py-1.5 pr-3">MASE</th>
+                                <th className="py-1.5 pr-3">sMAPE</th>
+                                <th className="py-1.5">Coverage</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {models.map(mName => {
+                                const mm = block[mName] as ModelMetric;
+                                const isBest = mName === chosen;
+                                return (
+                                  <tr key={mName} className={`border-b border-gray-100 ${isBest ? 'font-semibold text-green-700' : ''}`}>
+                                    <td className="py-1.5 pr-3">{mName}{isBest ? ' ★' : ''}</td>
+                                    <td className="py-1.5 pr-3">{mm?.MASE != null ? mm.MASE.toFixed(3) : '—'}</td>
+                                    <td className="py-1.5 pr-3">{mm?.sMAPE != null ? mm.sMAPE.toFixed(1) : '—'}</td>
+                                    <td className="py-1.5">{mm?.coverage != null ? `${(mm.coverage * 100).toFixed(0)}%` : '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Department forecasts */}
+              {forecast.forecasts?.departments && forecast.forecasts.departments.length > 0 && (
+                <div className="bg-white rounded-lg border border-gray-200 p-6">
+                  <h3 className="text-base font-semibold mb-1">Department forecast (next {forecast.horizonWeeks} weeks)</h3>
+                  <p className="text-xs text-gray-500 mb-4">
+                    Per-department nominations and spend, each projected by the model that backtests
+                    best for it (global LightGBM pools across departments; dense ones may pick ETS).
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-gray-500 border-b">
+                          <th className="py-2 pr-4">Department</th>
+                          <th className="py-2 pr-4">Noms (next {forecast.horizonWeeks}w)</th>
+                          <th className="py-2 pr-4">Noms range</th>
+                          <th className="py-2 pr-4">Spend (next {forecast.horizonWeeks}w)</th>
+                          <th className="py-2">Spend range</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...forecast.forecasts.departments]
+                          .map(d => ({
+                            d,
+                            nSum: d.nominations.reduce((a, p) => a + p.point, 0),
+                            nLo: d.nominations.reduce((a, p) => a + p.lower, 0),
+                            nUp: d.nominations.reduce((a, p) => a + p.upper, 0),
+                            sSum: d.spend.reduce((a, p) => a + p.point, 0),
+                            sLo: d.spend.reduce((a, p) => a + p.lower, 0),
+                            sUp: d.spend.reduce((a, p) => a + p.upper, 0),
+                          }))
+                          // 'Other' always last; real departments by projected nominations desc
+                          .sort((a, b) =>
+                            a.d.title === 'Other' ? 1 : b.d.title === 'Other' ? -1 : b.nSum - a.nSum)
+                          .map(({ d, nSum, nLo, nUp, sSum, sLo, sUp }) => (
+                            <tr key={d.title} className="border-b border-gray-100">
+                              <td className="py-2 pr-4 font-medium">
+                                {d.title}
+                                <span className="block text-[11px] text-gray-400">
+                                  noms: {d.nominationsModel || '—'} · spend: {d.spendModel || '—'}
+                                </span>
+                              </td>
+                              <td className="py-2 pr-4 font-semibold">{nSum.toFixed(0)}</td>
+                              <td className="py-2 pr-4 text-gray-500">{nLo.toFixed(0)} – {nUp.toFixed(0)}</td>
+                              <td className="py-2 pr-4 font-semibold">{formatCurrency(Math.round(sSum))}</td>
+                              <td className="py-2 text-gray-500">{formatCurrency(Math.round(sLo))} – {formatCurrency(Math.round(sUp))}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Review-load chart */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <h3 className="text-base font-semibold mb-4">Projected nominations &amp; reviews per week</h3>
+                <ForecastBandChart
+                  history={forecast.reviewLoad.history.map(h => ({ x: h.weekStart, y: h.nominations }))}
+                  forecast={forecast.reviewLoad.forecast.map(f => ({
+                    x: f.weekStart, y: f.projectedNominations,
+                    lo: f.projectedNominationsLower, up: f.projectedNominationsUpper,
+                  }))}
+                  yLabel="Nominations / week"
+                  color="#2563eb"
+                  forecastColor="#7c3aed"
+                />
+              </div>
+
+              {/* Spend history → forecast chart */}
+              {forecast.forecasts?.spendWeekly && forecast.forecasts.spendWeekly.length > 0 && (
+                <div className="bg-white rounded-lg border border-gray-200 p-6">
+                  <h3 className="text-base font-semibold mb-4">Projected award spend per week</h3>
+                  <ForecastBandChart
+                    history={(forecast.forecasts.spendHistory ?? []).map(h => ({ x: h.weekStart, y: h.amount }))}
+                    forecast={forecast.forecasts.spendWeekly.map(f => ({
+                      x: f.weekStart ?? '', y: f.point, lo: f.lower, up: f.upper,
+                    }))}
+                    yLabel="Spend / week"
+                    color="#16a34a"
+                    forecastColor="#15803d"
+                    valueFormat={(n) => formatCurrency(Math.round(n))}
+                  />
+                </div>
+              )}
+
+              {/* HRBP Review-Load header: assumptions + model note. Sits here
+                  because its review-rate / SLA tiles feed the queue-depth calc below. */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
+                      <LineChart size={20} className="text-blue-600" />
+                      HRBP Review-Load Forecast
+                    </h2>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Projected HRBP reviews per week for the next {forecast.horizonWeeks} weeks,
+                      with {Math.round(forecast.confidence * 100)}% prediction intervals.
+                    </p>
+                    <span className={`inline-block mt-2 text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                      forecast.source === 'stored_run' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {forecast.source === 'stored_run'
+                        ? `weekly model run · ${forecast.runId?.slice(0, 8)}`
+                        : 'live fallback (Holt) · weekly run pending'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Inputs / assumptions */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Flag / review rate</p>
+                    <p className="text-xl font-bold">{(forecast.inputs.reviewRate * 100).toFixed(1)}%</p>
+                    <p className="text-[11px] text-gray-400">
+                      {forecast.inputs.reviewRateIsDefault
+                        ? 'default (no history)'
+                        : `${forecast.inputs.flaggedNominations}/${forecast.inputs.totalNominationsWindow} nominations`}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Avg days to approval (SLA)</p>
+                    <p className="text-xl font-bold">{forecast.inputs.avgDaysToApproval.toFixed(1)}</p>
+                    <p className="text-[11px] text-gray-400">used for queue depth</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">History learned from</p>
+                    <p className="text-xl font-bold">{forecast.inputs.weeklyObservations} wks</p>
+                    <p className="text-[11px] text-gray-400">{forecast.historyDays}-day window</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500">Chosen model</p>
+                    <p className="text-xl font-bold">
+                      {forecast.forecasts?.nominationsWeekly?.[0]?.model || 'Holt linear'}
+                    </p>
+                    <p className="text-[11px] text-gray-400">
+                      {forecast.source === 'stored_run' ? 'selected by backtest MASE' : 'live fallback'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-start gap-2 text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg p-3">
+                  <AlertCircle size={14} className="text-blue-500 mt-0.5 shrink-0" />
+                  <span>{forecast.inputs.note}</span>
+                </div>
+              </div>
+
+              {/* Queue-depth table */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <h3 className="text-base font-semibold mb-1">Expected HRBP queue depth</h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  Reviews/week translated to concurrent queue depth via Little&apos;s Law
+                  (L = arrival rate &times; {forecast.inputs.avgDaysToApproval.toFixed(1)}-day time-in-queue).
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-gray-500 border-b">
+                        <th className="py-2 pr-4">Week of</th>
+                        <th className="py-2 pr-4">Proj. reviews</th>
+                        <th className="py-2 pr-4">Reviews range</th>
+                        <th className="py-2 pr-4">Queue depth</th>
+                        <th className="py-2">Queue range</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {forecast.reviewLoad.forecast.map(f => (
+                        <tr key={f.weekIndex} className="border-b border-gray-100">
+                          <td className="py-2 pr-4 font-medium">{f.weekStart}</td>
+                          <td className="py-2 pr-4">{f.projectedReviews.toFixed(1)}</td>
+                          <td className="py-2 pr-4 text-gray-500">{f.projectedReviewsLower.toFixed(1)} – {f.projectedReviewsUpper.toFixed(1)}</td>
+                          <td className="py-2 pr-4 font-semibold">{f.projectedQueueDepth.toFixed(1)}</td>
+                          <td className="py-2 text-gray-500">{f.projectedQueueDepthLower.toFixed(1)} – {f.projectedQueueDepthUpper.toFixed(1)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Budget pacing */}
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+                  <h3 className="text-base font-semibold flex items-center gap-2">
+                    <DollarSign size={18} className="text-green-600" />
+                    Recognition-budget pacing
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">Annual budget</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={budgetInput}
+                      onChange={e => setBudgetInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') applyBudget(); }}
+                      placeholder="e.g. 500000"
+                      className="w-36 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={applyBudget}
+                      disabled={forecastLoading}
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {forecastLoading ? 'Projecting…' : 'Project'}
+                    </button>
+                  </div>
+                </div>
+
+                {!forecast.budgetPacing && (
+                  <p className="text-sm text-gray-500 py-6 text-center">
+                    Enter your annual recognition budget above to project cumulative spend and the expected exhaustion date.
+                  </p>
+                )}
+
+                {forecast.budgetPacing && (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs text-gray-500">Spent to date (FY)</p>
+                        <p className="text-xl font-bold">{formatCurrency(forecast.budgetPacing.spentToDate)}</p>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs text-gray-500">Annual budget</p>
+                        <p className="text-xl font-bold">{formatCurrency(forecast.budgetPacing.annualBudget)}</p>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs text-gray-500">Projected exhaustion</p>
+                        <p className={`text-xl font-bold ${forecast.budgetPacing.exhaustionDate ? 'text-orange-600' : 'text-green-600'}`}>
+                          {forecast.budgetPacing.exhaustionDate || 'Within budget'}
+                        </p>
+                        {forecast.budgetPacing.exhaustionDate && (
+                          <p className="text-[11px] text-gray-400">
+                            range {forecast.budgetPacing.exhaustionDateEarliest || '—'} to {forecast.budgetPacing.exhaustionDateLatest || '—'}
+                          </p>
+                        )}
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs text-gray-500">Utilization @ +{forecast.horizonWeeks}w</p>
+                        <p className="text-xl font-bold">
+                          {forecast.budgetPacing.budgetUtilizationAtHorizon != null
+                            ? `${(forecast.budgetPacing.budgetUtilizationAtHorizon * 100).toFixed(0)}%`
+                            : '—'}
+                        </p>
+                      </div>
+                    </div>
+                    <BudgetPacingChart
+                      points={forecast.budgetPacing.cumulative}
+                      budget={forecast.budgetPacing.annualBudget}
+                      formatCurrency={formatCurrency}
+                    />
+                  </>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -610,7 +1184,7 @@ export const AnalyticsDashboard: React.FC = () => {
             </span>
             Recent Fraud Alerts
           </h2>
-          <FraudAlertsList alerts={fraudAlerts} />
+          <FraudAlertsList alerts={fraudAlerts} onOpenNominationLogs={onOpenNominationLogs} />
         </div>
       )}
 
@@ -1045,7 +1619,7 @@ export const AnalyticsDashboard: React.FC = () => {
                             <div className="flex items-center gap-3 shrink-0">
                               {finding.totalAmount != null && finding.totalAmount > 0 && (
                                 <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2.5 py-1 rounded-full">
-                                  ${finding.totalAmount.toLocaleString()}
+                                  {formatCurrency(finding.totalAmount)}
                                 </span>
                               )}
                               <ChevronDown
@@ -1076,7 +1650,7 @@ export const AnalyticsDashboard: React.FC = () => {
                                   Total Approved / Paid
                                 </p>
                                 <p className="text-sm font-bold text-gray-900">
-                                  ${finding.totalAmount.toLocaleString()}
+                                  {formatCurrency(finding.totalAmount)}
                                 </p>
                               </div>
                             )}
@@ -1123,6 +1697,186 @@ export const AnalyticsDashboard: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* ── GNN Analytics Tab ──────────────────────────────────────── */}
+      {selectedTab === 'gnn' && (
+        <div className="space-y-6">
+
+          <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <ShieldAlert className="text-blue-600 shrink-0 mt-0.5" size={20} />
+            <div className="text-sm text-blue-900">
+              <p className="font-semibold">Independent model comparison</p>
+              <p className="mt-1">
+                This view compares GNN and Random Forest component opinions. When available,
+                both participate independently in the final integrity decision.
+              </p>
+            </div>
+          </div>
+
+          {gnnLoading && (
+            <div className="text-center py-12 text-gray-500">Loading GNN analytics…</div>
+          )}
+
+          {!gnnLoading && gnnComparison && !gnnComparison.available && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-sm text-gray-700">
+              <p className="font-semibold text-gray-900">No GNN scores for this tenant yet</p>
+              <p className="mt-2">{gnnComparison.reason}</p>
+            </div>
+          )}
+
+          {!gnnLoading && gnnComparison && gnnComparison.available && (
+            <>
+              {/* Provenance — which model produced these numbers */}
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600 border-b border-gray-200 pb-3">
+                <span><span className="font-semibold">Model:</span> {gnnComparison.modelVersion}</span>
+                {gnnComparison.embeddingAsOf && (
+                  <span><span className="font-semibold">Embeddings as of:</span> {gnnComparison.embeddingAsOf}</span>
+                )}
+                {gnnComparison.scoredAt && (
+                  <span><span className="font-semibold">Scored:</span> {new Date(gnnComparison.scoredAt).toLocaleString()}</span>
+                )}
+              </div>
+
+              {/* Headline agreement numbers */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <MetricCard icon={BarChart3}  label="Nominations compared"
+                            value={String(gnnComparison.compared ?? 0)}
+                            change="scored by both models" />
+                <MetricCard icon={GitCompare} label="Same risk level"
+                            value={gnnComparison.agreementRate != null ? `${gnnComparison.agreementRate}%` : '—'}
+                            change={`${gnnComparison.agreed ?? 0} of ${gnnComparison.compared ?? 0}`} />
+                <MetricCard icon={TrendingUp} label="GNN scored higher"
+                            value={String(gnnComparison.gnnHigher ?? 0)}
+                            change="more suspicious than RF" warning />
+                <MetricCard icon={AlertCircle} label="GNN scored lower"
+                            value={String(gnnComparison.gnnLower ?? 0)}
+                            change="less suspicious than RF" />
+              </div>
+
+              {/* Evaluation gate status — the number that decides whether any of
+                  this can be turned into a precision/recall claim. */}
+              <div className={`rounded-lg border p-4 text-sm ${
+                gnnComparison.gateComputable
+                  ? 'bg-green-50 border-green-300 text-green-900'
+                  : 'bg-gray-50 border-gray-300 text-gray-800'
+              }`}>
+                <p className="font-semibold">
+                  Human-label evaluation: {gnnComparison.gateComputable ? 'computable' : 'not computable'}
+                </p>
+                <p className="mt-1">
+                  {gnnComparison.confirmed ?? 0} human-confirmed label
+                  {(gnnComparison.confirmed ?? 0) === 1 ? '' : 's'} in the compared population,
+                  of which {gnnComparison.confirmedFraud ?? 0} are fraud.
+                  {gnnComparison.gateReason === 'no_confirmations' && (
+                    <> Nothing in this population has been adjudicated, so every label the
+                    models are measured against is the Random Forest&rsquo;s own prior output.</>
+                  )}
+                  {gnnComparison.gateReason === 'no_confirmed_fraud' && (
+                    <> Every confirmation is <strong>legitimate</strong>. Recall cannot be
+                    measured without at least one confirmed fraud case.</>
+                  )}
+                  {gnnComparison.gateReason === 'no_confirmed_legitimate' && (
+                    <> Every confirmation is <strong>fraud</strong>. Confirming only what the
+                    model flagged says nothing about false positives, however many are
+                    confirmed &mdash; precision needs at least one confirmed-legitimate case.</>
+                  )}
+                </p>
+              </div>
+
+              {/* Agreement matrix */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">Risk level agreement</h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  Rows: Random Forest. Columns: GNN.
+                  The diagonal is agreement.
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="p-2 text-left text-xs font-semibold text-gray-500">RF ＼ GNN</th>
+                        {RISK_LEVELS.map(g => (
+                          <th key={g} className="p-2 text-xs font-semibold text-gray-700">{g}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {RISK_LEVELS.map(rf => (
+                        <tr key={rf}>
+                          <td className="p-2 text-xs font-semibold text-gray-700">{rf}</td>
+                          {RISK_LEVELS.map(g => {
+                            const n = gnnComparison.matrix?.find(
+                              c => c.rfRisk === rf && c.gnnRisk === g
+                            )?.count ?? 0;
+                            const same = rf === g;
+                            return (
+                              <td key={g}
+                                  className={`p-2 text-center border border-gray-200 min-w-[64px] ${
+                                    n === 0 ? 'text-gray-300'
+                                      : same ? 'bg-green-50 font-semibold text-green-900'
+                                      : 'bg-amber-50 text-amber-900'
+                                  }`}>
+                                {n}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Largest disagreements */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">Largest disagreements</h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  Ranked by raw score gap, not risk level — two scores a point apart can
+                  straddle a threshold and look like a bigger disagreement than they are.
+                </p>
+                {(gnnComparison.divergent?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-gray-500">No overlapping scores to compare.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-xs text-gray-600">
+                        <tr>
+                          <th className="p-2 text-left">Nomination</th>
+                          <th className="p-2 text-left">Nominator → Beneficiary</th>
+                          <th className="p-2 text-right">RF</th>
+                          <th className="p-2 text-right">GNN</th>
+                          <th className="p-2 text-right">Gap</th>
+                          <th className="p-2 text-left">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gnnComparison.divergent?.map(row => (
+                          <tr key={row.nominationId} className="border-t border-gray-100">
+                            <td className="p-2 font-mono text-xs">#{row.nominationId}</td>
+                            <td className="p-2 text-xs">
+                              {row.nominatorName} → {row.beneficiaryName}
+                            </td>
+                            <td className="p-2 text-right">
+                              {row.rfScore}
+                              <span className="text-xs text-gray-500 ml-1">{row.rfRisk}</span>
+                            </td>
+                            <td className="p-2 text-right">
+                              {row.gnnScore}
+                              <span className="text-xs text-gray-500 ml-1">{row.gnnRisk}</span>
+                            </td>
+                            <td className="p-2 text-right font-semibold">{row.delta}</td>
+                            <td className="p-2 text-xs">{row.status}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -1157,7 +1911,9 @@ interface DepartmentTableProps {
   departments: DepartmentSpending[];
 }
 
-const DepartmentTable: React.FC<DepartmentTableProps> = ({ departments }) => (
+const DepartmentTable: React.FC<DepartmentTableProps> = ({ departments }) => {
+  const { formatCurrency } = useTenantConfig();
+  return (
   <div className="overflow-x-auto">
     <table className="w-full text-sm">
       <thead className="bg-gray-50 border-b">
@@ -1173,20 +1929,23 @@ const DepartmentTable: React.FC<DepartmentTableProps> = ({ departments }) => (
           <tr key={i} className="hover:bg-gray-50">
             <td className="px-4 py-3">{dept.departmentName}</td>
             <td className="text-right px-4 py-3">{dept.nominationCount}</td>
-            <td className="text-right px-4 py-3 font-semibold">${dept.totalSpent.toLocaleString()}</td>
-            <td className="text-right px-4 py-3">${Math.round(dept.averageAmount).toLocaleString()}</td>
+            <td className="text-right px-4 py-3 font-semibold">{formatCurrency(dept.totalSpent)}</td>
+            <td className="text-right px-4 py-3">{formatCurrency(Math.round(dept.averageAmount))}</td>
           </tr>
         ))}
       </tbody>
     </table>
   </div>
-);
+  );
+};
 
 interface RecipientListProps {
   recipients: TopRecipient[];
 }
 
-const RecipientList: React.FC<RecipientListProps> = ({ recipients }) => (
+const RecipientList: React.FC<RecipientListProps> = ({ recipients }) => {
+  const { formatCurrency } = useTenantConfig();
+  return (
   <div className="space-y-3">
     {recipients.map((person, i) => (
       <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded">
@@ -1194,24 +1953,29 @@ const RecipientList: React.FC<RecipientListProps> = ({ recipients }) => (
           <p className="font-medium">{person.FirstName} {person.LastName}</p>
           <p className="text-xs text-gray-600">{person.nominationCount} awards</p>
         </div>
-        <p className="font-semibold">${person.totalAmount.toLocaleString()}</p>
+        <p className="font-semibold">{formatCurrency(person.totalAmount)}</p>
       </div>
     ))}
   </div>
-);
+  );
+};
 
 interface SpendingTrendChartProps {
   trends: SpendingTrend[];
+  formatCurrency: (n: number) => string;
 }
 
-const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends }) => {
-  const maxAmount = Math.max(...trends.map(t => t.amount), 1);
+const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends, formatCurrency }) => {
+  // API returns newest-first; reverse to oldest→newest, then take the most
+  // recent 30 (slice(-30)) so the last bar is the latest day, not the oldest.
   const sorted = [...trends].reverse();
+  const shown = sorted.slice(-30);
+  const maxAmount = Math.max(...shown.map(t => t.amount), 1);
 
   return (
     <div className="space-y-4">
       <div className="h-64 flex items-end gap-1 border-l border-b border-gray-300 p-4">
-        {sorted.slice(0, 30).map((trend, i) => (
+        {shown.map((trend, i) => (
           <div
             key={i}
             className="flex-1 bg-blue-500 rounded-t hover:bg-blue-600 transition-colors relative group"
@@ -1219,10 +1983,10 @@ const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends }) => {
               height: `${(trend.amount / maxAmount) * 100}%`,
               minHeight: '4px'
             }}
-            title={`${trend.date}: $${trend.amount.toLocaleString()}`}
+            title={`${trend.date}: ${formatCurrency(trend.amount)}`}
           >
             <div className="opacity-0 group-hover:opacity-100 absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap">
-              ${trend.amount.toLocaleString()}
+              {formatCurrency(trend.amount)}
             </div>
           </div>
         ))}
@@ -1232,19 +1996,165 @@ const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({ trends }) => {
   );
 };
 
-interface FraudAlertsListProps {
-  alerts: FraudAlert[];
+// ── Forecast band chart (SVG, no chart lib) ──────────────────────────────────
+interface BandPoint { x: string; y: number; lo?: number; up?: number; }
+interface ForecastBandChartProps {
+  history: BandPoint[];
+  forecast: BandPoint[];
+  yLabel: string;
+  color: string;
+  forecastColor: string;
+  valueFormat?: (n: number) => string;
 }
 
-const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts }) => {
+const ForecastBandChart: React.FC<ForecastBandChartProps> = ({ history, forecast, yLabel, color, forecastColor, valueFormat }) => {
+  const fmt = valueFormat ?? ((n: number) => Math.round(n).toLocaleString());
+  const W = 800, H = 320, padL = 48, padR = 16, padT = 16, padB = 40;
+  const all = [...history, ...forecast];
+  if (all.length === 0) return <p className="text-sm text-gray-500">No data.</p>;
+
+  const n = all.length;
+  const yMax = Math.max(1, ...all.map(p => Math.max(p.y, p.up ?? 0)));
+  const yMin = 0;
+  const xAt = (i: number) => padL + (n === 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
+  const yAt = (v: number) => H - padB - ((v - yMin) / (yMax - yMin)) * (H - padT - padB);
+
+  const histPts = history.map((p, i) => `${xAt(i)},${yAt(p.y)}`).join(' ');
+  const fStart = history.length;
+  // Connect last history point into the forecast line for visual continuity.
+  const lastHist = history.length ? `${xAt(history.length - 1)},${yAt(history[history.length - 1].y)} ` : '';
+  const fcPts = lastHist + forecast.map((p, i) => `${xAt(fStart + i)},${yAt(p.y)}`).join(' ');
+
+  // Confidence band polygon (upper edge forward, lower edge back), anchored at last history point.
+  const upper = forecast.map((p, i) => `${xAt(fStart + i)},${yAt(p.up ?? p.y)}`);
+  const lower = forecast.map((p, i) => `${xAt(fStart + i)},${yAt(p.lo ?? p.y)}`).reverse();
+  const anchor = history.length ? `${xAt(history.length - 1)},${yAt(history[history.length - 1].y)}` : '';
+  const bandPath = [anchor, ...upper, ...lower].filter(Boolean).join(' ');
+
+  const dividerX = history.length ? xAt(history.length - 1) : padL;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => yMin + f * (yMax - yMin));
+  const labelIdx = Array.from(new Set([0, Math.floor(n / 2), n - 1])).filter(i => i >= 0 && i < n);
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 520 }} role="img" aria-label="forecast chart">
+        {/* gridlines + y ticks */}
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} y1={yAt(t)} x2={W - padR} y2={yAt(t)} stroke="#eef2f7" strokeWidth={1} />
+            <text x={padL - 6} y={yAt(t) + 4} textAnchor="end" fontSize={11} fill="#94a3b8">{fmt(t)}</text>
+          </g>
+        ))}
+        {/* forecast region shading divider */}
+        <line x1={dividerX} y1={padT} x2={dividerX} y2={H - padB} stroke="#cbd5e1" strokeWidth={1} strokeDasharray="3 3" />
+        <text x={dividerX + 4} y={padT + 12} fontSize={10} fill="#94a3b8">forecast →</text>
+        {/* confidence band */}
+        {bandPath && <polygon points={bandPath} fill={forecastColor} opacity={0.16} />}
+        {/* history line */}
+        {history.length > 1 && <polyline points={histPts} fill="none" stroke={color} strokeWidth={2.5} />}
+        {history.map((p, i) => <circle key={`h${i}`} cx={xAt(i)} cy={yAt(p.y)} r={3} fill={color} />)}
+        {/* forecast line (dashed) */}
+        <polyline points={fcPts} fill="none" stroke={forecastColor} strokeWidth={2.5} strokeDasharray="6 4" />
+        {forecast.map((p, i) => <circle key={`f${i}`} cx={xAt(fStart + i)} cy={yAt(p.y)} r={3} fill={forecastColor} />)}
+        {/* transparent hover targets with native tooltips (date + exact value, band for forecast) */}
+        {history.map((p, i) => (
+          <circle key={`ht${i}`} cx={xAt(i)} cy={yAt(p.y)} r={9} fill="transparent" style={{ cursor: 'pointer' }}>
+            <title>{`${p.x}: ${fmt(p.y)}`}</title>
+          </circle>
+        ))}
+        {forecast.map((p, i) => (
+          <circle key={`ft${i}`} cx={xAt(fStart + i)} cy={yAt(p.y)} r={9} fill="transparent" style={{ cursor: 'pointer' }}>
+            <title>{`${p.x}: ${fmt(p.y)}  (${fmt(p.lo ?? p.y)} – ${fmt(p.up ?? p.y)})`}</title>
+          </circle>
+        ))}
+        {/* x labels */}
+        {labelIdx.map(i => (
+          <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" fontSize={10} fill="#94a3b8">
+            {all[i].x.slice(5)}
+          </text>
+        ))}
+        <text x={12} y={padT + 4} fontSize={10} fill="#94a3b8" transform={`rotate(-90 12 ${H / 2})`}>{yLabel}</text>
+      </svg>
+      <div className="flex gap-4 text-xs text-gray-500 mt-2 pl-12">
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5" style={{ background: color }} /> Observed</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 border-t border-dashed" style={{ borderColor: forecastColor }} /> Forecast</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: forecastColor, opacity: 0.16 }} /> Prediction interval</span>
+      </div>
+    </div>
+  );
+};
+
+// ── Budget pacing chart (cumulative actual vs projected vs budget line) ───────
+interface BudgetPacingChartProps {
+  points: BudgetCumulativePoint[];
+  budget: number;
+  formatCurrency: (n: number) => string;
+}
+const BudgetPacingChart: React.FC<BudgetPacingChartProps> = ({ points, budget, formatCurrency }) => {
+  const W = 800, H = 300, padL = 64, padR = 16, padT = 16, padB = 40;
+  if (!points.length) return null;
+  const n = points.length;
+  const yMax = Math.max(budget * 1.05, ...points.map(p => Math.max(p.actual ?? 0, p.upper ?? p.projected ?? 0)));
+  const xAt = (i: number) => padL + (n === 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
+  const yAt = (v: number) => H - padB - (v / yMax) * (H - padT - padB);
+
+  const actualPts = points.map((p, i) => p.actual != null ? `${xAt(i)},${yAt(p.actual)}` : null).filter(Boolean).join(' ');
+  const lastActualIdx = points.reduce((acc, p, i) => p.actual != null ? i : acc, -1);
+  const projStartAnchor = lastActualIdx >= 0 ? `${xAt(lastActualIdx)},${yAt(points[lastActualIdx].actual as number)} ` : '';
+  const projPts = projStartAnchor + points.map((p, i) => p.projected != null ? `${xAt(i)},${yAt(p.projected)}` : null).filter(Boolean).join(' ');
+
+  const up = points.map((p, i) => p.upper != null ? `${xAt(i)},${yAt(p.upper)}` : null).filter(Boolean);
+  const lo = points.map((p, i) => p.lower != null ? `${xAt(i)},${yAt(p.lower)}` : null).filter(Boolean).reverse();
+  const band = [...up, ...lo].join(' ');
+
+  const ticks = [0, 0.5, 1].map(f => f * yMax);
+  const labelIdx = Array.from(new Set([0, Math.floor(n / 2), n - 1])).filter(i => i >= 0 && i < n);
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 520 }} role="img" aria-label="budget pacing chart">
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} y1={yAt(t)} x2={W - padR} y2={yAt(t)} stroke="#eef2f7" strokeWidth={1} />
+            <text x={padL - 6} y={yAt(t) + 4} textAnchor="end" fontSize={11} fill="#94a3b8">{formatCurrency(Math.round(t))}</text>
+          </g>
+        ))}
+        {/* budget threshold */}
+        <line x1={padL} y1={yAt(budget)} x2={W - padR} y2={yAt(budget)} stroke="#dc2626" strokeWidth={1.5} strokeDasharray="5 4" />
+        <text x={W - padR} y={yAt(budget) - 5} textAnchor="end" fontSize={10} fill="#dc2626">Annual budget</text>
+        {band && <polygon points={band} fill="#16a34a" opacity={0.14} />}
+        {actualPts && <polyline points={actualPts} fill="none" stroke="#16a34a" strokeWidth={2.5} />}
+        <polyline points={projPts} fill="none" stroke="#16a34a" strokeWidth={2.5} strokeDasharray="6 4" />
+        {labelIdx.map(i => (
+          <text key={`x${i}`} x={xAt(i)} y={H - padB + 16} textAnchor="middle" fontSize={10} fill="#94a3b8">
+            {points[i].weekStart.slice(5)}
+          </text>
+        ))}
+      </svg>
+      <div className="flex gap-4 text-xs text-gray-500 mt-2 pl-16">
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-green-600" /> Actual cumulative</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 border-t border-dashed border-green-600" /> Projected</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 border-t border-dashed border-red-600" /> Budget</span>
+      </div>
+    </div>
+  );
+};
+
+interface FraudAlertsListProps {
+  alerts: FraudAlert[];
+  onOpenNominationLogs: (nominationId: number) => void;
+}
+
+const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts, onOpenNominationLogs }) => {
+  const { formatCurrency } = useTenantConfig();
   if (!alerts.length) {
     return <p className="text-center text-gray-600 py-8">No fraud alerts detected</p>;
   }
 
   return (
     <div className="space-y-3">
-      {alerts.map((alert, i) => (
-        <div key={i} className={`p-4 rounded-lg border-2 ${
+      {alerts.map((alert) => (
+        <div key={alert.NominationId} className={`p-4 rounded-lg border-2 ${
           alert.riskLevel === 'High' ? 'bg-red-50 border-red-300' : 'bg-yellow-50 border-yellow-300'
         }`}>
           <div className="flex items-start justify-between mb-2">
@@ -1252,7 +2162,16 @@ const FraudAlertsList: React.FC<FraudAlertsListProps> = ({ alerts }) => {
               <p className="font-semibold">
                 {alert.nominatorName} → {alert.beneficiaryName}
               </p>
-              <p className="text-sm text-gray-600">${alert.amount.toLocaleString()} on {alert.nominationDate}</p>
+              <p className="text-sm text-gray-600">{formatCurrency(alert.amount)} on {alert.nominationDate}</p>
+              <button
+                type="button"
+                onClick={() => onOpenNominationLogs(alert.NominationId)}
+                className="mt-1 rounded font-mono text-xs text-blue-700 hover:text-blue-900 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                title="View logs for this nomination"
+                aria-label={`View logs for nomination ${alert.NominationId}`}
+              >
+                Nomination #{alert.NominationId}
+              </button>
             </div>
             <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
               alert.riskLevel === 'High' 

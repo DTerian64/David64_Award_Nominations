@@ -22,8 +22,9 @@ the handler raises so the message is retried.
 
 import logging
 
-import db
-import email_client
+from utils import db
+from utils import email_client
+from utils import templating
 
 logger = logging.getLogger("auxiliary.handlers.payout_accepted")
 
@@ -65,17 +66,20 @@ def handle(payload: dict) -> None:
     )
 
     # ── 2. Send payment confirmation email ────────────────────────────────────
-    body = email_client.render_payment_confirmed(
-        beneficiary_name=details["beneficiary_name"],
-        dollar_amount=details["amount"],
-        currency=details.get("currency", "USD"),
-        payment_ref=payment_ref,
+    lang = db.get_tenant_lang(details["tenant_id"])
+    rendered = templating.render(
+        details["tenant_id"], "payment_confirmed", lang,
+        {
+            "beneficiary_name": details["beneficiary_name"],
+            "formatted_amount": email_client.format_amount(details["amount"], details.get("currency", "USD")),
+            "payment_ref":      payment_ref,
+        },
     )
 
     email_client.send_email(
         to_email=details["nominator_email"],
-        subject=f"💳 Payment Confirmed — {details['beneficiary_name']}",
-        body=body,
+        subject=rendered["subject"],
+        body=rendered["body"],
     )
 
     logger.info(

@@ -74,7 +74,7 @@
             "type": "String"
         },
         "dnszones_terian_services_com_name": {
-            "defaultValue": "terian-services.com",
+            "defaultValue": "terianix.ai",
             "type": "String"
         },
         "managedEnvironments_cae_award_eastus_name": {
@@ -94,7 +94,7 @@
             "type": "String"
         },
         "domains_terian_services_com_name": {
-            "defaultValue": "terian-services.com",
+            "defaultValue": "terianix.ai",
             "type": "String"
         },
         "registries_acrawardnomination_name": {
@@ -24633,7 +24633,7 @@
         {
             "type": "Microsoft.Web/staticSites/customDomains",
             "apiVersion": "2024-11-01",
-            "name": "[concat(parameters('staticSites_award_nomination_frontend_name'), '/awards.terian-services.com')]",
+            "name": "[concat(parameters('staticSites_award_nomination_frontend_name'), '/awards.terianix.ai')]",
             "location": "West US 2",
             "dependsOn": [
                 "[resourceId('Microsoft.Web/staticSites', parameters('staticSites_award_nomination_frontend_name'))]"

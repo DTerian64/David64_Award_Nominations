@@ -1,0 +1,92 @@
+name: Deploy Schema Migration (ACA Job)
+
+# -----------------------------------------------------------------------------
+# ADR-0001 -- migrations run as an in-VNet Container Apps Job, because the
+# private-endpoint SQL server is unreachable from GitHub-hosted runners.
+#
+# This workflow does NOT connect to SQL. It only uses the ARM control plane
+# (always reachable): build + push the schema-migration image, point the job at
+# it, START the job, and poll for completion. The job itself runs in the VNet as
+# the sql-migrations MI (db_ddladmin) and reaches SQL over the private endpoint.
+# -----------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main, sandbox, dev]
+    paths:
+      - 'schema-migration/**'
+  workflow_dispatch:
+
+concurrency:
+  group: schema-migration-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: award-schema-migration
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'sandbox' && 'sandbox' || 'development' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ vars.ACR_NAME }}
+
+      - name: Build & push migration image
+        run: |
+          SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+          cd schema-migration
+          docker build -t ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} .
+          docker tag ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+                     ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+          docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+          docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+      - name: Point job at the new image
+        run: |
+          SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+          az containerapp job update \
+            --name "${{ env.JOB_NAME }}" \
+            --resource-group "${{ vars.RESOURCE_GROUP }}" \
+            --image "${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"
+        env:
+          JOB_NAME: award-schema-migration-${{ vars.ENVIRONMENT }}
+
+      - name: Run migration job + wait
+        env:
+          JOB_NAME: award-schema-migration-${{ vars.ENVIRONMENT }}
+          RG: ${{ vars.RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+          EXEC=$(az containerapp job start -n "$JOB_NAME" -g "$RG" --query name -o tsv)
+          echo "Started execution: $EXEC"
+          for i in $(seq 1 80); do
+            STATUS=$(az containerapp job execution show \
+                       -n "$JOB_NAME" -g "$RG" --job-execution-name "$EXEC" \
+                       --query properties.status -o tsv 2>/dev/null || echo "Unknown")
+            echo "  [$i] status=$STATUS"
+            case "$STATUS" in
+              Succeeded) echo "Migration succeeded."; exit 0 ;;
+              Failed|Degraded|Stopped) echo "::error::Migration $STATUS"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "::error::Timed out waiting for migration execution $EXEC"; exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Schema migration (ACA Job) :package:"                 >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.ref_name }}"                  >> $GITHUB_STEP_SUMMARY
+          echo "**Job:** award-schema-migration-${{ vars.ENVIRONMENT }}"  >> $GITHUB_STEP_SUMMARY
+          echo "**Identity:** sql-migrations MI (db_ddladmin), in-VNet"    >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}"                            >> $GITHUB_STEP_SUMMARY

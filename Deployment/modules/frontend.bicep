@@ -20,7 +20,7 @@ resource staticSite 'Microsoft.Web/staticSites@2024-11-01' = {
 
 resource customDomain 'Microsoft.Web/staticSites/customDomains@2024-11-01' = {
   parent: staticSite
-  name: 'awards.terian-services.com'
+  name: 'awards.terianix.ai'
   properties: {
     // validationMethod: 'dns-txt-token'   // usually auto-handled, but can be added if needed
   }
@@ -37,5 +37,5 @@ resource basicAuth 'Microsoft.Web/staticSites/basicAuth@2024-11-01' = {
 }
 
 output defaultHostName string = staticSite.properties.defaultHostname
-output customDomainName string = 'awards.terian-services.com'
+output customDomainName string = 'awards.terianix.ai'
 output staticSiteId string = staticSite.id

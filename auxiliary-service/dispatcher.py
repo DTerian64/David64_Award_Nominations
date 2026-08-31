@@ -31,8 +31,22 @@ import logging
 from datetime import datetime, timezone
 from typing import Callable
 
-import db
-from handlers import nomination_created, nomination_approved, payout_submit, payout_accepted, notification_requested
+from utils import db
+from handlers import (
+    nomination_created,
+    nomination_approved,
+    payout_submit,
+    payout_accepted,
+    payroll_accepted,
+    payroll_failed,
+    notification_requested,
+    access_requested,
+    nomination_description_rejected,
+    nomination_fraud_flagged,
+    nomination_hrbp_approved,
+    nomination_hrbp_rejected,
+    nomination_hrbp_sla_breach,
+)
 
 logger = logging.getLogger("auxiliary.dispatcher")
 
@@ -45,9 +59,27 @@ HANDLERS: dict[str, Callable[[dict], None] | list[Callable[[dict], None]]] = {
     # nomination.approved triggers both the outcome email AND the payout submission.
     "nomination.approved":     [nomination_approved.handle, payout_submit.handle],
     "payout.accepted":         payout_accepted.handle,
+    # Payroll broker successfully submitted to the provider — mark nomination Paid.
+    "payroll.accepted":        payroll_accepted.handle,
+    # Payroll broker failed to submit to the provider — notify Support users.
+    "payroll.failed":          payroll_failed.handle,
     # Free-form email delivery requested by the Ask Analytics agent (or any backend service).
     # Payload carries From / To / Subject / Body directly — no DB lookup needed.
     "notification.requested":  notification_requested.handle,
+    # Branded HTML invitation email sent to a demo self-registration requestor.
+    "notification.access_requested": access_requested.handle,
+    # ── HRBP review workflow ──────────────────────────────────────────────────
+    # Nomination held for HR review — email all HRBP users for the tenant.
+    # Description quality auto-reject — nominator email with reason + resubmit suggestion.
+    "nomination.description-rejected": nomination_description_rejected.handle,
+    "nomination.fraud-flagged":    nomination_fraud_flagged.handle,
+    # HRBP approved — email the nominator; backend also fires nomination.created
+    # so the manager gets their approval request separately.
+    "nomination.hrbp-approved":    nomination_hrbp_approved.handle,
+    # HRBP rejected — email the nominator with the HRBP's reason.
+    "nomination.hrbp-rejected":    nomination_hrbp_rejected.handle,
+    # SLA breach — Logic App daily cron detected a stale PendingHRBPReview.
+    "nomination.hrbp-sla-breach":  nomination_hrbp_sla_breach.handle,
 }
 
 
@@ -74,7 +106,15 @@ def dispatch(message_id: str, payload: dict) -> str:
 
     handler_entry = HANDLERS.get(event_type)
     if handler_entry is None:
-        raise ValueError(f"No handler registered for event_type='{event_type}'")
+        # Unknown event type — complete silently rather than dead-lettering.
+        # The email-processor subscription filter excludes nomination.submitted
+        # (handled by integrity-check), so this should only fire for genuinely
+        # unrecognised event types.
+        logger.warning(
+            "No handler for event_type — completing silently",
+            extra={"event_type": event_type, "nomination_id": nomination_id},
+        )
+        return "skipped"
 
     # Normalise to a list so single-handler and multi-handler events are
     # treated identically below.

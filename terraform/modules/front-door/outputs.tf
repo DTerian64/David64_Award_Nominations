@@ -20,6 +20,11 @@ output "waf_policy_id" {
   value       = azurerm_cdn_frontdoor_firewall_policy.waf.id
 }
 
+output "payroll_broker_validation_token" {
+  description = "AFD-generated TXT validation token for payroll-broker.terianix.ai. Add as _dnsauth.<subdomain> TXT record to prove domain ownership before AFD issues the managed cert. Empty string when payroll broker is not configured."
+  value       = var.payroll_broker_custom_domain != "" ? azurerm_cdn_frontdoor_custom_domain.payroll_broker[0].validation_token : ""
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # POST-DEPLOY MANUAL STEP — Private Link approval
 # ─────────────────────────────────────────────────────────────────────────────

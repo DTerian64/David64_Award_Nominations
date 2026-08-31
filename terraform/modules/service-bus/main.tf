@@ -90,6 +90,70 @@ resource "azurerm_servicebus_subscription" "email_processor" {
   default_message_ttl = "P7D"
 }
 
+# Replace the auto-created $Default TrueFilter with a SQL filter that excludes
+# nomination.submitted — those are routed exclusively to the fraud-processor
+# subscription and handled by award-integrity-check. Auxiliary only needs the
+# downstream events (nomination.created, nomination.approved, etc.).
+resource "azurerm_servicebus_subscription_rule" "email_processor_filter" {
+  name            = "exclude-submitted"
+  subscription_id = azurerm_servicebus_subscription.email_processor.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "event_type != 'nomination.submitted'"
+}
+
+# ── Subscription — payroll-processor ─────────────────────────────────────────
+# Consumed exclusively by the Payroll Broker ACA.
+# SQL filter passes only nomination.approved — the event that triggers a payout.
+# The Payroll Broker picks this up, calls the tenant's payroll provider (e.g.
+# Gusto), then publishes payroll.accepted or payroll.failed back to the topic.
+# Those result events flow naturally to email-processor (already unfiltered for
+# everything except nomination.submitted) so Auxiliary Services handles the
+# "payment processed" notification without any subscription topology changes.
+resource "azurerm_servicebus_subscription" "payroll_processor" {
+  name     = "payroll-processor"
+  topic_id = azurerm_servicebus_topic.award_events.id
+
+  max_delivery_count                   = var.max_delivery_count
+  lock_duration                        = "PT5M"
+  dead_lettering_on_message_expiration = true
+  default_message_ttl                  = "P7D"
+}
+
+resource "azurerm_servicebus_subscription_rule" "payroll_processor_filter" {
+  name            = "approved-only"
+  subscription_id = azurerm_servicebus_subscription.payroll_processor.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "event_type = 'nomination.approved'"
+}
+
+# ── Subscription — fraud-processor ────────────────────────────────────────────
+# Consumed exclusively by award-integrity-check-sandbox.
+# SQL filter ensures ONLY nomination.submitted events are delivered here.
+# All other event types are routed exclusively to email-processor.
+#
+# Filter note: the publisher sets application_properties={"event_type": ...}
+# on every message (service_bus_publisher.py), so the SQL filter resolves
+# against that property at the Service Bus broker — no SDK changes needed.
+resource "azurerm_servicebus_subscription" "fraud_processor" {
+  name     = "fraud-processor"
+  topic_id = azurerm_servicebus_topic.award_events.id
+
+  max_delivery_count                   = var.max_delivery_count
+  lock_duration                        = "PT5M"
+  dead_lettering_on_message_expiration = true
+  default_message_ttl                  = "P7D"
+}
+
+# Replace the auto-created $Default TrueFilter with a SQL filter that passes
+# only nomination.submitted messages. Any other event arriving at this
+# subscription is ignored — defence-in-depth against mis-routed publishes.
+resource "azurerm_servicebus_subscription_rule" "fraud_processor_filter" {
+  name            = "fraud-only"
+  subscription_id = azurerm_servicebus_subscription.fraud_processor.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "event_type = 'nomination.submitted'"
+}
+
 # ── Private endpoint (Premium SKU only) ───────────────────────────────────────
 # Standard SKU does not support private endpoints. Set sku = "Premium" and
 # provide private_endpoint_subnet_id + private_dns_zone_id in prod if

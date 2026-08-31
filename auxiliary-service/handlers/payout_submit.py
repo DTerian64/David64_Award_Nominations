@@ -33,7 +33,7 @@ import os
 
 import httpx
 
-import db
+from utils import db
 
 logger = logging.getLogger("auxiliary.handlers.payout_submit")
 

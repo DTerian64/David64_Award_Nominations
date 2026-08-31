@@ -25,10 +25,16 @@ export interface Nomination {
   ApprovedDate: string | null;
   PayedDate: string | null;
   Status: 'Pending' | 'Approved' | 'Paid' | 'Rejected';
+  CategoryDescription?: string | null;
 }
 
 export interface NominationApproval {
   NominationId: number;
   Approved: boolean;
   Comments?: string;
+}
+
+export interface CertificateResponse {
+  DownloadUrl: string;
+  Cached: boolean;
 }

@@ -209,7 +209,7 @@ BACKLOG = [
                     (
                         "Dedicated custom domain per tenant",
                         "As a tenant administrator, I can assign a dedicated public hostname "
-                        "(e.g. acme-awards.terian-services.com) so that users access a "
+                        "(e.g. acme-awards.terianix.ai) so that users access a "
                         "branded URL.",
                     ),
                     (

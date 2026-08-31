@@ -36,11 +36,24 @@ export interface TenantTheme {
   primaryTextOnDark: string;  // e.g. "#ffffff"
 }
 
+export interface NominationCategory {
+  id: number;
+  category_description: string;
+  min_amount?: number | null;
+  max_amount?: number | null;
+}
+
 export interface TenantConfig {
   locale:   string;        // BCP 47 tag, e.g. "en-US" | "ko-KR"
   currency: string;        // ISO 4217, e.g. "USD" | "KRW"
   theme:    TenantTheme;
-  domain?:  string;        // canonical public hostname, e.g. "acme-awards.terian-services.com"
+  domain?:  string;        // canonical public hostname, e.g. "acme-awards.terianix.ai"
+  is_demo?: boolean;       // enables demo-only UI; sensitive actions are server-gated
+  /** Tenant-specific award amount bounds (integer, denominated in tenant currency). */
+  min_award?: number;
+  max_award?: number;
+  /** Custom nomination categories. Empty array = feature disabled for this tenant. */
+  nomination_categories: NominationCategory[];
 }
 
 /** Defaults used for tenant 1 (and any tenant without a Config row). */
@@ -53,6 +66,7 @@ const DEFAULT_CONFIG: TenantConfig = {
     primaryLightColor: '#e0e7ff',   // indigo-100
     primaryTextOnDark: '#ffffff',
   },
+  nomination_categories: [],
 };
 
 // ── Context ────────────────────────────────────────────────────────────────
@@ -107,8 +121,23 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
 
   const fetchConfig = useCallback(async () => {
     if (!authenticated) {
-      console.info('[TenantConfig] Unauthenticated — using application defaults:', DEFAULT_CONFIG);
-      applyTheme(DEFAULT_CONFIG.theme);
+      console.info('[TenantConfig] Unauthenticated — fetching theme from branding endpoint');
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/tenant/branding`);
+        if (res.ok) {
+          const b = await res.json();
+          applyTheme({
+            primaryColor:      b.primary_color        ?? DEFAULT_CONFIG.theme.primaryColor,
+            primaryHoverColor: b.primary_hover_color  ?? DEFAULT_CONFIG.theme.primaryHoverColor,
+            primaryLightColor: b.primary_light_color  ?? DEFAULT_CONFIG.theme.primaryLightColor,
+            primaryTextOnDark: b.primary_text_on_dark ?? DEFAULT_CONFIG.theme.primaryTextOnDark,
+          });
+        } else {
+          applyTheme(DEFAULT_CONFIG.theme);
+        }
+      } catch {
+        applyTheme(DEFAULT_CONFIG.theme);
+      }
       setIsLoading(false);
       return;
     }
@@ -126,7 +155,7 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
         console.info('[TenantConfig] Raw response from backend:', raw);
 
         // An empty object ({}) means the backend found no config row — treat as defaults
-        const hasConfig = raw.locale || raw.currency || raw.theme;
+        const hasConfig = raw.locale || raw.currency || raw.theme || raw.is_demo !== undefined;
         if (!hasConfig) {
           console.warn(
             '[TenantConfig] Backend returned empty config (no row in DB or NULL). ' +
@@ -139,11 +168,15 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
         }
 
         const merged: TenantConfig = {
-          locale:   raw.locale   ?? DEFAULT_CONFIG.locale,
-          currency: raw.currency ?? DEFAULT_CONFIG.currency,
-          theme:    raw.theme    ? { ...DEFAULT_CONFIG.theme, ...raw.theme }
-                                 : DEFAULT_CONFIG.theme,
-          domain:   raw.domain,
+          locale:    raw.locale   ?? DEFAULT_CONFIG.locale,
+          currency:  raw.currency ?? DEFAULT_CONFIG.currency,
+          theme:     raw.theme    ? { ...DEFAULT_CONFIG.theme, ...raw.theme }
+                                  : DEFAULT_CONFIG.theme,
+          domain:    raw.domain,
+          is_demo:   raw.is_demo ?? false,
+          min_award: typeof raw.min_award === 'number' ? raw.min_award : undefined,
+          max_award: typeof raw.max_award === 'number' ? raw.max_award : undefined,
+          nomination_categories: raw.nomination_categories ?? [],
         };
 
         // ── Domain isolation check ───────────────────────────────────────
@@ -218,11 +251,10 @@ export const TenantConfigProvider: React.FC<TenantConfigProviderProps> = ({
     [config.locale, config.currency],
   );
 
-  // KRW minimum is conceptually different from USD, but since DollarAmount
-  // is stored as an integer and reflects whatever the admin configured, we
-  // keep the same numeric bounds and just display them in the tenant currency.
-  const minAmount = 50;
-  const maxAmount = 5000;
+  // Award amount bounds come from tenant config; fall back to application
+  // defaults (50 / 5000) when not configured so the app works out of the box.
+  const minAmount = config.min_award ?? 50;
+  const maxAmount = config.max_award ?? 5000;
 
   // Block rendering until config is resolved so there is no locale/theme flash
   if (isLoading) return null;

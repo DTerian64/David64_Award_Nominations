@@ -41,6 +41,7 @@ resource "azurerm_container_app" "auxiliary" {
   name                         = var.app_name
   resource_group_name          = var.resource_group_name
   container_app_environment_id = var.container_app_environment_id
+  workload_profile_name        = var.workload_profile_name
   revision_mode                = "Single"
   tags                         = var.tags
 
@@ -125,7 +126,7 @@ resource "azurerm_container_app" "auxiliary" {
       # managed identities are attached to the same compute resource.
       # Without this, the SDK cannot determine which MI to use.
       env {
-        name  = "AZURE_CLIENT_ID"
+        name  = "MI_CLIENT_ID"
         value = var.auxiliary_identity_client_id
       }
 

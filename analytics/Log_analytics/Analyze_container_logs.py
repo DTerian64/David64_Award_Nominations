@@ -350,8 +350,8 @@ def main():
     print()
     
     # Default values from environment
-    default_resource_group = os.getenv("RESOURCE_GROUP", "rg_award_nomination")
-    default_apps = ["award-api-eastus", "award-api-westus"]
+    default_resource_group = os.getenv("RESOURCE_GROUP", "rg_award_nomination_sandbox")
+    default_apps = ["award-api-primary-sandbox", "award-api-secondary-sandbox"]
     
     # Get parameters
     if len(sys.argv) < 2:

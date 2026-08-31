@@ -1,0 +1,349 @@
+"""
+demo_router.py
+==============
+Public self-registration endpoint for demo-awards.terianix.ai.
+
+POST /api/demo/request
+----------------------
+No authentication required.
+
+Flow:
+  1. Visitor submits First Name, Last Name, Email, Is Admin?
+  2. Backend calls Graph POST /invitations (sendInvitationMessage=False)
+  3. Backend publishes a notification event; the auxiliary worker sends the branded invitation email via SMTP
+  4. If Is Admin: assigns AWard_Nomination_Admin role to the new guest object
+  5. Creates a dbo.Users row (UPN = email) so auth.py can resolve them on first sign-in
+  6. Logs the request to dbo.DemoRegistrationRequests for audit / rate-limit
+
+Rate limits (DB-backed, survive process restarts):
+  • Max 3 invitations per IP per hour
+  • Max 1 invitation per email per hour  (same email → "already invited" response)
+
+The invite redirect URL is hardcoded to /demo/welcome so the visitor lands on
+our branded welcome page after accepting the Microsoft invitation.
+"""
+
+import logging
+import os
+import re
+import urllib.parse
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from pydantic import BaseModel, validator
+
+import utils.sqlhelper2 as sqlhelper
+import entra_admin
+from utils.service_bus_publisher import publish_event
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/demo", tags=["Demo"])
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+_DEMO_ORIGIN_FALLBACK = os.getenv("DEMO_ORIGIN", "https://demo-awards.terianix.ai")
+
+
+def _build_invite_redirect_url(email: str, origin: str) -> str:
+    """
+    Build the inviteRedirectUrl passed to Graph POST /invitations.
+
+    The visitor's email is appended as a query parameter so DemoWelcomePage
+    can pass it to MSAL as `loginHint`.  Without that hint, MSAL's ssoSilent
+    cannot disambiguate between multiple cached AAD sessions in the browser
+    and falls through to a full account-picker login screen.
+
+    AAD preserves query params on the inviteRedirectUrl through B2B redemption,
+    so `?email=…` arrives intact at /demo/welcome after the user clicks
+    "Activate my Demo Access" in their email.
+    """
+    return f"{origin}/demo/welcome?email={urllib.parse.quote(email, safe='')}"
+
+_RATE_LIMIT_PER_IP    = 3   # max invitations from one IP per hour
+_RATE_LIMIT_PER_EMAIL = 1   # max invitations to one email per hour
+
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+# Comma-separated list of specific emails that bypass the personal-domain block.
+# Intended for owner/developer test accounts only.
+# Example:  DEMO_ALLOWED_EMAILS=david.terian@gmail.com,david_terian@yahoo.com
+_ALLOWED_EMAILS: frozenset[str] = frozenset(
+    e.strip().lower()
+    for e in os.getenv("DEMO_ALLOWED_EMAILS", "").split(",")
+    if e.strip()
+)
+
+# ---------------------------------------------------------------------------
+# Personal / consumer email domain blocklist
+# Keep in sync with DemoRequestPage.tsx PERSONAL_EMAIL_DOMAINS
+# ---------------------------------------------------------------------------
+_PERSONAL_EMAIL_DOMAINS: frozenset[str] = frozenset({
+    "gmail.com", "googlemail.com",
+    "yahoo.com", "yahoo.co.uk", "yahoo.co.in", "yahoo.fr", "yahoo.de",
+    "yahoo.es", "yahoo.it", "yahoo.ca", "yahoo.com.br", "ymail.com",
+    "hotmail.com", "hotmail.co.uk", "hotmail.fr", "hotmail.de", "hotmail.es",
+    "outlook.com", "live.com", "live.co.uk", "msn.com",
+    "icloud.com", "me.com", "mac.com",
+    "aol.com", "aim.com",
+    "protonmail.com", "proton.me", "pm.me",
+    "mail.com", "gmx.com", "gmx.net", "gmx.de",
+    "zoho.com", "fastmail.com", "fastmail.fm",
+    "tutanota.com", "tutamail.com",
+    "yandex.com", "yandex.ru",
+    "qq.com", "163.com", "126.com",
+    "inbox.com", "rocketmail.com",
+})
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+
+class DemoRequestBody(BaseModel):
+    first_name: str
+    last_name:  str
+    email:      str
+    is_admin:   bool = False
+
+    @validator("first_name", "last_name")
+    def _name_valid(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Name cannot be empty")
+        if len(v) > 50:
+            raise ValueError("Name must be 50 characters or fewer")
+        return v
+
+    @validator("email")
+    def _email_valid(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("Invalid email address")
+        if len(v) > 256:
+            raise ValueError("Email too long")
+        domain = v.split("@", 1)[1] if "@" in v else ""
+        if domain in _PERSONAL_EMAIL_DOMAINS and v not in _ALLOWED_EMAILS:
+            raise ValueError(
+                "That looks like a personal email address. "
+                "Please use your work or school email to request demo access."
+            )
+        return v
+
+
+class DemoRequestResponse(BaseModel):
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# Endpoint
+# ---------------------------------------------------------------------------
+
+@router.post("/warmup_database", status_code=202)
+async def warmup_database(background_tasks: BackgroundTasks):
+    background_tasks.add_task(sqlhelper.warmup_database)
+    return {"message": "Database warmup started"}
+
+
+@router.post(
+    "/request",
+    response_model=DemoRequestResponse,
+    summary="Request demo access",
+    description=(
+        "Sends a Microsoft B2B invitation to the provided email address. "
+        "No authentication required. Rate-limited by IP and email."
+    ),
+)
+async def demo_request(body: DemoRequestBody, request: Request) -> DemoRequestResponse:
+    try:
+        return await _demo_request_inner(body, request)
+    except HTTPException:
+        raise  # pass through clean HTTP errors unchanged
+    except Exception as exc:
+        logger.exception("Unhandled error in POST /api/demo/request: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {type(exc).__name__}: {exc}",
+        )
+
+
+async def _demo_request_inner(body: DemoRequestBody, request: Request) -> DemoRequestResponse:
+
+    client_ip = (request.client.host if request.client else "unknown")[:64]
+
+    # Fetch the demo portal origin from dbo.Tenants (is_demo = 1).
+    # Falls back to the DEMO_ORIGIN env var if Site_URL is not yet configured.
+    demo_origin = sqlhelper.get_demo_site_url() or _DEMO_ORIGIN_FALLBACK
+
+    # ── Rate limit by IP ──────────────────────────────────────────────────────
+    if sqlhelper.count_demo_registrations_by_ip(client_ip) >= _RATE_LIMIT_PER_IP:
+        # Return same generic message — don't reveal the limit type
+        logger.warning("Demo request rate-limited by IP: %s", client_ip)
+        return DemoRequestResponse(
+            message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
+        )
+
+    # ── Rate limit by email (return same message to prevent enumeration) ──────
+    if sqlhelper.count_demo_registrations_by_email(body.email) >= _RATE_LIMIT_PER_EMAIL:
+        logger.info("Demo request duplicate email suppressed: %s", body.email)
+        return DemoRequestResponse(
+            message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
+        )
+
+    # ── Already registered — resend invitation email, skip DB/role work ─────────
+    # Contract: every successful POST /demo/request MUST result in an email
+    # being queued to the user.  Invitations are time-limited, so a returning
+    # user expects a fresh "Activate my Demo Access" link every time they hit
+    # this endpoint.  If we cannot fulfill that (Graph or Service Bus down),
+    # we surface a 503 so the SPA can show a retry-able error rather than
+    # claim "Check your inbox" while no email actually goes out.
+    #
+    # Graph POST /invitations is safe to repeat: it returns the existing guest
+    # OID with a fresh inviteRedeemUrl, so the user gets a working link.
+    if sqlhelper.demo_email_registered(body.email):
+        logger.info("Already-registered user requesting resend (is_admin=%s): %s",
+                    body.is_admin, body.email)
+
+        # 1. Ascertain B2B (create-or-get; fail loud if Graph is unhappy)
+        try:
+            reinvite = entra_admin.invite_external_user(
+                first_name=body.first_name,
+                last_name=body.last_name,
+                email=body.email,
+                invite_redirect_url=_build_invite_redirect_url(body.email, demo_origin),
+            )
+        except RuntimeError as e:
+            logger.error("Resend: Graph invitation refresh failed for %s: %s", body.email, e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not refresh your invitation. Please try again in a moment.",
+            )
+
+        if not reinvite.get("redeem_url"):
+            # Graph returned 200 but no redeem URL — can't send a working email.
+            logger.error("Resend: Graph returned empty inviteRedeemUrl for %s", body.email)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not refresh your invitation. Please try again in a moment.",
+            )
+
+        # 2. Upgrade to admin if requested — best-effort, doesn't gate the email
+        if body.is_admin and reinvite["oid"]:
+            try:
+                entra_admin.assign_admin_role(reinvite["oid"])
+                logger.info("Admin role assigned on resend for oid=%s", reinvite["oid"])
+            except RuntimeError as e:
+                logger.error("Admin role assignment failed on resend for oid=%s: %s",
+                             reinvite["oid"], e)
+
+        # 3. Queue the branded invitation email — must succeed
+        try:
+            await publish_event(
+                "notification.access_requested",
+                extra={
+                    "to":         body.email,
+                    "first_name": body.first_name,
+                    "redeem_url": reinvite["redeem_url"],
+                },
+            )
+        except Exception as e:
+            logger.error("Resend: failed to queue invitation email for %s: %s", body.email, e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not queue invitation email. Please try again in a moment.",
+            )
+
+        logger.info("Resent invitation to already-registered user: %s", body.email)
+        return DemoRequestResponse(
+            message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
+        )
+
+    # ── Resolve demo tenant ───────────────────────────────────────────────────
+    tenant_id = sqlhelper.get_demo_tenant_id()
+    if tenant_id is None:
+        logger.error("Demo tenant not found in dbo.Tenants — seed_demo.py may not have run.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Demo environment is not configured. Please contact the administrator.",
+        )
+
+    # ── Send B2B invitation via Graph API ─────────────────────────────────────
+    try:
+        invite_result = entra_admin.invite_external_user(
+            first_name=body.first_name,
+            last_name=body.last_name,
+            email=body.email,
+            invite_redirect_url=_build_invite_redirect_url(body.email, demo_origin),
+        )
+    except RuntimeError as e:
+        logger.error("B2B invitation failed for %s: %s", body.email, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not send invitation. Please try again later.",
+        )
+
+    oid        = invite_result["oid"]
+    upn        = invite_result["upn"]
+    redeem_url = invite_result["redeem_url"]
+
+    # ── Create dbo.Users row FIRST ───────────────────────────────────────────
+    # Must happen before publish_event so that a rapid second request hits the
+    # demo_email_registered guard and cannot slip through before the DB write.
+    if not sqlhelper.upn_exists_in_tenant(upn, tenant_id):
+        try:
+            sqlhelper.create_demo_user(
+                first_name=body.first_name,
+                last_name=body.last_name,
+                email=body.email,
+                upn=upn,
+                tenant_id=tenant_id,
+            )
+        except Exception as e:
+            logger.error("DB insert failed for %s: %s", upn, e)
+            # Non-fatal — invitation already created in AAD; user can sign in
+            # once the row is inserted manually or via a retry.
+
+    # ── Assign admin role (if requested) ──────────────────────────────────────
+    if body.is_admin and oid:
+        try:
+            entra_admin.assign_admin_role(oid)
+        except RuntimeError as e:
+            logger.error("Admin role assignment failed for oid=%s: %s", oid, e)
+
+    # ── Queue branded invitation email via Service Bus → auxiliary worker ────
+    # Sent after the DB row exists so a concurrent retry sees the user and
+    # short-circuits before sending a duplicate email.
+    try:
+        await publish_event(
+            "notification.access_requested",
+            extra={
+                "to":         body.email,
+                "first_name": body.first_name,
+                "redeem_url": redeem_url,
+            },
+        )
+        logger.info("Demo access invitation queued for %s", body.email)
+    except Exception as e:
+        logger.error("Failed to queue demo access invitation for %s: %s", body.email, e)
+
+    # ── Audit log ─────────────────────────────────────────────────────────────
+    try:
+        sqlhelper.log_demo_registration(
+            first_name=body.first_name,
+            last_name=body.last_name,
+            email=body.email,
+            is_admin=body.is_admin,
+            aad_object_id=oid or None,
+            request_ip=client_ip,
+        )
+    except Exception as e:
+        logger.warning("Failed to log demo registration: %s", e)
+
+    logger.info(
+        "Demo invitation sent: email=%s is_admin=%s oid=%s ip=%s",
+        body.email, body.is_admin, oid, client_ip,
+    )
+
+    return DemoRequestResponse(
+        message="Thanks! If this email isn't already registered, you'll receive an invitation shortly."
+    )

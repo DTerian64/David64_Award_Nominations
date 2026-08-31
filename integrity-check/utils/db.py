@@ -1,0 +1,1219 @@
+"""
+Database access for the integrity-check worker.
+
+Focused subset of queries needed by inference/handler.py and its checks:
+
+  Idempotency:
+    claim_message()                 — insert into dbo.ProcessedEvents
+    update_processed_event_result() — update result after handling
+
+  Nomination data:
+    get_nomination_details()        — full nomination for fraud feature engineering
+    set_nomination_status()         — move to Pending / PendingHRBPReview
+
+  Tenant config:
+    get_tenant_desc_check_config()  — per-tenant description check thresholds
+    get_tenant_integrity_config()   — per-tenant fraud pipeline config (windows, thresholds)
+
+  Fraud history lookups (called by inference/random_forest_check.py):
+    get_nominator_history()         — past nominations sent by a user
+    get_beneficiary_history()       — past nominations received by a user
+    get_approver_history()          — past approvals by a user
+    check_reciprocal_nomination()   — has B ever nominated A?
+    get_pair_nomination_count()     — how many times has A nominated B?
+    get_beneficiary_descriptions()  — past descriptions written BY the beneficiary
+    get_nominator_descriptions()    — past descriptions written BY the nominator
+
+  Graph flag lookups (called by inference/random_forest_check.py):
+    get_user_graph_flags()          — latest UserGraphFlags for nominator + beneficiary
+    get_approver_graph_flags()      — latest UserGraphFlags + ApproverPairFlags for approver
+    get_graph_component_snapshot()  — latest complete snapshot for independent graph scoring
+
+  Fraud score persistence:
+    save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
+    save_graph_fraud_score()        — upsert into dbo.Graph_FraudScores
+    save_integrity_decision_results() — atomically dual-write v1 and v2 decisions
+    save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
+
+  GNN model support (called by gnn_check.py):
+    get_gnn_user_embeddings()       — version-matched node embeddings for a user set
+    save_gnn_fraud_score()          — upsert into dbo.GNN_FraudScores
+"""
+
+import json
+import logging
+import os
+import struct
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
+
+import pyodbc
+
+from .azure_credential import credential
+
+logger = logging.getLogger("integrity_check.db")
+
+# created_by / updated_by marker for this service's autonomous writes (no human actor).
+_AUDIT_ACTOR = "svc:integrity-check"
+_PENDING_CLAIM_TIMEOUT_SECONDS = int(
+    os.getenv("IDEMPOTENCY_PENDING_TIMEOUT_SECONDS", "120")
+)
+
+
+class MessageClaimInProgress(RuntimeError):
+    """A prior worker still owns a non-stale idempotency claim."""
+
+# ── Connection (Entra token via Managed Identity) ─────────────────────────────
+# DefaultAzureCredential resolves the container's user-assigned MI (selected by
+# MI_CLIENT_ID) in Azure, or the developer's az / VS Code login locally.
+# No SQL username/password.
+_SERVER   = os.environ["SQL_SERVER"]
+_DATABASE = os.environ["SQL_DATABASE"]
+_DRIVER   = os.getenv("DB_DRIVER", "{ODBC Driver 18 for SQL Server}")
+
+_SQL_COPT_SS_ACCESS_TOKEN = 1256
+_AZURE_SQL_SCOPE          = "https://database.windows.net/.default"
+_BASE_CONNECTION_STRING = (
+    f"Driver={_DRIVER};"
+    f"Server={_SERVER};"
+    f"Database={_DATABASE};"
+    f"Encrypt=yes;"
+    f"TrustServerCertificate=no;"
+)
+
+
+@contextmanager
+def _get_conn():
+    token        = credential.get_token(_AZURE_SQL_SCOPE).token.encode("utf-16-le")
+    token_struct = struct.pack(f"<I{len(token)}s", len(token), token)
+    conn = pyodbc.connect(
+        _BASE_CONNECTION_STRING,
+        attrs_before={_SQL_COPT_SS_ACCESS_TOKEN: token_struct},
+    )
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+# ── Per-tenant description check config ──────────────────────────────────────
+
+@dataclass
+class DescCheckConfig:
+    """
+    Per-tenant thresholds for description quality checks.
+
+    Populated from dbo.Tenants.desc_check_config (NVARCHAR(MAX) JSON).
+    NULL column → all fields take their defaults (English, word-count based).
+
+    Fields
+    ------
+    embed_model
+        Sentence-transformer model name used for semantic similarity.
+        'all-MiniLM-L6-v2'                       — English-optimised (default)
+        'paraphrase-multilingual-MiniLM-L12-v2'  — multilingual (CJK, etc.)
+
+    use_char_count
+        When True, length gate uses character count (appropriate for CJK
+        languages where one character carries full-word meaning).
+
+    min_char_count / min_word_count
+        Minimum length thresholds — enforced at the API Pydantic layer, not
+        the pipeline, but stored here so the API can read the same config.
+
+    category_alignment_threshold
+        Minimum cosine similarity between description and category embeddings.
+        Descriptions scoring below this are auto-rejected (Check A).
+        0.0 disables the check — correct for tenants with no categories.
+
+    duplicate_similarity_threshold
+        Cosine similarity above which a description is considered a near-
+        duplicate of the nominator's own prior descriptions.  Triggers a
+        warning flag routed to HRBP review (Check B), not an auto-reject.
+
+    boilerplate_phrases
+        Lowercased phrases that trigger an API-layer 422.  Language-specific.
+    """
+    embed_model:                    str       = "all-MiniLM-L6-v2"
+    use_char_count:                 bool      = False
+    min_char_count:                 int       = 12
+    min_word_count:                 int       = 3
+    category_alignment_threshold:   float     = 0.15
+    duplicate_similarity_threshold: float     = 0.85
+    boilerplate_phrases:            List[str] = field(default_factory=list)
+
+    # ── Check A: LLM semantic evidence ───────────────────────────────────────
+    # llm_category_check_enabled
+    #     Master switch — when False, Check A uses embedding evidence only.
+    #
+    # llm_fit_threshold
+    #     Nominations whose LLM category_fit_score falls below this value are
+    #     flagged for HRBP review.  Does not cause an auto-reject on its own
+    #     (only is_coherent=false does that).
+    #
+    # llm_instructions
+    #     Free-text addendum injected into the LLM prompt after the base
+    #     evaluation criteria.  Lets each tenant override default behaviour —
+    #     e.g. "do not penalise Korean-language descriptions" or "ignore
+    #     low_specificity flags for awards under 200".
+    llm_category_check_enabled:     bool      = False
+    llm_fit_threshold:              float     = 0.40
+    llm_instructions:               Optional[str] = None
+
+
+def get_tenant_desc_check_config(tenant_id: int) -> DescCheckConfig:
+    """
+    Load desc_check_config JSON from dbo.Tenants and return a DescCheckConfig.
+
+    Missing keys fall back to dataclass defaults, so partial configs are safe.
+    A NULL column (or any parse error) returns a fully-defaulted config.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT desc_check_config FROM dbo.Tenants WHERE TenantId = ?",
+            (tenant_id,),
+        )
+        row = cursor.fetchone()
+
+    raw = row[0] if row else None
+    if not raw:
+        return DescCheckConfig()
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Invalid JSON in desc_check_config for tenant %d — using defaults",
+            tenant_id,
+        )
+        return DescCheckConfig()
+
+    return DescCheckConfig(
+        embed_model=data.get("embed_model", DescCheckConfig.embed_model),
+        use_char_count=bool(data.get("use_char_count", DescCheckConfig.use_char_count)),
+        min_char_count=int(data.get("min_char_count", DescCheckConfig.min_char_count)),
+        min_word_count=int(data.get("min_word_count", DescCheckConfig.min_word_count)),
+        category_alignment_threshold=float(
+            data.get("category_alignment_threshold",
+                     DescCheckConfig.category_alignment_threshold)
+        ),
+        duplicate_similarity_threshold=float(
+            data.get("duplicate_similarity_threshold",
+                     DescCheckConfig.duplicate_similarity_threshold)
+        ),
+        boilerplate_phrases=[
+            p.lower() for p in data.get("boilerplate_phrases", [])
+        ],
+        llm_category_check_enabled=bool(
+            data.get("llm_category_check_enabled", False)
+        ),
+        llm_fit_threshold=float(
+            data.get("llm_fit_threshold", DescCheckConfig.llm_fit_threshold)
+        ),
+        llm_instructions=data.get("llm_instructions") or None,
+    )
+
+
+# ── Per-tenant integrity config ───────────────────────────────────────────────
+
+def get_tenant_integrity_config(tenant_id: int) -> dict:
+    """
+    Load and parse integrity_config JSON from dbo.Tenants for this tenant.
+
+    Returns the parsed dict, or {} if the column is NULL or absent.
+    Callers use .get() with explicit defaults so partial configs are safe.
+
+    Schema (all keys optional — missing keys fall back to system defaults):
+    {
+      "graph_pattern": { "detection_window_days": 365 },
+      "score_routing": {
+          "critical_threshold": 80,
+          "high_threshold":     60,
+          "medium_threshold":   40,
+          "low_threshold":      20
+      },
+      "gnn": {
+          "score_routing": {
+              "critical_threshold": 85,
+              "high_threshold":     65,
+              "medium_threshold":   45,
+              "low_threshold":      25
+          }
+      },
+      "graph": {
+          "score_routing": {
+              "critical_threshold": 100,
+              "high_threshold":      75,
+              "medium_threshold":    50,
+              "low_threshold":       25
+          }
+      }
+    }
+
+    The cache lifetime is the container process lifetime — config changes
+    require a container restart (acceptable operational behaviour).
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT integrity_config FROM dbo.Tenants WHERE TenantId = ?",
+            (tenant_id,),
+        )
+        row = cursor.fetchone()
+
+    raw = row[0] if row else None
+    if not raw:
+        return {}
+
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Invalid JSON in integrity_config for tenant %d — using defaults",
+            tenant_id,
+        )
+        return {}
+
+
+# ── Producer-owned component availability ────────────────────────────────────
+
+def get_integrity_component_statuses(tenant_id: int) -> dict[str, dict]:
+    """Return current RF, Graph, and GNN producer status for one tenant."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT Component, ServingStatus, ServingVersion, ServingAsOf,
+                   LastAttemptStatus, ReasonCode, ReasonDetail, DiagnosticsJson,
+                   LastAttemptAt, LastSuccessfulAt, RunId, UpdatedAt
+            FROM dbo.IntegrityComponentStatus
+            WHERE TenantId = ?
+        """, tenant_id)
+        rows = cursor.fetchall()
+
+    return {
+        str(row[0]).upper(): {
+            "component": str(row[0]).upper(),
+            "serving_status": row[1],
+            "serving_version": row[2],
+            "serving_as_of": row[3],
+            "last_attempt_status": row[4],
+            "reason_code": row[5],
+            "reason_detail": row[6],
+            "diagnostics_json": row[7],
+            "last_attempt_at": row[8],
+            "last_successful_at": row[9],
+            "run_id": row[10],
+            "updated_at": row[11],
+        }
+        for row in rows
+    }
+
+
+# ── Nomination details ────────────────────────────────────────────────────────
+
+def get_nomination_details(nomination_id: int) -> Optional[dict]:
+    """Fetch all nomination data needed for fraud feature engineering and routing."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                n.NominationId,
+                n.Amount,
+                n.Currency,
+                n.NominationDescription,
+                n.Status,
+                n.ApproverId,
+                nominator.UserId          AS NominatorId,
+                nominator.FirstName + ' ' + nominator.LastName AS NominatorName,
+                nominator.userEmail       AS NominatorEmail,
+                beneficiary.UserId        AS BeneficiaryId,
+                beneficiary.FirstName + ' ' + beneficiary.LastName AS BeneficiaryName,
+                beneficiary.userEmail     AS BeneficiaryEmail,
+                approver.FirstName + ' ' + approver.LastName AS ApproverName,
+                approver.userEmail        AS ApproverEmail,
+                nc.category_description   AS CategoryDescription,
+                nominator.TenantId        AS TenantId,
+                n.CategoryId
+            FROM  dbo.Nominations n
+            INNER JOIN dbo.Users nominator   ON n.NominatorId   = nominator.UserId
+            INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
+            INNER JOIN dbo.Users approver    ON n.ApproverId    = approver.UserId
+            LEFT  JOIN dbo.nomination_categories nc ON nc.id    = n.CategoryId
+            WHERE n.NominationId = ?
+        """, (nomination_id,))
+        row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "nomination_id":        int(row[0]),
+        "amount":               float(row[1]),
+        "currency":             row[2],
+        "description":          row[3],
+        "status":               row[4],
+        "approver_id":          int(row[5]),
+        "nominator_id":         int(row[6]),
+        "nominator_name":       row[7],
+        "nominator_email":      row[8],
+        "beneficiary_id":       int(row[9]),
+        "beneficiary_name":     row[10],
+        "beneficiary_email":    row[11],
+        "approver_name":        row[12],
+        "approver_email":       row[13],
+        "category_description": row[14],
+        "tenant_id":            int(row[15]),
+        "category_id":          row[16],
+    }
+
+
+def set_nomination_status(nomination_id: int, new_status: str) -> None:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE dbo.Nominations SET Status = ?, "
+            "updated_at = SYSUTCDATETIME(), updated_by = ? WHERE NominationId = ?",
+            (new_status, _AUDIT_ACTOR, nomination_id),
+        )
+        conn.commit()
+        logger.info("Status updated",
+                    extra={"nomination_id": nomination_id, "new_status": new_status})
+
+
+def reject_nomination(nomination_id: int, reason: str, actor: str) -> None:
+    """
+    Reject a nomination and persist the rejection reason and actor.
+
+    Separate from set_nomination_status() because that function is also used
+    for non-rejection transitions (Pending, PendingHRBPReview).
+
+    Args:
+        nomination_id: The nomination to reject.
+        reason:        Human-readable explanation surfaced to the nominator.
+        actor:         one of handler.ACTOR_DESCRIPTION_CHECK (Check A quality
+                       gate) or handler.ACTOR_FRAUD_ML (CRITICAL ML auto-reject).
+                       These two must stay distinct: load_data() in
+                       fraud-analytics-job excludes the former from training and
+                       keeps the latter. Rendered verbatim to the nominator as
+                       "Rejected by: {actor}", so keep it human-readable.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE dbo.Nominations
+            SET Status          = 'Rejected',
+                RejectionReason = ?,
+                RejectionActor  = ?,
+                updated_at      = SYSUTCDATETIME(),
+                updated_by      = ?
+            WHERE NominationId  = ?
+            """,
+            (reason.strip() or None, actor, _AUDIT_ACTOR, nomination_id),
+        )
+        conn.commit()
+        logger.info(
+            "Nomination rejected",
+            extra={
+                "nomination_id": nomination_id,
+                "actor":         actor,
+                "reason":        reason,
+            },
+        )
+
+
+# ── Fraud history lookups ─────────────────────────────────────────────────────
+
+def get_nominator_history(nominator_id: int) -> list[tuple]:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId, BeneficiaryId, Amount, NominationDate
+            FROM   dbo.Nominations
+            WHERE  NominatorId = ?
+            ORDER  BY NominationDate DESC
+        """, (nominator_id,))
+        return cursor.fetchall()
+
+
+def get_beneficiary_history(beneficiary_id: int) -> list[tuple]:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId, NominatorId, Amount, NominationDate
+            FROM   dbo.Nominations
+            WHERE  BeneficiaryId = ?
+            ORDER  BY NominationDate DESC
+        """, (beneficiary_id,))
+        return cursor.fetchall()
+
+
+def get_approver_history(approver_id: int) -> list[tuple]:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT NominationId,
+                   DATEDIFF(HOUR, NominationDate, ApprovedDate) AS HoursToApproval
+            FROM   dbo.Nominations
+            WHERE  ApproverId    = ?
+              AND  ApprovedDate IS NOT NULL
+            ORDER  BY NominationDate DESC
+        """, (approver_id,))
+        return cursor.fetchall()
+
+
+def check_reciprocal_nomination(nominator_id: int, beneficiary_id: int) -> bool:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM dbo.Nominations
+            WHERE NominatorId = ? AND BeneficiaryId = ?
+        """, (beneficiary_id, nominator_id))
+        row = cursor.fetchone()
+        return (row[0] > 0) if row else False
+
+
+def get_pair_nomination_count(nominator_id: int, beneficiary_id: int) -> int:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM dbo.Nominations
+            WHERE NominatorId = ? AND BeneficiaryId = ?
+        """, (nominator_id, beneficiary_id))
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+
+def get_beneficiary_descriptions(beneficiary_id: int) -> list[str]:
+    """Past descriptions written BY the beneficiary (as nominator) — capped at 20."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT TOP 20 NominationDescription
+            FROM   dbo.Nominations
+            WHERE  NominatorId            = ?
+              AND  NominationDescription IS NOT NULL
+              AND  NominationDescription  <> ''
+            ORDER  BY NominationDate DESC
+        """, (beneficiary_id,))
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_nominator_descriptions(
+    nominator_id: int,
+    exclude_nomination_id: Optional[int] = None,
+) -> list[str]:
+    """
+    Past descriptions written BY this nominator — capped at 50.
+
+    Used by description_check.py (Check B) to detect near-duplicate
+    descriptions submitted by the same person across different nominations.
+
+    exclude_nomination_id should always be the current nomination so it is
+    not compared against itself (the nomination is already committed to the DB
+    before the integrity-check event fires).
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        if exclude_nomination_id is not None:
+            cursor.execute("""
+                SELECT TOP 50 NominationDescription
+                FROM   dbo.Nominations
+                WHERE  NominatorId            = ?
+                  AND  NominationId          <> ?
+                  AND  NominationDescription IS NOT NULL
+                  AND  NominationDescription  <> ''
+                ORDER  BY NominationDate DESC
+            """, (nominator_id, exclude_nomination_id))
+        else:
+            cursor.execute("""
+                SELECT TOP 50 NominationDescription
+                FROM   dbo.Nominations
+                WHERE  NominatorId            = ?
+                  AND  NominationDescription IS NOT NULL
+                  AND  NominationDescription  <> ''
+                ORDER  BY NominationDate DESC
+            """, (nominator_id,))
+        return [row[0] for row in cursor.fetchall()]
+
+
+# ── Graph flag lookups ───────────────────────────────────────────────────────
+
+def get_user_graph_flags(
+    tenant_id:     int,
+    nominator_id:  int,
+    beneficiary_id: int,
+) -> dict:
+    """
+    Return the latest UserGraphFlags snapshot for the nominator and beneficiary.
+
+    Queries the two rows separately (nominator + beneficiary) and returns a
+    single dict of composite features ready for the P2P RF feature builder:
+
+      GraphCycleFlag              — 1 if either user is in a Ring finding
+      GraphClusterSize            — max CopyPaste cluster size across both users
+      SuperNominatorFlag          — 1 if nominator is a SuperNominator outlier
+      TransactionalLanguageFlag   — 1 if either user is in a TransactionalLanguage finding
+
+    Returns all-zero dict when no snapshot exists for either user (new users
+    with no graph history are treated as having no graph risk signal).
+    """
+    sql = """
+        SELECT TOP 1
+               IsInRing, IsSuperNominator,
+               IsInCopyPasteCluster, CopyPasteClusterSize,
+               HasTransactionalLanguage
+        FROM   dbo.UserGraphFlags
+        WHERE  TenantId = ? AND UserId = ?
+        ORDER  BY AsOfDate DESC
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(sql, (tenant_id, nominator_id))
+        n_row = cursor.fetchone()
+
+        cursor.execute(sql, (tenant_id, beneficiary_id))
+        b_row = cursor.fetchone()
+
+    n_ring  = bool(n_row[0]) if n_row else False
+    n_super = bool(n_row[1]) if n_row else False
+    n_copy  = int(n_row[3])  if n_row and n_row[2] else 0
+    n_trans = bool(n_row[4]) if n_row else False
+
+    b_ring  = bool(b_row[0]) if b_row else False
+    b_copy  = int(b_row[3])  if b_row and b_row[2] else 0
+    b_trans = bool(b_row[4]) if b_row else False
+
+    return {
+        "GraphCycleFlag":            int(n_ring or b_ring),
+        "GraphClusterSize":          max(n_copy, b_copy),
+        "SuperNominatorFlag":        int(n_super),
+        "TransactionalLanguageFlag": int(n_trans or b_trans),
+    }
+
+
+def get_approver_graph_flags(
+    tenant_id:     int,
+    approver_id:   int,
+    nominator_id:  int,
+    beneficiary_id: int,
+) -> dict:
+    """
+    Return the latest graph flags for the approver role:
+
+      ApproverAffinityFlag    — approver is in an ApproverAffinity finding
+      GraphApproverPairCount  — how many times this approver has approved
+                                this exact nominator→beneficiary pair
+
+    Returns all-zero dict when no snapshot exists.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+
+        # ApproverAffinityFlag from UserGraphFlags
+        cursor.execute("""
+            SELECT TOP 1 IsApproverAffinity
+            FROM   dbo.UserGraphFlags
+            WHERE  TenantId = ? AND UserId = ?
+            ORDER  BY AsOfDate DESC
+        """, (tenant_id, approver_id))
+        a_row = cursor.fetchone()
+
+        # GraphApproverPairCount from ApproverPairFlags
+        cursor.execute("""
+            SELECT TOP 1 PairApprovalCount
+            FROM   dbo.ApproverPairFlags
+            WHERE  TenantId      = ?
+              AND  ApproverId    = ?
+              AND  NominatorId   = ?
+              AND  BeneficiaryId = ?
+            ORDER  BY AsOfDate DESC
+        """, (tenant_id, approver_id, nominator_id, beneficiary_id))
+        p_row = cursor.fetchone()
+
+    return {
+        "ApproverAffinityFlag":   int(bool(a_row[0])) if a_row else 0,
+        "GraphApproverPairCount": int(p_row[0])        if p_row else 0,
+    }
+
+
+def get_graph_component_snapshot(tenant_id: int, user_ids: list[int]) -> Optional[dict]:
+    """Return the latest completed graph snapshot for the requested users.
+
+    The latest date is selected across both graph snapshot tables.  A missing
+    user row on that date means the user had no finding in that run; it does not
+    fall back to an older finding.  Falling back would keep a resolved graph
+    pattern alive forever and would make the live graph opinion incorrect.
+
+    ``None`` means the tenant has never produced a graph snapshot, which callers
+    must treat as "no opinion" rather than a clean score.
+    """
+    unique_ids = list(dict.fromkeys(int(uid) for uid in user_ids if uid is not None))
+
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT MAX(AsOfDate)
+            FROM (
+                SELECT MAX(AsOfDate) AS AsOfDate
+                FROM dbo.UserGraphFlags
+                WHERE TenantId = ?
+                UNION ALL
+                SELECT MAX(AsOfDate) AS AsOfDate
+                FROM dbo.ApproverPairFlags
+                WHERE TenantId = ?
+            ) snapshots
+        """, (tenant_id, tenant_id))
+        row = cursor.fetchone()
+        as_of = row[0] if row else None
+        if as_of is None:
+            return None
+
+        users: dict[int, dict] = {}
+        if unique_ids:
+            placeholders = ", ".join("?" for _ in unique_ids)
+            cursor.execute(f"""
+                SELECT UserId,
+                       IsInRing, IsSuperNominator,
+                       IsInCopyPasteCluster, CopyPasteClusterSize,
+                       HasTransactionalLanguage, IsApproverAffinity,
+                       HighestSeverity
+                FROM dbo.UserGraphFlags
+                WHERE TenantId = ?
+                  AND AsOfDate = ?
+                  AND UserId IN ({placeholders})
+            """, [tenant_id, as_of, *unique_ids])
+            for found in cursor.fetchall():
+                users[int(found[0])] = {
+                    "is_in_ring": bool(found[1]),
+                    "is_super_nominator": bool(found[2]),
+                    "is_in_copy_paste_cluster": bool(found[3]),
+                    "copy_paste_cluster_size": int(found[4] or 0),
+                    "has_transactional_language": bool(found[5]),
+                    "is_approver_affinity": bool(found[6]),
+                    "highest_severity": found[7],
+                }
+
+    return {"snapshot_as_of": as_of, "users": users}
+
+
+# ── Fraud score persistence ───────────────────────────────────────────────────
+
+def save_p2p_fraud_score(
+    nomination_id: int,
+    fraud_score:   int,
+    risk_level:    str,
+    warning_flags: str,
+) -> None:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            MERGE dbo.P2P_FraudScores AS target
+            USING (SELECT ? AS NominationId) AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN
+                UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
+                VALUES (?,            ?,          ?,         ?);
+        """, (
+            nomination_id,
+            fraud_score, risk_level, warning_flags,
+            nomination_id, fraud_score, risk_level, warning_flags,
+        ))
+        conn.commit()
+
+
+def save_graph_fraud_score(
+    nomination_id: int,
+    graph_score: int,
+    risk_level: str,
+    graph_flags: Optional[str],
+    snapshot_as_of: object,
+) -> None:
+    """Upsert the graph analytics component score for one snapshot."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            MERGE dbo.Graph_FraudScores AS target
+            USING (SELECT ? AS NominationId, ? AS SnapshotAsOfDate) AS source
+                ON  target.NominationId = source.NominationId
+                AND target.SnapshotAsOfDate = source.SnapshotAsOfDate
+            WHEN MATCHED THEN
+                UPDATE SET GraphScore = ?, RiskLevel = ?, GraphFlags = ?,
+                           ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, GraphScore, RiskLevel, GraphFlags,
+                        SnapshotAsOfDate, ScoredBy)
+                VALUES (?, ?, ?, ?, ?, ?);
+        """, (
+            nomination_id, snapshot_as_of,
+            graph_score, risk_level, graph_flags, _AUDIT_ACTOR,
+            nomination_id, graph_score, risk_level, graph_flags,
+            snapshot_as_of, _AUDIT_ACTOR,
+        ))
+        conn.commit()
+
+
+def save_integrity_decision_results(
+    nomination_id: int,
+    message_id: str,
+    policy_version: str,
+    rf_result: dict,
+    graph_result: dict,
+    gnn_result: dict,
+    decision: dict,
+    engine_results: dict[str, dict],
+    final_route: str,
+    routing_rule: str,
+    review_scope: Optional[str],
+    decisive_engines: list[str],
+) -> None:
+    """Atomically persist and reconcile the legacy and four-engine decisions."""
+    decisive = ",".join(decision.get("decisive_models", [])) or None
+    composite_score = (
+        decision.get("final_score") if decision.get("decision_available") else None
+    )
+    engine_json = {
+        name: json.dumps(payload, default=str, separators=(",", ":"))
+        for name, payload in engine_results.items()
+    }
+    decisive_json = json.dumps(decisive_engines, separators=(",", ":"))
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            MERGE dbo.FraudDecisionResults AS target
+            USING (SELECT ? AS NominationId) AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN UPDATE SET
+                PolicyVersion = ?,
+                RfAvailable = ?, RfScore = ?, RfRiskLevel = ?,
+                RfUnavailableReasonCode = ?, RfUnavailableReasonDetail = ?,
+                GraphAvailable = ?, GraphScore = ?, GraphRiskLevel = ?,
+                GraphUnavailableReasonCode = ?, GraphUnavailableReasonDetail = ?,
+                GnnAvailable = ?, GnnScore = ?, GnnRiskLevel = ?,
+                GnnUnavailableReasonCode = ?, GnnUnavailableReasonDetail = ?,
+                FinalScore = ?, FinalRiskLevel = ?, DecisiveModels = ?,
+                ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN INSERT (
+                NominationId, PolicyVersion,
+                RfAvailable, RfScore, RfRiskLevel,
+                RfUnavailableReasonCode, RfUnavailableReasonDetail,
+                GraphAvailable, GraphScore, GraphRiskLevel,
+                GraphUnavailableReasonCode, GraphUnavailableReasonDetail,
+                GnnAvailable, GnnScore, GnnRiskLevel,
+                GnnUnavailableReasonCode, GnnUnavailableReasonDetail,
+                FinalScore, FinalRiskLevel, DecisiveModels, ScoredBy
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            nomination_id,
+            policy_version,
+            int(bool(rf_result.get("model_available"))), rf_result.get("fraud_score"), rf_result.get("risk_level"),
+            rf_result.get("unavailable_reason"), rf_result.get("unavailable_detail"),
+            int(bool(graph_result.get("model_available"))), graph_result.get("fraud_score"), graph_result.get("risk_level"),
+            graph_result.get("unavailable_reason"), graph_result.get("unavailable_detail"),
+            int(bool(gnn_result.get("model_available"))), gnn_result.get("fraud_score"), gnn_result.get("risk_level"),
+            gnn_result.get("unavailable_reason"), gnn_result.get("unavailable_detail"),
+            decision.get("final_score"), decision.get("risk_level"), decisive,
+            _AUDIT_ACTOR,
+            nomination_id, policy_version,
+            int(bool(rf_result.get("model_available"))), rf_result.get("fraud_score"), rf_result.get("risk_level"),
+            rf_result.get("unavailable_reason"), rf_result.get("unavailable_detail"),
+            int(bool(graph_result.get("model_available"))), graph_result.get("fraud_score"), graph_result.get("risk_level"),
+            graph_result.get("unavailable_reason"), graph_result.get("unavailable_detail"),
+            int(bool(gnn_result.get("model_available"))), gnn_result.get("fraud_score"), gnn_result.get("risk_level"),
+            gnn_result.get("unavailable_reason"), gnn_result.get("unavailable_detail"),
+            decision.get("final_score"), decision.get("risk_level"), decisive, _AUDIT_ACTOR,
+        ))
+        cursor.execute("""
+            MERGE dbo.IntegrityDecisionResults AS target
+            USING (SELECT ? AS NominationId) AS source
+                ON target.NominationId = source.NominationId
+            WHEN MATCHED THEN UPDATE SET
+                DecisionSchemaVersion = ?, PolicyVersion = ?, SourceMessageId = ?,
+                RfResultJson = ?, GraphResultJson = ?, GnnResultJson = ?,
+                SemanticResultJson = ?, CompositeScore = ?,
+                CompositeRiskLevel = ?, DecisiveEnginesJson = ?,
+                FinalRoute = ?, RoutingRule = ?, ReviewScope = ?,
+                ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
+            WHEN NOT MATCHED THEN INSERT (
+                NominationId, DecisionSchemaVersion, PolicyVersion,
+                SourceMessageId, RfResultJson, GraphResultJson, GnnResultJson,
+                SemanticResultJson, CompositeScore, CompositeRiskLevel,
+                DecisiveEnginesJson, FinalRoute, RoutingRule, ReviewScope,
+                ScoredBy
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            nomination_id,
+            2, policy_version, message_id,
+            engine_json["rf"], engine_json["graph"], engine_json["gnn"],
+            engine_json["semantic"], composite_score, decision.get("risk_level"),
+            decisive_json, final_route, routing_rule, review_scope, _AUDIT_ACTOR,
+            nomination_id, 2, policy_version, message_id,
+            engine_json["rf"], engine_json["graph"], engine_json["gnn"],
+            engine_json["semantic"], composite_score, decision.get("risk_level"),
+            decisive_json, final_route, routing_rule, review_scope, _AUDIT_ACTOR,
+        ))
+
+        # Read both rows back before committing. A mismatch aborts the entire
+        # transaction rather than leaving two contradictory decision records.
+        cursor.execute("""
+            SELECT
+                legacy.RfAvailable, legacy.RfScore, legacy.RfRiskLevel,
+                legacy.GraphAvailable, legacy.GraphScore, legacy.GraphRiskLevel,
+                legacy.GnnAvailable, legacy.GnnScore, legacy.GnnRiskLevel,
+                legacy.FinalScore, legacy.FinalRiskLevel,
+                idr.RfResultJson, idr.GraphResultJson,
+                idr.GnnResultJson, idr.CompositeScore,
+                idr.CompositeRiskLevel
+            FROM dbo.FraudDecisionResults AS legacy
+            INNER JOIN dbo.IntegrityDecisionResults AS idr
+                ON idr.NominationId = legacy.NominationId
+            WHERE legacy.NominationId = ?;
+        """, (nomination_id,))
+        persisted = cursor.fetchone()
+        if persisted is None:
+            raise RuntimeError(
+                f"Decision dual-write reconciliation found no row for {nomination_id}"
+            )
+
+        values = list(persisted)
+        mismatches: list[str] = []
+        for offset, name in ((0, "rf"), (3, "graph"), (6, "gnn")):
+            available = bool(values[offset])
+            document = json.loads(values[11 + offset // 3])
+            if available != bool(document.get("available")):
+                mismatches.append(f"{name}.available")
+            if available:
+                if values[offset + 1] != document.get("score"):
+                    mismatches.append(f"{name}.score")
+                if values[offset + 2] != document.get("risk_level"):
+                    mismatches.append(f"{name}.risk_level")
+
+        # V1 encoded "no available decision" as score 0; V2 correctly uses
+        # NULL. Treat only that documented compatibility difference as equal.
+        if values[14] is None:
+            if values[9] not in (None, 0):
+                mismatches.append("composite_score")
+        elif values[9] != values[14]:
+            mismatches.append("composite_score")
+        if values[10] != values[15]:
+            mismatches.append("composite_risk_level")
+        if mismatches:
+            logger.error(
+                "Decision dual-write reconciliation failed",
+                extra={"nomination_id": nomination_id, "mismatches": mismatches},
+            )
+            raise RuntimeError(
+                "Decision dual-write reconciliation failed: " + ", ".join(mismatches)
+            )
+
+        logger.info(
+            "Decision dual-write reconciliation passed",
+            extra={"nomination_id": nomination_id},
+        )
+        conn.commit()
+
+
+def save_hrbp_fraud_flags(
+    nomination_id:        int,
+    fraud_score:          int,
+    fraud_probability:    float,
+    risk_level:           str,
+    warning_flags:        str,
+    shap_explanations_json: Optional[str],  # JSON list of top-5 SHAP contributions
+    feature_summary_json: Optional[str],
+) -> None:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO dbo.HRBP_FraudFlags
+                (NominationId, FraudScore, FraudProbability, RiskLevel,
+                 WarningFlags, TopFeaturesJson, FeatureSummaryJson, CreatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, GETUTCDATE())
+        """, (
+            nomination_id, fraud_score, fraud_probability, risk_level,
+            warning_flags, shap_explanations_json, feature_summary_json,
+        ))
+        conn.commit()
+
+
+# ── Idempotency (dbo.ProcessedEvents) ────────────────────────────────────────
+
+def claim_message(
+    message_id:   str,
+    event_type:   str,
+    nomination_id: Optional[int],
+    processed_at: datetime,
+) -> bool:
+    """
+    Claim a message for processing and return True only after prior success.
+
+    Failed claims are immediately reusable. A pending claim is reusable only
+    after its lease timeout; until then ``MessageClaimInProgress`` prevents the
+    Service Bus delivery from being completed as though work had succeeded.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO dbo.ProcessedEvents
+                    (MessageId, EventType, NominationId, ProcessedAt, Result)
+                VALUES (?, ?, ?, ?, 'pending')
+            """, (message_id, event_type, nomination_id, processed_at))
+            conn.commit()
+            return False   # new — proceed
+
+        except pyodbc.IntegrityError:
+            cursor.execute(
+                "SELECT Result, ProcessedAt FROM dbo.ProcessedEvents WHERE MessageId = ?",
+                (message_id,),
+            )
+            existing = cursor.fetchone()
+            prior = str(existing[0]).lower() if existing else None
+            prior_at = existing[1] if existing else None
+
+            if prior == "success":
+                return True
+
+            stale_pending = False
+            if prior == "pending" and prior_at is not None:
+                prior_utc = (
+                    prior_at.replace(tzinfo=timezone.utc)
+                    if prior_at.tzinfo is None
+                    else prior_at.astimezone(timezone.utc)
+                )
+                current_utc = (
+                    processed_at.replace(tzinfo=timezone.utc)
+                    if processed_at.tzinfo is None
+                    else processed_at.astimezone(timezone.utc)
+                )
+                stale_pending = current_utc - prior_utc >= timedelta(
+                    seconds=_PENDING_CLAIM_TIMEOUT_SECONDS
+                )
+
+            if prior == "error" or stale_pending:
+                cursor.execute("""
+                    UPDATE dbo.ProcessedEvents
+                    SET EventType = ?, NominationId = ?, ProcessedAt = ?,
+                        Result = 'pending'
+                    WHERE MessageId = ? AND Result = ? AND ProcessedAt = ?
+                """, (
+                    event_type, nomination_id, processed_at,
+                    message_id, prior, prior_at,
+                ))
+                if cursor.rowcount != 1:
+                    raise MessageClaimInProgress(
+                        f"Message {message_id} was reclaimed by another worker"
+                    )
+                conn.commit()
+                logger.warning(
+                    "Reclaimed failed or stale message",
+                    extra={
+                        "message_id": message_id,
+                        "nomination_id": nomination_id,
+                        "prior_result": prior,
+                        "stale_pending": stale_pending,
+                    },
+                )
+                return False
+
+            raise MessageClaimInProgress(
+                f"Message {message_id} has an active pending claim"
+            )
+
+
+def update_processed_event_result(
+    message_id: str,
+    result: str,
+    error: Optional[str] = None,
+) -> None:
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE dbo.ProcessedEvents SET Result = ? WHERE MessageId = ?",
+            (result, message_id),
+        )
+        conn.commit()
+    if error:
+        logger.error("ProcessedEvent recorded as error",
+                     extra={"message_id": message_id, "error": error})
+
+
+# ===========================================================================
+# NOMINATION LOG PERSISTENCE (SOC 2) — dbo.Nomination_Logs
+# ===========================================================================
+
+_NOMLOG_SQL = (
+    "INSERT INTO dbo.Nomination_Logs "
+    "(nomination_id, tenant_id, log_time, level, service, logger, message, "
+    " message_id, details, exception, created_by, updated_by) "
+    "VALUES (?, COALESCE(?, (SELECT TOP 1 u.TenantId FROM dbo.Nominations n "
+    "JOIN dbo.Users u ON u.UserId = n.NominatorId WHERE n.NominationId = ?)), "
+    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+
+def insert_nomination_logs(rows: list) -> None:
+    """Bulk-insert nomination log rows (called by the background log handler).
+    created_at/updated_at come from the DB default (SYSUTCDATETIME())."""
+    if not rows:
+        return
+    params = [
+        (r["nomination_id"], r["tenant_id"], r["nomination_id"], r["log_time"], r["level"], r["service"],
+         r["logger"], r["message"], r["message_id"], r["details"], r["exception"],
+         r["created_by"], r["updated_by"])
+        for r in rows
+    ]
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        # Do not enable pyodbc fast_executemany here. With SQL Server's
+        # NVARCHAR(MAX) details/exception columns, the ODBC driver can bind a
+        # 255-character (510-byte UTF-16) buffer and reject larger JSON records
+        # with HY000 "String data, right truncation". Nomination-log batches
+        # are small, so standard executemany is the safer correctness tradeoff.
+        cursor.executemany(_NOMLOG_SQL, params)
+        conn.commit()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GNN model support — called by gnn_check.py
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_gnn_user_embeddings(
+    tenant_id: int,
+    user_ids: list,
+    model_version: Optional[str] = None,
+) -> dict:
+    """
+    Return {UserId: (embedding, as_of_date, model_version)} for the requested users.
+
+    Selects, per user, the NEWEST snapshot whose ModelVersion equals the caller's
+    decoder version — not the newest snapshot overall.
+
+    That distinction is what makes a decoder-only rollback work. dbo.GNN_UserEmbeddings
+    is append-only within its retention window, so restoring a previous
+    gnn_head_tenant_<N>.pt is sufficient on its own: this query then picks up that
+    decoder's own generation of embeddings. Matching on "newest overall" instead
+    would leave a rolled-back decoder permanently unable to score, because every
+    lookup would return embeddings from a version it was not trained against.
+
+    model_version=None returns the newest snapshot for each user regardless of
+    version. That is NOT a scoring path — gnn_check.py uses it only to tell a
+    genuine cold-start user (no embeddings at all) apart from a decoder whose
+    generation of embeddings is missing (rollback gone wrong, or a weekly run
+    that never published). Those need different responses, and conflating them
+    hides the second behind the first.
+
+    Users with no matching snapshot are simply absent from the result; the caller
+    decides whether that is fatal (nominator/beneficiary) or tolerable (approver).
+
+    Embedding bytes are float32 written by numpy.ndarray.tobytes() in the weekly
+    job, and are read back with the same dtype. A dimension mismatch against the
+    decoder is caught by the caller.
+    """
+    if not user_ids:
+        return {}
+
+    unique_ids = sorted(set(int(u) for u in user_ids if u is not None))
+    if not unique_ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in unique_ids)
+    version_filter = "AND ModelVersion = ?" if model_version is not None else ""
+    outer_filter   = "AND e.ModelVersion = ?" if model_version is not None else ""
+    sql = f"""
+        SELECT e.UserId, e.Embedding, e.AsOfDate, e.ModelVersion
+        FROM   dbo.GNN_UserEmbeddings e
+        JOIN  (
+                 SELECT UserId, MAX(AsOfDate) AS AsOfDate
+                 FROM   dbo.GNN_UserEmbeddings
+                 WHERE  TenantId = ?
+                   {version_filter}
+                   AND  UserId IN ({placeholders})
+                 GROUP BY UserId
+              ) latest
+          ON  latest.UserId   = e.UserId
+         AND  latest.AsOfDate = e.AsOfDate
+        WHERE e.TenantId = ?
+          {outer_filter}
+    """
+    params = [tenant_id]
+    if model_version is not None:
+        params.append(model_version)
+    params += unique_ids
+    params.append(tenant_id)
+    if model_version is not None:
+        params.append(model_version)
+
+    out: dict = {}
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        for user_id, blob, as_of, version in cursor.fetchall():
+            import numpy as _np
+            vec = _np.frombuffer(bytes(blob), dtype=_np.float32)
+            out[int(user_id)] = (vec, as_of, version)
+
+    missing = set(unique_ids) - set(out)
+    if missing:
+        logger.debug(
+            "No GNN embedding (tenant=%d, version=%s) for user(s) %s",
+            tenant_id, model_version, sorted(missing),
+        )
+    return out
+
+
+def save_gnn_fraud_score(
+    nomination_id:       int,
+    fraud_score:         int,
+    fraud_probability:   float,
+    risk_level:          str,
+    warning_flags:       Optional[str],
+    model_version:       str,
+    embedding_as_of:     Optional[object],
+) -> None:
+    """
+    Upsert one row into dbo.GNN_FraudScores.
+
+    The unique key is (NominationId, ModelVersion), not NominationId alone — one
+    row per nomination per training run, preserving week-over-week score drift;
+    a single-column key would overwrite the history needed for calibration.
+
+    ScoredBy records which producer wrote the row. The weekly job backfills
+    historical scores as svc:fraud-analytics-job; this path is always the live
+    submission, so it writes the module-level _AUDIT_ACTOR.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            MERGE dbo.GNN_FraudScores AS target
+            USING (SELECT ? AS NominationId, ? AS ModelVersion) AS source
+                ON  target.NominationId = source.NominationId
+                AND target.ModelVersion = source.ModelVersion
+            WHEN MATCHED THEN
+                UPDATE SET FraudScore        = ?,
+                           FraudProbability  = ?,
+                           RiskLevel         = ?,
+                           FraudFlags        = ?,
+                           EmbeddingAsOfDate = ?,
+                           ScoredBy          = ?
+            WHEN NOT MATCHED THEN
+                INSERT (NominationId, FraudScore, FraudProbability, RiskLevel,
+                        FraudFlags, ModelVersion, EmbeddingAsOfDate, ScoredBy)
+                VALUES (?,            ?,          ?,                ?,
+                        ?,          ?,            ?,                 ?);
+        """, (
+            nomination_id, model_version,
+            # MATCHED
+            fraud_score, fraud_probability, risk_level, warning_flags,
+            embedding_as_of, _AUDIT_ACTOR,
+            # NOT MATCHED
+            nomination_id, fraud_score, fraud_probability, risk_level,
+            warning_flags, model_version, embedding_as_of, _AUDIT_ACTOR,
+        ))
+        conn.commit()

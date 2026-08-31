@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: transparent;
+    color: var(--text-primary, #1a1a1a);
+    font-size: 11.5px;
+    padding: 12px;
+  }
+
+  h2.sr-only {
+    position: absolute; width: 1px; height: 1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap;
+  }
+
+  .title {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    margin-bottom: 12px;
+    color: var(--text-primary, #111);
+    border-bottom: 2px solid color-mix(in srgb, var(--accent-primary, #5B6AF0) 40%, transparent);
+    padding-bottom: 6px;
+  }
+
+  /* ── Layout columns ── */
+  .layout { display: flex; gap: 14px; align-items: flex-start; }
+  .col-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .col-right { width: 190px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
+
+  /* ── Sections ── */
+  .section {
+    border-radius: 8px;
+    padding: 9px 11px;
+    border: 1.5px solid;
+  }
+  .section-label {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    opacity: 0.65;
+  }
+
+  .s-init   { background: color-mix(in srgb,#94a3b8 7%,transparent); border-color:color-mix(in srgb,#94a3b8 30%,transparent); }
+  .s-load   { background: color-mix(in srgb,#60a5fa 7%,transparent); border-color:color-mix(in srgb,#60a5fa 30%,transparent); }
+  .s-detect { background: color-mix(in srgb,var(--accent-primary,#5B6AF0) 7%,transparent); border-color:color-mix(in srgb,var(--accent-primary,#5B6AF0) 25%,transparent); }
+  .s-save   { background: color-mix(in srgb,#22c55e 7%,transparent); border-color:color-mix(in srgb,#22c55e 25%,transparent); }
+  .s-snap   { background: color-mix(in srgb,#f59e0b 7%,transparent); border-color:color-mix(in srgb,#f59e0b 25%,transparent); }
+  .s-db     { background: color-mix(in srgb,#f59e0b 5%,transparent); border-color:color-mix(in srgb,#f59e0b 30%,transparent); border-style:dashed; }
+
+  /* ── Step rows ── */
+  .step-row { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 5px; }
+  .step-row:last-child { margin-bottom: 0; }
+  .step-num {
+    font-size: 9px; font-weight: 800;
+    background: color-mix(in srgb,var(--accent-primary,#5B6AF0) 18%,transparent);
+    color: var(--accent-primary,#5B6AF0);
+    border-radius: 50%;
+    width: 16px; height: 16px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 1px;
+  }
+  .step-body { flex: 1; min-width: 0; }
+  .step-title { font-weight: 700; font-size: 11px; line-height: 1.3; }
+  .step-sub { font-size: 9.5px; color: var(--text-secondary,#555); line-height: 1.4; margin-top: 1px; }
+
+  /* ── Detector grid ── */
+  .det-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  .det {
+    border-radius: 6px;
+    padding: 5px 8px;
+    border: 1.5px solid;
+    font-size: 10px;
+  }
+  .det-title { font-weight: 700; margin-bottom: 1px; }
+  .det-sub { font-size: 9px; color: var(--text-secondary,#555); line-height: 1.35; }
+
+  .d-ring  { background:color-mix(in srgb,#ef4444 8%,white 92%); border-color:color-mix(in srgb,#ef4444 35%,transparent); }
+  .d-sn    { background:color-mix(in srgb,#f97316 8%,white 92%); border-color:color-mix(in srgb,#f97316 35%,transparent); }
+  .d-des   { background:color-mix(in srgb,#94a3b8 8%,white 92%); border-color:color-mix(in srgb,#94a3b8 35%,transparent); }
+  .d-aa    { background:color-mix(in srgb,#a855f7 8%,white 92%); border-color:color-mix(in srgb,#a855f7 35%,transparent); }
+  .d-cp    { background:color-mix(in srgb,#0ea5e9 8%,white 92%); border-color:color-mix(in srgb,#0ea5e9 35%,transparent); }
+  .d-tl    { background:color-mix(in srgb,#f59e0b 8%,white 92%); border-color:color-mix(in srgb,#f59e0b 35%,transparent); }
+  .d-hc    { background:color-mix(in srgb,#22c55e 8%,white 92%); border-color:color-mix(in srgb,#22c55e 35%,transparent); }
+
+  /* ── Decision diamond ── */
+  .branch {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin-top: 3px;
+  }
+  .branch-q {
+    font-weight: 700; font-size: 10px;
+    background: color-mix(in srgb,#f59e0b 12%,white 88%);
+    border: 1.5px solid color-mix(in srgb,#f59e0b 45%,transparent);
+    border-radius: 5px;
+    padding: 4px 8px;
+    display: inline-block;
+  }
+  .branch-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .branch-arm {
+    border-radius: 5px; padding: 4px 8px;
+    font-size: 9.5px; font-weight: 600;
+    border: 1.5px solid;
+    min-width: 80px;
+  }
+  .arm-yes { background:color-mix(in srgb,#ef4444 8%,white 92%); border-color:color-mix(in srgb,#ef4444 35%,transparent); }
+  .arm-no  { background:color-mix(in srgb,#22c55e 8%,white 92%); border-color:color-mix(in srgb,#22c55e 35%,transparent); }
+
+  /* ── DB pills ── */
+  .db-pill {
+    display: inline-block;
+    border-radius: 4px; padding: 3px 7px;
+    font-size: 9.5px; font-weight: 600;
+    border: 1.5px dashed;
+    margin: 2px 2px 2px 0;
+    white-space: nowrap;
+  }
+  .db-sql  { background:color-mix(in srgb,#f59e0b 7%,white 93%); border-color:color-mix(in srgb,#f59e0b 45%,transparent); color:#78350f; }
+  .db-blob { background:color-mix(in srgb,#60a5fa 7%,white 93%); border-color:color-mix(in srgb,#60a5fa 45%,transparent); color:#1e40af; }
+
+  /* ── Arrows ── */
+  .arr { color:var(--text-secondary,#888); font-size:14px; line-height:1; flex-shrink:0; }
+  .arr-down { text-align:center; color:var(--text-secondary,#888); font-size:13px; margin: 2px 0; }
+
+  .note {
+    font-size: 9px; color:var(--text-secondary,#666); font-style:italic;
+    margin-top: 3px; line-height: 1.4;
+  }
+
+  /* ── CP embed detail ── */
+  .embed-steps {
+    margin-top: 3px;
+    border-left: 2px solid color-mix(in srgb,#0ea5e9 40%,transparent);
+    padding-left: 7px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .embed-step {
+    font-size: 9px; color: var(--text-secondary,#444); line-height: 1.35;
+  }
+
+  .badge {
+    display: inline-block; font-size: 8.5px; font-weight: 700;
+    border-radius: 3px; padding: 1px 5px; margin-right: 3px;
+    letter-spacing: 0.03em;
+  }
+  .badge-boot { background:#fee2e2; color:#b91c1c; }
+  .badge-norm { background:#dcfce7; color:#166534; }
+</style>
+</head>
+<body>
+<h2 class="sr-only">Stage 1 deep-dive: modeling/graph_analytics.py runs initialization, loads data per tenant, runs 7 pattern detectors, deduplicates and saves findings, then populates UserGraphFlags and ApproverPairFlags snapshots.</h2>
+
+<div class="title">Stage 1 — modeling/graph_analytics.py</div>
+
+<div class="layout">
+
+  <!-- ═══ LEFT / MAIN COLUMN ═══ -->
+  <div class="col-main">
+
+    <!-- INIT -->
+    <div class="section s-init">
+      <div class="section-label">Startup (once per run)</div>
+      <div class="step-row">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <div class="step-title">Connect &amp; Sync Graph Tables</div>
+          <div class="step-sub">
+            DELETE + INSERT into <code>NomGraph_Person</code> and <code>NomGraph_Nominated</code> from live <code>Users</code> / <code>Nominations</code>.
+            Full reload every run (tables are small).
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <div class="step-title">Evict Stale Embeddings</div>
+          <div class="step-sub">
+            DELETE from <code>NomGraph_NominationEmbedding</code> where nomination is outside the detection window
+            (default 180 days) or no longer Approved/Paid. Keeps the cache table bounded.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TENANT LOOP -->
+    <div class="arr-down">↓ for each tenant</div>
+
+    <!-- LOAD -->
+    <div class="section s-load">
+      <div class="section-label">Data Load (per tenant)</div>
+      <div class="step-row">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <div class="step-title">Load nominations</div>
+          <div class="step-sub">Status IN ('Approved','Paid'), within rolling window. Only committed spend.</div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <div class="step-title">Load users + ever-active set</div>
+          <div class="step-sub">
+            All users (for desert detection, no date filter) + union of all-time nominator/beneficiary IDs.
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <div class="step-title">Load existing FindingHashes</div>
+          <div class="step-sub">SHA-256 fingerprints already in <code>GraphPatternFindings</code> — used to dedup before insert.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DETECT -->
+    <div class="arr-down">↓</div>
+    <div class="section s-detect">
+      <div class="section-label">7 Pattern Detectors (run in series → detected_findings list)</div>
+      <div class="det-grid">
+        <div class="det d-ring">
+          <div class="det-title">① Ring</div>
+          <div class="det-sub">networkx simple_cycles, size 3–8. frozenset dedup. Severity by $ amount.</div>
+        </div>
+        <div class="det d-sn">
+          <div class="det-title">② SuperNominator</div>
+          <div class="det-sub">Out-degree &gt; mean+2σ AND &gt;3× median AND ≥5 sent.</div>
+        </div>
+        <div class="det d-des">
+          <div class="det-title">③ Desert</div>
+          <div class="det-sub">Whole team (≥3 members) absent from both sides of all-time nominations.</div>
+        </div>
+        <div class="det d-aa">
+          <div class="det-title">④ ApproverAffinity</div>
+          <div class="det-sub">Per-pair approval rate ≥2× tenant baseline, min 5 nominations.</div>
+        </div>
+        <div class="det d-cp">
+          <div class="det-title">⑤ CopyPaste</div>
+          <div class="det-sub">
+            Embedding cosine ≥0.92, cluster ≥3.
+            <div class="embed-steps">
+              <div class="embed-step">→ Check embedding cache (DB)</div>
+              <div class="embed-step">→ Encode delta only (MiniLM-L6-v2)</div>
+              <div class="embed-step">→ Save new vectors to cache</div>
+              <div class="embed-step">→ Chunked union-find (no full N×N)</div>
+            </div>
+          </div>
+        </div>
+        <div class="det d-tl">
+          <div class="det-title">⑥ TransactionalLanguage</div>
+          <div class="det-sub">Regex: quid-pro-quo phrases in description, ≥2 hits.</div>
+        </div>
+        <div class="det d-hc" style="grid-column: span 2;">
+          <div class="det-title">⑦ HiddenCandidate</div>
+          <div class="det-sub">User name appears ≥5× in description text but never as BeneficiaryId. Active users only.</div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:5px;">
+        All 7 detectors append to a single <code>detected_findings</code> list (pre-dedup). Each finding carries
+        a deterministic SHA-256 fingerprint (TenantId + PatternType + sorted users + sorted nomination IDs).
+      </div>
+    </div>
+
+    <!-- SAVE -->
+    <div class="arr-down">↓</div>
+    <div class="section s-save">
+      <div class="section-label">Persist Findings</div>
+      <div class="step-row">
+        <div class="step-num">6</div>
+        <div class="step-body">
+          <div class="step-title">Dedup &amp; Insert → GraphPatternFindings</div>
+          <div class="step-sub">
+            Two-pass dedup: (a) skip hashes already in DB, (b) skip intra-run duplicates.
+            DB unique index on (TenantId, FindingHash) is the safety net.
+            Only net-new rows inserted.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SNAPSHOT -->
+    <div class="arr-down">↓</div>
+    <div class="section s-snap">
+      <div class="section-label">Graph Flag Snapshots (per tenant)</div>
+      <div class="branch">
+        <div class="branch-q">UserGraphFlags empty for this tenant?</div>
+        <div class="branch-row">
+          <div class="branch-arm arm-yes">
+            <span class="badge badge-boot">BOOTSTRAP</span><br>
+            Load ALL findings from<br><code>GraphPatternFindings</code><br>
+            <span style="font-size:8.5px;">(one-time, full history)</span>
+          </div>
+          <div class="branch-arm arm-no">
+            <span class="badge badge-norm">NORMAL</span><br>
+            Use <code>detected_findings</code><br>
+            (pre-dedup, window-bounded)<br>
+            <span style="font-size:8.5px;">cost ∝ window, not table size</span>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:7px;">
+        <div class="step-row">
+          <div class="step-num">7</div>
+          <div class="step-body">
+            <div class="step-title">MERGE → UserGraphFlags</div>
+            <div class="step-sub">
+              Aggregate per user from findings: IsInRing, RingMaxUserCount, RingMaxNominationCount,
+              IsSuperNominator, IsInCopyPasteCluster, CopyPasteClusterSize,
+              HasTransactionalLanguage, IsApproverAffinity, HighestSeverity.
+              MERGE on (TenantId, UserId, AsOfDate) — idempotent rerun.
+            </div>
+          </div>
+        </div>
+        <div class="step-row">
+          <div class="step-num">8</div>
+          <div class="step-body">
+            <div class="step-title">MERGE → ApproverPairFlags</div>
+            <div class="step-sub">
+              Count (ApproverId, NominatorId, BeneficiaryId) triples from approved/paid nominations.
+              MERGE on (TenantId, ApproverId, NominatorId, BeneficiaryId, AsOfDate).
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="note">AsOfDate = today UTC. Rows are appended, never overwritten — time-series snapshots for point-in-time training joins.</div>
+    </div>
+
+    <!-- NEXT TENANT -->
+    <div class="arr-down">↓ free tenant memory → next tenant</div>
+
+  </div>
+
+  <!-- ═══ RIGHT COLUMN: DB TABLES + INPUTS ═══ -->
+  <div class="col-right">
+
+    <div class="section s-db">
+      <div class="section-label">Inputs</div>
+      <div style="margin-bottom:5px;">
+        <span class="db-pill db-sql">dbo.Users</span>
+        <span class="db-pill db-sql">dbo.Nominations</span>
+        <span class="db-pill db-sql">dbo.Tenants</span>
+      </div>
+      <div class="note">Filtered to Approved/Paid within window_days (default 180).</div>
+    </div>
+
+    <div class="section s-db">
+      <div class="section-label">Graph Tables (refreshed each run)</div>
+      <span class="db-pill db-sql">dbo.NomGraph_Person</span>
+      <span class="db-pill db-sql">dbo.NomGraph_Nominated</span>
+      <div class="note" style="margin-top:4px;">Full DELETE+INSERT. Small tables, SQL Server graph-edge format.</div>
+    </div>
+
+    <div class="section s-db">
+      <div class="section-label">Embedding Cache</div>
+      <span class="db-pill db-sql">dbo.NomGraph_NominationEmbedding</span>
+      <div class="note" style="margin-top:4px;">
+        VARBINARY float32 vectors. Stale rows evicted at startup.
+        ~96% cache hit rate at steady state → only 1 week of new descriptions encoded per run.
+      </div>
+    </div>
+
+    <div class="section s-db">
+      <div class="section-label">Findings Output</div>
+      <span class="db-pill db-sql">dbo.GraphPatternFindings</span>
+      <div class="note" style="margin-top:4px;">
+        Append-only audit log. FindingHash unique index prevents duplicates.
+        PatternType / Severity / AffectedUsers (JSON) / NominationIds (JSON) / TotalAmount.
+      </div>
+    </div>
+
+    <div class="section s-db" style="border-color:color-mix(in srgb,var(--accent-primary,#5B6AF0) 40%,transparent);">
+      <div class="section-label" style="color:var(--accent-primary,#5B6AF0);opacity:1;">Snapshot Outputs → Stage 2</div>
+      <span class="db-pill db-sql">dbo.UserGraphFlags</span>
+      <span class="db-pill db-sql">dbo.ApproverPairFlags</span>
+      <div class="note" style="margin-top:4px;">
+        PK includes AsOfDate — append-only time series.
+        Stage 2 reads via OUTER APPLY point-in-time join.
+        Inference reads latest AsOfDate row per user.
+      </div>
+    </div>
+
+    <div class="section" style="background:color-mix(in srgb,#94a3b8 5%,transparent);border:1.5px solid color-mix(in srgb,#94a3b8 25%,transparent);">
+      <div class="section-label">Env Config</div>
+      <div style="font-size:9px;line-height:1.6;font-family:monospace;color:var(--text-secondary,#444);">
+        DETECTION_WINDOW_DAYS=180<br>
+        RING_MAX_CLUSTER_SIZE=0<br>
+        GRAPH_FINDINGS_TABLE=<br>&nbsp;dbo.GraphPatternFindings
+      </div>
+      <div class="note" style="margin-top:3px;">Set DETECTION_WINDOW_DAYS=3650 for first deploy to backfill all history.</div>
+    </div>
+
+  </div>
+
+</div>
+</body>
+</html>

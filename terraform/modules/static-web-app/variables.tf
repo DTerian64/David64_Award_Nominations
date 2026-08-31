@@ -47,6 +47,12 @@ variable "vite_appinsights_connection_string" {
   sensitive   = true
 }
 
+variable "demo_allowed_emails" {
+  description = "Comma-separated list of personal email addresses that bypass the work-email domain block on the demo registration form (owner/developer test accounts). Injected as VITE_DEMO_ALLOWED_EMAILS."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

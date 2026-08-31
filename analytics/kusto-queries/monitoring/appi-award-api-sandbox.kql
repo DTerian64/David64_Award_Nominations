@@ -1,0 +1,28 @@
+appi-award-api-sandbox | Logs
+
+traces
+| where timestamp > ago(2m)
+| where message has_any ("App_Log:")
+| extend 
+    PacificTime = datetime_utc_to_local(timestamp, 'US/Pacific') 
+| project PacificTime, message
+| order by PacificTime asc
+
+traces
+| where timestamp > ago(125m)
+| where cloud_RoleName == "award-api-primary-sandbox"
+| where message == "Fraud assessment result"
+| project timestamp, message, customDimensions
+
+traces
+| where timestamp > ago(30m)
+| where cloud_RoleName == "award-api-primary-sandbox"
+| where message == "Fraud assessment result"
+| extend 
+    risk_level    = tostring(customDimensions["risk_level"]),
+    fraud_score   = toint(customDimensions["fraud_score"]),
+    warning_flags = tostring(customDimensions["warning_flags"])
+| project timestamp, message, risk_level, fraud_score, warning_flags
+| order by timestamp asc
+
+

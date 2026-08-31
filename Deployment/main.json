@@ -90,7 +90,7 @@
     },
     "dnsZoneName": {
       "type": "string",
-      "defaultValue": "terian-services.com"
+      "defaultValue": "terianix.ai"
     },
     "staticSiteName": {
       "type": "string",
@@ -1201,7 +1201,7 @@
             {
               "type": "Microsoft.Web/staticSites/customDomains",
               "apiVersion": "2024-11-01",
-              "name": "[format('{0}/{1}', parameters('staticSiteName'), 'awards.terian-services.com')]",
+              "name": "[format('{0}/{1}', parameters('staticSiteName'), 'awards.terianix.ai')]",
               "properties": {},
               "dependsOn": [
                 "[resourceId('Microsoft.Web/staticSites', parameters('staticSiteName'))]"
@@ -1226,7 +1226,7 @@
             },
             "customDomainName": {
               "type": "string",
-              "value": "awards.terian-services.com"
+              "value": "awards.terianix.ai"
             },
             "staticSiteId": {
               "type": "string",

@@ -26,12 +26,24 @@ resource "azurerm_mssql_server" "sql" {
   resource_group_name          = var.resource_group_name
   location                     = var.location
   version                      = "12.0"
-  administrator_login          = var.admin_login
-  administrator_login_password = var.admin_password
+  # When Entra-only auth is enabled these MUST be null (azurerm requirement).
+  administrator_login          = var.entra_admin_only ? null : var.admin_login
+  administrator_login_password = var.entra_admin_only ? null : var.admin_password
 
   # Disable public access once private endpoint is confirmed working
   # Set to false after initial deployment and testing
   public_network_access_enabled = var.public_network_access_enabled
+
+  # -- Entra ID admin (ADR-0001). Prefer a group; keep entra_admin_only false
+  # until contained users + grants are validated, then flip to disable SQL auth.
+  dynamic "azuread_administrator" {
+    for_each = var.entra_admin_object_id != "" ? [1] : []
+    content {
+      login_username              = var.entra_admin_login
+      object_id                   = var.entra_admin_object_id
+      azuread_authentication_only = var.entra_admin_only
+    }
+  }
 
   tags = var.tags
 }

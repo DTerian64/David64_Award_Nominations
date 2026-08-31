@@ -60,7 +60,17 @@ export const apiCall = async <T = any>(
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || `API call failed: ${response.statusText}`);
+    // FastAPI returns detail as a string for HTTPException (400/404/etc.)
+    // but as an array of validation objects for RequestValidationError (422).
+    // Always extract a plain string so callers get a consistent message.
+    const detail = errorData.detail;
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail) && detail.length > 0
+          ? (detail[0]?.msg ?? `API call failed: ${response.statusText}`)
+          : `API call failed: ${response.statusText}`;
+    throw new Error(message);
   }
 
   // Handle 204 No Content

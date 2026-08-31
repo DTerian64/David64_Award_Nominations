@@ -41,7 +41,8 @@ from urllib.parse import urlparse
 from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import OAuth2
 from typing import Optional, Dict, Any, Callable
-import sqlhelper2 as sqlhelper
+import utils.sqlhelper2 as sqlhelper
+from utils.audit_context import set_actor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -237,10 +238,17 @@ async def _authenticate(token: str, origin: Optional[str] = None) -> Dict[str, A
                 detail="User Principal Name not found in token.",
             )
 
-        logger.info("UPN: %s", upn)
+        # For B2B guests the `upn` claim (when present) is the resource-tenant
+        # #EXT# UPN, while `preferred_username` / `email` typically carry the
+        # original home identity's email — which is what we wrote to
+        # dbo.Users.userEmail at registration time.  Pass both so the lookup
+        # can match either column and survive either token shape.
+        email_claim = payload.get("email") or payload.get("preferred_username")
+
+        logger.info("UPN: %s  email_claim: %s", upn, email_claim)
 
         # ── 4. Look up user scoped to tenant ───────────────────────────────
-        row = sqlhelper.get_user_by_upn_and_tenant(upn, tenant_id)
+        row = sqlhelper.get_user_by_upn_and_tenant(upn, tenant_id, email=email_claim)
         if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -251,6 +259,8 @@ async def _authenticate(token: str, origin: Optional[str] = None) -> Dict[str, A
             "Authenticated: %s %s (UserId=%d, TenantId=%d)",
             row[2], row[3], row[0], tenant_id,
         )
+
+        set_actor(row[1])  # audit: default actor = authenticated UPN
 
         return {
             "UserId":             row[0],
@@ -339,10 +349,12 @@ async def get_current_user_with_impersonation(
                 detail="Only administrators can impersonate users.",
             )
 
-        # Look up the target user — scoped to the SAME tenant as the admin
+        # Look up the target user — scoped to the SAME tenant as the admin.
+        # The admin may type either the #EXT# UPN or the original email; the
+        # lookup will OR-match either column.
         tenant_id = actual_user["TenantId"]
         impersonated_row = sqlhelper.get_user_by_upn_and_tenant(
-            x_impersonate_user, tenant_id
+            x_impersonate_user, tenant_id, email=x_impersonate_user
         )
         if not impersonated_row:
             raise HTTPException(
@@ -377,6 +389,8 @@ async def get_current_user_with_impersonation(
             x_impersonate_user,
             tenant_id,
         )
+
+        set_actor(impersonated_user["userPrincipalName"])  # audit: acting-as UPN
 
         return {
             "actual_user":     actual_user,
@@ -421,6 +435,27 @@ def is_admin(user: Dict[str, Any]) -> bool:
     """Return True if the user holds an admin app role."""
     roles = user.get("roles", [])
     return "AWard_Nomination_Admin" in roles or "Administrator" in roles
+
+
+def require_analytics_access(
+    user_context: Dict[str, Any] = Depends(get_current_user_with_impersonation),
+) -> Dict[str, Any]:
+    """Allow tenant administrators and effective Data Scientist users.
+
+    DataScientist is an application role stored in dbo.UserRoles, unlike the
+    Entra-managed administrator role.  Checking the effective user preserves
+    the app's existing tenant-scoped impersonation behaviour while the admin
+    check continues to use the authenticated user's token roles.
+    """
+    actual_user = user_context["actual_user"]
+    effective_user = user_context["effective_user"]
+    app_roles = sqlhelper.get_user_roles(effective_user["UserId"])
+    if not is_admin(actual_user) and "DataScientist" not in app_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Data Scientist or administrator access required",
+        )
+    return user_context
 
 
 async def log_action_if_impersonating(

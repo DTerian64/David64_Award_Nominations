@@ -173,3 +173,24 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ── Workload profile ──────────────────────────────────────────────────────────
+variable "workload_profile_name" {
+  description = <<-EOT
+    Workload profile this resource runs on.
+
+    The sandbox environment reports a single profile:
+      [{ "name": "Consumption", "workloadProfileType": "Consumption" }]
+
+    Azure assigns that profile itself. If Terraform does not declare it, every
+    plan proposes `workload_profile_name = "Consumption" -> null`, i.e. stripping
+    the assignment from a live app. Declaring it makes config match reality and
+    the diff disappear.
+
+    Deliberately NOT paired with a workload_profile block on
+    azurerm_container_app_environment: azurerm#31840 makes that plan never
+    converge (min/max counts round-trip as 0).
+  EOT
+  type    = string
+  default = "Consumption"
+}

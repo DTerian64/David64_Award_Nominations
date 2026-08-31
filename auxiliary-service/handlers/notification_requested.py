@@ -11,7 +11,7 @@ Payload shape
 ─────────────
 {
     "event_type": "notification.requested",
-    "from":       "system@terian-services.com",   # optional — defaults to FROM_EMAIL
+    "from":       "support@terian-services.com",   # optional — defaults to FROM_EMAIL
     "to":         "compliance@company.com",        # required
     "subject":    "Fraud Investigation Summary",   # required
     "body":       "Plain-text body..."             # required
@@ -25,7 +25,7 @@ No DB lookup needed — all content is in the payload.
 
 import logging
 
-import email_client
+from utils import email_client
 
 logger = logging.getLogger("auxiliary.handlers.notification_requested")
 

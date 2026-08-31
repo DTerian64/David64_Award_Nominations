@@ -1,23 +1,78 @@
 """
 run_job.py — Fraud Analytics Job entrypoint
 ============================================
-Orchestrates the two-stage weekly fraud analytics pipeline:
+Orchestrates the weekly analytics pipeline in dependency order. The registry
+below (STAGES) is the single source of truth; this list documents it.
 
-  Stage 1: train_fraud_model.py
-      Per-tenant Random Forest retrain on the Nominations + FraudScores tables.
-      Upserts updated fraud scores into dbo.FraudScores.
-      Uploads the retrained .pkl model to Azure Blob Storage.
-
-  Stage 2: graph_pattern_detector.py
+  Stage 1: modeling/graph_analytics.py
       Syncs the Azure SQL Graph tables (NomGraph_Person, NomGraph_Nominated).
       Runs MATCH queries for ring detection and approver affinity.
       Runs networkx analysis for super-nominators and nomination deserts.
       Runs sentence-transformers for copy-paste and transactional language.
       Upserts findings into dbo.GraphPatternFindings.
+      Materialises per-user graph flag snapshots into dbo.UserGraphFlags
+      and dbo.ApproverPairFlags — required by Stage 2 for RF feature engineering.
+
+  Stage 2: modeling/train_rf_model.py
+      Per-tenant Random Forest retrain on Nominations + FraudScores tables.
+      Point-in-time joins dbo.UserGraphFlags and dbo.ApproverPairFlags to
+      include graph pattern features without data leakage.
+      Upserts updated fraud scores into dbo.P2P_FraudScores / dbo.Appr_FraudScores.
+      Uploads the retrained .pkl model to Azure Blob Storage.
+
+  Stage 3: modeling/train_gnn_model.py
+      Per-tenant heterogeneous GNN — HeteroConv + SAGEConv over user and
+      nomination nodes, trained on a three-window temporal split so message
+      passing, training targets and evaluation targets never overlap.
+
+      Split encoder/decoder by design: the encoder runs HERE and persists one
+      embedding per user to dbo.GNN_UserEmbeddings; only the ~15k-parameter
+      decoder head ships to integrity-check. That is what keeps PyTorch
+      Geometric out of the inference image.
+
+      Writes independent component scores to dbo.GNN_FraudScores. Whenever a
+      trained artifact and matching embeddings are available, integrity-check
+      includes the GNN opinion in nomination routing.
+
+      Reads graph topology straight from dbo.Nominations / dbo.Users, NOT from
+      dbo.UserGraphFlags. That independence is the point: a GNN fed the Random
+      Forest's engineered graph features would just be relearning the detector
+      it is meant to be a second opinion on.
+
+      Skips a tenant rather than failing it when below GNN_MIN_TRAINING_SAMPLES
+      / GNN_MIN_USERS / GNN_MIN_POSITIVES. Those gates are empirical: in the
+      The synthetic ablation found that a 50-user tenant scored WORSE with message passing than
+      without it, so training a small tenant is not a neutral act.
+
+      Requires the tables from Alembic revision 0040. Set GNN_ENABLED=false to
+      skip the stage without rebuilding the image.
+
+  Stage 4: misc_jobs/sync_holidays.py
+      Refreshes dbo.Holidays from the Nager.Date API, falling back to the
+      offline `holidays` library per country/year, so Stage 5's is_holiday
+      calendar feature stays correct per tenant locale.
+
+  Stage 5: modeling/forecast_models.py
+      Per-tenant bake-off (Seasonal-Naive vs ETS vs LightGBM, ranked by
+      rolling-origin MASE) writing to dbo.ForecastRuns / dbo.Forecasts.
+
+  ORDERING
+    Stage 1 before Stage 2 — the UserGraphFlags / ApproverPairFlags snapshots
+      must be current before the RF engineers features from them.
+    Stage 2 before Stage 3 — the GNN's labels come from dbo.P2P_FraudScores,
+      which Stage 2 has just rewritten. (Worth naming plainly: outside the
+      human-confirmed rows, those labels are the RF's own prior output, so the
+      GNN is partly learning from the model it is meant to check.)
+    Stage 4 before Stage 5 — the forecast reads the holiday calendar.
+
+  ISOLATION
+    run_stage() catches per-stage exceptions, so one failing stage does not stop
+    the others; the job still exits 1 at the end. A GNN failure can therefore
+    never block the Random Forest retrain.
 
 Exit codes:
-  0  — both stages succeeded
-  1  — one or both stages failed (Container Apps Job reports execution failure;
+  0  — all stages succeeded
+  1  — one or more stages failed (Container Apps Job reports execution failure;
        Azure Monitor alert rule fires on non-zero exit)
 
 Logging:
@@ -25,28 +80,41 @@ Logging:
   and forwarded to the Log Analytics workspace defined in the CAE.
 """
 
+import argparse
 import logging
 import os
 import sys
 import time
+import urllib.request
+import urllib.error
+import json
 from pathlib import Path
 
-import pyodbc
+from dotenv import load_dotenv
+
+# ── Environment ───────────────────────────────────────────────────────────────
+# Load .env FIRST — before wake_database() or setup_logging() read os.environ,
+# and before any stage module is imported. Same path the stages use, so the
+# orchestrated and standalone paths are identical. In Azure Container Apps there
+# is no .env file: env vars are injected by the platform and load_dotenv is a
+# harmless no-op (and won't override platform values).
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(env_path)
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=os.getenv("LOGGING_LEVEL", "INFO"),
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-    stream=sys.stdout,
-)
+# Structured JSON logging with the 'App_Log: ' prefix on our own records, so they
+# can be isolated in Log Analytics with `| where message startswith "App_Log:"`.
+# Mirrors backend/logging_config.py. run_job.py is the container entrypoint, so
+# its directory is on sys.path[0] and logging_config imports cleanly.
+from logging_config import setup_logging  # noqa: E402 - .env configures logging
+setup_logging()
 logger = logging.getLogger("fraud_analytics_job")
 
 # ── Path setup ───────────────────────────────────────────────────────────────
 # WORKDIR in the container is /app, which is also the build context
-# (analytics/fraud-analytics-job/).  All pipeline scripts live in the same
-# directory, so they are importable as flat top-level modules — no dotted
-# package paths, no cross-directory COPY gymnastics in the Dockerfile.
+# (fraud-analytics-job/). Modeling stages live in the modeling package; shared
+# infrastructure lives in utils. The full job directory is copied into the
+# image, so dotted package imports work without cross-directory COPY steps.
 JOB_DIR = Path(__file__).parent.resolve()   # /app  (same dir as this file)
 sys.path.insert(0, str(JOB_DIR))
 
@@ -74,22 +142,11 @@ def wake_database(
     """
     server   = os.getenv("SQL_SERVER", "(not set)")
     database = os.getenv("SQL_DATABASE", "(not set)")
-    conn_str = (
-        "DRIVER={ODBC Driver 18 for SQL Server};"
-        f"SERVER={server};"
-        f"DATABASE={database};"
-        f"UID={os.getenv('SQL_USER', '')};"
-        f"PWD={os.getenv('SQL_PASSWORD', '')};"
-        "Encrypt=yes;"
-        "TrustServerCertificate=no;"
-        f"Connection Timeout={attempt_timeout_s};"
-    )
+    from utils.db_conn import connect  # Managed Identity token auth
 
-    logger.info("──────────────────────────────────────────────────")
     logger.info("DB WAKE-UP  server=%s  database=%s", server, database)
     logger.info("  Serverless auto-pause means the DB may be cold.")
     logger.info("  Will poll up to %d times (timeout %ds each).", max_attempts, attempt_timeout_s)
-    logger.info("──────────────────────────────────────────────────")
 
     t_start = time.monotonic()
     last_exc: Exception | None = None
@@ -98,7 +155,7 @@ def wake_database(
         t_attempt = time.monotonic()
         logger.info("DB WAKE-UP  attempt %d/%d — connecting...", attempt, max_attempts)
         try:
-            conn = pyodbc.connect(conn_str)
+            conn = connect(attempt_timeout_s)
             conn.execute("SELECT 1").fetchone()
             conn.close()
             elapsed = time.monotonic() - t_start
@@ -106,7 +163,6 @@ def wake_database(
                 "DB WAKE-UP  ✓ database is awake  (total wait: %.1f s, attempts: %d)",
                 elapsed, attempt,
             )
-            logger.info("──────────────────────────────────────────────────")
             return
         except Exception as exc:
             last_exc = exc
@@ -131,19 +187,75 @@ def wake_database(
     )
 
 
-def run_stage(name: str, module_path: str) -> bool:
+def notify_api_refresh() -> None:
+    """
+    POST to /api/internal/refresh-fraud-model so the live backend immediately
+    replaces its in-memory model cache with the freshly uploaded pkls.
+
+    This is best-effort: a failure here is logged but does NOT fail the job —
+    the backend's TTL eviction will pick up the new models within one eviction
+    cycle regardless.
+
+    Requires:
+        API_BASE_URL       — e.g. "https://award-api-sandbox.internal.cae-domain"
+        FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET — shared secret matching backend FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET
+    """
+    api_base = os.getenv("API_BASE_URL", "").rstrip("/")
+    secret   = os.getenv("FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET", "")
+
+    if not api_base:
+        logger.warning(
+            "notify_api_refresh: API_BASE_URL not set — skipping cache refresh call. "
+            "Backend will refresh via TTL eviction instead."
+        )
+        return
+
+    url = f"{api_base}/api/internal/refresh-fraud-model"
+    logger.info("notify_api_refresh: POST %s", url)
+
+    try:
+        req = urllib.request.Request(
+            url,
+            data=b"",
+            method="POST",
+            headers={
+                "X-Internal-Key": secret,
+                "Content-Type":   "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode())
+            logger.info(
+                "notify_api_refresh: ✅ status=%s updated=%s",
+                body.get("status"), body.get("updated"),
+            )
+    except urllib.error.HTTPError as exc:
+        logger.warning(
+            "notify_api_refresh: ⚠️  HTTP %d — %s. "
+            "Backend will refresh via TTL eviction.",
+            exc.code, exc.reason,
+        )
+    except Exception as exc:
+        logger.warning(
+            "notify_api_refresh: ⚠️  Could not reach backend (%s). "
+            "Backend will refresh via TTL eviction.",
+            exc,
+        )
+
+
+def run_stage(name: str, module_path: str, tenants_to_process: list | None = None) -> bool:
     """
     Import and execute the main() function of a pipeline stage.
     Returns True on success, False on any exception.
+    tenants_to_process is forwarded to mod.main() — stages that are not
+    tenant-scoped (e.g. sync_holidays) accept but ignore it.
     """
-    logger.info("=" * 60)
     logger.info("STAGE: %s", name)
-    logger.info("=" * 60)
     t0 = time.monotonic()
     try:
         import importlib
         mod = importlib.import_module(module_path)
-        mod.main()
+        mod.main(tenants_to_process=tenants_to_process)
         elapsed = time.monotonic() - t0
         logger.info("✓  %s completed in %.1f s", name, elapsed)
         return True
@@ -153,17 +265,54 @@ def run_stage(name: str, module_path: str) -> bool:
         return False
 
 
+# ── Stage registry ───────────────────────────────────────────────────────────
+# Single source of truth. `key` is what --only accepts; `module` is its import path.
+# `post` is an optional hook run only if the stage succeeded.
+STAGES = [
+    {"key": "graph_analytics", "label": "Graph Analytics",   "module": "modeling.graph_analytics", "post": None},
+    {"key": "train_rf_model",  "label": "RF model training", "module": "modeling.train_rf_model",  "post": notify_api_refresh},
+    # GNN training. Placed after train_rf_model for two reasons: it
+    # consumes the label view the RF has just refreshed, and a GNN failure can then
+    # never block the RF retrain — run_stage()'s per-stage try/except gives that
+    # isolation for free. No post-hook: the backend does not consume the GNN, so
+    # /api/internal/refresh-fraud-model is irrelevant to it; integrity-check streams
+    # the decoder itself on first use per tenant.
+    {"key": "train_gnn_model",        "label": "GNN model training",       "module": "modeling.train_gnn_model", "post": None},
+    {"key": "sync_holidays",          "label": "Holiday sync",             "module": "misc_jobs.sync_holidays", "post": None},
+    {"key": "forecast_models",        "label": "Forecast models",          "module": "modeling.forecast_models", "post": None},
+]
+_STAGE_KEYS = [s["key"] for s in STAGES]
+
+
+def _parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="Weekly analytics job runner. Runs all stages by default; "
+                    "use --only to run a single stage with the same harness "
+                    "(DB wake-up, logging, exit codes).")
+    ap.add_argument("--only", "--stage", dest="only", choices=_STAGE_KEYS, default=None,
+                    metavar="STAGE",
+                    help="run only this stage: " + ", ".join(_STAGE_KEYS))
+    ap.add_argument("--tenant", dest="tenant", type=int, default=None,
+                    metavar="TENANT_ID",
+                    help="restrict all stages to a single tenant ID (local analysis only)")
+    return ap.parse_args()
+
+
 def main() -> None:
-    logger.info("╔══════════════════════════════════════════════════╗")
-    logger.info("║        FRAUD ANALYTICS JOB — START               ║")
-    logger.info("╚══════════════════════════════════════════════════╝")
+    args = _parse_args()
+    selected = [s for s in STAGES if args.only is None or s["key"] == args.only]
+    tenants_to_process = [args.tenant] if args.tenant is not None else None
+
+    logger.info("WEEKLY ANALYTICS JOB - START")
     logger.info("Environment : %s", os.getenv("ENVIRONMENT", "unknown"))
     logger.info("SQL Server  : %s", os.getenv("SQL_SERVER", "(not set)"))
     logger.info("Storage acct: %s", os.getenv("AZURE_STORAGE_ACCOUNT", "(not set)"))
+    logger.info("Stages      : %s", args.only or "ALL (%s)" % ", ".join(_STAGE_KEYS))
+    logger.info("Tenant      : %s", args.tenant or "ALL")
 
     # ── DB wake-up — must succeed before any stage runs ──────────────────────
-    # Serverless SQL auto-pauses after 60 min; this job fires at 2 AM UTC
-    # when the DB has been idle for hours. We wait here until it responds.
+    # Serverless SQL auto-pauses after 60 min; resuming takes 60–90 s. Every
+    # stage needs the DB, so we wake it up regardless of which stage(s) we run.
     try:
         wake_database()
     except RuntimeError as exc:
@@ -171,25 +320,19 @@ def main() -> None:
         sys.exit(1)
 
     results: dict[str, bool] = {}
-
-    # ── Stage 1: Random Forest retrain ───────────────────────────────────────
-    results["RF model training"] = run_stage(
-        name        = "RF model training  (train_fraud_model)",
-        module_path = "train_fraud_model",
-    )
-
-    # ── Stage 2: Graph pattern detection ─────────────────────────────────────
-    # Runs regardless of Stage 1 outcome — graph findings are independent.
-    results["Graph pattern detection"] = run_stage(
-        name        = "Graph pattern detection  (graph_pattern_detector)",
-        module_path = "graph_pattern_detector",
-    )
+    for stage in selected:
+        ok = run_stage(
+            name                = f"{stage['label']}  ({stage['module']})",
+            module_path         = stage["module"],
+            tenants_to_process  = tenants_to_process,
+        )
+        results[stage["label"]] = ok
+        # Stage-specific post-hook, only on success.
+        if ok and stage["post"] is not None:
+            stage["post"]()
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    logger.info("")
-    logger.info("╔══════════════════════════════════════════════════╗")
-    logger.info("║        FRAUD ANALYTICS JOB — SUMMARY             ║")
-    logger.info("╚══════════════════════════════════════════════════╝")
+    logger.info("FRAUD ANALYTICS JOB - SUMMARY")
     all_passed = True
     for stage, passed in results.items():
         status = "✓  PASS" if passed else "✗  FAIL"

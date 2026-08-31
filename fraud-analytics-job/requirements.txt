@@ -1,15 +1,24 @@
 # fraud-analytics-job/requirements.txt
 # ─────────────────────────────────────────────────────────────────────────────
 # Combined dependencies for:
-#   analytics/Fraud_Detection/train_fraud_model.py  (Random Forest pipeline)
-#   scripts/graph_pattern_detector.py               (Graph + NLP pipeline)
+#   modeling/train_rf_model.py                      (Random Forest pipeline)
+#   modeling/graph_analytics.py                     (Graph + NLP pipeline)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Data / ML ─────────────────────────────────────────────────────────────────
 pandas>=2.1.0
 numpy>=1.24.0
-scikit-learn>=1.3.0
+scikit-learn==1.8.0
 matplotlib>=3.8.0
+
+# ── Forecasting (modeling/forecast_models.py stage) ──────────────────────────
+# statsmodels → ETS / Holt-Winters; lightgbm → gradient-boosted lag-feature model
+statsmodels>=0.14.0
+lightgbm>=4.0.0
+
+# ── Holiday sync (misc_jobs/sync_holidays.py stage) ──────────────────────────
+# Offline fallback when the Nager.Date API is unreachable.
+holidays>=0.50
 
 # ── Graph analytics ───────────────────────────────────────────────────────────
 networkx>=3.2.0
@@ -22,6 +31,23 @@ networkx>=3.2.0
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2.0
 sentence-transformers>=2.6.0
+
+# ── GNN — third fraud model (modeling/train_gnn_model.py stage) ──────────────
+# Depends on the CPU-only torch pinned above; must stay below it in this file
+# so pip resolves torch from the CPU index first.
+#
+# Deliberately WITHOUT the compiled torch-scatter / torch-sparse extensions.
+# PyG >= 2.3 ships pure-PyTorch fallbacks for the ops this model uses
+# (HeteroConv + SAGEConv, mean aggregation), and the compiled wheels are the
+# single largest source of version-pinning breakage on python:3.12-slim.
+# Verified 2026-08-14: torch-geometric 2.8 imports and trains with neither
+# extension present. Only add them if profiling shows the fallback is too slow
+# — at ~13k nominations per tenant it is not.
+#
+# Adds ~40 MB to the image on top of the torch already pulled in by
+# sentence-transformers. NOT required by integrity-check: only the decoder head
+# ships to inference, and it is plain torch.nn.
+torch-geometric>=2.5.0,<3.0.0
 
 # ── Azure ─────────────────────────────────────────────────────────────────────
 azure-storage-blob>=12.19.0

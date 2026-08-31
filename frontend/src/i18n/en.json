@@ -6,8 +6,11 @@
   "nav": {
     "nominate": "Nominate Employee",
     "history": "My Nominations",
-    "approvals": "Pending Approvals",
-    "analytics": "Analytics"
+    "approvals": "My Approvals",
+    "analytics": "Analytics",
+    "modelAnalysis": "Model Analysis",
+    "hrbp": "HRBP Review",
+    "payroll": "Payroll"
   },
   "nominate": {
     "heading": "Submit Award Nomination",
@@ -25,24 +28,47 @@
   "history": {
     "heading": "My Nomination History",
     "empty": "No nominations yet",
-    "nominatedOn": "Nominated on {{date}}"
+    "nominatedOn": "Nominated on {{date}}",
+    "filterDecided": "Approved · Rejected · Paid"
   },
   "approvals": {
     "heading": "Pending Approvals",
     "empty": "No pending approvals",
     "nominatedBy": "Nominated by {{name}} on {{date}}",
     "approve": "Approve",
-    "reject": "Reject"
+    "reject": "Reject",
+    "viewPending": "Pending Approvals",
+    "viewDecided": "Approved / Rejected",
+    "viewPaid": "Paid",
+    "emptyDecided": "No approved or rejected nominations yet",
+    "emptyPaid": "No paid nominations yet",
+    "decidedOn": "Decided on {{date}}",
+    "certificate": "Certificate",
+    "generatingCertificate": "Generating…"
   },
   "analytics": {
-    "heading": "Analytics & Reporting"
+    "heading": "Analytics & Reporting",
+    "tabs": {
+      "ask": "Ask Analytics",
+      "overview": "Overview",
+      "spending": "Spending Trends",
+      "forecast": "Forecasting",
+      "fraud": "Fraud Alerts",
+      "diversity": "Diversity Metrics",
+      "integrity": "Graph Analytics",
+      "gnn": "GNN Analytics"
+    }
+  },
+  "modelAnalysis": {
+    "heading": "Model Analysis"
   },
   "status": {
+    "Submitted": "Submitted",
     "Pending": "Pending",
+    "PendingHRBPReview": "Pending HR Review",
     "Approved": "Approved",
     "Paid": "Paid",
-    "Rejected": "Rejected",
-    "Payed": "Paid"
+    "Rejected": "Rejected"
   },
   "messages": {
     "fillAllFields": "Please fill in all fields",
@@ -53,8 +79,37 @@
     "approvalError": "Failed to process approval. Please try again.",
     "submitError": "Failed to submit nomination. Please try again."
   },
+  "payroll": {
+    "heading": "Payroll",
+    "lookupHeading": "Award Payout History",
+    "selectEmployee": "Select Employee",
+    "month": "Month",
+    "year": "Year",
+    "search": "Look Up",
+    "searching": "Looking up…",
+    "noOffCycle": "No award payouts for this period",
+    "colPeriod": "Pay Period",
+    "colCheckDate": "Check Date",
+    "colCompType": "Comp. Type",
+    "colGross": "Gross Pay",
+    "colNet": "Net Pay",
+    "colDeductions": "Deductions",
+    "colPayrollRef": "Payroll Ref",
+    "noProvider": "No payroll provider is configured for this tenant.",
+    "selectPrompt": "Select an employee and month, then click Look Up",
+    "employeeCard": "Employee",
+    "payrollCard": "Payroll",
+    "profileName": "Full Name",
+    "profileEmail": "Work Email",
+    "profileUUID": "Employee UUID",
+    "profilePayrate": "Pay Rate",
+    "profileAddress": "Home Address"
+  },
   "auth": {
     "signIn": "Sign in with Microsoft",
     "signOut": "Sign Out"
+  },
+  "impersonation": {
+    "title": "Impersonate User"
   }
 }

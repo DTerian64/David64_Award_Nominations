@@ -5,6 +5,19 @@ output "app_url" {
   value       = "https://${module.front_door.afd_endpoint_hostname}"
 }
 
+# -- ADR-0001 SQL access governance -------------------------------------------
+output "sql_access_readwrite_group" {
+  description = "Runtime SQL read/write group."
+  value       = module.sql_access.readwrite_group_name
+}
+
+output "sql_access_migrations_group" {
+  description = "Schema-migrations group."
+  value       = module.sql_access.migrations_group_name
+}
+
+
+
 output "frontend_url" {
   description = "Static Web App public URL"
   value       = "https://${module.static_web_app.default_hostname}"
@@ -71,6 +84,11 @@ output "frontdoor_endpoint" {
   value       = var.afd_endpoint_name
 }
 
+output "payroll_broker_validation_token" {
+  description = "AFD TXT validation token for payroll-broker.terianix.ai — add as _dnsauth.payroll-broker TXT record if not already created by Terraform"
+  value       = module.front_door.payroll_broker_validation_token
+}
+
 output "sql_server_fqdn" {
   description = "SQL Server FQDN — GitHub Actions SQL_SERVER secret"
   value       = "${var.sql_server_name}.database.windows.net"
@@ -88,7 +106,7 @@ output "post_deploy_checklist" {
   Sandbox environment deployed. Complete these steps:
 
   1. KV secrets are auto-wired from module outputs (storage key, OpenAI key/endpoint,
-     SQL server/database). Remaining secrets (SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD,
+     SQL server/database). Remaining secrets (SQL-USER, SQL-PASSWORD, SMTP-PASSWORD,
      etc.) must be present in terraform.tfvars secrets map before apply.
 
   2. KV access policies are fully automated via User-Assigned Managed Identities —

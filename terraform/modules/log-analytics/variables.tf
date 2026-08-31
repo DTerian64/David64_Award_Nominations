@@ -36,6 +36,17 @@ variable "retention_in_days" {
   }
 }
 
+variable "daily_quota_gb" {
+  description = "Daily ingestion cap (GB) for both workspaces — hard stop against runaway Log Analytics cost. -1 = unlimited (Azure default)."
+  type        = number
+  default     = -1
+
+  validation {
+    condition     = var.daily_quota_gb == -1 || var.daily_quota_gb > 0
+    error_message = "daily_quota_gb must be -1 (unlimited) or a positive number."
+  }
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

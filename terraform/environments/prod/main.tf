@@ -138,7 +138,7 @@ module "key_vault" {
   aca_principal_ids          = []
   tags                       = local.tags
 
-  # var.secrets (from terraform.tfvars) supplies: SQL-USER, SQL-PASSWORD, GMAIL-APP-PASSWORD
+  # var.secrets (from terraform.tfvars) supplies: SQL-USER, SQL-PASSWORD, SMTP-PASSWORD
   # Remaining secrets are derived from other module outputs so they stay in sync automatically.
   secrets = merge(var.secrets, {
     AZURE-STORAGE-KEY                     = module.storage.primary_access_key
@@ -223,6 +223,8 @@ module "container_apps" {
     { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
     { name = "MODEL_CONTAINER",                 value = module.storage.ml_models_container_name },
     { name = "EXTRACTS_CONTAINER",              value = module.storage.extracts_container_name },
+    { name = "CERTIFICATES_CONTAINER",          value = module.storage.certificates_container_name },
+    { name = "CERT_TEMPLATES_CONTAINER",        value = module.storage.certificate_templates_container_name },
     { name = "AZURE_OPENAI_MODEL",              value = module.openai.model_deployment_name },
     { name = "KEY_VAULT_URL",                   value = module.key_vault.vault_uri },
     { name = "ENVIRONMENT",                     value = var.environment },
@@ -238,6 +240,12 @@ module "container_apps" {
     # Service Bus — neither FQNS nor topic name is sensitive; MI credential grants access.
     { name = "SERVICE_BUS_FQNS",                value = module.service_bus.namespace_fqns },
     { name = "SERVICE_BUS_TOPIC_NAME",          value = module.service_bus.topic_name },
+    # Fraud model lazy-load tuning — controls in-memory cache lifetime and eviction frequency.
+    { name = "MODEL_IDLE_TTL_SECONDS",          value = tostring(var.model_idle_ttl_seconds) },
+    { name = "MODEL_EVICTION_INTERVAL_SECONDS", value = tostring(var.model_eviction_interval_seconds) },
+    # Log Analytics workspace GUID — used by the admin nomination-logs endpoint (azure-monitor-query).
+    # Must be the customer/workspace GUID, NOT the ARM resource ID.
+    { name = "LOG_ANALYTICS_WORKSPACE_ID",      value = module.log_analytics.workspace_primary_customer_id },
   ]
 
   # Secret config — fetched from Key Vault at runtime via managed identity
@@ -247,7 +255,6 @@ module "container_apps" {
     { env_name = "SQL_USER",              kv_secret_name = "SQL-USER" },
     { env_name = "SQL_PASSWORD",          kv_secret_name = "SQL-PASSWORD" },
     { env_name = "AZURE_STORAGE_KEY",     kv_secret_name = "AZURE-STORAGE-KEY" },
-    { env_name = "GMAIL_APP_PASSWORD",    kv_secret_name = "GMAIL-APP-PASSWORD" },
     { env_name = "EMAIL_ACTION_SECRET_KEY",                  kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
     { env_name = "AZURE_OPENAI_KEY",                         kv_secret_name = "AZURE-OPENAI-KEY" },
     { env_name = "AZURE_OPENAI_ENDPOINT",                    kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
@@ -290,6 +297,25 @@ resource "azurerm_key_vault_access_policy" "auxiliary_function" {
   secret_permissions = ["Get", "List"]
 
   depends_on = [module.key_vault, azurerm_user_assigned_identity.auxiliary_function]
+}
+
+# Log Analytics Reader — both backend containers query Log Analytics for the admin
+# nomination-logs endpoint (/api/admin/nominations/{id}/logs).
+# Both primary and secondary need the role — Front Door load-balances between them.
+# Requires Microsoft.OperationalInsights/workspaces/query/*/read — Log Analytics
+# Reader grants this; Monitoring Reader does not.
+resource "azurerm_role_assignment" "aca_primary_log_analytics_reader" {
+  scope                = module.log_analytics.workspace_primary_id
+  role_definition_name = "Log Analytics Reader"
+  principal_id         = azurerm_user_assigned_identity.aca_primary.principal_id
+  depends_on           = [azurerm_user_assigned_identity.aca_primary, module.log_analytics]
+}
+
+resource "azurerm_role_assignment" "aca_secondary_log_analytics_reader" {
+  scope                = module.log_analytics.workspace_primary_id
+  role_definition_name = "Log Analytics Reader"
+  principal_id         = azurerm_user_assigned_identity.aca_secondary.principal_id
+  depends_on           = [azurerm_user_assigned_identity.aca_secondary, module.log_analytics]
 }
 
 # ── 9. Service Bus ────────────────────────────────────────────────────────────
@@ -360,6 +386,13 @@ module "auxiliary" {
   environment_variables = [
     { name = "API_BASE_URL",                    value = var.api_base_url },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
+    # Certificate attachment (opt-in per tenant) — worker downloads the cached
+    # PDF from the certificates container to attach to the beneficiary email.
+    { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
+    { name = "CERTIFICATES_CONTAINER",          value = module.storage.certificates_container_name },
+    # SMTP sender (Zoho) — non-secret config; SMTP_PASSWORD is a Key Vault secret below.
+    { name = "SMTP_USER",                       value = "support@terian-services.com" },
+    { name = "SMTP_HOST",                       value = "smtppro.zoho.com" },
   ]
 
   # Secrets from Key Vault — fetched at runtime via managed identity
@@ -368,7 +401,8 @@ module "auxiliary" {
     { env_name = "SQL_DATABASE",                  kv_secret_name = "SQL-DATABASE" },
     { env_name = "SQL_USER",                      kv_secret_name = "SQL-USER" },
     { env_name = "SQL_PASSWORD",                  kv_secret_name = "SQL-PASSWORD" },
-    { env_name = "GMAIL_APP_PASSWORD",            kv_secret_name = "GMAIL-APP-PASSWORD" },
+    { env_name = "AZURE_STORAGE_KEY",             kv_secret_name = "AZURE-STORAGE-KEY" },
+    { env_name = "SMTP_PASSWORD",                 kv_secret_name = "SMTP-PASSWORD" },
     { env_name = "FROM_EMAIL",                    kv_secret_name = "FROM-EMAIL" },
     { env_name = "FROM_NAME",                     kv_secret_name = "FROM-NAME" },
     { env_name = "EMAIL_ACTION_SECRET_KEY",       kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },

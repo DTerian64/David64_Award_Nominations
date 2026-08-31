@@ -1,0 +1,9 @@
+<svg width="280" height="100" viewBox="0 0 280 100" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Arial, sans-serif">
+  <!-- Icon: bold "A" with upward arrow peak -->
+  <polygon points="45,15 70,80 55,80 45,55 35,80 20,80" fill="#0D47A1"/>
+  <polygon points="45,15 55,38 35,38" fill="#0D47A1"/>
+  <rect x="32" y="57" width="26" height="5" rx="2" fill="white"/>
+  <!-- Wordmark -->
+  <text x="84" y="52" font-size="28" font-weight="800" fill="#0D47A1" letter-spacing="3">ACME</text>
+  <text x="84" y="74" font-size="13" font-weight="400" fill="#546E7A" letter-spacing="2">I N C .</text>
+</svg>

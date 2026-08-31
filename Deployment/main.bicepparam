@@ -13,7 +13,7 @@ param acrName = 'acrawardnomination'
 param kvName = 'kv-awardnominations'
 param sqlServerName = 'david64-sql'
 param storageName = 'awardnominationmodels'
-param dnsZoneName = 'terian-services.com'
+param dnsZoneName = 'terianix.ai'
 param staticSiteName = 'award-nomination-frontend'
 param frontDoorName = 'Award-Nomination-ADF'
 

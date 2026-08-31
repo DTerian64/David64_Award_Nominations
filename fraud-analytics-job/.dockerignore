@@ -1,0 +1,46 @@
+# fraud-analytics-job/.dockerignore
+# ─────────────────────────────────────────────────────────────────────────────
+# The Dockerfile ends with `COPY . .`, so without this file every path in the
+# build context lands in the production job image.
+#
+# Added 2026-08-14 alongside the GNN work, which introduced the
+# repository's first pytest suite in tests/. Unit tests and their synthetic data
+# generator have no business in a production fraud-detection image.
+#
+# NOTE: docker does NOT read .gitignore. Several entries below are already
+# git-ignored, which means they are absent in a clean CI checkout but present in
+# a local working tree — so a local `docker build` embeds them while a CI build
+# does not. That divergence is exactly what this file removes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Tests — must not ship ─────────────────────────────────────────────────────
+tests/
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+# fraud-analytics-job/.env exists in local working trees and would otherwise be
+# baked into the image at /app/.env. The job reads the repo-root .env (see
+# run_job.py: parent.parent / ".env"), which is outside this build context, so
+# excluding this changes nothing at runtime in any environment.
+.env
+.env.*
+!.env.example
+
+# ── Build / run artefacts ────────────────────────────────────────────────────
+# Output/ holds trained .pkl models and .png charts from local runs. It is
+# recreated at runtime by modeling/train_rf_model.py (OUTPUT_DIR.mkdir), so shipping a
+# stale local copy is pure weight — and a stale local model in the image would
+# be actively confusing during an incident.
+Output/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── Editor / OS noise ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

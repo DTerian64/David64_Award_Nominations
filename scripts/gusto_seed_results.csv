@@ -1,0 +1,292 @@
+email,status,employee_uuid,job_uuid,compensation_uuid,error
+Jesse.Williams@terian-services.com,skipped,e8fec1a3-d377-4ff3-8dac-f9ad524dce74,67b1c3e8-4139-4bdb-b68a-418f385ce112,,compensation already exists
+Chris.Brown@terian-services.com,skipped,15b50c4f-fbea-4dad-b1fe-c977d514842c,26ec7512-29e8-4c1d-8276-9437001e5c75,,compensation already exists
+Robin.Lopez@terian-services.com,skipped,9f7a4feb-4fad-4ba6-b52a-5a3d3a600b40,a136fef2-1118-4243-bbb9-95819aeaebd7,,compensation already exists
+Cameron.Williams@terian-services.com,skipped,e5d53952-8f4e-4664-8f8b-c989c0e03830,6655d285-d393-4da4-9eda-ad46ce93cc07,,compensation already exists
+Morgan.Smith@terian-services.com,skipped,289aa039-fec6-4a78-88ab-dd6812138c4d,4a1979f4-07e8-48a6-90b3-6ff396182d83,,compensation already exists
+Robin.Williams@terian-services.com,skipped,4288a4f1-caf5-436a-ae94-f9f9281a9b24,b378792e-18f4-4003-ab28-4bd2b38301b2,,compensation already exists
+Jordan.Thomas@terian-services.com,skipped,acaa8b69-28dd-4832-9a40-75c5d52a502d,4727e2e4-3819-4b6d-905b-16a1b1332a18,,compensation already exists
+Jesse.Wilson@terian-services.com,skipped,2b721d73-2844-4513-b051-01d31ebb47f5,b2abfda0-db13-4a60-96f4-71d55a3754a6,,compensation already exists
+Jordan.Miller@terian-services.com,skipped,556a5e39-716c-4515-8127-0a82f841ec8f,fd4e3f68-71b9-4663-81f9-21be5e4e05f8,,compensation already exists
+Dana.Brown@terian-services.com,skipped,dcdfd206-c726-410f-a0dd-9aadfb62c237,7c55312a-f8cb-45bb-8fb8-a4445712ab8a,,compensation already exists
+Drew.Jackson@terian-services.com,skipped,e0c7c3be-2755-452a-a03a-945cb43fd270,0e689408-049d-4e05-b293-d84eedabbd59,,compensation already exists
+Cameron.Hernandez@terian-services.com,skipped,b1f14184-fad0-4566-8861-9a4e84429ef5,faec432f-a886-419f-bb5a-dc6743e195e7,,compensation already exists
+Pat.Jackson@terian-services.com,skipped,6623516d-e65c-45e0-986e-3c3479bb823f,dccd0db5-7736-4e83-9275-354f64fe06e4,,compensation already exists
+Morgan.Johnson@terian-services.com,skipped,b6d1e394-13b6-4c01-8116-fbb4188b85db,064098c5-b248-4a18-9a61-c34c4daffbfd,,compensation already exists
+Jamie.Williams@terian-services.com,created,4bea85e5-e5ed-4ffe-aac6-486d29d38d63,0da08b01-ce4f-4ea8-bfea-d4d110b76991,94993fb9-dd74-40d9-ad23-9e4a26e52a78,
+david64.terian@terian-services.com,skipped,99b20959-fef5-474a-8a01-34fcb5345187,f6267e65-25a2-4cda-950f-f181c3f42072,,compensation already exists
+Jesse.Brown@terian-services.com,skipped,8290fdd1-a138-4595-809c-8682cd608ba4,8514422a-6184-4ea2-8c9a-3c6d8ac3a937,,compensation already exists
+Hayden.Martin@terian-services.com,skipped,ee668744-ea4e-4cb0-829b-8719b720e35d,caf57565-b3b8-4747-a1c2-6132c274cdd3,,compensation already exists
+Dana.Garcia@terian-services.com,skipped,ac1f0416-fc78-475b-b52d-9f470a7257e8,d2027c34-5368-43ff-b568-d8fffbaeaf5f,,compensation already exists
+Dana.Taylor@terian-services.com,skipped,1047dd0a-7b36-4230-a94e-74b7b071e5e6,1bfb7b46-4ef9-41f3-a42b-81059729bc7f,,compensation already exists
+Jamie.Thomas@terian-services.com,skipped,d0079e35-d8cf-4148-9661-a4b7f0402ee9,bf2b422b-6626-4cc5-b491-6fe3464290f9,,compensation already exists
+Kendall.Martin@terian-services.com,skipped,14b6d8a6-8934-4668-bae4-d6e97feaba63,3690b438-c356-43f2-9a82-3666f6baf400,,compensation already exists
+Chris.Anderson@terian-services.com,skipped,627f2682-ef18-4e41-a4f2-b04a86bed5a4,ffcdb140-6506-4d43-95af-c54a6d89db44,,compensation already exists
+Robin.Martinez@terian-services.com,skipped,fecea837-cdbb-4a4f-bc72-c7fe004a4a84,c933d4e5-2a17-436a-a56e-8a00521bb50c,,compensation already exists
+Avery.Moore@terian-services.com,skipped,e72b7699-71a7-4b3d-b36f-486b55b5c8a0,e4830701-1a7f-462f-87b9-4b5f0c754a8d,,compensation already exists
+Cameron.Taylor@terian-services.com,skipped,aed42254-9fb9-4280-ac90-32af16c7943b,84327997-d51d-4860-9c4e-edc1543519a9,,compensation already exists
+Alex.Moore@terian-services.com,skipped,7e4b8031-e4af-4bb3-bdab-6528b222a169,c80741ff-3689-4a2e-8cac-c1fc0e5f0cf4,,compensation already exists
+Casey.Hernandez@terian-services.com,skipped,010ffbc4-618d-4d0c-bed4-94a73c3dc988,0feaa81d-644e-466d-86b5-2eb1627cfff4,,compensation already exists
+Sam.Martin@terian-services.com,skipped,452c7fac-76a6-4cde-a8c4-8f59525c6ea7,2a3b666d-bba3-4689-9d46-b970e6b4429f,,compensation already exists
+Jesse.Miller@terian-services.com,skipped,e3fa5ccc-3c19-49b7-9f03-98b4e3b033a5,4230ebdd-dbc5-419f-a057-f0667b244b25,,compensation already exists
+Cameron.Moore@terian-services.com,skipped,dc201409-e6f5-4c22-a15f-1c289442b936,97297fcd-9857-4059-b790-01dfa49b67a2,,compensation already exists
+Cameron.Smith@terian-services.com,skipped,d9e63e5e-e6dd-4a23-878f-61b1ce8e7717,bb3a32e6-96d9-42c3-8092-0b40130c83b4,,compensation already exists
+Avery.Hernandez@terian-services.com,skipped,06eb3635-8959-427a-b947-7ec4e006ae2c,6e7ecfb7-885a-4897-b0e5-00f8acb351ce,,compensation already exists
+Kendall.Smith@terian-services.com,skipped,9b727bef-b27f-49e1-852a-38e02d7d06f9,0007ff53-d6b1-4d95-9491-7cc9bad03adf,,compensation already exists
+Dana.Martin@terian-services.com,skipped,50c02364-676e-4d6b-807a-34e155d2527e,9ada8d68-4273-417c-a58b-4daa287efceb,,compensation already exists
+Avery.Anderson@terian-services.com,skipped,6d72200d-31c6-4bdd-89f8-04a5538abb90,e5475ad2-583b-43aa-91ee-de5786fa64a7,,compensation already exists
+Morgan.Thomas@terian-services.com,skipped,5b473cfd-ad42-4ff4-9c88-12a383e62251,976eced4-f1f2-4186-b26d-707ade0376b7,,compensation already exists
+Taylor.Moore@terian-services.com,skipped,b231b6de-667e-4a62-a9d0-8b3c8f5859b4,cbb6a7bf-56c2-4fa8-8c78-4e14e1beb522,,compensation already exists
+Morgan.Wilson@terian-services.com,skipped,8ebec296-9c6c-4297-b4c0-8dd6b3e1aaa0,e7dbdb32-bab6-48f6-90a9-d71574e9b577,,compensation already exists
+Kendall.Garcia@terian-services.com,skipped,c686bab8-c1df-47aa-832c-507ce16306e2,6f12d1de-c3ad-4639-8e5c-eb53da455ac0,,compensation already exists
+Hayden.Williams@terian-services.com,skipped,a6da4423-c548-4a07-9b8d-cf3e3c5eb841,6b51674a-b83a-44e6-aa9c-af91b5185950,,compensation already exists
+Evan.Garcia@terian-services.com,skipped,9d0e1218-07a5-4d44-bf6c-437c549904e1,6af5de55-c6fa-4249-9639-9add43d0294d,,compensation already exists
+Robin.Brown@terian-services.com,skipped,264dff33-a443-4d92-a463-ec9df48c1a70,0167b4e7-a2d2-473a-94fe-06e066a05d07,,compensation already exists
+Sam.Gonzalez@terian-services.com,skipped,feb48897-36d2-4b11-986a-921f86952f3a,819c1003-99bf-45cf-b23b-dfb8b72c77f9,,compensation already exists
+Dana.Martinez@terian-services.com,skipped,4df62cdf-b793-45de-a260-ec3eab1e6c9c,9a276e55-2ccb-4053-9667-5c2b516e2b5d,,compensation already exists
+Casey.Moore@terian-services.com,skipped,57cbecc5-c3e9-4620-a93a-f92303e0236d,227dedac-8c8f-4cd9-b172-f877e3760031,,compensation already exists
+Morgan.Anderson@terian-services.com,skipped,ce9053f8-5dba-4275-8e49-302044f1bc8e,6edd44d2-7fb0-468f-9e91-5833d1261093,,compensation already exists
+Morgan.Brown@terian-services.com,skipped,44259151-3621-4354-aea7-263209b42d01,c1677d52-ef5d-40f2-9bce-6672fc2eb26f,,compensation already exists
+Chris.Jones@terian-services.com,skipped,994a2ac6-72a2-415b-9596-fed744e44f75,8d4ea90d-9f60-4ecd-9162-5cffd1292f31,,compensation already exists
+Pat.Rodriguez@terian-services.com,skipped,f079a8ee-cebc-4131-ba90-6fce98944234,9f6faee6-1bb1-4c0b-813d-8419f062f2fe,,compensation already exists
+Jesse.Lopez@terian-services.com,skipped,4950e5e3-6ad5-4d72-b5e8-cf98a893f4ae,6c56affa-59a1-4f5e-af27-627fcbd5bfa8,,compensation already exists
+Casey.Jackson@terian-services.com,skipped,83de463b-18ad-4c1d-95bc-f3a67ccc546d,3baa440a-f029-45f9-a48d-3c51b7284a8a,,compensation already exists
+Pat.Garcia@terian-services.com,skipped,5b1cdbce-7a38-48e6-ab24-4bdf534337a2,e2c86e89-2c7d-4e78-a410-ae682d7f1c35,,compensation already exists
+Sam.Williams@terian-services.com,skipped,440d1a38-36e0-4dad-890c-dab4d98c004d,5c87cfc7-74f7-43a6-822c-230a458c67c8,,compensation already exists
+Hayden.Rodriguez@terian-services.com,skipped,6494a90e-ba01-4ec5-9850-bab5d6dc9210,7beee253-041c-46ef-b8b3-d6ea03109d45,,compensation already exists
+Sam.Lopez@terian-services.com,skipped,f3953a7c-68e0-46ce-8fa2-8c5ab99b9b9c,e35f6007-163b-44f8-a6a6-a4d1e6c3ecbe,,compensation already exists
+Kendall.Taylor@terian-services.com,skipped,a6c3b793-4f10-4871-a2e6-ec56e5d1403c,d6ae07f2-aebe-4918-9982-7cc7ec12532e,,compensation already exists
+Dana.Thomas@terian-services.com,skipped,77e6f305-d392-4138-af10-3c85d7a4c946,8c9efe19-39e2-42da-a9be-343b623e49a4,,compensation already exists
+Taylor.Davis@terian-services.com,skipped,95784948-b1e0-4040-9710-077dfc9070cb,278d4afc-edf3-41c2-8dd3-9b107a750672,,compensation already exists
+Alex.Garcia@terian-services.com,skipped,84a79741-d409-4031-8251-4dc09caa21de,f9682862-84d6-41de-8f3c-4e846052373a,,compensation already exists
+Evan.Wilson@terian-services.com,skipped,52312bfd-57db-4148-8a09-38da8d35b0fd,f1ac7945-89ad-417e-a640-d3a4de5f3430,,compensation already exists
+Taylor.Jackson@terian-services.com,skipped,89d6c7a2-9ca3-4dbe-94a3-4572add79b98,344628de-8e08-4e57-b62c-e33ab6769846,,compensation already exists
+Chris.Thomas@terian-services.com,skipped,a1219971-11ec-4c22-a324-4ab4d31ef619,d27dd222-5d04-4fa4-abaa-11e2a3b8c444,,compensation already exists
+Pat.Anderson@terian-services.com,skipped,260316e3-bde7-47af-8ad7-4dd675e5177e,12decf5e-a2b3-4ec9-ab3b-539490860983,,compensation already exists
+Evan.Williams@terian-services.com,skipped,e114eb68-f080-454f-baac-0b4b5c1433ba,6be41de5-9a93-4616-81bf-52cface967c8,,compensation already exists
+Evan.Miller@terian-services.com,skipped,d092c712-cb6b-41a7-abfa-a8dddb39fcbf,d909387b-6dd1-4145-9422-39c4224fbb63,,compensation already exists
+Pat.Martin@terian-services.com,skipped,21cae877-9d20-4bbb-ad5d-5f5a15fbb185,0660e186-51f9-4de3-a8d9-7e8edec9ef70,,compensation already exists
+Morgan.Moore@terian-services.com,skipped,c025ea2d-f4b4-4b04-a473-75c6974cd48b,db4ce463-b09e-4410-9e1d-4d6eaacfb077,,compensation already exists
+Casey.Taylor@terian-services.com,skipped,e4aaee96-6d52-4c82-b028-3e57bec65f2c,1cf1f948-a154-4bf1-829b-f859d5d9b81a,,compensation already exists
+Taylor.Jones@terian-services.com,skipped,c9541dd6-1b2f-49a7-a410-a61bee892409,fd19d246-ae79-4592-b267-184bf08dd6f2,,compensation already exists
+Alex.Jones@terian-services.com,skipped,331dea08-bf9d-480e-ae91-d4a61798da77,92d3b758-805d-4ff9-babf-3fa5acfedc60,,compensation already exists
+Evan.Moore@terian-services.com,skipped,87760f19-111f-4ae6-b4df-f6fa79072c5c,0ecc4fd2-2a42-4480-a405-b977130839ba,,compensation already exists
+Chris.Garcia@terian-services.com,skipped,d75db901-3deb-4805-af54-7c8f5471a13d,1465bc1a-680f-45d8-a2e0-9ab3b7f81fea,,compensation already exists
+Morgan.Rodriguez@terian-services.com,skipped,bb0bc4f4-eda1-4dae-b7e2-5c8f02d63f30,6d187de7-843d-4972-a8a7-7e20b38bbcfa,,compensation already exists
+Kendall.Jones@terian-services.com,skipped,4919f710-a28f-49fe-a14f-5e6895aa117f,0dc6120d-224c-466b-b4c9-3e4e83c00e2f,,compensation already exists
+Sam.Miller@terian-services.com,skipped,e9671080-4fd0-450b-97ca-a3b4708d5bc8,9d859335-f805-4fbf-a7b2-8dd2b6c77221,,compensation already exists
+Evan.Rodriguez@terian-services.com,created,d744fb2b-c06f-4592-a933-031894094c73,13e01ffe-15ee-4ea5-8e37-6aaf0fcbb731,7e9858ef-007a-42a0-b416-49baaf53cdb0,
+Taylor.Garcia@terian-services.com,skipped,786756e3-f81c-4130-9b85-f659ee9f2a34,805a1fad-ef64-4107-b5bc-0e7943731d37,,compensation already exists
+Riley.Johnson@terian-services.com,created,7488e21d-a48f-4f04-9d6d-251136cbef03,7fc68fe7-42f5-4fa6-809c-025d297a1709,cbb422db-f10d-49df-9a7c-a0cf491393b5,
+Jamie.Hernandez@terian-services.com,skipped,da8e978c-e7d6-4480-aea7-b350cce4f42c,246ada5d-1970-4366-b3eb-e17c38148901,,compensation already exists
+Cameron.Johnson@terian-services.com,skipped,d8dd8dc4-7f63-4d28-94a4-918c484f61b3,9773d51b-c10f-4e43-ac74-f5bda30ca9ae,,compensation already exists
+Logan.Brown@terian-services.com,skipped,ecb89745-424b-4f50-8aa0-77b2d3b7269c,ce9c139a-223f-4a73-825a-4a8ac3aef7a2,,compensation already exists
+Jesse.Martinez@terian-services.com,skipped,6e18b39d-344d-4c63-81e0-ab832fb03b4b,5b35c3d8-f1dd-4189-99c6-d4f038f788b4,,compensation already exists
+Hayden.Lopez@terian-services.com,skipped,a2295de5-6776-4480-b5eb-94abdddcb6fc,f795b4da-1325-4b34-835d-3070f9a1c75c,,compensation already exists
+Avery.Jones@terian-services.com,skipped,a3d0e564-9095-4be6-8d73-7ef353c4f172,290e0814-72b2-4355-a255-6abb09b0bb1d,,compensation already exists
+Casey.Thomas@terian-services.com,skipped,66f02b32-7091-4a60-932c-8670f9ea57c6,2a1f0316-5784-4c83-aeeb-813964f4e39c,,compensation already exists
+Avery.Brown@terian-services.com,skipped,d0ad4e13-e68a-43f8-8d68-329a41ed9ac9,82031181-7faf-4c60-a88e-613cf6d1c9bb,,compensation already exists
+Evan.Martinez@terian-services.com,skipped,e1405466-894c-4892-b5e0-cbaef71f45e1,9a11f7cb-1b68-4337-890e-90fddc8de012,,compensation already exists
+Dana.Rodriguez@terian-services.com,created,77e8a60d-d871-428c-88e5-1345a398b7c4,b33a4164-87e6-464e-88c5-f44cb78dd6ff,a1af64fd-54c0-4a75-92fa-1e8bf760a2d9,
+Riley.Garcia@terian-services.com,created,bd531b4d-2be2-4a17-a0e2-7c110d7a26cf,c6adf52a-829c-4b32-a133-a237cb3ff522,71ccdc40-b7d1-4eda-8847-2e6c3d25c354,
+Jesse.Garcia@terian-services.com,created,d32fc822-187d-47df-8937-00e331165922,f39b0388-d506-4d71-a9c0-8bb429bd1243,bc54f66d-db3b-4c8c-9e13-53860a19742e,
+Jordan.Lopez@terian-services.com,created,a8d0dd71-56e8-4507-b5e8-1d346d3489a4,2d5ae664-4e65-4b09-b44c-ed5739f6ac59,51877a3b-19c3-4ab8-8bef-66daa0692671,
+Robin.Garcia@terian-services.com,created,ddc25308-99bd-48bf-bac8-5e8ce7a29feb,3119a87c-929b-48ef-8ff2-44e947faaf23,6cdabb94-fdfb-457b-b9aa-8f7f002ef85c,
+Morgan.Lopez@terian-services.com,created,093b9ba9-ef36-46f9-810e-a5bbccbe3984,fd5f1bf1-a524-4b7f-a99e-2a4abb660397,6daa4a08-f60d-4a1f-afcb-d737080fd2eb,
+Kendall.Gonzalez@terian-services.com,created,b3bbfae4-f3d8-4074-b50a-9945b5c0e348,50ee0f93-5bee-4bdc-9189-32c711ecb46e,7b637472-74da-4ff2-af3a-f87887d16bc4,
+Dana.Gonzalez@terian-services.com,created,043e7724-619a-4261-8bc7-68283b51b2a5,3d1e65cc-ab9b-48dc-898e-1f23c7e6eafe,9af0528c-8fdb-47e3-b9b9-7902ec3c9071,
+Drew.Taylor@terian-services.com,created,90e8347a-70d5-4ca1-b40a-72bf7a94315d,30847e64-fd03-40ae-a945-1c8d69f50202,a5720f7e-f394-4b3d-a76d-efa99a3cc5ef,
+Logan.Gonzalez@terian-services.com,created,d4b02570-c009-4c8d-8aca-ab25c0e09b7f,29fe9406-b2e7-423c-879e-e750965b5c6b,555c86bf-a649-437a-b4b5-a51429feb02f,
+Cameron.Rodriguez@terian-services.com,created,bceba47d-5c18-4e56-ba0c-cd601f9836b2,ef442cd1-220b-4ee8-b492-ad23657d9a73,f296dfc5-6e6d-4670-8345-b5f1496c872a,
+Casey.Garcia@terian-services.com,created,0ece6823-75df-466b-aab6-d19f87d4b9c8,00657f57-929f-4337-a0a9-562844afda51,4ebe1de3-b224-4935-96dd-e7db037f434b,
+Morgan.Garcia@terian-services.com,created,158a234c-079d-4367-8280-2afe829c35a4,d95ddfbf-9244-4231-92cb-c496ea18f933,6a897684-53c6-4493-afd6-ceef06395cfb,
+Chris.Martin@terian-services.com,created,577af904-0460-481d-ae25-9476ee15eee3,d515222b-79ad-425c-8bc8-a2f7b0253c5f,09f45e03-b394-46c8-8569-1df25fb6d2fd,
+Morgan.Hernandez@terian-services.com,created,58209f6a-c4ab-4c47-a8fe-7379766bfd4b,1a4e5ac5-2cb9-4a94-a993-acea9e7126be,60a7c957-bba3-4b94-b32f-6342b0f53363,
+Taylor.Gonzalez@terian-services.com,created,bb4d6f04-956b-475b-b241-e344fbbf8eb9,90e13c55-bfed-44fb-9e95-1339e2333820,d8743b6c-a031-4398-bfc8-779765b1d76e,
+Dana.Wilson@terian-services.com,created,9f4772cd-6d6a-4b96-a914-403e0a04777c,c47b64b5-7716-44b6-b1e2-10ea21ed4cc1,bac62fa4-d3a1-4f95-b964-66802a970782,
+Morgan.Miller@terian-services.com,created,67647645-350c-4471-a749-444fae62abd8,3b71a584-1c9a-4496-9c99-d5d48ea0b6ad,a8a5bc1b-cd8b-45a6-b557-4c42b489ff1e,
+Riley.Taylor@terian-services.com,created,b810a513-222d-4997-933d-011d0d3ac7f2,968b3069-297d-4972-a2ae-5478c95363cf,58517364-7ca9-4a95-8bfb-b2e7851dc423,
+Emily.Terian@terian-services.com,created,31b45ac5-1a08-465c-975c-8497157e497b,77192a71-d4ae-4d52-8a1a-91bffb388ce0,f49b4f86-ac63-43c0-8ccb-a338acf663fa,
+Jordan.Moore@terian-services.com,created,dbee4b81-524b-4084-bdea-6e076a395c91,f2e5a6f5-ef25-4e00-a7dc-39032ca06851,d4b789f6-8e90-4e24-92ea-eb86457cde65,
+Riley.Jackson@terian-services.com,created,fe641969-de0f-4671-9f50-029aef88db54,dcc0d274-4809-410d-bc8e-f76a2a7ec6ad,4a9fbd0e-a1c9-4447-b902-e19a499ed028,
+Pat.Moore@terian-services.com,created,ef9155b7-a15d-4d73-9ba9-3b421cca3e7f,2530e69f-ed8a-4fb9-8618-18b76819a44d,3a089c07-43e0-4ba3-83c3-79c02cb21744,
+Alex.Martin@terian-services.com,created,ccec7b3b-cc55-497f-844a-0ae96279cb01,453c7166-cb04-42cc-868d-5c8e84be0465,f99e375f-494c-4006-ae92-85e8e66d35ad,
+Evan.Davis@terian-services.com,created,b4c03aee-52a3-4d7f-a833-40f8fbb722c5,4467d5d1-f301-4901-a5dc-a4534651f0f4,fb6735a4-aeb2-4846-854c-0f74d7636107,
+Sam.Martinez@terian-services.com,created,34759699-c97c-40e3-8334-cac62e5011b1,2ea91586-fd68-44e9-9afb-d8d771bb5042,e11398cc-7a27-44d9-8d30-1349fdd021a3,
+Dana.Hernandez@terian-services.com,created,abec50be-24d5-40e8-b2eb-f057e1daae79,f407d2fc-5d51-4d35-9b74-ae0ae0d05344,a9b572f2-18d0-4ba5-8703-1a0b0cdf5d89,
+Jamie.Martinez@terian-services.com,created,f06349e6-1659-4ffd-a6c7-fe548db9ef20,48594afc-cee7-4f2b-9459-c9e94553cf4a,aa842912-9dde-4d54-9765-7d2a31703176,
+Dana.Moore@terian-services.com,created,2cbc4f7a-888d-453c-9a0d-86452732d67d,a38013b5-e069-4c7a-a579-9eb192af76ca,3d423916-80ea-4449-8772-aa1f61009776,
+Casey.Gonzalez@terian-services.com,created,e4516c0f-45bb-494f-9e11-e16f39980b75,86a49da1-5171-4777-95fa-19532b070bd6,aaf58c9f-7634-45d5-b2bb-d5e72fe93e35,
+Jordan.Jones@terian-services.com,created,9576521d-4ecf-4167-abd8-426c89139460,ddd8e9ee-b8c3-4dfa-aa92-a48a6b059e94,6797d6f3-a351-4fd0-8d92-ca4525329202,
+Jordan.Martin@terian-services.com,created,c4f0d060-bd0a-4fb1-8a54-0ad45626a363,d6628417-180e-4653-8c65-a12846788234,dfe5a904-1939-4cb5-b37c-95bf9f88e13f,
+hripsime.haroutunian@terian-services.com,created,b4a58de8-bdac-4c9e-a373-bb80537e9490,0c63f25c-fa26-4d76-a5a1-219b8b7f14ed,3581a5bd-8ce2-4100-9306-f7b9d83e574d,
+Robin.Rodriguez@terian-services.com,created,b15d6e8d-4a9d-4a4e-86e4-faefdc9ea3a1,5eac9393-e62c-4ac6-89e8-f2e419fe401d,922fcc9a-66f9-4dc8-82a5-a88f760be14b,
+Casey.Miller@terian-services.com,created,f2ae6829-34ec-4274-9d76-c9a7671fb2f3,7f865f1d-fffb-4d25-b452-1bda9cb4b816,14b0f425-b526-47ff-8ec1-84d218f350f7,
+Jordan.Smith@terian-services.com,created,ff11a7e8-d719-4a39-8a85-d79e1553b1ed,daddcf95-6ce5-4ac5-9eeb-09ec0a177e55,9f9b596c-801c-4da6-9180-1dede1b347bc,
+Chris.Rodriguez@terian-services.com,created,b37bc804-8200-43f1-84bf-6420cf824669,068aa9ce-9911-4895-8430-780c853fc61e,7ca25fe7-a428-4370-8858-bb3619a70b5d,
+Logan.Jones@terian-services.com,created,442543e6-3442-49d1-ae60-e2367a76ab7c,2869fcab-1bc3-4d8d-90cf-56a6d63bf773,eb5b68d4-dc2d-422d-99fd-a35f4a35e0b4,
+Jamie.Anderson@terian-services.com,created,86f2e119-0194-4686-8b19-03a2d809ad5c,78d87cf7-d2ae-4149-a8a0-ae3bec08e874,ba442af8-0b62-4b48-9417-cc37e969ae94,
+Cameron.Brown@terian-services.com,created,d73be481-1369-4ad0-a116-afe342e25b4a,fccf7beb-a618-489f-a2c5-b0545cd4256e,c7873a36-229c-481e-af4c-cf2bd4c4ad48,
+Logan.Taylor@terian-services.com,created,68eb661c-f53e-414c-9f42-77ea805f6eab,3356dd18-beee-4fff-a438-83388ca1575d,a0d6e051-a3ee-4219-a4b4-50d7c6a3b1af,
+Jesse.Taylor@terian-services.com,created,05035e32-ad4f-4881-b03f-eb3f9c094047,c6b93b25-68b8-4164-9aa1-f778b5dc176a,fa8ab99e-6e00-40fc-bba3-bdc19933fdc3,
+Riley.Smith@terian-services.com,created,b3ea7ae3-041f-4d22-aa33-781a7984b020,950546bc-6510-4107-a273-e3bd7d71d4ed,909c98c4-b244-408d-a5fe-bf06d8d934bd,
+Hayden.Thomas@terian-services.com,created,a19d69b9-557f-4671-ac02-b59443a1cda4,dab08c46-72fe-4673-b188-08c6653821b8,2d745b1c-6b11-48f3-84fb-795542b5c5d9,
+Casey.Brown@terian-services.com,created,532c104f-9735-4a58-bc70-c05f9eafb1a8,a2d05dc6-df13-4013-97e6-2b92532f0fa9,ecd9714d-87fa-49d7-9ad6-7aca8c3e5a8f,
+Kendall.Brown@terian-services.com,created,8f2fb0eb-9c03-42e5-b9f2-0ced2c67d034,b5492013-6b08-4698-82c6-4e660d9f5a1a,929922e2-223b-4b4c-af07-59d2f3824787,
+Chris.Lopez@terian-services.com,created,eb105a83-6729-497a-9fb6-911391686fb5,54b04122-95a8-4386-b9ed-f5ca5cd8b4a7,9ab5e2bc-e5f2-4f91-8548-20384157f80d,
+Avery.Wilson@terian-services.com,created,6d882561-72e8-475c-b921-a239a4d426fb,e4dfbce7-4fc6-4ca7-8b67-828ece540eb7,cf06f47b-a9c4-4372-9191-394ffc1bc05e,
+Cameron.Garcia@terian-services.com,created,3fcf6f29-10be-4f29-aef1-a6588d9b3d5b,2b07921b-4ab5-4713-a5be-16b6031ed537,3bf63e59-610c-46f1-b8be-0930d3e7df42,
+Riley.Lopez@terian-services.com,created,df0ea205-129e-45d0-a396-4a2f630898b1,fe13ed11-a2db-4cdd-98b7-2ef8a3d0362b,fc53372b-6bb4-4705-81cf-f641b1752d47,
+Logan.Thomas@terian-services.com,created,14523c07-55c9-4bce-bb51-3a783ca830b5,2b494884-750d-40f7-8467-618888786ef5,7aa47724-2f46-493f-9008-cf0a8e7d0b5e,
+Chris.Moore@terian-services.com,created,1a8a7c2d-074d-4b03-acba-f2597bd82b20,85f7976c-7a80-4d6c-bcef-2a0f1c00c301,2031ad1e-a110-43ce-9d78-63600ad09b2e,
+Jamie.Martin@terian-services.com,created,cf671fb5-aeb3-4763-ba5a-a34d211acfca,e9d3a886-a03b-440f-9498-a1cd3cd25434,e2754f5b-3a68-4e03-b850-5d3ea7515840,
+Hayden.Anderson@terian-services.com,created,886eeb37-6c7c-4a40-ad3e-9fa6ce8e7d85,7b14b584-d7c1-4065-bca7-5b0630f8db9e,a2760ba5-7730-47d8-b44b-7d87d653e486,
+Morgan.Davis@terian-services.com,created,a66a8294-7ef8-42ac-8d56-b7560cd3d41c,e89a42d5-6d79-4cfc-91b0-b3c3070143dd,bcbfb0cc-9af4-4ff4-8961-703601c3c1d1,
+Kendall.Moore@terian-services.com,created,60d9d23c-25c6-45e3-8559-c170bd6eacfb,2ece3460-ee0a-48b5-80e8-685680d56433,96cbde1a-af19-4f09-ad4f-b205520e7d72,
+Jordan.Davis@terian-services.com,skipped,6cdcd715-3a75-4a70-87da-473e058761a7,9dc05b21-adaf-47d8-bf05-00c247a4ba8a,,compensation already exists
+Morgan.Jackson@terian-services.com,skipped,f1d9c273-eb16-4250-bbfb-5048151c23f6,d0d52069-5e9a-45bc-8e6e-4106f81b790d,,compensation already exists
+Casey.Anderson@terian-services.com,skipped,82d91455-8a8f-48f1-81fd-e1bb4a28ada0,89eb61ee-8dd3-40b8-a5ef-9919d817e509,,compensation already exists
+Chris.Hernandez@terian-services.com,skipped,7939ea5e-0e19-4c6b-81fd-8bdc3baf5f00,9547ccb4-5993-4be0-8ba6-f3b82d24806c,,compensation already exists
+Avery.Thomas@terian-services.com,skipped,29a44393-80e6-4f18-b624-576eee149308,17f7ca58-e435-452e-b596-d7f0943e280f,,compensation already exists
+Taylor.Miller@terian-services.com,skipped,8e6603ca-e71f-4fce-8fd9-140baa818441,427ff27f-601a-4e65-9801-b2b912879896,,compensation already exists
+Alex.Martinez@terian-services.com,skipped,39e75c06-4e3d-4afe-9cb8-1a916aaa76c7,b501ef24-a1d4-4515-a46e-3e1415d7d175,,compensation already exists
+Riley.Anderson@terian-services.com,skipped,b362df2e-fa70-4114-9298-8bc4db683643,6a0ea8e6-dbc4-4d1c-aacc-b2d1b2265635,,compensation already exists
+Taylor.Hernandez@terian-services.com,skipped,249d479a-0741-49ac-bb2c-a9174966a305,9d24ac6a-365e-4c7b-9b0a-537ce5093458,,compensation already exists
+Drew.Johnson@terian-services.com,skipped,82952f39-0a0c-4ed2-aeff-999e20384e7d,1ec3f290-5128-4daa-ba88-4dd82ba76980,,compensation already exists
+Riley.Martinez@terian-services.com,skipped,36eec696-b879-45f9-8f96-1e7b5890f921,c3bcc65e-eb80-4f8c-ac71-142e6d35a31d,,compensation already exists
+Chris.Johnson@terian-services.com,skipped,220094bc-890f-4de2-91a5-d82b7c9efa65,a2c08344-5ead-44a0-965d-f4318816f266,,compensation already exists
+Kendall.Davis@terian-services.com,skipped,cb19141b-a2bc-4f6f-8f7a-422c1d1240fb,d0607aae-1703-4a24-95a8-d0b7554938c4,,compensation already exists
+Casey.Martinez@terian-services.com,skipped,55722f1b-4275-4574-8285-3e9a753b7d74,33821293-4c67-4bc8-b5fe-01e3cc709716,,compensation already exists
+Hayden.Taylor@terian-services.com,skipped,fc641437-f60e-4077-a7b3-4de68a1a47f4,d8307bb8-e2af-414e-b542-90616ce6cbb6,,compensation already exists
+Drew.Wilson@terian-services.com,skipped,b2a78c9c-7046-4572-b45e-9eef988620be,1ea4bb85-47f2-4756-90e1-e014a4caa9e7,,compensation already exists
+Riley.Moore@terian-services.com,skipped,06b060d0-00e2-4e55-910c-be160e8eabfa,6ac5d84f-5ac1-40be-b77a-8415d0eaf864,,compensation already exists
+Jamie.Wilson@terian-services.com,skipped,0e237fb4-d478-4827-8a0b-cc9307941cdd,d99571e7-150f-4398-8b44-2c902cca00e8,,compensation already exists
+Chris.Williams@terian-services.com,skipped,f3de2dbc-da89-42cf-aef3-f50dcd9c5317,61f53aff-f633-469c-8e47-de541f99417b,,compensation already exists
+Evan.Brown@terian-services.com,skipped,9baab401-dd6f-497b-a24f-c537c4097a5e,004659d4-d6d5-4666-a3ac-5851661669c1,,compensation already exists
+Hayden.Brown@terian-services.com,skipped,5533be4a-4c6f-4869-805f-699d3aa6d8b3,803d9382-e91f-4ad3-9370-aa7cbed52083,,compensation already exists
+Riley.Hernandez@terian-services.com,skipped,d0af7d8d-41d6-4a3d-be06-e986443c9e8d,cd8257ea-c4b2-4d7f-a2ff-02fb3e34db5c,,compensation already exists
+Evan.Anderson@terian-services.com,skipped,ab1b2bbe-b8c0-4911-a74e-6b371cb96bb5,d3932f13-9b7f-4971-bc6d-daee40670cd8,,compensation already exists
+Robin.Davis@terian-services.com,skipped,404a68f3-22f7-4b0e-99ce-ae54cd920495,8ce24eed-c8a6-49af-8f72-787f3e494541,,compensation already exists
+Kendall.Jackson@terian-services.com,skipped,a2dfc540-de99-4750-813f-c20386a27e30,2bdf2f29-d327-457e-b6d0-6a0590d71da3,,compensation already exists
+Cameron.Martin@terian-services.com,skipped,c9bc2bcb-da44-46b7-a259-168c1c3fcdb8,47a67ff8-e436-47a4-89dd-5476e3c31670,,compensation already exists
+Morgan.Taylor@terian-services.com,skipped,67479748-a0d7-4c49-98bc-849fb4b89f36,6d76c0a4-03db-4741-a6ff-5876f28bf045,,compensation already exists
+Avery.Jackson@terian-services.com,skipped,79de5bd0-7904-4748-b8aa-0e056904f42a,1c2e5d08-5127-447e-b84c-206128f18d53,,compensation already exists
+Pat.Brown@terian-services.com,skipped,9edebd27-d059-4cef-a59a-af640f422326,7223ed1b-c3f8-4fa2-891d-93dfb1cb9cf9,,compensation already exists
+Jesse.Hernandez@terian-services.com,skipped,0b71c3f5-2be3-493a-8809-59d42feb8592,e3cdc164-8495-4784-a73a-573d4b4c1dd7,,compensation already exists
+Avery.Lopez@terian-services.com,skipped,8a5d6266-2bbb-4acd-99b9-2bacf47fe720,60045933-222d-4c96-97fa-51199631960a,,compensation already exists
+Cameron.Jackson@terian-services.com,skipped,c23074d3-fbd6-4a2e-ba54-8fd9b2b7c06d,6d0841bc-0085-4f69-9cbc-34e46557d4aa,,compensation already exists
+Chris.Martinez@terian-services.com,skipped,fd9871c9-ca5c-49cb-8fe0-f0e9e9ee044e,40552937-d2f0-4d62-b39e-385f1a56e63c,,compensation already exists
+Avery.Martin@terian-services.com,skipped,139c75e0-3611-49dd-80ef-9f2283cbf6b0,b368b66f-daf2-4681-bbca-efbd6612db3d,,compensation already exists
+Chris.Davis@terian-services.com,skipped,de079091-51c4-4b37-87d1-f8dd5b59b97e,c09295c8-8167-4901-8aba-f2370c5de141,,compensation already exists
+Logan.Jackson@terian-services.com,skipped,ec44dfc0-3770-45ce-ac1f-d86e3c7e6aea,f9bc059a-e4f1-468e-a011-4163046953c8,,compensation already exists
+Jordan.Anderson@terian-services.com,skipped,afdff299-b833-4ebe-a9a0-149636562cbf,22b2439f-4c8d-49cd-adda-142d28dfd304,,compensation already exists
+Sam.Wilson@terian-services.com,skipped,18b095b7-5a5f-40e8-9dec-48b61099d3f4,50ee9b5e-881e-489f-b392-fef60ad5af76,,compensation already exists
+Logan.Moore@terian-services.com,skipped,589cd1fb-3505-4f96-bcf7-aecd2f53013c,9bff07e5-5fcd-4e92-b4ab-c0fad4a8f259,,compensation already exists
+Evan.Taylor@terian-services.com,skipped,846e4c66-47df-4c9d-b345-2ab48983103b,0237ece6-48ab-4821-89fa-308b28abcd34,,compensation already exists
+Logan.Lopez@terian-services.com,skipped,366f84f7-7111-44fb-b316-3b24a444169f,2f512d04-7467-4ef3-832e-637b62b339fe,,compensation already exists
+Evan.Smith@terian-services.com,skipped,ad62bf72-ee0e-4bd2-bde0-469ccb43fa71,44345ca7-7eb8-4dc7-9f48-a871d3fd7458,,compensation already exists
+Jordan.Hernandez@terian-services.com,skipped,1877591f-15db-49f3-9452-3d37f9b528c7,a6ea3ac2-2e82-4e74-b910-2acf5b95166b,,compensation already exists
+Jesse.Smith@terian-services.com,skipped,1c9248f4-582f-4495-aa6b-d597f8ec95d1,c6670f44-dec3-4c04-97a7-fc3a26069f38,,compensation already exists
+Robin.Wilson@terian-services.com,skipped,2f4ec426-8b84-4bb8-b19b-d4297b0a86a9,2a9c63de-174c-4fc7-85af-ec2bf9fe4107,,compensation already exists
+Jesse.Johnson@terian-services.com,skipped,a52a1946-cf83-4983-85d0-02d7dc2fcf4f,2356aece-f8cb-4c9b-9d6d-acedacf8a688,,compensation already exists
+Jordan.Wilson@terian-services.com,skipped,f56a5303-3995-4488-adfa-7dfec544c96a,cb0a01ab-04a5-436d-bd3f-705c9a6de829,,compensation already exists
+Taylor.Smith@terian-services.com,skipped,a8e2bf8c-3b03-491b-9129-22eefddd02f8,3e9831d5-2580-4205-9f19-eb4d84eb5061,,compensation already exists
+Jordan.Martinez@terian-services.com,skipped,79f8e553-2df0-43d2-8891-9de3a75d07a5,c49aad36-32ad-46d4-a6a5-1dcd2bbc18bd,,compensation already exists
+Drew.Smith@terian-services.com,skipped,663beb5f-21ea-4ecd-973b-4362336d4431,be63aaac-c70c-488d-a6e1-f10333d35962,,compensation already exists
+Drew.Moore@terian-services.com,skipped,8eb21804-d966-41c3-b565-01a2228bfa91,9373d66f-9a73-4309-8588-9adaf734b131,,compensation already exists
+Robin.Jackson@terian-services.com,skipped,641df7ad-f3d1-4ab0-ba7c-ab4cca7d56ea,b58e481a-6fbe-4e00-a8b9-e0a441c5e81d,,compensation already exists
+Kendall.Miller@terian-services.com,skipped,894f83fd-076b-4d19-b91f-8a594a15e2d5,9590e88d-1519-4f1a-b51f-37afa0a9bd64,,compensation already exists
+Logan.Rodriguez@terian-services.com,skipped,5588ff3a-b18b-42df-b78a-1b789ffda39f,adeaf45d-5dfa-41c8-b6a8-73aa2bdf7343,,compensation already exists
+Taylor.Williams@terian-services.com,skipped,32cba482-068e-4e45-91b4-0b383621942e,1577452b-6ff7-4f2d-bd46-da27c2228719,,compensation already exists
+Jesse.Thomas@terian-services.com,skipped,d6f9d0df-2dd0-481f-bb77-529b3d01ffce,8038cc21-0a0d-449d-ba4f-2a175faaa307,,compensation already exists
+Jamie.Lopez@terian-services.com,skipped,e94855f2-4010-4e3c-9bf8-101dae106d63,44ef4db0-9df0-431a-8933-7b69455c387a,,compensation already exists
+Dana.Anderson@terian-services.com,skipped,9f88f1a0-2904-4c40-a195-3ffc84e6823f,0a64065a-5d22-4564-98fb-2546f7430271,,compensation already exists
+Avery.Johnson@terian-services.com,skipped,4b8e3690-cb4f-477d-8d3d-9857f41a9fbe,ddab5bac-7aa6-4379-a07d-f6bd8cfc0c44,,compensation already exists
+Avery.Garcia@terian-services.com,skipped,90feed66-0053-4cba-b1a2-4b40b68766c5,3b3e8309-1d61-453c-8d8e-b3af8b42cd5a,,compensation already exists
+Logan.Anderson@terian-services.com,skipped,db9b34e7-4858-43e7-bc18-7f42f2c0520d,a2e22357-70cd-4fcc-974b-1a036317e4ba,,compensation already exists
+Hayden.Smith@terian-services.com,skipped,6ebe942f-4ad9-488b-8aaa-0ce754010380,e6345ac7-55b1-4729-a55f-78f5807ea205,,compensation already exists
+Dana.Miller@terian-services.com,skipped,10f79712-5272-4bd5-87f3-17b2ad90e5cb,674186ee-6b8e-45f6-9802-cf143028094c,,compensation already exists
+Kendall.Hernandez@terian-services.com,skipped,f44d514e-33f4-4842-9104-0c490807b059,fc34ecd4-c709-453e-98c2-6c69a817371d,,compensation already exists
+Casey.Lopez@terian-services.com,skipped,5f200262-ffa5-49e9-a347-32659d461752,4f31312e-c263-4dc7-afa3-6c7a7f84ed94,,compensation already exists
+Logan.Davis@terian-services.com,skipped,ccbcdeaa-30e7-4399-b169-d2fb0be5a72d,a12de4d2-b479-4a09-8ca1-60220394c92d,,compensation already exists
+Chris.Jackson@terian-services.com,skipped,d6a5387e-65f7-43ea-a619-4060a59b4776,a3bd62e9-4a26-474a-8575-b9225ad8b1ff,,compensation already exists
+Avery.Smith@terian-services.com,skipped,9207ff26-cdb2-4693-b393-f3e440d228cd,e9bc0f59-651e-4896-bb91-ac72ba07ee2d,,compensation already exists
+Hayden.Wilson@terian-services.com,skipped,62b6525f-2feb-4642-9869-53577e4b3285,fea06054-533c-475c-97b6-63412c95111e,,compensation already exists
+Riley.Wilson@terian-services.com,skipped,0b9f16bc-54d3-47c5-9382-138eb222387f,c5ffbd72-6dae-4286-921b-e31e145fde48,,compensation already exists
+Riley.Jones@terian-services.com,skipped,001eb71a-f50c-4344-a3bf-e7580dcca563,73df6d0f-d6d9-4f79-bddc-f36b05a99bf7,,compensation already exists
+Drew.Hernandez@terian-services.com,skipped,4dbdace1-0a21-49c2-bd62-dbf19165a57f,04da31b4-7aa5-47d5-adc8-410c8c1911fa,,compensation already exists
+Jordan.Johnson@terian-services.com,skipped,850d53df-ab5e-4fbf-ad35-4cbf5e9f485b,3ef09ec1-1350-4b6e-baf0-6021e1a6ac57,,compensation already exists
+Riley.Davis@terian-services.com,skipped,ae1fbf0b-46f5-4c27-8089-1855871c342a,2dad08fe-bb79-40ef-8ac3-26955aaecfd0,,compensation already exists
+Robin.Taylor@terian-services.com,skipped,7fa16038-ae49-4e71-a031-053b67f47f68,e6b440d5-383f-4c6f-bef3-e27fe8577f83,,compensation already exists
+Sam.Thomas@terian-services.com,skipped,cb3d66a4-dc8e-4392-b41a-d334492a4b1c,e1011173-d9a6-4088-8e35-c7aefb7fdff1,,compensation already exists
+Riley.Brown@terian-services.com,skipped,834ab731-3c30-44f8-96ac-fafc8ca99dc7,158a3515-91a8-4cda-a2fb-c1b2350447d8,,compensation already exists
+Jesse.Rodriguez@terian-services.com,skipped,e2b1c569-e67d-41d0-b0d2-b55b581f4a2a,1415b352-185b-4341-b1d2-7eb69c5a3c0a,,compensation already exists
+Riley.Williams@terian-services.com,skipped,26d48fba-e1e1-4a6c-8aae-7d57ff94ff5e,c97fd55f-23d4-45c4-b261-c4a90b3ff67f,,compensation already exists
+Chris.Gonzalez@terian-services.com,skipped,126d4de9-dc87-4fd9-9753-107c4f09eebb,61a97efe-740b-4016-94fd-bfe9c00cd4b7,,compensation already exists
+Drew.Rodriguez@terian-services.com,skipped,26c05245-e008-4a91-a6e3-da02ff91c9cb,cd2b10fb-1ad6-4b6f-ae2c-d901e3dd7733,,compensation already exists
+Drew.Williams@terian-services.com,skipped,f08fe2ea-4496-4c14-9aac-fe078bffa7ae,b380cbcc-9e45-4764-8a31-326aab616d9d,,compensation already exists
+Logan.Williams@terian-services.com,skipped,998677ed-c5ff-42de-b65f-651c9143ebc6,2aff2a1b-c6ce-4de5-aec6-c55cf00b8a3b,,compensation already exists
+Dana.Davis@terian-services.com,skipped,0502775f-d209-42fe-910a-1c1ea59303c2,e8d642ff-7ae1-45a2-bb71-f58b3e614bf3,,compensation already exists
+Drew.Martin@terian-services.com,skipped,ca7dce8a-995e-4dc4-bd74-14e141e7fc3b,626c1011-7b45-4972-b52c-a5dc26fc6982,,compensation already exists
+Drew.Martinez@terian-services.com,skipped,cda45319-7a24-496a-9e32-9dd60b50ef4c,6615780d-ac8c-45c0-904f-727e876cb7b8,,compensation already exists
+luigy.teriani@terian-services.com,skipped,cd307320-1183-4ab6-984a-1ca95db57b81,55026e23-ca05-4900-8d21-354b0566001d,,compensation already exists
+Jamie.Garcia@terian-services.com,skipped,4fdee422-8f4a-414f-8bc1-3d9639522458,fa02f2ed-a36d-4819-82ea-c7738ed077e7,,compensation already exists
+Alex.Wilson@terian-services.com,skipped,9cc484c7-5fc4-4aa5-8fed-979d7a98797c,00aa0a79-3463-4175-befa-7b3b71eba3c1,,compensation already exists
+Kendall.Martinez@terian-services.com,skipped,0e0da9c7-2477-4ef2-a15b-02a50f2b113b,27862601-a1dc-44e5-ade0-0ba249679861,,compensation already exists
+Jamie.Gonzalez@terian-services.com,skipped,45af7871-1069-49c9-8cb4-506f17ecb70f,faf89224-b2de-486d-a923-b7063cd7172b,,compensation already exists
+Dana.Lopez@terian-services.com,skipped,642bebfd-7289-476b-aabe-cf3be5f87c61,7f429323-f4fc-41ce-8dc0-1d1f364fa7fe,,compensation already exists
+Jesse.Anderson@terian-services.com,skipped,eb80e514-5f59-455e-9305-10157e39e229,5727b438-923a-4d8f-8cda-f12e63518fab,,compensation already exists
+Cameron.Anderson@terian-services.com,skipped,f19f4d53-7fad-43bc-b592-3484c02f244b,367eaf85-c77d-49b6-a7d4-77b607d2d855,,compensation already exists
+Hayden.Moore@terian-services.com,skipped,1aeae7b7-b3f9-4257-94c6-70d87c5f888d,756fe798-2d0b-4244-a2f1-2d6d357daf00,,compensation already exists
+Sam.Rodriguez@terian-services.com,skipped,90da2904-c1f4-4f41-9c56-88bf5a454269,a98ba72e-e615-4341-b97b-f661c98c4261,,compensation already exists
+Taylor.Rodriguez@terian-services.com,skipped,cf3527ad-b97a-40d8-8aca-48c0019cc307,41f56743-182c-4b54-a0ca-045982c88c48,,compensation already exists
+Alex.Williams@terian-services.com,skipped,befeebf3-9fb3-4450-9765-3782df096134,f0bd986e-500c-4a51-b9a1-3299cd708e78,,compensation already exists
+Taylor.Martinez@terian-services.com,skipped,6779db7a-f363-40a9-a45d-31b5333875bf,fd40fc2b-40eb-4729-8b24-7a96b9e456f9,,compensation already exists
+Morgan.Williams@terian-services.com,skipped,f3fcfe81-ee9e-47b0-867c-f9d89647c3e7,f025fde1-5d6a-48ae-938c-8ec8795e0be2,,compensation already exists
+Morgan.Martinez@terian-services.com,skipped,8c0727f4-3df9-48b1-8291-d9846dea94a2,d6a78dea-6894-42df-aa71-de7a5fe3657d,,compensation already exists
+Evan.Johnson@terian-services.com,skipped,419425d1-e1e0-4fbc-86ba-dd1fde8644cc,407dfecc-d8f1-4438-9aee-0d2d686298b2,,compensation already exists
+Casey.Davis@terian-services.com,skipped,ffec11ce-1780-4b71-813c-6a04487c82f1,8079b96a-eb07-44fa-91f6-388b0794ad46,,compensation already exists
+Drew.Lopez@terian-services.com,skipped,b96f000b-c76c-49dc-b2a9-10d6b6ad853f,a6ad44a0-5c5b-420a-a691-86d639c12544,,compensation already exists
+Riley.Gonzalez@terian-services.com,skipped,49b85aba-ba7e-4cd1-a958-06d56e9d4cb4,d6379567-1512-4827-968f-035ef33dff83,,compensation already exists
+Taylor.Johnson@terian-services.com,skipped,b9c669cf-437d-48b4-82c8-c5e18996a588,49ca40ad-b2c1-471d-bbb2-895ee7057fae,,compensation already exists
+Dana.Jackson@terian-services.com,skipped,1974a533-b9c8-4545-b1cf-53346333788d,9c33040b-4a81-4f5b-a8db-f662e67375d7,,compensation already exists
+Casey.Wilson@terian-services.com,skipped,562aaf35-0a52-4b87-921c-8aac4b99c14f,da170ce9-1800-42f6-b30c-5c59bea74964,,compensation already exists
+Drew.Brown@terian-services.com,skipped,8b77eeae-19b2-4105-a77c-bf6e6f80d3d8,55d1a96c-9ad2-457c-8c9c-16ea5fbeb79e,,compensation already exists
+Jesse.Davis@terian-services.com,skipped,53e9a647-c24e-4256-b665-2b3b60b1179a,b11d73da-2d10-4e72-b81f-6acb1dbbeffb,,compensation already exists
+Hayden.Garcia@terian-services.com,skipped,2cf0fa93-855d-4ac8-b5ff-38f5fb9ca6d2,4504572a-56a6-4b16-b953-7bdd7c939254,,compensation already exists
+Pat.Smith@terian-services.com,skipped,879bd47e-1c59-451c-9983-b38fa272644f,ca2459a2-3764-462b-acdc-cac9f737f5ab,,compensation already exists
+Casey.Rodriguez@terian-services.com,skipped,56790d5f-a563-4e5d-ac22-e69657225f3d,c221bf7b-2b6d-4d57-add6-4e094555b223,,compensation already exists
+Hayden.Jones@terian-services.com,skipped,3ee58cdf-0907-4312-88a3-adb86afd35d4,443127d9-5db0-4121-b3d2-43cb6d11c5cf,,compensation already exists
+Taylor.Anderson@terian-services.com,skipped,2f59178f-84b2-4c8d-b696-9bb2e8d98db7,93b42710-70ad-4aab-b5be-63503a093b86,,compensation already exists
+Avery.Rodriguez@terian-services.com,skipped,3066916c-cf7b-472c-aa0c-f5792963dbb0,e3a24b9b-9b07-4134-be98-009a0e3c31c4,,compensation already exists
+Alex.Rodriguez@terian-services.com,skipped,76322951-10c0-4fc3-8b67-9c02138fbe78,49bc7141-ea0e-49c5-9158-aa0bbe769aba,,compensation already exists
+Alex.Johnson@terian-services.com,skipped,7d8edf9c-7a29-4434-acff-073949a17f2a,d4170c8b-7dbe-4744-b188-d75a923d0803,,compensation already exists
+Robin.Hernandez@terian-services.com,skipped,6e071377-2208-4246-a148-114ff110a163,c035899d-5822-4f41-a603-aa1b34c56849,,compensation already exists
+Avery.Gonzalez@terian-services.com,skipped,01e97eff-1bd3-483a-9a35-f4ea6b243856,cf908334-8b7d-4298-a24e-99ec2c3ccdeb,,compensation already exists
+Cameron.Lopez@terian-services.com,skipped,2d2601f1-22a6-4354-b827-94208fa259e2,b722592a-2f4e-4912-bc82-f64de0661a49,,compensation already exists
+Kendall.Thomas@terian-services.com,skipped,ca468675-466c-45ba-821c-6785ca977c12,66db15c8-b743-49e4-8293-35cc3090b675,,compensation already exists
+Kendall.Williams@terian-services.com,skipped,4e579781-e6b2-4bc4-a57e-8012ff76cae8,f6ce0b31-0fd1-4e68-9b7a-f9f2fb5a59d2,,compensation already exists
+Dana.Williams@terian-services.com,skipped,73ba5e2a-a528-4874-b72d-c9c119042525,3c54da6a-b5f0-4dfb-a06d-8e2ce9f54397,,compensation already exists
+Jesse.Jones@terian-services.com,skipped,9eadbbab-25d4-40b6-bf50-3a4428a9dcf7,51c20652-2691-479a-935c-cde7a32e7f0d,,compensation already exists
+Taylor.Thomas@terian-services.com,skipped,d45cdc44-0a7e-4d33-90e9-16c70eafd5a0,089bf60f-d7ae-4b25-bbd1-f173d494910f,,compensation already exists
+Pat.Williams@terian-services.com,skipped,a5b940dd-485e-43a0-a4d3-82dd9827b9c7,05f23a99-b47f-4598-a2dc-50e4aa0d297e,,compensation already exists
+Riley.Martin@terian-services.com,skipped,76131292-33f1-4ecc-99af-be2284ce4e0c,9e6ec53b-0800-4623-9e8e-9796f545440a,,compensation already exists
+Chris.Taylor@terian-services.com,skipped,49769fd9-709d-4709-a498-838fd5277b57,8d65d306-1647-41b1-bd32-8e25e86cca0e,,compensation already exists
+Chris.Wilson@terian-services.com,skipped,63cd4412-d2cb-4af7-acf5-1f41faa15e67,2de3703d-f681-4c3d-950b-d0c3349bfa2a,,compensation already exists
+Alex.Hernandez@terian-services.com,skipped,8a007d04-56e7-45e3-9dc3-464ee14d2347,f2e1784c-9597-4f89-aa09-3414b5b5b11c,,compensation already exists
+Sam.Jones@terian-services.com,skipped,a9b15d31-00ef-4532-a7df-32f52ed2b865,3c7f6c70-5175-48ad-a8d3-25182bc8d3f4,,compensation already exists
+Pat.Wilson@terian-services.com,skipped,d5772047-c4cc-405d-9350-f2d574820afc,f55f91c4-0ac6-4708-bd70-d5ebb6c2c538,,compensation already exists
+Taylor.Wilson@terian-services.com,skipped,711a6c3d-3f0d-45cb-b3a8-40c22584474a,a9c89604-9ee0-47c8-801a-516651050fcf,,compensation already exists
+Jordan.Jackson@terian-services.com,skipped,ef2e742f-b996-4cb3-a742-1a59811ff3b0,e1ef4dad-8f50-43ac-bf70-3b505fd53270,,compensation already exists
+Evan.Martin@terian-services.com,skipped,8feba3a2-86bb-4ebd-ae39-91778229a679,3bc55467-b2f7-427e-b86e-66fc9c9d8aaa,,compensation already exists
+Riley.Miller@terian-services.com,skipped,f4080122-7c26-441e-b456-b6085da21ddb,50ed2201-d314-40ab-9cf9-af77e5123500,,compensation already exists
+Taylor.Martin@terian-services.com,skipped,43578391-b194-4519-9689-ea892b195dbe,04a97000-836e-455a-bbd6-3c9fed9c2a9d,,compensation already exists
+Sam.Anderson@terian-services.com,skipped,207faa39-2139-45a1-a4b5-6097ca627fca,464522b0-f674-4477-a983-8beb9b45175a,,compensation already exists
+Robin.Miller@terian-services.com,skipped,1c744454-d583-45c2-b1d2-d5664e8fd800,34c448b4-6802-468f-bd40-a771f9d72924,,compensation already exists
+Jesse.Moore@terian-services.com,skipped,9abcef90-7bba-4ed3-99a0-f72cc88282a1,f39f5cf5-7e92-4f02-9708-fb34fda2196b,,compensation already exists
+Dana.Jones@terian-services.com,skipped,11e6b82c-8238-4639-8636-7208bb287dd2,0f24af28-bf93-4fe3-83d5-c524a3a13783,,compensation already exists
+Sam.Moore@terian-services.com,skipped,e6bdfdad-ad35-4554-823b-c79dc7c9f87d,0f063cbe-95bb-4c19-b130-f54b04b8299b,,compensation already exists
+Jamie.Jones@terian-services.com,skipped,32adb295-c908-43be-ae87-1b4c45133b61,8fa3ecee-a7fa-4d77-90e0-6ee1d5bdcb9c,,compensation already exists
+Drew.Anderson@terian-services.com,skipped,d896ddc6-9142-44c1-a71a-61ca6f99c644,15705a78-e9a4-4539-b239-51db68f0dc91,,compensation already exists
+Sam.Hernandez@terian-services.com,skipped,b91f7959-9dd4-42c3-9625-1f8694d2fb33,d6727968-ab69-481a-8a93-a0f17b3d10e8,,compensation already exists
+Taylor.Taylor@terian-services.com,skipped,a804863f-0605-4431-a52b-12e203593e4f,f209c5ad-8982-4ba0-befd-a91fb2982de1,,compensation already exists

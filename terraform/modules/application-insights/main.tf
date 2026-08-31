@@ -15,19 +15,21 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "azurerm_application_insights" "backend" {
-  name                = "appi-award-api-${var.environment}"
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  workspace_id        = var.log_analytics_workspace_id
-  application_type    = "web"
-  tags                = var.tags
+  name                  = "appi-award-api-${var.environment}"
+  resource_group_name   = var.resource_group_name
+  location              = var.location
+  workspace_id          = var.log_analytics_workspace_id
+  application_type      = "web"
+  daily_data_cap_in_gb  = var.daily_data_cap_gb == -1 ? null : var.daily_data_cap_gb
+  tags                  = var.tags
 }
 
 resource "azurerm_application_insights" "frontend" {
-  name                = "appi-award-frontend-${var.environment}"
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  workspace_id        = var.log_analytics_workspace_id
-  application_type    = "web"
-  tags                = var.tags
+  name                  = "appi-award-frontend-${var.environment}"
+  resource_group_name   = var.resource_group_name
+  location              = var.location
+  workspace_id          = var.log_analytics_workspace_id
+  application_type      = "web"
+  daily_data_cap_in_gb  = var.daily_data_cap_gb == -1 ? null : var.daily_data_cap_gb
+  tags                  = var.tags
 }
