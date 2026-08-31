@@ -16,6 +16,24 @@ NominationStatus = Literal[
 RiskLevel = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE", "UNKNOWN"]
 
 
+@router.get("/setup/fraud-integrity")
+async def get_fraud_integrity_setup(
+    user_context: dict = Depends(require_analytics_access),
+):
+    """Return tenant fraud/integrity settings without exposing a write route."""
+    tenant_id = user_context["effective_user"]["TenantId"]
+    return sqlhelper.get_fraud_settings(tenant_id)
+
+
+@router.get("/setup/decision-engines")
+async def get_decision_engines_setup(
+    user_context: dict = Depends(require_analytics_access),
+):
+    """Return tenant decision-engine operational status as a read-only view."""
+    tenant_id = user_context["effective_user"]["TenantId"]
+    return {"rows": sqlhelper.get_integrity_component_statuses(tenant_id)}
+
+
 @router.get("/nominations")
 async def search_nominations(
     q: str = Query(default="", max_length=200),

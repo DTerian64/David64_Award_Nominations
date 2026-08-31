@@ -1,13 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
-  BrainCircuit, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
-  CircleHelp, ExternalLink, FileSearch, RefreshCw, Search, X,
+  Activity, BrainCircuit, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
+  CircleHelp, ExternalLink, FileSearch, RefreshCw, Search, Settings, ShieldAlert, X,
 } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import {
   EngineVerdicts, RiskBadge, ShapPanel,
   type HRBPQueueItem, type PairHistory,
 } from './HRBPReviewTab';
+import { DetectionEnginesPanel, FraudPanel } from './SetupPanel';
 
 interface SearchItem {
   nomination_id: number;
@@ -151,38 +152,45 @@ const ReadOnlyEvidence: React.FC<{
 };
 
 export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, onOpenNominationLogs }) => {
-  const { isImpersonating, getEffectiveUser } = useImpersonation();
+  const { isAdmin, isImpersonating, getEffectiveUser } = useImpersonation();
   const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-  const [subTab, setSubTab] = useState<'independent' | 'elce'>('independent');
+  const [subTab, setSubTab] = useState<'independent' | 'modelSetup' | 'elce'>('independent');
+  const [modelSetupTab, setModelSetupTab] = useState<'fraud' | 'engines'>('fraud');
   const [query, setQuery] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
   const [status, setStatus] = useState('');
+  const [appliedStatus, setAppliedStatus] = useState('');
   const [risk, setRisk] = useState('');
+  const [appliedRisk, setAppliedRisk] = useState('');
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<SearchResponse | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<HRBPQueueItem | null>(null);
   const [detailHistory, setDetailHistory] = useState<PairHistory | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const load = useCallback(async () => {
+  const executeSearch = async (targetPage: number, targetQuery: string, targetStatus: string, targetRisk: string) => {
     setLoading(true);
     setError(null);
-    const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
-    if (appliedQuery) params.set('q', appliedQuery);
-    if (status) params.set('status', status);
-    if (risk) params.set('risk', risk);
+    const params = new URLSearchParams({ page: String(targetPage), page_size: String(PAGE_SIZE) });
+    if (targetQuery) params.set('q', targetQuery);
+    if (targetStatus) params.set('status', targetStatus);
+    if (targetRisk) params.set('risk', targetRisk);
     try {
       setResult(await apiFetch<SearchResponse>(`/api/model-analysis/nominations?${params}`, {}, impersonatedUPN));
+      setPage(targetPage);
+      setAppliedQuery(targetQuery);
+      setAppliedStatus(targetStatus);
+      setAppliedRisk(targetRisk);
+      setHasSearched(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to search nominations');
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, appliedQuery, impersonatedUPN, page, risk, status]);
-
-  useEffect(() => { if (subTab === 'independent') load(); }, [load, subTab]);
+  };
 
   const openDetail = async (nominationId: number) => {
     setDetailLoading(true);
@@ -202,6 +210,7 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
   };
 
   const totalPages = Math.max(1, Math.ceil((result?.total ?? 0) / PAGE_SIZE));
+  const modelSetupReadOnly = !isAdmin || isImpersonating;
 
   return (
     <div className="space-y-5">
@@ -212,6 +221,13 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
           className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${subTab === 'independent' ? '' : 'text-gray-600 hover:bg-gray-100'}`}
         >
           <BrainCircuit className="h-4 w-4" /> Independent Models
+        </button>
+        <button
+          onClick={() => setSubTab('modelSetup')}
+          style={subTab === 'modelSetup' ? { backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' } : {}}
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${subTab === 'modelSetup' ? '' : 'text-gray-600 hover:bg-gray-100'}`}
+        >
+          <Settings className="h-4 w-4" /> Model Setup
         </button>
         <button
           onClick={() => setSubTab('elce')}
@@ -231,10 +247,43 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
           <h3 className="text-lg font-semibold text-gray-800">ELCE workspace prepared</h3>
           <p className="mt-1 text-sm text-gray-500">Even Lineage Counterfactual Explanation functionality will be added in the ELCE project.</p>
         </div>
+      ) : subTab === 'modelSetup' ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2">
+            <button
+              onClick={() => setModelSetupTab('fraud')}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${modelSetupTab === 'fraud' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:bg-white/70'}`}
+            >
+              <ShieldAlert className="h-4 w-4" /> Fraud / Integrity
+            </button>
+            <button
+              onClick={() => setModelSetupTab('engines')}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${modelSetupTab === 'engines' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:bg-white/70'}`}
+            >
+              <Activity className="h-4 w-4" /> Decision Engines
+            </button>
+          </div>
+
+          {modelSetupTab === 'fraud' ? (
+            <FraudPanel
+              readOnly={modelSetupReadOnly}
+              endpoint={modelSetupReadOnly ? '/api/model-analysis/setup/fraud-integrity' : '/api/admin/setup/fraud'}
+              impersonatedUPN={impersonatedUPN}
+            />
+          ) : (
+            <DetectionEnginesPanel
+              endpoint={modelSetupReadOnly ? '/api/model-analysis/setup/decision-engines' : '/api/admin/setup/detection-engines'}
+              impersonatedUPN={impersonatedUPN}
+            />
+          )}
+        </div>
       ) : (
         <>
           <form
-            onSubmit={event => { event.preventDefault(); setPage(1); setAppliedQuery(query.trim()); }}
+            onSubmit={event => {
+              event.preventDefault();
+              void executeSearch(1, query.trim(), status, risk);
+            }}
             className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 lg:grid-cols-[1fr_13rem_11rem_auto]"
           >
             <label className="relative">
@@ -247,19 +296,27 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
                 className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
             </label>
-            <select value={status} onChange={event => { setStatus(event.target.value); setPage(1); }} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
+            <select value={status} onChange={event => setStatus(event.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
               {STATUSES.map(value => <option key={value} value={value}>{value || 'All statuses'}</option>)}
             </select>
-            <select value={risk} onChange={event => { setRisk(event.target.value); setPage(1); }} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
+            <select value={risk} onChange={event => setRisk(event.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
               {RISKS.map(value => <option key={value} value={value}>{value || 'All risk levels'}</option>)}
             </select>
-            <button type="submit" style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }} className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium">
+            <button disabled={loading} type="submit" style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }} className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
               <Search className="h-4 w-4" /> Search
             </button>
           </form>
 
           {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {loading && <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-400"><RefreshCw className="h-4 w-4 animate-spin" /> Searching…</div>}
+
+          {!loading && !hasSearched && (
+            <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center text-gray-400">
+              <FileSearch className="mx-auto mb-3 h-12 w-12" />
+              <p className="font-medium text-gray-600">Search when you are ready</p>
+              <p className="mt-1 text-sm">Choose any filters, or leave them empty to search all nominations, then click Search.</p>
+            </div>
+          )}
 
           {!loading && result && result.items.length === 0 && (
             <div className="py-16 text-center text-gray-400"><FileSearch className="mx-auto mb-3 h-12 w-12" /><p>No matching nominations found.</p></div>
@@ -306,9 +363,9 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
             <div className="flex items-center justify-between text-sm text-gray-500">
               <span>{result.total} nomination{result.total === 1 ? '' : 's'}</span>
               <div className="flex items-center gap-2">
-                <button disabled={page <= 1} onClick={() => setPage(value => value - 1)} className="rounded border border-gray-200 p-1.5 disabled:opacity-40" title="Previous page"><ChevronLeft className="h-4 w-4" /></button>
+                <button disabled={page <= 1} onClick={() => void executeSearch(page - 1, appliedQuery, appliedStatus, appliedRisk)} className="rounded border border-gray-200 p-1.5 disabled:opacity-40" title="Previous page"><ChevronLeft className="h-4 w-4" /></button>
                 <span>Page {page} of {totalPages}</span>
-                <button disabled={page >= totalPages} onClick={() => setPage(value => value + 1)} className="rounded border border-gray-200 p-1.5 disabled:opacity-40" title="Next page"><ChevronRight className="h-4 w-4" /></button>
+                <button disabled={page >= totalPages} onClick={() => void executeSearch(page + 1, appliedQuery, appliedStatus, appliedRisk)} className="rounded border border-gray-200 p-1.5 disabled:opacity-40" title="Next page"><ChevronRight className="h-4 w-4" /></button>
               </div>
             </div>
           )}

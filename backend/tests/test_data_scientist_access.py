@@ -11,7 +11,12 @@ from fastapi import HTTPException
 os.environ.setdefault("CLIENT_ID", "unit-test-client")
 
 from auth import require_analytics_access
-from routers.model_analysis_router import get_nomination_analysis, search_nominations
+from routers.model_analysis_router import (
+    get_decision_engines_setup,
+    get_fraud_integrity_setup,
+    get_nomination_analysis,
+    search_nominations,
+)
 from utils import sqlhelper2
 
 
@@ -36,6 +41,28 @@ class DataScientistAuthorizationTests(unittest.TestCase):
 
 
 class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
+    @patch("routers.model_analysis_router.sqlhelper.get_fraud_settings")
+    async def test_fraud_setup_is_read_from_effective_tenant(self, get_settings):
+        get_settings.return_value = {"low_threshold": 20}
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+        result = await get_fraud_integrity_setup(context)
+        get_settings.assert_called_once_with(4)
+        self.assertEqual(result["low_threshold"], 20)
+
+    @patch("routers.model_analysis_router.sqlhelper.get_integrity_component_statuses")
+    async def test_decision_engines_are_read_from_effective_tenant(self, get_statuses):
+        get_statuses.return_value = [{"component": "RF"}]
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+        result = await get_decision_engines_setup(context)
+        get_statuses.assert_called_once_with(4)
+        self.assertEqual(result["rows"][0]["component"], "RF")
+
     @patch("routers.model_analysis_router.sqlhelper.search_model_analysis_nominations")
     async def test_search_uses_effective_tenant(self, search):
         search.return_value = {"items": [], "total": 0, "page": 1, "page_size": 25}

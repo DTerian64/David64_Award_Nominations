@@ -8,9 +8,9 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Settings, Users as UsersIcon, Tag, ShieldAlert, DollarSign,
+  Settings, Users as UsersIcon, Tag, DollarSign,
   Save, RefreshCw, AlertCircle, CheckCircle, X, Plus,
-  ShieldCheck, History, UserCheck, Eye, Download, Mail, Activity,
+  ShieldCheck, History, UserCheck, Eye, Download, Mail,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
 import CodeMirror from '@uiw/react-codemirror';
@@ -18,7 +18,7 @@ import { html } from '@codemirror/lang-html';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-type SubTab = 'organization' | 'roles' | 'categories' | 'email' | 'fraud' | 'engines' | 'payroll' | 'audit';
+type SubTab = 'organization' | 'roles' | 'categories' | 'email' | 'payroll' | 'audit';
 
 interface OrgSettings {
   tenant_name:          string;
@@ -40,8 +40,6 @@ const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
   { id: 'roles',        label: 'Roles & Access',   icon: <UsersIcon className="w-4 h-4" /> },
   { id: 'categories',   label: 'Award Categories', icon: <Tag className="w-4 h-4" /> },
   { id: 'email',        label: 'Email Templates',  icon: <Mail className="w-4 h-4" /> },
-  { id: 'fraud',        label: 'Fraud / Integrity',icon: <ShieldAlert className="w-4 h-4" /> },
-  { id: 'engines',      label: 'Detection Engines',icon: <Activity className="w-4 h-4" /> },
   { id: 'payroll',      label: 'Payroll',          icon: <DollarSign className="w-4 h-4" /> },
   { id: 'audit',        label: 'Audit & Access',   icon: <ShieldCheck className="w-4 h-4" /> },
 ];
@@ -74,15 +72,13 @@ export const SetupPanel: React.FC = () => {
       {sub === 'roles'        && <RolesPanel />}
       {sub === 'categories'   && <CategoriesPanel />}
       {sub === 'email'        && <EmailTemplatesPanel />}
-      {sub === 'fraud'        && <FraudPanel />}
-      {sub === 'engines'      && <DetectionEnginesPanel />}
       {sub === 'payroll'      && <PayrollPanel />}
       {sub === 'audit'        && <AuditPanel />}
     </div>
   );
 };
 
-// ── Detection Engines ───────────────────────────────────────────────────────
+// ── Decision Engines ────────────────────────────────────────────────────────
 // Operational state only. Routing thresholds remain under Fraud / Integrity.
 
 interface DetectionEngineStatus {
@@ -144,7 +140,15 @@ const diagnosticValue = (value: unknown): string => {
   return String(value);
 };
 
-const DetectionEnginesPanel: React.FC = () => {
+interface DetectionEnginesPanelProps {
+  endpoint?: string;
+  impersonatedUPN?: string;
+}
+
+export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
+  endpoint = '/api/admin/setup/detection-engines',
+  impersonatedUPN,
+}) => {
   const [rows, setRows] = useState<DetectionEngineStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -154,8 +158,10 @@ const DetectionEnginesPanel: React.FC = () => {
     setError(null);
     try {
       const token = await getAccessToken();
-      const res = await fetch(`${API_BASE_URL}/api/admin/setup/detection-engines`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (impersonatedUPN) headers['X-Impersonate-User'] = impersonatedUPN;
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        headers,
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
       const body = await res.json();
@@ -165,7 +171,7 @@ const DetectionEnginesPanel: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [endpoint, impersonatedUPN]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -173,7 +179,7 @@ const DetectionEnginesPanel: React.FC = () => {
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-gray-800">Detection Engines</h2>
+          <h2 className="text-lg font-semibold text-gray-800">Decision Engines</h2>
           <p className="text-sm text-gray-500 mt-1">
             Read-only operational status for the independent fraud-detection engines.
             Thresholds and routing remain under Fraud / Integrity.
@@ -187,7 +193,7 @@ const DetectionEnginesPanel: React.FC = () => {
             onClick={load}
             disabled={loading}
             className="p-2 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-            title="Refresh engine status"
+            title="Refresh decision engine status"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -813,7 +819,17 @@ interface FraudSettings {
   boilerplate_phrases: string[];
 }
 
-const FraudPanel: React.FC = () => {
+interface FraudPanelProps {
+  readOnly?: boolean;
+  endpoint?: string;
+  impersonatedUPN?: string;
+}
+
+export const FraudPanel: React.FC<FraudPanelProps> = ({
+  readOnly = false,
+  endpoint = '/api/admin/setup/fraud',
+  impersonatedUPN,
+}) => {
   const [data, setData]         = useState<FraudSettings | null>(null);
   const [phrasesText, setPhrasesText] = useState('');
   const [loading, setLoading]   = useState(true);
@@ -825,8 +841,10 @@ const FraudPanel: React.FC = () => {
     setMsg(null);
     try {
       const token = await getAccessToken();
-      const res = await fetch(`${API_BASE_URL}/api/admin/setup/fraud`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (impersonatedUPN) headers['X-Impersonate-User'] = impersonatedUPN;
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        headers,
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
       const d: FraudSettings = await res.json();
@@ -837,7 +855,7 @@ const FraudPanel: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [endpoint, impersonatedUPN]);
   useEffect(() => { load(); }, [load]);
 
   const save = async () => {
@@ -852,7 +870,11 @@ const FraudPanel: React.FC = () => {
       };
       const res = await fetch(`${API_BASE_URL}/api/admin/setup/fraud`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          ...(impersonatedUPN ? { 'X-Impersonate-User': impersonatedUPN } : {}),
+        },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
@@ -875,9 +897,10 @@ const FraudPanel: React.FC = () => {
         step={opts?.step ?? 1}
         min={opts?.min}
         max={opts?.max}
+        disabled={readOnly}
         value={(data as any)[key] ?? ''}
         onChange={e => setData(d => (d ? { ...d, [key]: e.target.value === '' ? 0 : Number(e.target.value) } : d))}
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:text-gray-600"
       />
     </div>
   );
@@ -886,6 +909,7 @@ const FraudPanel: React.FC = () => {
     <label className="inline-flex items-center gap-2 text-sm text-gray-700">
       <input
         type="checkbox"
+        disabled={readOnly}
         checked={Boolean((data as any)[key])}
         onChange={e => setData(d => (d ? { ...d, [key]: e.target.checked } : d))}
       />
@@ -904,10 +928,17 @@ const FraudPanel: React.FC = () => {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
-        <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        <span>Changes are saved immediately but the fraud pipeline caches config, so they take effect after the integrity-check service restarts.</span>
-      </div>
+      {readOnly ? (
+        <div className="flex items-start gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded-lg p-2">
+          <Eye className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>Read-only tenant configuration. Data Scientists can inspect these values but cannot change them.</span>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>Changes are saved immediately but the fraud pipeline caches config, so they take effect after the integrity-check service restarts.</span>
+        </div>
+      )}
 
       {/* Fraud score routing */}
       <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-4 sm:p-5">
@@ -977,9 +1008,10 @@ const FraudPanel: React.FC = () => {
           <label className="block text-sm font-medium text-gray-700 mb-1">LLM instructions (optional)</label>
           <textarea
             rows={2}
+            disabled={readOnly}
             value={data.llm_instructions ?? ''}
             onChange={e => setData(d => (d ? { ...d, llm_instructions: e.target.value || null } : d))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100 disabled:text-gray-600"
             placeholder="Extra guidance appended to the LLM prompt…"
           />
         </div>
@@ -987,9 +1019,10 @@ const FraudPanel: React.FC = () => {
           <label className="block text-sm font-medium text-gray-700 mb-1">Boilerplate phrases (one per line)</label>
           <textarea
             rows={3}
+            disabled={readOnly}
             value={phrasesText}
             onChange={e => setPhrasesText(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono disabled:bg-gray-100 disabled:text-gray-600"
             placeholder={'great job\nwell done'}
           />
         </div>
@@ -1003,13 +1036,17 @@ const FraudPanel: React.FC = () => {
       )}
 
       <div className="flex gap-2">
-        <button onClick={save} disabled={saving}
-          style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium disabled:opacity-50">
-          <Save className={`w-4 h-4 ${saving ? 'animate-pulse' : ''}`} />{saving ? 'Saving…' : 'Save changes'}
-        </button>
+        {!readOnly && (
+          <button onClick={save} disabled={saving}
+            style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium disabled:opacity-50">
+            <Save className={`w-4 h-4 ${saving ? 'animate-pulse' : ''}`} />{saving ? 'Saving…' : 'Save changes'}
+          </button>
+        )}
         <button onClick={load} disabled={saving || loading}
-          className="px-4 py-2 rounded-lg text-gray-700 border border-gray-300 hover:bg-gray-50 disabled:opacity-50">Reset</button>
+          className="px-4 py-2 rounded-lg text-gray-700 border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
+          {readOnly ? 'Refresh' : 'Reset'}
+        </button>
       </div>
     </div>
   );
