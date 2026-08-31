@@ -62,6 +62,7 @@ from utils.component_status import upsert_component_status
 # model at inference time (e.g. 'paraphrase-multilingual-MiniLM-L12-v2'
 # for Korean / Japanese / other non-English tenants).
 DEFAULT_EMBED_MODEL_NAME = 'all-MiniLM-L6-v2'
+RF_FEATURE_CONTRACT = 'rf-native-v2'
 
 JOB_DIR = Path(__file__).resolve().parents[1]
 env_path = JOB_DIR.parent / ".env"
@@ -192,6 +193,7 @@ def _write_rf_manifest(
         },
         "training": training_metrics,
         "data_profile": {
+            "feature_contract": model_data["feature_contract"],
             "amount_mean": model_data["amount_mean"],
             "amount_std": model_data["amount_std"],
             "category_count": len(model_data["category_fraud_rate"]),
@@ -301,53 +303,11 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         n.CategoryId,
         p2p.FraudScore,
         p2p.RiskLevel,
-        p2p.FraudFlags,
-
-        -- ── Graph features: nominator snapshot (point-in-time) ──────────────
-        -- OUTER APPLY picks the closest UserGraphFlags snapshot whose AsOfDate
-        -- is ≤ the nomination date.  If no prior snapshot exists, all columns
-        -- are NULL and fillna(0) in the RF pipeline treats them as no-signal.
-        ISNULL(ugf_n.IsInRing,                 0) AS NominatorIsInRing,
-        ISNULL(ugf_n.IsSuperNominator,         0) AS SuperNominatorFlag,
-        ISNULL(ugf_n.IsInCopyPasteCluster,     0) AS NominatorInCopyPaste,
-        ISNULL(ugf_n.CopyPasteClusterSize,     0) AS NominatorClusterSize,
-        ISNULL(ugf_n.HasTransactionalLanguage, 0) AS NominatorTransactional,
-
-        -- ── Graph features: beneficiary snapshot (point-in-time) ────────────
-        ISNULL(ugf_b.IsInRing,                 0) AS BeneficiaryIsInRing,
-        ISNULL(ugf_b.IsInCopyPasteCluster,     0) AS BeneficiaryInCopyPaste,
-        ISNULL(ugf_b.CopyPasteClusterSize,     0) AS BeneficiaryClusterSize,
-        ISNULL(ugf_b.HasTransactionalLanguage, 0) AS BeneficiaryTransactional
+        p2p.FraudFlags
 
     FROM dbo.Nominations n
     JOIN dbo.Users u ON u.UserId = n.NominatorId
     LEFT JOIN dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
-
-    -- Nominator graph flags as of nomination date
-    OUTER APPLY (
-        SELECT TOP 1
-               IsInRing, IsSuperNominator,
-               IsInCopyPasteCluster, CopyPasteClusterSize,
-               HasTransactionalLanguage
-        FROM   dbo.UserGraphFlags
-        WHERE  TenantId = u.TenantId
-          AND  UserId   = n.NominatorId
-          AND  AsOfDate <= CAST(n.NominationDate AS DATE)
-        ORDER  BY AsOfDate DESC
-    ) ugf_n
-
-    -- Beneficiary graph flags as of nomination date
-    OUTER APPLY (
-        SELECT TOP 1
-               IsInRing,
-               IsInCopyPasteCluster, CopyPasteClusterSize,
-               HasTransactionalLanguage
-        FROM   dbo.UserGraphFlags
-        WHERE  TenantId = u.TenantId
-          AND  UserId   = n.BeneficiaryId
-          AND  AsOfDate <= CAST(n.NominationDate AS DATE)
-        ORDER  BY AsOfDate DESC
-    ) ugf_b
 
     WHERE n.Status NOT IN ('PendingHRBPReview')
       AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection (Description)')
@@ -533,40 +493,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
         df['NominatorTotalNominations'] / (df['NominatorUniqueBeneficiaries'] + 1)
     )
 
-    # ── Graph pattern features ───────────────────────────────────────────────
-    # Raw columns from load_data() are nominator/beneficiary split; compose
-    # them into the single features the RF sees.
-    #
-    # GraphCycleFlag — 1 if nominator OR beneficiary is in a Ring finding.
-    df['GraphCycleFlag'] = (
-        (df.get('NominatorIsInRing', 0).fillna(0).astype(int))
-        | (df.get('BeneficiaryIsInRing', 0).fillna(0).astype(int))
-    ).astype(int)
-
-    # GraphReciprocalFlag — HasReciprocalNomination already captures this at
-    # the nomination level from the training set.  The graph flag version is
-    # the same signal but sourced from UserGraphFlags at inference time.
-    # At training time we reuse HasReciprocalNomination (already computed
-    # above) so no duplicate column is needed; the RF column is aliased below.
-    df['GraphReciprocalFlag'] = df['HasReciprocalNomination'].fillna(0).astype(int)
-
-    # GraphClusterSize — take the maximum cluster size across nominator and
-    # beneficiary (if either is in a copy-paste cluster, the cluster size
-    # reflects their worst-case exposure).
-    df['GraphClusterSize'] = df[
-        ['NominatorClusterSize', 'BeneficiaryClusterSize']
-    ].fillna(0).max(axis=1).astype(int)
-
-    # SuperNominatorFlag — directly from nominator's snapshot.
-    df['SuperNominatorFlag'] = df.get('SuperNominatorFlag', 0).fillna(0).astype(int)
-
-    # TransactionalLanguageFlag — 1 if nominator OR beneficiary appears in a
-    # TransactionalLanguage finding.
-    df['TransactionalLanguageFlag'] = (
-        (df.get('NominatorTransactional', 0).fillna(0).astype(int))
-        | (df.get('BeneficiaryTransactional', 0).fillna(0).astype(int))
-    ).astype(int)
-
     # ── Nomination category — target encoding ────────────────────────────────
     # Replace CategoryId with a single float: the mean fraud rate for that
     # category in the training set.  This is stable across category changes:
@@ -732,12 +658,6 @@ P2P_FEATURE_COLUMNS = [
     'CategoryFraudRate',
     'DescriptionCosineSim',
     'DescriptionEmbDistance',
-    # Graph pattern features (point-in-time joined from dbo.UserGraphFlags)
-    'GraphCycleFlag',               # nominator or beneficiary in a Ring finding
-    'GraphReciprocalFlag',          # beneficiary has nominated nominator back
-    'GraphClusterSize',             # CopyPaste cluster size (0 if not in cluster)
-    'SuperNominatorFlag',           # nominator is a SuperNominator outlier
-    'TransactionalLanguageFlag',    # nominator/beneficiary in TransactionalLanguage finding
 ]
 
 
@@ -873,7 +793,11 @@ def score_and_save_historical(
     )
 
 
-def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
+def train_model(
+    df: pd.DataFrame,
+    tenant_id: int,
+    tenant_name: str | None = None,
+) -> tuple[dict, dict]:
     """
     Train a Random Forest for one tenant and persist it to
     Output/random_forest_tenant_{tenant_id}.pkl.
@@ -985,6 +909,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     model_version = f"rf-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-t{tenant_id}"
     model_data = {
         'model_version':         model_version,
+        'feature_contract':      RF_FEATURE_CONTRACT,
         # P2P model — used for live submission-time fraud scoring
         'p2p_model':            p2p_rf,
         'p2p_scaler':           p2p_scaler,
@@ -1016,7 +941,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     p2p_probs_viz = p2p_rf.predict_proba(
         p2p_scaler.transform(df[P2P_FEATURE_COLUMNS].fillna(0))
     )[:, 1]
-    create_visualizations(df, p2p_probs_viz, tenant_id)
+    create_visualizations(df, p2p_probs_viz, tenant_id, tenant_name)
 
     training_metrics = {
         'p2p_auc': p2p_auc,
@@ -1042,6 +967,7 @@ def create_visualizations(
     df: pd.DataFrame,
     p2p_probs: np.ndarray,
     tenant_id: int,
+    tenant_name: str | None = None,
 ) -> None:
     """
     Generate and upload the nomination-time RF score distribution, coloured by
@@ -1058,7 +984,8 @@ def create_visualizations(
     ax.hist([legitimate, fraud], bins=30, label=['Legitimate', 'Fraud'], alpha=0.7)
     ax.set_xlabel('Fraud Score (0–100)')
     ax.set_ylabel('Count')
-    ax.set_title(f'Nomination Fraud Score Distribution — Tenant {tenant_id}')
+    tenant_label = tenant_name or f'Tenant {tenant_id}'
+    ax.set_title(f'Nomination Fraud Score Distribution — {tenant_label}')
     ax.legend()
 
     plt.tight_layout()
@@ -1130,7 +1057,7 @@ def main(tenants_to_process: list | None = None) -> None:
                 )
                 continue
 
-            model_data, stats = train_model(df, tenant_id)
+            model_data, stats = train_model(df, tenant_id, tenant_name)
             if stats.get('skipped'):
                 print(f"⚠  Tenant {tenant_id} skipped — no fraud patterns found.")
                 results[tenant_id] = "SKIPPED (no fraud patterns — model will be trained once patterns emerge)"

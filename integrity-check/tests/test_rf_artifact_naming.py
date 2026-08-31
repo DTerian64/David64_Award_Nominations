@@ -52,7 +52,10 @@ class _BlobService:
 class RfArtifactNamingTests(unittest.TestCase):
     def test_integrity_check_loads_canonical_blob_name(self):
         attempts = []
-        payload = pickle.dumps({"model_version": "rf-test"})
+        payload = pickle.dumps({
+            "model_version": "rf-test",
+            "p2p_feature_columns": ["Amount", "HasReciprocalNomination"],
+        })
         fake_service = _BlobService(attempts, payload)
 
         with patch.object(random_forest_check, "_STORAGE_KEY", "test-key"), patch(

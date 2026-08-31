@@ -15,8 +15,8 @@ below (STAGES) is the single source of truth; this list documents it.
 
   Stage 2: modeling/train_rf_model.py
       Per-tenant Random Forest retrain on Nominations + FraudScores tables.
-      Point-in-time joins dbo.UserGraphFlags to include nominator and beneficiary
-      graph pattern features without data leakage.
+      Uses nomination, relationship, amount, category, and semantic-description
+      features only; Graph Analytics findings remain an independent opinion.
       Upserts updated nomination-time scores into dbo.P2P_FraudScores. Historical
       dbo.Appr_FraudScores rows are retained but no longer produced.
       Uploads the retrained .pkl model to Azure Blob Storage.
@@ -58,8 +58,8 @@ below (STAGES) is the single source of truth; this list documents it.
       rolling-origin MASE) writing to dbo.ForecastRuns / dbo.Forecasts.
 
   ORDERING
-    Stage 1 before Stage 2 — the UserGraphFlags snapshots must be current before
-      the RF engineers nomination-time graph features from them.
+    Stage 1 and Stage 2 are model-independent. They remain sequenced for stable
+      operations, but the RF does not consume Graph Analytics findings.
     Stage 2 before Stage 3 — the GNN's labels come from dbo.P2P_FraudScores,
       which Stage 2 has just rewritten. (Worth naming plainly: outside the
       human-confirmed rows, those labels are the RF's own prior output, so the

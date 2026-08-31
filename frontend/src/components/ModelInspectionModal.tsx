@@ -97,6 +97,9 @@ interface Props {
 const prettyLabel = (value: string) =>
   value.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
 
+const forestModelLabel = (name: string) =>
+  name.toLowerCase() === 'p2p' ? 'Peer to Peer' : prettyLabel(name);
+
 const displayValue = (value: unknown): string => {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
@@ -154,7 +157,7 @@ const ForestModel: React.FC<{ name: string; summary: ForestSummary }> = ({ name,
   if (!summary.available) {
     return (
       <section className="rounded-lg border border-dashed border-gray-200 p-4">
-        <h4 className="font-semibold text-gray-700">{prettyLabel(name)} model</h4>
+        <h4 className="font-semibold text-gray-700">{forestModelLabel(name)} model</h4>
         <p className="mt-1 text-sm text-gray-500">Not produced because the training data did not support this model.</p>
       </section>
     );
@@ -164,7 +167,7 @@ const ForestModel: React.FC<{ name: string; summary: ForestSummary }> = ({ name,
     <section className="rounded-lg border border-gray-200 p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h4 className="flex items-center gap-2 font-semibold text-gray-800"><Trees className="h-4 w-4 text-emerald-600" />{prettyLabel(name)} model</h4>
+          <h4 className="flex items-center gap-2 font-semibold text-gray-800"><Trees className="h-4 w-4 text-emerald-600" />{forestModelLabel(name)} model</h4>
           <p className="mt-1 text-xs text-gray-500">{summary.estimator} · {summary.tree_count} trees · {summary.feature_count} features</p>
         </div>
         <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-700">Available</span>
@@ -199,7 +202,7 @@ const RandomForestView: React.FC<{ manifest: ModelManifest; imageUrl: string | n
         <img src={imageUrl} alt="Tenant Random Forest fraud-score distribution" className="w-full rounded" />
       </section>
     )}
-    <div className="grid gap-4 xl:grid-cols-2">
+    <div className="grid gap-4">
       {Object.entries(manifest.models || {}).map(([name, summary]) => (
         <ForestModel key={name} name={name} summary={summary} />
       ))}
@@ -341,26 +344,18 @@ export const ModelInspectionModal: React.FC<Props> = ({ component, impersonatedU
     };
   }, [component, impersonatedUPN]);
 
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [onClose]);
-
   const manifest = response?.manifest;
   const title = component === 'rf' ? 'Random Forest model' : 'Graph Neural Network model';
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-3 sm:p-6" role="dialog" aria-modal="true" aria-label={title} onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-3 sm:p-6" role="dialog" aria-modal="true" aria-label={title}>
       <div className="mx-auto max-w-7xl overflow-hidden rounded-xl bg-white shadow-2xl">
         <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-gray-200 bg-white px-5 py-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
             <p className="mt-0.5 text-xs text-gray-500">Read-only representation of the tenant’s deployed model artifacts</p>
           </div>
-          <button onClick={onClose} className="rounded p-2 text-gray-500 hover:bg-gray-100" title="Close model inspection"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} className="rounded p-2 text-gray-500 hover:bg-gray-100" title="Close model inspection" aria-label="Close model inspection"><X className="h-5 w-5" /></button>
         </header>
 
         <div className="space-y-5 p-4 sm:p-6">

@@ -38,7 +38,7 @@ import logging
 import os
 import pickle
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -51,6 +51,24 @@ logger = logging.getLogger("integrity_check.random_forest")
 _STORAGE_ACCOUNT = os.environ["AZURE_STORAGE_ACCOUNT"]
 _MODEL_CONTAINER  = os.getenv("MODEL_CONTAINER", "ml-models")
 _STORAGE_KEY      = os.getenv("AZURE_STORAGE_KEY")   # local dev only
+
+_LEGACY_GRAPH_DERIVED_FEATURES = frozenset({
+    "GraphCycleFlag",
+    "GraphReciprocalFlag",
+    "GraphClusterSize",
+    "SuperNominatorFlag",
+    "TransactionalLanguageFlag",
+})
+
+
+def _is_independent_rf_artifact(model_data: object) -> bool:
+    """Reject legacy RF artifacts that consume Graph Analytics outputs."""
+    if not isinstance(model_data, dict):
+        return False
+    feature_columns = model_data.get("p2p_feature_columns")
+    if not isinstance(feature_columns, (list, tuple)):
+        return False
+    return _LEGACY_GRAPH_DERIVED_FEATURES.isdisjoint(feature_columns)
 
 
 # ── Per-tenant model cache ────────────────────────────────────────────────────
@@ -146,7 +164,16 @@ def _stream_from_blob(tenant_id: int) -> dict | None:
             "Streamed RF model %s from blob (%d bytes)", blob_name, len(data),
             extra={"tenant_id": tenant_id},
         )
-        return pickle.loads(data)
+        model_data = pickle.loads(data)
+        if not _is_independent_rf_artifact(model_data):
+            logger.error(
+                "Refusing legacy RF model %s because its feature contract "
+                "depends on Graph Analytics; retrain and republish the RF artifact",
+                blob_name,
+                extra={"tenant_id": tenant_id},
+            )
+            return None
+        return model_data
     except ResourceNotFoundError:
         logger.warning(
             "No RF model blob %s for tenant %d; RF will contribute no opinion",
@@ -197,7 +224,7 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
     nominator_id    = details["nominator_id"]
     beneficiary_id  = details["beneficiary_id"]
     amount          = details["amount"]
-    nomination_date = datetime.utcnow()
+    nomination_date = datetime.now(timezone.utc)
 
     # ── Nominator behaviour ───────────────────────────────────────────────────
     nom_hist = db.get_nominator_history(nominator_id)
@@ -265,10 +292,6 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
         desc_cosine_sim   = 0.0
         desc_emb_distance = 1.0
 
-    # ── Graph pattern features (UserGraphFlags latest snapshot) ──────────────
-    tenant_id = details["tenant_id"]
-    graph_flags = db.get_user_graph_flags(tenant_id, nominator_id, beneficiary_id)
-
     # ── Assemble + scale ──────────────────────────────────────────────────────
     feature_cols = model_data["p2p_feature_columns"]
     feature_vals = {
@@ -290,12 +313,6 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
         "CategoryFraudRate":            category_fraud_rate,
         "DescriptionCosineSim":         desc_cosine_sim,
         "DescriptionEmbDistance":       desc_emb_distance,
-        # Graph pattern features
-        "GraphCycleFlag":            graph_flags["GraphCycleFlag"],
-        "GraphReciprocalFlag":       1 if has_reciprocal else 0,
-        "GraphClusterSize":          graph_flags["GraphClusterSize"],
-        "SuperNominatorFlag":        graph_flags["SuperNominatorFlag"],
-        "TransactionalLanguageFlag": graph_flags["TransactionalLanguageFlag"],
     }
 
     X = np.array([[feature_vals.get(c, 0.0) for c in feature_cols]], dtype=float)
@@ -313,10 +330,6 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
             "concentration":          round(float(concentration_ratio), 3),
             "cosine_sim":             round(float(desc_cosine_sim), 4),
             "emb_distance":           round(float(desc_emb_distance), 4),
-            "graph_cycle":            graph_flags["GraphCycleFlag"],
-            "graph_cluster_size":     graph_flags["GraphClusterSize"],
-            "super_nominator":        graph_flags["SuperNominatorFlag"],
-            "transactional_language": graph_flags["TransactionalLanguageFlag"],
         },
     )
 
@@ -363,18 +376,6 @@ def _warning_flags(
         flags.append("Limited beneficiary diversity")
     if desc_cosine_sim > 0.85:
         flags.append("Nomination descriptions suspiciously similar")
-    # Graph pattern flags
-    if feature_vals.get("GraphCycleFlag", 0) == 1:
-        flags.append("Nominator or beneficiary is part of a known nomination ring")
-    if feature_vals.get("SuperNominatorFlag", 0) == 1:
-        flags.append("Nominator is a statistical outlier in nomination volume")
-    if feature_vals.get("GraphClusterSize", 0) > 0:
-        flags.append(
-            f"Nomination belongs to a copy-paste cluster "
-            f"(size: {feature_vals['GraphClusterSize']})"
-        )
-    if feature_vals.get("TransactionalLanguageFlag", 0) == 1:
-        flags.append("Transactional or quid-pro-quo language detected")
     return flags
 
 
@@ -396,12 +397,6 @@ _FEATURE_LABELS: dict[str, str] = {
     "NominatorAvgAmount":           "this nominator's typical award amount",
     "NominatorStdAmount":           "variability in this nominator's award amounts",
     "NominatorUniqueBeneficiaries": "number of distinct people this nominator has nominated",
-    # Graph pattern features
-    "GraphCycleFlag":            "whether this nominator or beneficiary is part of a known nomination ring",
-    "GraphReciprocalFlag":       "whether the beneficiary has also nominated the nominator back",
-    "GraphClusterSize":          "size of the copy-paste description cluster this nomination belongs to",
-    "SuperNominatorFlag":        "whether the nominator is a statistical outlier in nomination volume",
-    "TransactionalLanguageFlag": "whether transactional or quid-pro-quo language was detected in related nominations",
 }
 
 

@@ -90,7 +90,7 @@ class RfShapLoggingTests(unittest.TestCase):
     def test_completed_shap_log_is_nomination_scoped_and_contains_features(self):
         contributions = [
             {"feature": "AmountZScore", "raw_value": 2.5, "contribution": 0.31},
-            {"feature": "GraphCycleFlag", "raw_value": 1.0, "contribution": 0.22},
+            {"feature": "PairNominationCount", "raw_value": 7.0, "contribution": 0.22},
         ]
         result, compute_shap, info, warning = self._assess(
             0.81, shap_result=contributions

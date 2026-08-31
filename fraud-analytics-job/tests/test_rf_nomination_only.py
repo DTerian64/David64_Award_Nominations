@@ -12,6 +12,15 @@ from sklearn.ensemble import RandomForestClassifier
 from modeling import train_rf_model
 
 
+GRAPH_DERIVED_FEATURES = {
+    "GraphCycleFlag",
+    "GraphReciprocalFlag",
+    "GraphClusterSize",
+    "SuperNominatorFlag",
+    "TransactionalLanguageFlag",
+}
+
+
 class _Scaler:
     def transform(self, values):
         return values
@@ -70,6 +79,32 @@ def test_historical_rf_scoring_never_writes_approver_scores():
     assert "Appr_FraudScores" not in sql
 
 
+def test_rf_feature_contract_excludes_graph_analytics_outputs():
+    assert GRAPH_DERIVED_FEATURES.isdisjoint(train_rf_model.P2P_FEATURE_COLUMNS)
+    assert "HasReciprocalNomination" in train_rf_model.P2P_FEATURE_COLUMNS
+
+
+def test_rf_training_query_does_not_read_graph_snapshots():
+    connection = _Connection()
+    empty = pd.DataFrame()
+
+    with (
+        patch.object(train_rf_model, "get_db_connection", return_value=connection),
+        patch.object(train_rf_model.pd, "read_sql", return_value=empty) as read_sql,
+        patch.object(train_rf_model.labels_mod, "load_labels", return_value=empty),
+        patch.object(
+            train_rf_model.labels_mod,
+            "attach_training_labels",
+            side_effect=lambda frame, _labels: frame,
+        ),
+    ):
+        train_rf_model.load_data(tenant_id=3)
+
+    query = read_sql.call_args.args[0]
+    assert "UserGraphFlags" not in query
+    assert "ApproverPairFlags" not in query
+
+
 def test_rf_manifest_contains_only_the_nomination_model():
     classifier = RandomForestClassifier(n_estimators=2, max_depth=2, random_state=42)
     classifier.fit([[0, 0], [0, 1], [1, 0], [1, 1]], [0, 0, 1, 1])
@@ -82,6 +117,7 @@ def test_rf_manifest_contains_only_the_nomination_model():
         png_path.write_bytes(b"chart")
         model_data = {
             "model_version": "rf-test-t1",
+            "feature_contract": train_rf_model.RF_FEATURE_CONTRACT,
             "p2p_model": classifier,
             "p2p_feature_columns": ["Amount", "PairNominationCount"],
             "amount_mean": 100.0,
@@ -103,3 +139,44 @@ def test_rf_manifest_contains_only_the_nomination_model():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert list(manifest["models"]) == ["p2p"]
         assert "approver" not in json.dumps(manifest).lower()
+        assert manifest["data_profile"]["feature_contract"] == "rf-native-v2"
+
+
+def test_rf_visualization_title_uses_tenant_name():
+    class _Axis:
+        def __init__(self):
+            self.title = None
+
+        def hist(self, *_args, **_kwargs):
+            pass
+
+        def set_xlabel(self, _label):
+            pass
+
+        def set_ylabel(self, _label):
+            pass
+
+        def set_title(self, title):
+            self.title = title
+
+        def legend(self):
+            pass
+
+    axis = _Axis()
+    frame = pd.DataFrame({"IsFraud": [0, 1]})
+
+    with (
+        patch.object(train_rf_model.plt, "subplots", return_value=(object(), axis)),
+        patch.object(train_rf_model.plt, "tight_layout"),
+        patch.object(train_rf_model.plt, "savefig"),
+        patch.object(train_rf_model.plt, "close"),
+        patch.object(train_rf_model, "_upload_artefact"),
+    ):
+        train_rf_model.create_visualizations(
+            frame,
+            np.array([0.1, 0.9]),
+            tenant_id=3,
+            tenant_name="Contoso Awards",
+        )
+
+    assert axis.title == "Nomination Fraud Score Distribution — Contoso Awards"
