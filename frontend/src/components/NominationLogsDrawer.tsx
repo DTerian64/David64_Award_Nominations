@@ -2,9 +2,9 @@
  * NominationLogsDrawer
  *
  * Slide-in panel that shows the persistent log trail for a single nomination.
- * Triggered by admin clicking the #NominationId watermark on any nomination card.
+ * Triggered by an authorized analytics user clicking a nomination number.
  *
- * The backend endpoint GET /api/admin/nominations/{id}/logs reads dbo.Nomination_Logs,
+ * The tenant-scoped backend endpoint GET /api/admin/nominations/{id}/logs reads dbo.Nomination_Logs,
  * written at runtime by every service — full history, no retention window, no delay.
  */
 

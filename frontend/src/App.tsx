@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Clock, Award, BarChart3, ShieldAlert, DollarSign, RefreshCw, Settings, Sparkles } from 'lucide-react';
+import { CheckCircle, Clock, Award, BarChart3, BrainCircuit, ShieldAlert, DollarSign, RefreshCw, Settings, Sparkles } from 'lucide-react';
 import { Toast } from './components/Toast';
 import {
   AuthenticatedTemplate,
@@ -22,6 +22,7 @@ import { useTenantConfig } from './contexts/TenantConfigContext';
 import { getAccessToken } from './services/api';
 import { warmupDemoDatabase } from './services/demoWarmup';
 import { NominationLogsDrawer } from './components/NominationLogsDrawer';
+import { ModelAnalysisTab } from './components/ModelAnalysisTab';
 
 // Types matching your backend
 interface User {
@@ -150,13 +151,17 @@ const AwardNominationApp: React.FC = () => {
   const [decidedApprovals, setDecidedApprovals] = useState<Nomination[]>([]);
   const [approvalsView, setApprovalsView] = useState<'pending' | 'decided' | 'paid'>('pending');
   const [certLoadingId, setCertLoadingId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics' | 'payroll' | 'setup'>('nominate');
+  const [activeTab, setActiveTab] = useState<'nominate' | 'history' | 'approvals' | 'hrbp' | 'analytics' | 'modelAnalysis' | 'payroll' | 'setup'>('nominate');
   const [historyView, setHistoryView] = useState<'pending' | 'decided'>('pending');
   const [isHRBP, setIsHRBP] = useState(false);
   const [isPayrollBP, setIsPayrollBP] = useState(false);
+  const [isDataScientist, setIsDataScientist] = useState(false);
+  const [rolesLoaded, setRolesLoaded] = useState(false);
   const [payrollProvider, setPayrollProvider] = useState<{ display_name: string; api_base_url: string; name: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [logsNominationId, setLogsNominationId] = useState<number | null>(null);
+  const canAccessAnalytics = isDataScientist || (isAdmin && !isImpersonating);
+  const canAccessModelAnalysis = isDataScientist || (isAdmin && !isImpersonating);
 
   // Payroll lookup state
   const [payrollUserId, setPayrollUserId]       = useState<string>('');
@@ -197,17 +202,24 @@ const AwardNominationApp: React.FC = () => {
 
   useEffect(() => {
     if (accounts.length > 0) {
-      loadCurrentUser();
-      loadUsers();
-      loadNominations();
-      loadPendingApprovals();
+      setRolesLoaded(false);
       loadMe();
     }
   }, [accounts, isImpersonating]);
 
+  useEffect(() => {
+    if (accounts.length === 0 || !rolesLoaded) return;
+    if (!isDataScientist) {
+      loadCurrentUser();
+      loadNominations();
+      loadPendingApprovals();
+    }
+    if (!isDataScientist || isPayrollBP) loadUsers();
+  }, [accounts, isImpersonating, rolesLoaded, isDataScientist, isPayrollBP]);
+
   // Load decided approvals when the user opens the "Approved / Rejected" view.
   useEffect(() => {
-    if (accounts.length > 0 && activeTab === 'approvals' && (approvalsView === 'decided' || approvalsView === 'paid')) {
+    if (accounts.length > 0 && !isDataScientist && activeTab === 'approvals' && (approvalsView === 'decided' || approvalsView === 'paid')) {
       loadDecidedApprovals();
     }
   }, [accounts, isImpersonating, activeTab, approvalsView]);
@@ -216,7 +228,7 @@ const AwardNominationApp: React.FC = () => {
   // changes, so a nomination whose status moved buckets (e.g. Pending -> Approved)
   // is re-fetched from the DB rather than filtered from a stale client-side list.
   useEffect(() => {
-    if (accounts.length > 0 && activeTab === 'history') {
+    if (accounts.length > 0 && !isDataScientist && activeTab === 'history') {
       loadNominations();
     }
   }, [accounts, isImpersonating, activeTab, historyView]);
@@ -224,21 +236,28 @@ const AwardNominationApp: React.FC = () => {
   const loadMe = async () => {
     try {
       const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-      const me = await apiFetch<{ is_hrbp: boolean; is_payroll_bp: boolean; is_admin: boolean; payroll_provider?: { display_name: string; api_base_url: string; name: string } | null }>('/api/me', {}, impersonatedUPN);
+      const me = await apiFetch<{ is_hrbp: boolean; is_payroll_bp: boolean; is_data_scientist: boolean; is_admin: boolean; payroll_provider?: { display_name: string; api_base_url: string; name: string } | null }>('/api/me', {}, impersonatedUPN);
       setIsHRBP(me.is_hrbp);
       setIsPayrollBP(me.is_payroll_bp ?? false);
+      setIsDataScientist(me.is_data_scientist ?? false);
       setPayrollProvider(me.payroll_provider ?? null);
-      // If switching away from a role-gated tab after impersonation change, reset to nominate
+      const fallback = me.is_data_scientist ? 'modelAnalysis' : 'nominate';
+      const analyticsAllowed = Boolean(me.is_data_scientist || (me.is_admin && !isImpersonating));
       setActiveTab(prev => {
-        if (prev === 'hrbp'     && !me.is_hrbp)        return 'nominate';
-        if (prev === 'payroll'  && !me.is_payroll_bp)   return 'nominate';
-        if (prev === 'analytics' && !isAdmin)            return 'nominate';
+        if (me.is_data_scientist && ['nominate', 'history', 'approvals'].includes(prev)) return 'modelAnalysis';
+        if (prev === 'hrbp' && !me.is_hrbp) return fallback;
+        if (prev === 'payroll' && !me.is_payroll_bp) return fallback;
+        if ((prev === 'analytics' || prev === 'modelAnalysis') && !analyticsAllowed) return fallback;
+        if (prev === 'setup' && !(me.is_admin && !isImpersonating)) return fallback;
         return prev;
       });
     } catch {
       setIsHRBP(false);
       setIsPayrollBP(false);
+      setIsDataScientist(false);
       setPayrollProvider(null);
+    } finally {
+      setRolesLoaded(true);
     }
   };
 
@@ -586,7 +605,7 @@ const AwardNominationApp: React.FC = () => {
 
           {/* Tab bar */}
           <div className="bg-white rounded-lg shadow-sm p-1 grid grid-cols-2 gap-1 sm:flex">
-            {(['nominate', 'history', 'approvals'] as const).map((tab) => {
+            {rolesLoaded && !isDataScientist && (['nominate', 'history', 'approvals'] as const).map((tab) => {
               const isActive = activeTab === tab;
               return (
                 <button
@@ -628,8 +647,8 @@ const AwardNominationApp: React.FC = () => {
                 {t('nav.hrbp')}
               </button>
             )}
-            {/* Analytics tab — visible only to actual admin, never when impersonating */}
-            {isAdmin && !isImpersonating && (
+            {/* Analytics — administrators and Data Scientists */}
+            {canAccessAnalytics && (
               <button
                 onClick={() => setActiveTab('analytics')}
                 style={activeTab === 'analytics' ? {
@@ -642,6 +661,22 @@ const AwardNominationApp: React.FC = () => {
               >
                 <BarChart3 className="w-5 h-5 inline-block mr-2" />
                 {t('nav.analytics')}
+              </button>
+            )}
+            {/* Model Analysis — administrators and Data Scientists */}
+            {canAccessModelAnalysis && (
+              <button
+                onClick={() => setActiveTab('modelAnalysis')}
+                style={activeTab === 'modelAnalysis' ? {
+                  backgroundColor: 'var(--color-primary)',
+                  color: 'var(--color-primary-text)',
+                } : {}}
+                className={`flex-1 py-3 px-4 rounded-md font-medium transition-colors ${
+                  activeTab === 'modelAnalysis' ? '' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <BrainCircuit className="w-5 h-5 inline-block mr-2" />
+                {t('nav.modelAnalysis', { defaultValue: 'Model Analysis' })}
               </button>
             )}
             {/* Payroll tab — visible only to PayrollBP role */}
@@ -681,7 +716,7 @@ const AwardNominationApp: React.FC = () => {
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 pb-12">
           {/* ── Nominate tab ─────────────────────────────────────────────── */}
-          {activeTab === 'nominate' && (
+          {activeTab === 'nominate' && rolesLoaded && !isDataScientist && (
             <div className="bg-white rounded-lg shadow-md p-8">
               <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('nominate.heading')}</h2>
 
@@ -804,7 +839,7 @@ const AwardNominationApp: React.FC = () => {
           )}
 
           {/* ── History tab ──────────────────────────────────────────────── */}
-          {activeTab === 'history' && (
+          {activeTab === 'history' && rolesLoaded && !isDataScientist && (
             <div className="bg-white rounded-lg shadow-md p-8">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold text-gray-900">{t('history.heading')}</h2>
@@ -920,7 +955,7 @@ const AwardNominationApp: React.FC = () => {
           )}
 
           {/* ── Approvals tab ────────────────────────────────────────────── */}
-          {activeTab === 'approvals' && (
+          {activeTab === 'approvals' && rolesLoaded && !isDataScientist && (
             <div className="bg-white rounded-lg shadow-md p-8">
               {/* Heading dropdown: Pending Approvals vs Approved / Rejected */}
               <div className="flex items-center justify-between mb-6">
@@ -1166,10 +1201,24 @@ const AwardNominationApp: React.FC = () => {
           )}
 
           {/* ── Analytics tab ────────────────────────────────────────────── */}
-          {activeTab === 'analytics' && isAdmin && !isImpersonating && (
+          {activeTab === 'analytics' && canAccessAnalytics && (
             <div className="bg-white rounded-lg shadow-md p-8">
               <h2 className="text-2xl font-bold text-gray-900 mb-6">{t('analytics.heading')}</h2>
               <AnalyticsDashboard onOpenNominationLogs={setLogsNominationId} />
+            </div>
+          )}
+
+          {/* ── Model Analysis tab ───────────────────────────────────────── */}
+          {activeTab === 'modelAnalysis' && canAccessModelAnalysis && (
+            <div className="bg-white rounded-lg shadow-md p-4 sm:p-8">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">
+                {t('modelAnalysis.heading', { defaultValue: 'Model Analysis' })}
+              </h2>
+              <ModelAnalysisTab
+                apiFetch={apiFetch}
+                formatCurrency={formatCurrency}
+                onOpenNominationLogs={setLogsNominationId}
+              />
             </div>
           )}
 

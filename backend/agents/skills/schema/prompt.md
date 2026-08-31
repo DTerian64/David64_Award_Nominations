@@ -20,11 +20,12 @@ Used to assign elevated roles to users beyond the default employee view.
 | UserRoleId  | INT IDENTITY  | Primary Key                                                    |
 | UserId      | INT           | FK → Users.UserId                                              |
 | TenantId    | INT           | FK → Tenants.TenantId — denormalised for query convenience     |
-| Role        | NVARCHAR(50)  | Exact values: HRBP, Support, PayrollBP                         |
+| Role        | NVARCHAR(50)  | Exact values: DataScientist, HRBP, Support, PayrollBP          |
 | AssignedAt  | DATETIME      | When the role was assigned                                     |
 | AssignedBy  | INT           | FK → Users.UserId (who assigned the role); may be NULL         |
 
 Role meanings:
+- **DataScientist** — tenant-scoped Analytics and read-only model analysis
 - **HRBP** — reviews nominations held in PendingHRBPReview by the fraud model
 - **Support** — receives payroll failure alert emails when the broker cannot submit to the provider
 - **PayrollBP** — may look up employee payroll data via the Payroll tab

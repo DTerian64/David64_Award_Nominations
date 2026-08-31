@@ -91,7 +91,7 @@ async def update_organization(
 # App roles only. AWard_Nomination_Admin is Entra-managed and intentionally NOT
 # grantable here — admins can't self-elevate or mint other admins from the app.
 
-_ASSIGNABLE_ROLES = {"HRBP", "PayrollBP", "Support"}
+_ASSIGNABLE_ROLES = {"DataScientist", "HRBP", "PayrollBP", "Support"}
 
 
 class RoleChange(BaseModel):

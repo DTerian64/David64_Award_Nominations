@@ -1,8 +1,8 @@
 """
 routers/analytics_router.py
 ============================
-Admin analytics, integrity findings, and AI ask/investigate endpoints.
-All routes require the AWard_Nomination_Admin role.
+Tenant analytics, integrity findings, and AI ask/investigate endpoints.
+All routes require either administrator or Data Scientist access.
 
 Routes
 ------
@@ -41,7 +41,7 @@ from pydantic import BaseModel
 
 import utils.sqlhelper2 as sqlhelper
 import utils.forecasting as forecasting
-from auth import get_current_user_with_impersonation, require_role
+from auth import get_current_user_with_impersonation, require_analytics_access
 from routers.schemas import User
 from utils.export_utils import build_finding_workbook
 from agents import AskAgent, AskResult
@@ -73,7 +73,7 @@ class ConversationRename(BaseModel):
 @router.get("/api/admin/analytics/overview")
 async def get_analytics_overview(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Get high-level analytics overview"""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -97,7 +97,7 @@ async def get_analytics_overview(
 async def get_spending_trends(
     days: int = Query(default=90, ge=1, le=365),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Get spending trends over time"""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -119,7 +119,7 @@ async def get_spending_trends(
 @router.get("/api/admin/analytics/department-spending")
 async def get_department_spending(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Get spending breakdown by department"""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -143,7 +143,7 @@ async def get_department_spending(
 async def get_top_recipients(
     limit: int = Query(default=10, ge=1, le=50),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Get top award recipients"""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -168,7 +168,7 @@ async def get_top_recipients(
 async def get_top_nominators(
     limit: int = Query(default=10, ge=1, le=50),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Get top nominators"""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -193,7 +193,7 @@ async def get_top_nominators(
 async def get_fraud_alerts(
     limit: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Get recent fraud detection alerts"""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -221,7 +221,7 @@ async def get_fraud_alerts(
 async def get_gnn_comparison(
     limit: int = Query(default=25, ge=1, le=100),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """
     Random Forest vs GNN agreement for the tenant's latest GNN model version.
@@ -252,7 +252,7 @@ async def get_gnn_comparison(
 @router.get("/api/admin/analytics/approval-metrics")
 async def get_approval_metrics(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Get approval and rejection metrics"""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -266,7 +266,7 @@ async def get_approval_metrics(
 @router.get("/api/admin/analytics/diversity-metrics")
 async def get_diversity_metrics(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Get award distribution diversity metrics"""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -280,7 +280,7 @@ async def get_diversity_metrics(
 @router.get("/api/admin/analytics/category-breakdown")
 async def get_category_breakdown(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """
     Return nomination counts and spend broken down by award category.
@@ -323,7 +323,7 @@ async def get_forecast(
     confidence: float = Query(default=0.80, ge=0.50, le=0.99,
                               description="Prediction-interval confidence level"),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin")),
+    _: dict = Depends(require_analytics_access),
 ):
     """
     Predictive forecast over the tenant's daily nomination series.
@@ -471,7 +471,7 @@ async def get_forecast(
 @router.get("/api/admin/analytics/integrity/runs")
 async def get_integrity_runs(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Return the list of weekly job runs available for the tenant."""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -486,7 +486,7 @@ async def get_integrity_runs(
 async def get_integrity_findings(
     run_id: str = Query(..., description="RunId UUID from the integrity runs list"),
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Return all graph pattern findings for a specific run."""
     tenant_id = current_user["effective_user"]["TenantId"]
@@ -501,7 +501,7 @@ async def get_integrity_findings(
 async def export_integrity_finding(
     finding_id: int,
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin")),
+    _: dict = Depends(require_analytics_access),
 ):
     """Stream an Excel workbook for a single integrity finding."""
     actual_user = current_user["actual_user"]
@@ -522,7 +522,7 @@ async def export_integrity_finding(
 @router.get("/api/admin/analytics/conversations")
 async def list_conversations(
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin")),
+    _: dict = Depends(require_analytics_access),
 ):
     """Return the current user's conversations, newest first."""
     actual_user = current_user["actual_user"]
@@ -535,7 +535,7 @@ async def list_conversations(
 async def get_conversation_messages(
     conversation_id: str,
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin")),
+    _: dict = Depends(require_analytics_access),
 ):
     """Return all messages for a conversation (tenant-scoped)."""
     actual_user = current_user["actual_user"]
@@ -551,7 +551,7 @@ async def get_conversation_messages(
 async def delete_conversation(
     conversation_id: str,
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin")),
+    _: dict = Depends(require_analytics_access),
 ):
     """Delete a conversation and all its messages."""
     actual_user = current_user["actual_user"]
@@ -570,7 +570,7 @@ async def rename_conversation(
     conversation_id: str,
     req: ConversationRename,
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin")),
+    _: dict = Depends(require_analytics_access),
 ):
     """Rename a conversation title."""
     title = req.title.strip()
@@ -594,7 +594,7 @@ async def rename_conversation(
 async def ask_analytics_question(
     req: AnalyticsQuestion,
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """Ask a question, persisting history in SQL Server."""
     actual_user     = current_user["actual_user"]
@@ -663,7 +663,7 @@ async def ask_analytics_question(
 async def investigate_analytics_question(
     req: AnalyticsQuestion,
     current_user: User = Depends(get_current_user_with_impersonation),
-    _: None = Depends(require_role("AWard_Nomination_Admin"))
+    _: dict = Depends(require_analytics_access)
 ):
     """
     Deep multi-agent investigation using AgentsOrchestrator (Azure OpenAI GPT-4.1).

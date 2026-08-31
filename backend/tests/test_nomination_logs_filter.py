@@ -21,10 +21,9 @@ from routers.admin_router import get_nomination_logs
 
 
 class NominationLogsFilterTests(unittest.IsolatedAsyncioTestCase):
-    @patch("routers.admin_router.is_admin", return_value=True)
     @patch("routers.admin_router.sqlhelper.get_nomination_logs")
     async def test_integrity_check_only_is_forwarded_to_sql_helper(
-        self, get_logs, _is_admin
+        self, get_logs
     ):
         get_logs.return_value = [
             (
@@ -40,10 +39,13 @@ class NominationLogsFilterTests(unittest.IsolatedAsyncioTestCase):
         result = await get_nomination_logs(
             nomination_id=13866,
             integrity_check_only=True,
-            current_user={"roles": ["AWard_Nomination_Admin"]},
+            user_context={
+                "actual_user": {"roles": ["AWard_Nomination_Admin"]},
+                "effective_user": {"UserId": 7, "TenantId": 3},
+            },
         )
 
-        get_logs.assert_called_once_with(13866, integrity_check_only=True)
+        get_logs.assert_called_once_with(13866, 3, integrity_check_only=True)
         self.assertTrue(result["integrity_check_only"])
         self.assertEqual(result["log_count"], 1)
         self.assertEqual(result["logs"][0]["logger"], "integrity_check.random_forest")

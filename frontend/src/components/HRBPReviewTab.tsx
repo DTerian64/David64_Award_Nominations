@@ -17,7 +17,7 @@ import { SHAP_FEATURE_LABELS, type ShapContribution } from '../utils/shap';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-interface HRBPQueueItem {
+export interface HRBPQueueItem {
   nomination_id:      number;
   status:             string;
   amount:             number;
@@ -44,7 +44,7 @@ interface HRBPQueueItem {
   routing_rule:       string | null;
 }
 
-interface EngineResult {
+export interface EngineResult {
   engine?: string;
   available?: boolean;
   status?: string;
@@ -63,7 +63,7 @@ interface EngineResult {
   llm?: { response?: { category_fit_score?: number; flags?: string[] }; outcome?: string };
 }
 
-interface PairHistoryItem {
+export interface PairHistoryItem {
   nomination_id:    number;
   amount:           number;
   currency:         string;
@@ -75,7 +75,7 @@ interface PairHistoryItem {
   beneficiary_name: string;
 }
 
-interface PairHistory {
+export interface PairHistory {
   nominator_name:   string;
   beneficiary_name: string;
   pair_count:       number;
@@ -92,7 +92,7 @@ type HRBPOutcome =
 
 // ── ShapPanel component ───────────────────────────────────────────────────
 
-const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFeaturesJson }) => {
+export const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFeaturesJson }) => {
   if (!topFeaturesJson) return null;
 
   let contributions: ShapContribution[] = [];
@@ -158,7 +158,7 @@ const RISK_COLOURS: Record<string, string> = {
   UNKNOWN:  'bg-gray-100 text-gray-700 border-gray-300',
 };
 
-const riskBadge = (level: string | null) => {
+export const RiskBadge: React.FC<{ level: string | null }> = ({ level }) => {
   const key = (level || 'UNKNOWN').toUpperCase();
   return (
     <span className={`inline-block px-2 py-0.5 rounded border text-xs font-semibold ${RISK_COLOURS[key] ?? RISK_COLOURS.UNKNOWN}`}>
@@ -167,7 +167,7 @@ const riskBadge = (level: string | null) => {
   );
 };
 
-const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
+export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
   if (item.decision_source === 'legacy') {
     return (
       <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -213,7 +213,7 @@ const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
                 <p className="text-sm font-semibold text-slate-800">{label}</p>
                 {isSemantic
                   ? <span className="text-xs font-semibold uppercase text-slate-600">{action || engine.status}</span>
-                  : riskBadge(engine.risk_level || 'UNKNOWN')}
+                  : <RiskBadge level={engine.risk_level || 'UNKNOWN'} />}
               </div>
               {!isSemantic && engine.available && engine.score !== null && engine.score !== undefined && (
                 <p className="text-xs text-slate-600">
@@ -419,7 +419,7 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                       <p className="text-2xl font-bold text-gray-800 mb-1">
                         {formatCurrency(nom.amount)}
                       </p>
-                      {riskBadge(nom.risk_level)}
+                      <RiskBadge level={nom.risk_level} />
                       {nom.risk_level === 'CRITICAL' && (
                         <p className="mt-1 text-xs font-semibold text-red-700">
                           Priority human review
@@ -523,7 +523,7 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                                         'bg-gray-100 text-gray-600'
                                       }`}>{h.status}</span>
                                     </td>
-                                    <td className="py-1.5 pr-3">{riskBadge(h.risk_level)}</td>
+                                    <td className="py-1.5 pr-3"><RiskBadge level={h.risk_level} /></td>
                                     <td className="py-1.5 text-gray-600 max-w-xs truncate" title={h.description}>
                                       {h.description}
                                     </td>

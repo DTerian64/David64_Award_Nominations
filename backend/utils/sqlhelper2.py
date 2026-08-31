@@ -2695,6 +2695,59 @@ def _json_list(value) -> list:
         return []
 
 
+def _model_evidence_from_row(r) -> dict:
+    """Map the shared four-engine nomination evidence projection."""
+    engine_results = {
+        "rf": _json_object(r[19]),
+        "graph": _json_object(r[20]),
+        "gnn": _json_object(r[21]),
+        "semantic": _json_object(r[22]),
+    }
+    findings = []
+    if r[16] is not None:
+        for engine in engine_results.values():
+            if not engine:
+                continue
+            findings.extend(engine.get("findings") or [])
+            combined = engine.get("combined_decision") or {}
+            findings.extend(combined.get("checks") or [])
+    if not findings and r[13]:
+        findings = r[13].split(", ")
+
+    rf_document = engine_results["rf"] or {}
+    new_explanation = (
+        rf_document.get("explanation", {}).get("llm_text")
+        if isinstance(rf_document.get("explanation"), dict)
+        else None
+    )
+    return {
+        "nomination_id": r[0],
+        "status": r[1],
+        "amount": r[2],
+        "currency": r[3],
+        "description": r[4],
+        "nomination_date": str(r[5]),
+        "nominator_name": r[6],
+        "nominator_email": r[7],
+        "beneficiary_name": r[8],
+        "beneficiary_email": r[9],
+        "fraud_score": r[10],
+        "fraud_probability": r[11],
+        "risk_level": r[12],
+        "warning_flags": findings,
+        "top_features": r[14],
+        "feature_summary": r[15],
+        "llm_explanation": new_explanation or _rf_llm_explanation(r[15]),
+        "decision_source": "integrity_v2" if r[16] is not None else "legacy",
+        "decision_schema_version": r[16],
+        "review_scope": r[17] or "LEGACY_FRAUD",
+        "decisive_engines": _json_list(r[18]),
+        "engine_results": engine_results,
+        "final_route": r[23],
+        "routing_rule": r[24],
+    }
+
+
 def get_hrbp_queue(tenant_id: int) -> list[dict]:
     """
     Return all nominations in PendingHRBPReview for a tenant, joined with
@@ -2746,58 +2799,123 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
             """),
             {"tenant_id": tenant_id},
         ).fetchall()
-        results = []
-        for r in rows:
-            engine_results = {
-                "rf": _json_object(r[19]),
-                "graph": _json_object(r[20]),
-                "gnn": _json_object(r[21]),
-                "semantic": _json_object(r[22]),
-            }
-            findings = []
-            if r[16] is not None:
-                for engine in engine_results.values():
-                    if not engine:
-                        continue
-                    findings.extend(engine.get("findings") or [])
-                    combined = engine.get("combined_decision") or {}
-                    findings.extend(combined.get("checks") or [])
-            if not findings and r[13]:
-                findings = r[13].split(", ")
+        return [_model_evidence_from_row(r) for r in rows]
 
-            rf_document = engine_results["rf"] or {}
-            new_explanation = (
-                rf_document.get("explanation", {}).get("llm_text")
-                if isinstance(rf_document.get("explanation"), dict)
-                else None
-            )
-            results.append({
-                "nomination_id":      r[0],
-                "status":             r[1],
-                "amount":             r[2],
-                "currency":           r[3],
-                "description":        r[4],
-                "nomination_date":    str(r[5]),
-                "nominator_name":     r[6],
-                "nominator_email":    r[7],
-                "beneficiary_name":   r[8],
-                "beneficiary_email":  r[9],
-                "fraud_score":        r[10],
-                "fraud_probability":  r[11],
-                "risk_level":         r[12],
-                "warning_flags":      findings,
-                "top_features":       r[14],
-                "feature_summary":    r[15],
-                "llm_explanation":    new_explanation or _rf_llm_explanation(r[15]),
-                "decision_source":    "integrity_v2" if r[16] is not None else "legacy",
-                "decision_schema_version": r[16],
-                "review_scope":       r[17] or "LEGACY_FRAUD",
-                "decisive_engines":   _json_list(r[18]),
-                "engine_results":     engine_results,
-                "final_route":        r[23],
-                "routing_rule":       r[24],
-            })
-        return results
+
+def search_model_analysis_nominations(
+    tenant_id: int,
+    query: str = "",
+    status_filter: Optional[str] = None,
+    risk_filter: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> dict:
+    """Search tenant nominations for the read-only model-analysis workspace."""
+    query = (query or "").strip().lstrip("#")
+    params = {
+        "tid": tenant_id,
+        "query": query,
+        "search": f"%{query}%",
+        "status": status_filter,
+        "risk": risk_filter,
+        "offset": (page - 1) * page_size,
+        "page_size": page_size,
+    }
+    where = """
+        WHERE nom.TenantId = :tid
+          AND (:query = '' OR
+               CONVERT(NVARCHAR(20), n.NominationId) = :query OR
+               n.NominationDescription LIKE :search OR
+               nom.FirstName + ' ' + nom.LastName LIKE :search OR
+               nom.userEmail LIKE :search OR
+               ben.FirstName + ' ' + ben.LastName LIKE :search OR
+               ben.userEmail LIKE :search)
+          AND (:status IS NULL OR n.Status = :status)
+          AND (:risk IS NULL OR COALESCE(idr.CompositeRiskLevel, ff.RiskLevel, 'UNKNOWN') = :risk)
+    """
+    with get_db_context() as session:
+        total = session.execute(
+            text("""
+                SELECT COUNT(*)
+                FROM dbo.Nominations n
+                JOIN dbo.Users nom ON nom.UserId = n.NominatorId
+                JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
+                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+            """ + where),
+            params,
+        ).scalar_one()
+        rows = session.execute(
+            text("""
+                SELECT n.NominationId, n.NominationDate,
+                       nom.FirstName + ' ' + nom.LastName,
+                       ben.FirstName + ' ' + ben.LastName,
+                       nc.category_description, n.Amount, n.Currency, n.Status,
+                       COALESCE(idr.CompositeRiskLevel, ff.RiskLevel),
+                       CASE WHEN idr.DecisionSchemaVersion IS NOT NULL
+                            THEN idr.CompositeScore ELSE ff.FraudScore END,
+                       idr.FinalRoute,
+                       CASE WHEN idr.NominationId IS NOT NULL OR ff.NominationId IS NOT NULL
+                            THEN 1 ELSE 0 END
+                FROM dbo.Nominations n
+                JOIN dbo.Users nom ON nom.UserId = n.NominatorId
+                JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
+                LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
+                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+            """ + where + """
+                ORDER BY n.NominationDate DESC, n.NominationId DESC
+                OFFSET :offset ROWS FETCH NEXT :page_size ROWS ONLY
+            """),
+            params,
+        ).fetchall()
+    return {
+        "items": [
+            {
+                "nomination_id": r[0], "nomination_date": str(r[1]),
+                "nominator_name": r[2], "beneficiary_name": r[3],
+                "category": r[4], "amount": r[5], "currency": r[6],
+                "status": r[7], "risk_level": r[8], "composite_score": r[9],
+                "final_route": r[10], "has_model_evidence": bool(r[11]),
+            }
+            for r in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+def get_model_analysis_nomination(nomination_id: int, tenant_id: int) -> Optional[dict]:
+    """Return full four-engine evidence for one nomination in the tenant."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT n.NominationId, n.Status, n.Amount, n.Currency,
+                       n.NominationDescription, n.NominationDate,
+                       nom.FirstName + ' ' + nom.LastName,
+                       nom.userEmail,
+                       ben.FirstName + ' ' + ben.LastName,
+                       ben.userEmail,
+                       CASE WHEN idr.DecisionSchemaVersion IS NOT NULL
+                            THEN idr.CompositeScore ELSE ff.FraudScore END,
+                       ff.FraudProbability,
+                       COALESCE(idr.CompositeRiskLevel, ff.RiskLevel),
+                       ff.WarningFlags, ff.TopFeaturesJson, ff.FeatureSummaryJson,
+                       idr.DecisionSchemaVersion, idr.ReviewScope,
+                       idr.DecisiveEnginesJson, idr.RfResultJson,
+                       idr.GraphResultJson, idr.GnnResultJson,
+                       idr.SemanticResultJson, idr.FinalRoute, idr.RoutingRule
+                FROM dbo.Nominations n
+                JOIN dbo.Users nom ON nom.UserId = n.NominatorId
+                JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
+                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+                WHERE n.NominationId = :nid AND nom.TenantId = :tid
+            """),
+            {"nid": nomination_id, "tid": tenant_id},
+        ).fetchone()
+    return _model_evidence_from_row(row) if row else None
 
 
 def get_user_roles(user_id: int) -> list[str]:
@@ -3039,6 +3157,7 @@ def insert_nomination_logs(rows: list) -> None:
 
 def get_nomination_logs(
     nomination_id: int,
+    tenant_id: int,
     integrity_check_only: bool = False,
 ) -> list:
     """Return persisted nomination log rows (log_time, level, service, logger, message)
@@ -3050,11 +3169,13 @@ def get_nomination_logs(
                 SELECT log_time, level, service, logger, message, details
                 FROM   dbo.Nomination_Logs
                 WHERE  nomination_id = :nid
+                  AND  tenant_id = :tid
                   AND  (:integrity_only = 0 OR logger LIKE 'integrity_check%')
                 ORDER  BY log_time ASC, log_id ASC
             """),
             {
                 "nid": nomination_id,
+                "tid": tenant_id,
                 "integrity_only": int(integrity_check_only),
             },
         ).fetchall()

@@ -469,6 +469,7 @@ const OrganizationForm: React.FC = () => {
 interface RoleMember { user_id: number; name: string; upn: string; roles: string[]; }
 interface RoleUser   { user_id: number; name: string; upn: string; }
 interface RolesData  { assignable_roles: string[]; members: RoleMember[]; users: RoleUser[]; }
+const roleLabel = (role: string) => role === 'DataScientist' ? 'Data Scientist' : role;
 
 const RolesPanel: React.FC = () => {
   const [data, setData]       = useState<RolesData | null>(null);
@@ -552,7 +553,7 @@ const RolesPanel: React.FC = () => {
             onChange={e => setSelRole(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
-            {data.assignable_roles.map(r => <option key={r} value={r}>{r}</option>)}
+            {data.assignable_roles.map(r => <option key={r} value={r}>{roleLabel(r)}</option>)}
           </select>
         </div>
         <button
@@ -588,11 +589,11 @@ const RolesPanel: React.FC = () => {
                 <div className="flex flex-wrap gap-1.5 justify-end">
                   {m.roles.map(r => (
                     <span key={r} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs">
-                      {r}
+                      {roleLabel(r)}
                       <button
                         disabled={busy}
                         onClick={() => change('revoke', m.user_id, r)}
-                        title={`Revoke ${r}`}
+                        title={`Revoke ${roleLabel(r)}`}
                         className="text-gray-400 hover:text-red-600 disabled:opacity-50"
                       >
                         <X className="w-3 h-3" />

@@ -437,6 +437,27 @@ def is_admin(user: Dict[str, Any]) -> bool:
     return "AWard_Nomination_Admin" in roles or "Administrator" in roles
 
 
+def require_analytics_access(
+    user_context: Dict[str, Any] = Depends(get_current_user_with_impersonation),
+) -> Dict[str, Any]:
+    """Allow tenant administrators and effective Data Scientist users.
+
+    DataScientist is an application role stored in dbo.UserRoles, unlike the
+    Entra-managed administrator role.  Checking the effective user preserves
+    the app's existing tenant-scoped impersonation behaviour while the admin
+    check continues to use the authenticated user's token roles.
+    """
+    actual_user = user_context["actual_user"]
+    effective_user = user_context["effective_user"]
+    app_roles = sqlhelper.get_user_roles(effective_user["UserId"])
+    if not is_admin(actual_user) and "DataScientist" not in app_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Data Scientist or administrator access required",
+        )
+    return user_context
+
+
 async def log_action_if_impersonating(
     user_context: Dict[str, Any],
     action: str,

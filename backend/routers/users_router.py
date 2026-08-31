@@ -68,8 +68,8 @@ async def get_me(user_context: dict = Depends(get_current_user_with_impersonatio
     """
     Return the effective user's identity and application roles.
 
-    - app_roles: roles from dbo.UserRoles (e.g. ['HRBP']) for the effective user.
-      The frontend uses this to conditionally show the HRBP tab.
+    - app_roles: roles from dbo.UserRoles (for example HRBP or DataScientist)
+      for the effective user. The frontend derives role-specific navigation.
     - is_admin: derived from the Azure AD token of the *actual* user (not the
       impersonated one) — admins retain their own identity for Analytics access.
     """
@@ -91,6 +91,7 @@ async def get_me(user_context: dict = Depends(get_current_user_with_impersonatio
         "app_roles":        app_roles,
         "is_hrbp":          "HRBP" in app_roles,
         "is_payroll_bp":    is_payroll,
+        "is_data_scientist": "DataScientist" in app_roles,
         "is_admin":         is_admin(actual_user),
         "payroll_provider": payroll_provider,   # {display_name, api_base_url, name} or null
     }

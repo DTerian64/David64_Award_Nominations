@@ -8,6 +8,7 @@
     "history": "내 추천 내역",
     "approvals": "내 승인",
     "analytics": "분석",
+    "modelAnalysis": "모델 분석",
     "hrbp": "HRBP 검토",
     "payroll": "급여"
   },
@@ -57,6 +58,9 @@
       "integrity": "그래프 분석",
       "gnn": "GNN 분석"
     }
+  },
+  "modelAnalysis": {
+    "heading": "모델 분석"
   },
   "status": {
     "Submitted": "제출됨",

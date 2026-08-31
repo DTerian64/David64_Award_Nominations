@@ -8,6 +8,7 @@
     "history": "My Nominations",
     "approvals": "My Approvals",
     "analytics": "Analytics",
+    "modelAnalysis": "Model Analysis",
     "hrbp": "HRBP Review",
     "payroll": "Payroll"
   },
@@ -57,6 +58,9 @@
       "integrity": "Graph Analytics",
       "gnn": "GNN Analytics"
     }
+  },
+  "modelAnalysis": {
+    "heading": "Model Analysis"
   },
   "status": {
     "Submitted": "Submitted",

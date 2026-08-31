@@ -8,7 +8,7 @@ Routes
 GET  /api/admin/audit-logs                      — impersonation audit log
 POST /api/admin/refresh-fraud-model             — manually pull latest model from blob
 GET  /api/admin/fraud-model-info                — inspect loaded per-tenant models
-GET  /api/admin/nominations/{id}/logs           — Log Analytics trace for a nomination
+GET  /api/admin/nominations/{id}/logs           — tenant-scoped nomination trace (admin/Data Scientist)
 """
 
 import logging
@@ -19,7 +19,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 import utils.sqlhelper2 as sqlhelper
-from auth import get_current_user, is_admin, require_role
+from auth import get_current_user, is_admin, require_analytics_access, require_role
 from routers.schemas import AuditLog
 from utils.rf_model_cache import refresh_model, rf_model_cache
 
@@ -117,21 +117,19 @@ async def get_fraud_model_info(current_user: dict = Depends(require_role("AWard_
 async def get_nomination_logs(
     nomination_id: int,
     integrity_check_only: bool = False,
-    current_user: dict = Depends(get_current_user),
+    user_context: dict = Depends(require_analytics_access),
 ):
     """
-    Return the persisted log trail for a single nomination (Admin only).
+    Return the persisted log trail for a single nomination.
 
     Reads dbo.Nomination_Logs — written at runtime by every service that logs
     with a nomination_id — so the trail survives indefinitely, with no Log
     Analytics retention window and no ingestion delay. Ordered by emission time.
     """
-    if not is_admin(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="AWard_Nomination_Admin access required")
-
+    effective_user = user_context["effective_user"]
     rows = sqlhelper.get_nomination_logs(
         nomination_id,
+        effective_user["TenantId"],
         integrity_check_only=integrity_check_only,
     )
 
@@ -152,8 +150,9 @@ async def get_nomination_logs(
     # Note: no nomination_id in this log's extras — we don't want the admin's
     # "viewed logs" event to pollute the very trail being viewed.
     logger.info(
-        "Admin fetched nomination logs",
+        "Analytics user fetched nomination logs",
         extra={
+            "viewer_user_id": effective_user["UserId"],
             "viewed_nomination_id": nomination_id,
             "log_count": len(logs),
             "integrity_check_only": integrity_check_only,
