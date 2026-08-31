@@ -78,11 +78,29 @@ def get_manifest(tenant_id: int, component: ModelComponent) -> Optional[dict]:
         raise ValueError("Model manifest type is invalid")
     if manifest.get("schema_version") != 1:
         raise ValueError("Model manifest schema version is unsupported")
+    if component == "rf":
+        # Older RF manifests may describe the now-retired post-decision
+        # Approver classifier. The active RF product is nomination-only.
+        manifest = dict(manifest)
+        models = dict(manifest.get("models") or {})
+        retired_approver = models.pop("approver", None) is not None
+        manifest["models"] = models
+        if retired_approver:
+            manifest["retired_components"] = ["approver"]
+        training = dict(manifest.get("training") or {})
+        training.pop("appr_auc", None)
+        training.pop("approver_auc", None)
+        manifest["training"] = training
     return manifest
 
 
 def get_rf_visualization(tenant_id: int) -> Optional[bytes]:
     """Return the tenant's generated RF score-distribution PNG."""
+    manifest = get_manifest(tenant_id, "rf")
+    if manifest is None or "approver" in manifest.get("retired_components", []):
+        # The old two-panel image contains an Approver score distribution. Do
+        # not show it after retirement; the next RF run publishes a P2P-only PNG.
+        return None
     return _download(
         f"random_forest_tenant_{tenant_id}.png",
         _MAX_VISUALIZATION_BYTES,

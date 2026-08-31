@@ -196,7 +196,6 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
     """
     nominator_id    = details["nominator_id"]
     beneficiary_id  = details["beneficiary_id"]
-    approver_id     = details["approver_id"]
     amount          = details["amount"]
     nomination_date = datetime.utcnow()
 
@@ -219,16 +218,6 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
         ben_avg_amt = float(np.mean([r[2] for r in ben_hist]))
     else:
         ben_total = ben_avg_amt = 0
-
-    # ── Approver behaviour ────────────────────────────────────────────────────
-    appr_hist = db.get_approver_history(approver_id)
-    if appr_hist:
-        _appr_total   = len(appr_hist)
-        appr_times    = [r[1] for r in appr_hist if r[1] is not None]
-        _appr_avg_time = float(np.mean(appr_times)) if appr_times else 24.0
-    else:
-        _appr_total    = 0
-        _appr_avg_time = 24.0
 
     # ── Relationship features ─────────────────────────────────────────────────
     has_reciprocal = db.check_reciprocal_nomination(nominator_id, beneficiary_id)

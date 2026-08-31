@@ -11,13 +11,14 @@ below (STAGES) is the single source of truth; this list documents it.
       Runs sentence-transformers for copy-paste and transactional language.
       Upserts findings into dbo.GraphPatternFindings.
       Materialises per-user graph flag snapshots into dbo.UserGraphFlags
-      and dbo.ApproverPairFlags — required by Stage 2 for RF feature engineering.
+      and dbo.ApproverPairFlags for graph analysis and audit use cases.
 
   Stage 2: modeling/train_rf_model.py
       Per-tenant Random Forest retrain on Nominations + FraudScores tables.
-      Point-in-time joins dbo.UserGraphFlags and dbo.ApproverPairFlags to
-      include graph pattern features without data leakage.
-      Upserts updated fraud scores into dbo.P2P_FraudScores / dbo.Appr_FraudScores.
+      Point-in-time joins dbo.UserGraphFlags to include nominator and beneficiary
+      graph pattern features without data leakage.
+      Upserts updated nomination-time scores into dbo.P2P_FraudScores. Historical
+      dbo.Appr_FraudScores rows are retained but no longer produced.
       Uploads the retrained .pkl model to Azure Blob Storage.
 
   Stage 3: modeling/train_gnn_model.py
@@ -57,8 +58,8 @@ below (STAGES) is the single source of truth; this list documents it.
       rolling-origin MASE) writing to dbo.ForecastRuns / dbo.Forecasts.
 
   ORDERING
-    Stage 1 before Stage 2 — the UserGraphFlags / ApproverPairFlags snapshots
-      must be current before the RF engineers features from them.
+    Stage 1 before Stage 2 — the UserGraphFlags snapshots must be current before
+      the RF engineers nomination-time graph features from them.
     Stage 2 before Stage 3 — the GNN's labels come from dbo.P2P_FraudScores,
       which Stage 2 has just rewritten. (Worth naming plainly: outside the
       human-confirmed rows, those labels are the RF's own prior output, so the

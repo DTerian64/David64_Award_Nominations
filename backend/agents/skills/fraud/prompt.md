@@ -25,10 +25,9 @@ It returns:
 
 ## Fraud score query pattern
 
-There are two fraud score tables — always use `P2P_FraudScores` for
-submission-time scores (what the model assigned when the nomination was
-submitted). Use `Appr_FraudScores` only when specifically asked about
-approver behaviour.
+Use `P2P_FraudScores` for the active Random Forest nomination score assigned at
+submission time. `Appr_FraudScores` is retired historical data: the weekly job
+no longer writes it, and it must not be presented as a current model opinion.
 
 Join through Nominations to enforce tenant isolation
 (neither table has a TenantId column):
@@ -42,7 +41,7 @@ LEFT JOIN dbo.P2P_FraudScores fs ON fs.NominationId = n.NominationId
 WHERE  u_nom.TenantId = <TenantId>
   AND  n.NominatorId  = <UserId>
 
--- Approver fraud score (post-decision, batch job)
+-- Retired historical approver score (not refreshed; audit requests only)
 SELECT n.NominationId, n.Amount, fs.FraudScore, fs.RiskLevel, fs.FraudFlags
 FROM   dbo.Nominations n
 JOIN   dbo.Users u_nom ON u_nom.UserId = n.NominatorId

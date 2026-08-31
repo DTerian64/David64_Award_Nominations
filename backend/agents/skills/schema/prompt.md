@@ -86,8 +86,9 @@ joining through Nominations → Users:
 `JOIN dbo.Users u ON u.UserId = n.NominatorId WHERE u.TenantId = <TenantId>`
 
 ## dbo.Appr_FraudScores
-Approver-behaviour fraud score written by the weekly batch job after nominations are Paid.
-Uses post-decision features (approval speed, payment speed).
+Retired historical approver-score data. The weekly analytics job no longer
+trains an Approver classifier or writes new rows. Preserve this table for audit
+and rollback until a later retention decision; do not treat it as current.
 
 | Column       | Type           | Notes                                              |
 |--------------|----------------|----------------------------------------------------|

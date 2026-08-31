@@ -184,13 +184,10 @@ def _write_rf_manifest(
         "tenant_id": tenant_id,
         "model_version": model_data["model_version"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "description": "Tenant-scoped Random Forest fraud models",
+        "description": "Tenant-scoped Random Forest nomination model",
         "models": {
             "p2p": _rf_classifier_summary(
                 model_data["p2p_model"], model_data["p2p_feature_columns"]
-            ),
-            "approver": _rf_classifier_summary(
-                model_data["appr_model"], model_data["appr_feature_columns"]
             ),
         },
         "training": training_metrics,
@@ -296,13 +293,10 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         n.NominationId,
         n.NominatorId,
         n.BeneficiaryId,
-        n.ApproverId,
         n.Amount,
         n.Currency,
         n.NominationDescription,
         n.NominationDate,
-        n.ApprovedDate,
-        n.PayedDate,
         n.Status,
         n.CategoryId,
         p2p.FraudScore,
@@ -323,14 +317,7 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         ISNULL(ugf_b.IsInRing,                 0) AS BeneficiaryIsInRing,
         ISNULL(ugf_b.IsInCopyPasteCluster,     0) AS BeneficiaryInCopyPaste,
         ISNULL(ugf_b.CopyPasteClusterSize,     0) AS BeneficiaryClusterSize,
-        ISNULL(ugf_b.HasTransactionalLanguage, 0) AS BeneficiaryTransactional,
-
-        -- ── Graph features: approver snapshot (point-in-time) ───────────────
-        ISNULL(ugf_a.IsApproverAffinity,       0) AS ApproverAffinityFlag,
-
-        -- ── ApproverPairFlags: how many times has this approver approved
-        --    this exact nominator→beneficiary pair? (point-in-time) ──────────
-        ISNULL(apf.PairApprovalCount,          0) AS GraphApproverPairCount
+        ISNULL(ugf_b.HasTransactionalLanguage, 0) AS BeneficiaryTransactional
 
     FROM dbo.Nominations n
     JOIN dbo.Users u ON u.UserId = n.NominatorId
@@ -361,28 +348,6 @@ def load_data(tenant_id: int) -> pd.DataFrame:
           AND  AsOfDate <= CAST(n.NominationDate AS DATE)
         ORDER  BY AsOfDate DESC
     ) ugf_b
-
-    -- Approver graph flags as of nomination date
-    OUTER APPLY (
-        SELECT TOP 1 IsApproverAffinity
-        FROM   dbo.UserGraphFlags
-        WHERE  TenantId = u.TenantId
-          AND  UserId   = n.ApproverId
-          AND  AsOfDate <= CAST(n.NominationDate AS DATE)
-        ORDER  BY AsOfDate DESC
-    ) ugf_a
-
-    -- Approver-pair count as of nomination date
-    OUTER APPLY (
-        SELECT TOP 1 PairApprovalCount
-        FROM   dbo.ApproverPairFlags
-        WHERE  TenantId      = u.TenantId
-          AND  ApproverId    = n.ApproverId
-          AND  NominatorId   = n.NominatorId
-          AND  BeneficiaryId = n.BeneficiaryId
-          AND  AsOfDate      <= CAST(n.NominationDate AS DATE)
-        ORDER  BY AsOfDate DESC
-    ) apf
 
     WHERE n.Status NOT IN ('PendingHRBPReview')
       AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection (Description)')
@@ -501,23 +466,12 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── Date parsing ────────────────────────────────────────────────────────
     df['NominationDate'] = pd.to_datetime(df['NominationDate'])
-    df['ApprovedDate']   = pd.to_datetime(df['ApprovedDate'])
-    df['PayedDate']      = pd.to_datetime(df['PayedDate'])
 
     # ── Temporal features ───────────────────────────────────────────────────
     df['DayOfWeek'] = df['NominationDate'].dt.dayofweek
     df['Month']     = df['NominationDate'].dt.month
     df['Hour']      = df['NominationDate'].dt.hour
     df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
-
-    df['HoursToApproval'] = (
-        (df['ApprovedDate'] - df['NominationDate']).dt.total_seconds() / 3600
-    )
-    df['HoursToPayment'] = (
-        (df['PayedDate'] - df['ApprovedDate']).dt.total_seconds() / 3600
-    )
-    df['HoursToApproval'] = df['HoursToApproval'].replace([np.inf, -np.inf], np.nan)
-    df['HoursToPayment']  = df['HoursToPayment'].replace([np.inf, -np.inf], np.nan)
 
     # ── Nominator behaviour ─────────────────────────────────────────────────
     print("  Calculating user behaviour features ...")
@@ -540,14 +494,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index()
 
     df = df.merge(beneficiary_stats, on='BeneficiaryId', how='left')
-
-    # ── Approver behaviour ───────────────────────────────────────────────────
-    approver_stats = df.groupby('ApproverId').agg(
-        ApproverTotalApproved=('NominationId', 'count'),
-        ApproverAvgApprovalTime=('HoursToApproval', 'mean'),
-    ).reset_index()
-
-    df = df.merge(approver_stats, on='ApproverId', how='left')
 
     # ── Relationship features ────────────────────────────────────────────────
     print("  Calculating relationship features ...")
@@ -583,7 +529,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     df['IsLowAmount']  = (df['AmountZScore'] < -2).astype(int)
 
     # ── Derived ratios ───────────────────────────────────────────────────────
-    df['IsRapidApproval'] = (df['HoursToApproval'] < 1).astype(int)
     df['NominatorConcentrationRatio'] = (
         df['NominatorTotalNominations'] / (df['NominatorUniqueBeneficiaries'] + 1)
     )
@@ -621,11 +566,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
         (df.get('NominatorTransactional', 0).fillna(0).astype(int))
         | (df.get('BeneficiaryTransactional', 0).fillna(0).astype(int))
     ).astype(int)
-
-    # ApproverAffinityFlag and GraphApproverPairCount come through directly
-    # from load_data() — ensure they're int with no NULLs.
-    df['ApproverAffinityFlag']   = df.get('ApproverAffinityFlag', 0).fillna(0).astype(int)
-    df['GraphApproverPairCount'] = df.get('GraphApproverPairCount', 0).fillna(0).astype(int)
 
     # ── Nomination category — target encoding ────────────────────────────────
     # Replace CategoryId with a single float: the mean fraud rate for that
@@ -800,33 +740,6 @@ P2P_FEATURE_COLUMNS = [
     'TransactionalLanguageFlag',    # nominator/beneficiary in TransactionalLanguage finding
 ]
 
-# ── Approver feature columns ──────────────────────────────────────────────────
-# Post-decision measurements — only available after a nomination is Paid.
-# Used by the batch job to detect approver-side fraud patterns.
-APPR_FEATURE_COLUMNS = [
-    'ApproverTotalApproved',
-    'ApproverAvgApprovalTime',
-    'HoursToApproval',
-    'HoursToPayment',
-    'IsRapidApproval',
-    # Graph pattern features (point-in-time joined from dbo.UserGraphFlags
-    # and dbo.ApproverPairFlags)
-    'ApproverAffinityFlag',         # approver is in an ApproverAffinity finding
-    'GraphApproverPairCount',       # times this approver approved this nominator→beneficiary pair
-]
-
-
-def _risk_level(score: int) -> str:
-    if score >= 80:
-        return 'CRITICAL'
-    if score >= 60:
-        return 'HIGH'
-    if score >= 40:
-        return 'MEDIUM'
-    if score >= 20:
-        return 'LOW'
-    return 'NONE'
-
 
 def score_and_save_historical(
     df: pd.DataFrame,
@@ -834,15 +747,16 @@ def score_and_save_historical(
     tenant_id: int,
 ) -> None:
     """
-    Score every nomination in df with both the P2P and Approver models
-    and upsert results into dbo.P2P_FraudScores and dbo.Appr_FraudScores.
+    Score every nomination in df with the P2P model and upsert results into
+    dbo.P2P_FraudScores. Approver fraud scoring is retired; existing rows in
+    dbo.Appr_FraudScores remain untouched as historical audit data.
 
     Bulk-upsert strategy (temp table + single MERGE per table):
       1. Vectorize all scoring and flag logic in numpy — no Python row loop.
       2. Bulk-insert the full result set into a #staging temp table using
          fast_executemany=True (one network round-trip for the whole batch).
       3. Execute one MERGE statement per table against the staging data.
-      Total SQL round-trips: 3 per table (CREATE, INSERT, MERGE) regardless
+      Total SQL round-trips: 3 (CREATE, INSERT, MERGE) regardless
       of row count — vs. N round-trips in the old per-row approach.
     """
     import time
@@ -871,24 +785,6 @@ def score_and_save_historical(
         p2p_fraud_probs = None
     else:
         p2p_fraud_probs = p2p_probas[:, 1]
-
-    # ── Approver inference ────────────────────────────────────────────────────
-    appr_rf     = model_data['appr_model']
-    appr_scaler = model_data['appr_scaler']
-    appr_cols   = model_data['appr_feature_columns']
-
-    if appr_rf is None:
-        print(f"[Tenant {tenant_id}] ⚠  No approver model — skipping approver score persistence.")
-        appr_fraud_probs = None
-    else:
-        t0 = time.perf_counter()
-        appr_probas = appr_rf.predict_proba(appr_scaler.transform(df[appr_cols].fillna(0)))
-        print(f"[Tenant {tenant_id}]   Appr predict_proba:     {time.perf_counter() - t0:.2f}s  ({n} rows)")
-        if appr_probas.shape[1] < 2:
-            print(f"[Tenant {tenant_id}] ⚠  Approver single-class model — skipping approver score persistence.")
-            appr_fraud_probs = None
-        else:
-            appr_fraud_probs = appr_probas[:, 1]
 
     # ── Vectorized score + flag computation (no Python row loop) ─────────────
     # np.select for risk levels; np.where string concat for flags.
@@ -923,24 +819,6 @@ def score_and_save_historical(
             p2p_scores.tolist(),
             p2p_levels.tolist(),
             p2p_flags.tolist(),
-        ))
-
-    appr_rows: list | None = None
-    if appr_fraud_probs is not None:
-        appr_scores = (appr_fraud_probs * 100).astype(int)
-        appr_levels = _risk_level_vec(appr_scores)
-        hours_to_pay = df['HoursToPayment'].fillna(0).values
-        appr_flags = pd.Series(
-            np.where(df['IsRapidApproval'].fillna(0).values == 1,
-                     'Rapid approval, ', '').astype(object)
-            + np.where((hours_to_pay > 0) & (hours_to_pay < 24),
-                       'Fast payment', '').astype(object)
-        ).str.rstrip(', ')
-        appr_rows = list(zip(
-            nom_ids.tolist(),
-            appr_scores.tolist(),
-            appr_levels.tolist(),
-            appr_flags.tolist(),
         ))
 
     print(f"[Tenant {tenant_id}]   Vectorize scores/flags: {time.perf_counter() - t0:.2f}s")
@@ -979,40 +857,6 @@ def score_and_save_historical(
         """)
         print(f"[Tenant {tenant_id}]   P2P MERGE:              {time.perf_counter() - t0:.2f}s")
 
-    # ── Approver bulk upsert: CREATE temp → bulk INSERT → single MERGE ────────
-    if appr_rows:
-        t0 = time.perf_counter()
-        cursor.execute("""
-            CREATE TABLE #appr_staging (
-                NominationId INT           NOT NULL,
-                FraudScore   INT           NOT NULL,
-                RiskLevel    NVARCHAR(20)  NOT NULL,
-                FraudFlags   NVARCHAR(500)     NULL
-            )
-        """)
-        cursor.executemany(
-            "INSERT INTO #appr_staging (NominationId, FraudScore, RiskLevel, FraudFlags) "
-            "VALUES (?, ?, ?, ?)",
-            appr_rows,
-        )
-        print(f"[Tenant {tenant_id}]   Appr temp insert:       {time.perf_counter() - t0:.2f}s  ({len(appr_rows)} rows)")
-
-        t0 = time.perf_counter()
-        cursor.execute("""
-            MERGE dbo.Appr_FraudScores AS target
-            USING #appr_staging AS source
-                ON target.NominationId = source.NominationId
-            WHEN MATCHED THEN
-                UPDATE SET FraudScore = source.FraudScore,
-                           RiskLevel  = source.RiskLevel,
-                           FraudFlags = source.FraudFlags
-            WHEN NOT MATCHED THEN
-                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
-                VALUES (source.NominationId, source.FraudScore,
-                        source.RiskLevel,   source.FraudFlags);
-        """)
-        print(f"[Tenant {tenant_id}]   Appr MERGE:             {time.perf_counter() - t0:.2f}s")
-
     # ── Commit ────────────────────────────────────────────────────────────────
     t0 = time.perf_counter()
     conn.commit()
@@ -1021,12 +865,10 @@ def score_and_save_historical(
     cursor.close()
     conn.close()
 
-    p2p_n    = len(p2p_rows)  if p2p_rows  else 0
-    appr_n   = len(appr_rows) if appr_rows else 0
+    p2p_n = len(p2p_rows) if p2p_rows else 0
     p2p_high = int(np.sum(p2p_fraud_probs * 100 >= 60)) if p2p_fraud_probs is not None else 0
     print(
         f"[Tenant {tenant_id}] ✓ P2P: {p2p_n} upserted ({p2p_high} HIGH/CRITICAL) | "
-        f"Approver: {appr_n} upserted  |  "
         f"Total: {time.perf_counter() - t_total:.2f}s"
     )
 
@@ -1090,12 +932,11 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
 
     y = df_train['IsFraud']
 
-    def _train_rf(X: pd.DataFrame, label: str, y_: pd.Series = None) -> tuple:
-        """Train one RF, print evaluation, return (model, scaler, auc)."""
-        y_use = y_ if y_ is not None else y
-        print(f"\n[Tenant {tenant_id}] Training {label} model — shape: {X.shape}")
+    def _train_rf(X: pd.DataFrame) -> tuple:
+        """Train the nomination-time RF and return (model, scaler, AUC)."""
+        print(f"\n[Tenant {tenant_id}] Training P2P model — shape: {X.shape}")
         X_tr, X_te, y_tr, y_te = train_test_split(
-            X, y_use, test_size=0.2, random_state=42, stratify=y_use
+            X, y, test_size=0.2, random_state=42, stratify=y
         )
         scaler_ = StandardScaler()
         X_tr_s  = scaler_.fit_transform(X_tr)
@@ -1116,7 +957,7 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         y_proba_ = rf_.predict_proba(X_te_s)[:, 1]
 
         print(f"\n{'='*60}")
-        print(f"{label.upper()} MODEL EVALUATION — Tenant {tenant_id}")
+        print(f"P2P MODEL EVALUATION — Tenant {tenant_id}")
         print(f"{'='*60}")
         print(classification_report(y_te, y_pred_, target_names=['Legitimate', 'Fraud']))
         print("Confusion Matrix:")
@@ -1130,45 +971,15 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         fi = pd.DataFrame({'Feature': X.columns.tolist(),
                            'Importance': rf_.feature_importances_}) \
                .sort_values('Importance', ascending=False)
-        print(f"\nTop 10 Most Important {label} Features:")
+        print("\nTop 10 Most Important P2P Features:")
         print(fi.head(10).to_string(index=False))
 
         return rf_, scaler_, auc_
 
     # ── Train P2P model ───────────────────────────────────────────────────────
     p2p_rf, p2p_scaler, p2p_auc = _train_rf(
-        df_train[P2P_FEATURE_COLUMNS].fillna(0), "P2P"
+        df_train[P2P_FEATURE_COLUMNS].fillna(0)
     )
-
-    # ── Derive approver fraud labels from P2P scores ──────────────────────────
-    # Restrict to Approved/Paid: HoursToApproval and HoursToPayment are only
-    # meaningful when both ApprovedDate and PayedDate are populated.  Pending
-    # nominations have NULL timestamps and would produce misleading zero values
-    # after fillna(0), skewing the approver model's rapid-approval signal.
-    df_appr = df_train[df_train['Status'].isin(['Approved', 'Paid'])].copy()
-
-    p2p_probas_appr = p2p_rf.predict_proba(
-        p2p_scaler.transform(df_appr[P2P_FEATURE_COLUMNS].fillna(0))
-    )[:, 1]
-    df_appr['IsApproverFraud'] = (
-        pd.Series((p2p_probas_appr * 100 >= 60).astype(int), index=df_appr.index)
-        & (df_appr['IsRapidApproval'] == 1)
-    ).astype(int)
-
-    appr_auc = None
-    if df_appr['IsApproverFraud'].sum() > 0:
-        appr_rf, appr_scaler, appr_auc = _train_rf(
-            df_appr[APPR_FEATURE_COLUMNS].fillna(0), "Approver",
-            y_=df_appr['IsFraud'],
-        )
-    else:
-        print(
-            f"[Tenant {tenant_id}] ⚠  No approver-fraud labels derived — "
-            "skipping approver model training. "
-            "Need HIGH/CRITICAL P2P nominations with IsRapidApproval=1."
-        )
-        appr_rf     = None
-        appr_scaler = None
 
     # ── Persist pkl ───────────────────────────────────────────────────────────
     model_version = f"rf-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-t{tenant_id}"
@@ -1178,10 +989,6 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
         'p2p_model':            p2p_rf,
         'p2p_scaler':           p2p_scaler,
         'p2p_feature_columns':  P2P_FEATURE_COLUMNS,
-        # Approver model — used by the weekly batch job
-        'appr_model':           appr_rf,
-        'appr_scaler':          appr_scaler,
-        'appr_feature_columns': APPR_FEATURE_COLUMNS,
         # Tenant-scoped amount stats for z-score computation at inference time
         'amount_mean':          float(df['Amount'].mean()),
         'amount_std':           float(df['Amount'].std()),
@@ -1199,7 +1006,8 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     print(f"\n✓ Model saved to '{pkl_filename}'")
     _upload_artefact(pkl_filename)
 
-    # ── Score all historical nominations into both score tables ───────────────
+    # Refresh historical nomination-time RF scores. Retired approver scores are
+    # intentionally left untouched for audit history.
     score_and_save_historical(df, model_data, tenant_id)
 
     # ── Visualisations ────────────────────────────────────────────────────────
@@ -1208,16 +1016,10 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     p2p_probs_viz = p2p_rf.predict_proba(
         p2p_scaler.transform(df[P2P_FEATURE_COLUMNS].fillna(0))
     )[:, 1]
-    appr_probs_viz = (
-        appr_rf.predict_proba(
-            appr_scaler.transform(df[APPR_FEATURE_COLUMNS].fillna(0))
-        )[:, 1]
-        if appr_rf is not None else None
-    )
-    create_visualizations(df, p2p_probs_viz, appr_probs_viz, tenant_id)
+    create_visualizations(df, p2p_probs_viz, tenant_id)
 
     training_metrics = {
-        'p2p_auc': p2p_auc, 'appr_auc': appr_auc,
+        'p2p_auc': p2p_auc,
         'training_samples': len(df_train), 'model_version': model_version,
     }
     manifest_path = _write_rf_manifest(
@@ -1239,40 +1041,25 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
 def create_visualizations(
     df: pd.DataFrame,
     p2p_probs: np.ndarray,
-    appr_probs: np.ndarray,
     tenant_id: int,
 ) -> None:
     """
-    Generate and upload a fraud score distribution chart showing P2P and
-    Approver score distributions side by side, coloured by IsFraud label.
-    Probabilities are passed in directly from the training run — no DB re-fetch.
+    Generate and upload the nomination-time RF score distribution, coloured by
+    the human-confirmed/pseudo-label training outcome.
     """
     print(f"\n[Tenant {tenant_id}] Creating visualisations ...")
 
     is_fraud = df['IsFraud'].fillna(0).astype(int).values
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    fig.suptitle(f"Fraud Score Distribution — Tenant {tenant_id}", fontsize=13)
-
-    for ax, (probs, label) in zip(axes, [
-        (p2p_probs,  'P2P'),
-        (appr_probs, 'Approver'),
-    ]):
-        if probs is None:
-            ax.text(0.5, 0.5, 'No approver model\n(insufficient labelled data)',
-                    ha='center', va='center', transform=ax.transAxes,
-                    fontsize=11, color='grey')
-            ax.set_title(f'{label} Score Distribution')
-            ax.axis('off')
-            continue
-        scores = (probs * 100).astype(int)
-        legit  = scores[is_fraud == 0]
-        fraud  = scores[is_fraud == 1]
-        ax.hist([legit, fraud], bins=30, label=['Legitimate', 'Fraud'], alpha=0.7)
-        ax.set_xlabel('Fraud Score (0–100)')
-        ax.set_ylabel('Count')
-        ax.set_title(f'{label} Score Distribution')
-        ax.legend()
+    fig, ax = plt.subplots(figsize=(9, 5))
+    scores = (p2p_probs * 100).astype(int)
+    legitimate = scores[is_fraud == 0]
+    fraud = scores[is_fraud == 1]
+    ax.hist([legitimate, fraud], bins=30, label=['Legitimate', 'Fraud'], alpha=0.7)
+    ax.set_xlabel('Fraud Score (0–100)')
+    ax.set_ylabel('Count')
+    ax.set_title(f'Nomination Fraud Score Distribution — Tenant {tenant_id}')
+    ax.legend()
 
     plt.tight_layout()
     png_filename = OUTPUT_DIR / f"random_forest_tenant_{tenant_id}.png"
@@ -1355,10 +1142,9 @@ def main(tenants_to_process: list | None = None) -> None:
                 )
                 continue
             p2p_auc_str  = f"{stats['p2p_auc']:.4f}"  if stats.get('p2p_auc')  else "n/a"
-            appr_auc_str = f"{stats['appr_auc']:.4f}" if stats.get('appr_auc') else "n/a"
             results[tenant_id] = (
                 f"OK  ({stats['training_samples']} samples, "
-                f"P2P AUC={p2p_auc_str}, Approver AUC={appr_auc_str})"
+                f"P2P AUC={p2p_auc_str})"
             )
             _record_rf_status(
                 tenant_id=tenant_id, attempt_status="SUCCEEDED",
@@ -1367,7 +1153,6 @@ def main(tenants_to_process: list | None = None) -> None:
                 diagnostics={
                     "training_samples": stats["training_samples"],
                     "p2p_auc": stats.get("p2p_auc"),
-                    "approver_auc": stats.get("appr_auc"),
                 },
                 run_id=run_id,
             )
