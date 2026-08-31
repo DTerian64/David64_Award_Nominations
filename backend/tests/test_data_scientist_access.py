@@ -3,6 +3,7 @@
 import os
 import unittest
 from contextlib import contextmanager
+from datetime import date
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -71,14 +72,30 @@ class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
             "effective_user": {"UserId": 19, "TenantId": 4},
         }
         result = await search_nominations(
-            q="Ada", nomination_status=None, risk="HIGH", page=1, page_size=25,
+            q="Ada", nomination_status=None, risk="HIGH",
+            start_date=date(2026, 8, 1), end_date=date(2026, 8, 31),
+            page=1, page_size=25,
             user_context=context,
         )
         search.assert_called_once_with(
             tenant_id=4, query="Ada", status_filter=None, risk_filter="HIGH",
+            start_date=date(2026, 8, 1), end_date=date(2026, 8, 31),
             page=1, page_size=25,
         )
         self.assertEqual(result["total"], 0)
+
+    async def test_search_rejects_an_inverted_date_range(self):
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+        with self.assertRaises(HTTPException) as raised:
+            await search_nominations(
+                q="", nomination_status=None, risk=None,
+                start_date=date(2026, 9, 1), end_date=date(2026, 8, 31),
+                page=1, page_size=25, user_context=context,
+            )
+        self.assertEqual(raised.exception.status_code, 422)
 
     @patch("routers.model_analysis_router.sqlhelper.get_model_analysis_nomination")
     async def test_detail_uses_effective_tenant(self, get_detail):

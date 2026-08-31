@@ -41,6 +41,13 @@ interface Props {
 const PAGE_SIZE = 25;
 const STATUSES = ['', 'Submitted', 'Pending', 'PendingHRBPReview', 'Approved', 'Paid', 'Rejected'];
 const RISKS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NONE', 'UNKNOWN'];
+const todayAsLocalDate = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const ReadOnlyEvidence: React.FC<{
   item: HRBPQueueItem;
@@ -162,6 +169,10 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
   const [appliedStatus, setAppliedStatus] = useState('');
   const [risk, setRisk] = useState('');
   const [appliedRisk, setAppliedRisk] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [appliedStartDate, setAppliedStartDate] = useState('');
+  const [endDate, setEndDate] = useState(todayAsLocalDate);
+  const [appliedEndDate, setAppliedEndDate] = useState('');
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<SearchResponse | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
@@ -171,19 +182,30 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
   const [detailHistory, setDetailHistory] = useState<PairHistory | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const executeSearch = async (targetPage: number, targetQuery: string, targetStatus: string, targetRisk: string) => {
+  const executeSearch = async (
+    targetPage: number,
+    targetQuery: string,
+    targetStatus: string,
+    targetRisk: string,
+    targetStartDate: string,
+    targetEndDate: string,
+  ) => {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams({ page: String(targetPage), page_size: String(PAGE_SIZE) });
     if (targetQuery) params.set('q', targetQuery);
     if (targetStatus) params.set('status', targetStatus);
     if (targetRisk) params.set('risk', targetRisk);
+    if (targetStartDate) params.set('start_date', targetStartDate);
+    if (targetEndDate) params.set('end_date', targetEndDate);
     try {
       setResult(await apiFetch<SearchResponse>(`/api/model-analysis/nominations?${params}`, {}, impersonatedUPN));
       setPage(targetPage);
       setAppliedQuery(targetQuery);
       setAppliedStatus(targetStatus);
       setAppliedRisk(targetRisk);
+      setAppliedStartDate(targetStartDate);
+      setAppliedEndDate(targetEndDate);
       setHasSearched(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to search nominations');
@@ -282,26 +304,42 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
           <form
             onSubmit={event => {
               event.preventDefault();
-              void executeSearch(1, query.trim(), status, risk);
+              void executeSearch(1, query.trim(), status, risk, startDate, endDate);
             }}
-            className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 lg:grid-cols-[1fr_13rem_11rem_auto]"
+            className="grid grid-cols-1 items-end gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 md:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_10.5rem_10.5rem_12rem_10.5rem_auto]"
           >
-            <label className="relative">
-              <span className="sr-only">Search nominations</span>
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-              <input
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                placeholder="Nomination #, employee, email, or description"
-                className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
+            <label className="space-y-1">
+              <span className="block text-xs font-medium text-gray-600">Nomination search</span>
+              <span className="relative block">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                <input
+                  value={query}
+                  onChange={event => setQuery(event.target.value)}
+                  placeholder="Nomination #, employee, email, or description"
+                  className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </span>
             </label>
-            <select value={status} onChange={event => setStatus(event.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
-              {STATUSES.map(value => <option key={value} value={value}>{value || 'All statuses'}</option>)}
-            </select>
-            <select value={risk} onChange={event => setRisk(event.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
-              {RISKS.map(value => <option key={value} value={value}>{value || 'All risk levels'}</option>)}
-            </select>
+            <label className="space-y-1">
+              <span className="block text-xs font-medium text-gray-600">Start date (optional)</span>
+              <input type="date" value={startDate} max={endDate || undefined} onChange={event => setStartDate(event.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+            <label className="space-y-1">
+              <span className="block text-xs font-medium text-gray-600">End date (inclusive)</span>
+              <input type="date" value={endDate} min={startDate || undefined} onChange={event => setEndDate(event.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </label>
+            <label className="space-y-1">
+              <span className="block text-xs font-medium text-gray-600">Status</span>
+              <select value={status} onChange={event => setStatus(event.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                {STATUSES.map(value => <option key={value} value={value}>{value || 'All statuses'}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="block text-xs font-medium text-gray-600">Model risk</span>
+              <select value={risk} onChange={event => setRisk(event.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                {RISKS.map(value => <option key={value} value={value}>{value || 'All risk levels'}</option>)}
+              </select>
+            </label>
             <button disabled={loading} type="submit" style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }} className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
               <Search className="h-4 w-4" /> Search
             </button>
@@ -363,9 +401,9 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
             <div className="flex items-center justify-between text-sm text-gray-500">
               <span>{result.total} nomination{result.total === 1 ? '' : 's'}</span>
               <div className="flex items-center gap-2">
-                <button disabled={page <= 1} onClick={() => void executeSearch(page - 1, appliedQuery, appliedStatus, appliedRisk)} className="rounded border border-gray-200 p-1.5 disabled:opacity-40" title="Previous page"><ChevronLeft className="h-4 w-4" /></button>
+                <button disabled={page <= 1} onClick={() => void executeSearch(page - 1, appliedQuery, appliedStatus, appliedRisk, appliedStartDate, appliedEndDate)} className="rounded border border-gray-200 p-1.5 disabled:opacity-40" title="Previous page"><ChevronLeft className="h-4 w-4" /></button>
                 <span>Page {page} of {totalPages}</span>
-                <button disabled={page >= totalPages} onClick={() => void executeSearch(page + 1, appliedQuery, appliedStatus, appliedRisk)} className="rounded border border-gray-200 p-1.5 disabled:opacity-40" title="Next page"><ChevronRight className="h-4 w-4" /></button>
+                <button disabled={page >= totalPages} onClick={() => void executeSearch(page + 1, appliedQuery, appliedStatus, appliedRisk, appliedStartDate, appliedEndDate)} className="rounded border border-gray-200 p-1.5 disabled:opacity-40" title="Next page"><ChevronRight className="h-4 w-4" /></button>
               </div>
             </div>
           )}

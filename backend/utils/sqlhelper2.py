@@ -22,6 +22,7 @@ import os
 import struct
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import date
 from typing import List, Optional, Tuple
 from urllib.parse import quote_plus
 
@@ -2807,6 +2808,8 @@ def search_model_analysis_nominations(
     query: str = "",
     status_filter: Optional[str] = None,
     risk_filter: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     page: int = 1,
     page_size: int = 25,
 ) -> dict:
@@ -2818,6 +2821,8 @@ def search_model_analysis_nominations(
         "search": f"%{query}%",
         "status": status_filter,
         "risk": risk_filter,
+        "start_date": start_date,
+        "end_date": end_date,
         "offset": (page - 1) * page_size,
         "page_size": page_size,
     }
@@ -2832,6 +2837,8 @@ def search_model_analysis_nominations(
                ben.userEmail LIKE :search)
           AND (:status IS NULL OR n.Status = :status)
           AND (:risk IS NULL OR COALESCE(idr.CompositeRiskLevel, ff.RiskLevel, 'UNKNOWN') = :risk)
+          AND (:start_date IS NULL OR n.NominationDate >= :start_date)
+          AND (:end_date IS NULL OR n.NominationDate < DATEADD(DAY, 1, :end_date))
     """
     with get_db_context() as session:
         total = session.execute(

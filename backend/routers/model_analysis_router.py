@@ -1,5 +1,6 @@
 """Read-only nomination model analysis for Data Scientists and administrators."""
 
+from datetime import date
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -39,17 +40,26 @@ async def search_nominations(
     q: str = Query(default="", max_length=200),
     nomination_status: Optional[NominationStatus] = Query(default=None, alias="status"),
     risk: Optional[RiskLevel] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
     user_context: dict = Depends(require_analytics_access),
 ):
     """Search the effective user's tenant; never returns cross-tenant rows."""
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=422,
+            detail="Start date must be on or before end date",
+        )
     tenant_id = user_context["effective_user"]["TenantId"]
     return sqlhelper.search_model_analysis_nominations(
         tenant_id=tenant_id,
         query=q,
         status_filter=nomination_status,
         risk_filter=risk,
+        start_date=start_date,
+        end_date=end_date,
         page=page,
         page_size=page_size,
     )
