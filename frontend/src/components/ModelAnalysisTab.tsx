@@ -357,12 +357,14 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
                 {RISKS.map(value => <option key={value} value={value}>{value || 'All risk levels'}</option>)}
               </select>
             </label>
-            <div className="flex gap-2 md:col-span-2 xl:col-span-1">
-              <button disabled={loading} type="submit" style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }} className="flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
+            <div className="space-y-1 md:col-span-2 xl:col-span-1">
+              <div className="flex h-4 items-center justify-end">
+                <button disabled={loading} type="button" onClick={clearFilters} className="text-xs font-medium text-indigo-600 hover:underline disabled:opacity-50">
+                  Clear filters
+                </button>
+              </div>
+              <button disabled={loading} type="submit" style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }} className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">
                 <Search className="h-4 w-4" /> Search
-              </button>
-              <button disabled={loading} type="button" onClick={clearFilters} className="whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                Clear filters
               </button>
             </div>
           </form>
