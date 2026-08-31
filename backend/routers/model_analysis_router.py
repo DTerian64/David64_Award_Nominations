@@ -3,9 +3,10 @@
 from datetime import date
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 import utils.sqlhelper2 as sqlhelper
+from utils import model_artifacts
 from auth import require_analytics_access
 
 
@@ -15,6 +16,7 @@ NominationStatus = Literal[
     "Submitted", "Pending", "PendingHRBPReview", "Approved", "Paid", "Rejected"
 ]
 RiskLevel = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE", "UNKNOWN"]
+ModelComponent = Literal["rf", "gnn"]
 
 
 @router.get("/setup/fraud-integrity")
@@ -33,6 +35,45 @@ async def get_decision_engines_setup(
     """Return tenant decision-engine operational status as a read-only view."""
     tenant_id = user_context["effective_user"]["TenantId"]
     return {"rows": sqlhelper.get_integrity_component_statuses(tenant_id)}
+
+
+@router.get("/setup/models/{component}")
+async def get_model_manifest(
+    component: ModelComponent,
+    user_context: dict = Depends(require_analytics_access),
+):
+    """Return safe model metadata, never the executable model artifact."""
+    tenant_id = user_context["effective_user"]["TenantId"]
+    try:
+        manifest = model_artifacts.get_manifest(tenant_id, component)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The {component.upper()} model representation is invalid",
+        ) from exc
+    if manifest is None:
+        return {
+            "available": False,
+            "component": component,
+            "message": "Representation will be available after the next training run.",
+        }
+    return {"available": True, "component": component, "manifest": manifest}
+
+
+@router.get("/setup/models/rf/visualization")
+async def get_rf_model_visualization(
+    user_context: dict = Depends(require_analytics_access),
+):
+    """Proxy the tenant RF chart without exposing Blob Storage credentials."""
+    tenant_id = user_context["effective_user"]["TenantId"]
+    image = model_artifacts.get_rf_visualization(tenant_id)
+    if image is None:
+        raise HTTPException(status_code=404, detail="RF visualization is not available")
+    return Response(
+        content=image,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.get("/nominations")

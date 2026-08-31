@@ -32,7 +32,7 @@ import logging
 import os
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -56,9 +56,15 @@ load_dotenv(env_path)
 
 from . import gnn_graph as G  # noqa: E402 - .env must load before model imports
 from . import labels as labels_mod  # noqa: E402
+from .artifact_manifest import (  # noqa: E402
+    MANIFEST_SCHEMA_VERSION,
+    artifact_descriptor,
+    state_dict_summary,
+    write_manifest,
+)
 from utils.component_status import upsert_component_status  # noqa: E402
 from utils.db_conn import connect  # noqa: E402
-from .gnn_model import train_gnn  # noqa: E402
+from .gnn_model import _RELATIONS, train_gnn  # noqa: E402
 
 # Reuse the Random Forest's blob upload helper rather than duplicating the auth
 # and error handling. Both stages run in the same process under run_job.py.
@@ -361,6 +367,61 @@ def _write_head(model, graph: dict, model_version: str, metrics: dict, path: Pat
         torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=True)
 
 
+def _write_gnn_manifest(
+    tenant_id: int,
+    model,
+    model_version: str,
+    metrics: dict,
+    encoder_path: Path,
+    head_path: Path,
+) -> Path:
+    """Publish a non-executable representation of the encoder and serving head."""
+    manifest_path = OUTPUT_DIR / f"gnn_tenant_{tenant_id}.manifest.json"
+    emb_dim = int(model.emb_dim)
+    nomination_feature_count = len(G.NOMINATION_FEATURE_COLUMNS)
+    manifest = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "artifact_type": "graph_neural_network",
+        "tenant_id": tenant_id,
+        "model_version": model_version,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "description": "Tenant-scoped heterogeneous GraphSAGE fraud model",
+        "architecture": {
+            "encoder": {
+                "type": "Heterogeneous GraphSAGE",
+                "role": "audit_and_retraining",
+                "layer_count": len(model.encoder.convs),
+                "embedding_dimension": emb_dim,
+                "aggregation": "mean",
+                "relations": [
+                    {"source": source, "relationship": relation, "target": target}
+                    for source, relation, target in _RELATIONS
+                ],
+                **state_dict_summary(model.encoder.state_dict()),
+            },
+            "decoder": {
+                "type": "Multilayer Perceptron",
+                "role": "live_inference",
+                "input_dimension": 3 * emb_dim + nomination_feature_count,
+                "layers": [3 * emb_dim + nomination_feature_count, 64, 32, 1],
+                "dropout": 0.2,
+                **state_dict_summary(model.decoder.net.state_dict()),
+            },
+        },
+        "features": {
+            "user": list(G.USER_FEATURE_COLUMNS),
+            "nomination": list(G.NOMINATION_FEATURE_COLUMNS),
+        },
+        "training": {key: value for key, value in metrics.items() if key != "history"},
+        "artifacts": [
+            artifact_descriptor(encoder_path, "audit_encoder"),
+            artifact_descriptor(head_path, "serving_head"),
+        ],
+    }
+    write_manifest(manifest_path, manifest)
+    return manifest_path
+
+
 # ── Per-tenant run ────────────────────────────────────────────────────────────
 
 def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
@@ -511,12 +572,21 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
                 "model_version": model_version,
                 "emb_dim": int(model.emb_dim)}, enc_path)
     _write_head(model, graph, model_version, metrics, head_path)
+    manifest_path = _write_gnn_manifest(
+        tenant_id=tenant_id,
+        model=model,
+        model_version=model_version,
+        metrics=metrics,
+        encoder_path=enc_path,
+        head_path=head_path,
+    )
 
-    # Head last: until it lands, inference finds no decoder for this version and
-    # scores nothing, which is the safe state. Uploading it first would briefly
-    # expose a decoder whose embeddings are not yet published.
+    # Upload model artifacts encoder first and head second: until the head lands,
+    # inference finds no decoder for this version and scores nothing. The JSON
+    # representation is presentation metadata and is published only afterward.
     _upload_artefact(enc_path)
     _upload_artefact(head_path)
+    _upload_artefact(manifest_path)
 
     n_evicted = _evict_stale_embeddings(conn, tenant_id, GNN_EMBEDDING_RETENTION_DAYS)
 

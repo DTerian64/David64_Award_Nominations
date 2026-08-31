@@ -15,7 +15,9 @@ from auth import require_analytics_access
 from routers.model_analysis_router import (
     get_decision_engines_setup,
     get_fraud_integrity_setup,
+    get_model_manifest,
     get_nomination_analysis,
+    get_rf_model_visualization,
     search_nominations,
 )
 from utils import sqlhelper2
@@ -42,6 +44,44 @@ class DataScientistAuthorizationTests(unittest.TestCase):
 
 
 class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
+    @patch("routers.model_analysis_router.model_artifacts.get_manifest")
+    async def test_model_manifest_is_read_from_effective_tenant(self, get_manifest):
+        get_manifest.return_value = {
+            "schema_version": 1,
+            "artifact_type": "random_forest",
+            "tenant_id": 4,
+        }
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+        result = await get_model_manifest("rf", context)
+        get_manifest.assert_called_once_with(4, "rf")
+        self.assertTrue(result["available"])
+
+    @patch("routers.model_analysis_router.model_artifacts.get_manifest")
+    async def test_missing_manifest_returns_a_training_run_message(self, get_manifest):
+        get_manifest.return_value = None
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+        result = await get_model_manifest("gnn", context)
+        self.assertFalse(result["available"])
+        self.assertIn("next training run", result["message"])
+
+    @patch("routers.model_analysis_router.model_artifacts.get_rf_visualization")
+    async def test_rf_visualization_is_read_from_effective_tenant(self, get_image):
+        get_image.return_value = b"\x89PNG\r\n"
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+        response = await get_rf_model_visualization(context)
+        get_image.assert_called_once_with(4)
+        self.assertEqual(response.media_type, "image/png")
+        self.assertEqual(response.body, b"\x89PNG\r\n")
+
     @patch("routers.model_analysis_router.sqlhelper.get_fraud_settings")
     async def test_fraud_setup_is_read_from_effective_tenant(self, get_settings):
         get_settings.return_value = {"low_threshold": 20}

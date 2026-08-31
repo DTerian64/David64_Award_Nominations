@@ -358,7 +358,7 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
               </select>
             </label>
             <div className="space-y-1 md:col-span-2 xl:col-span-1">
-              <div className="flex h-4 items-center justify-end">
+              <div className="flex h-4 items-center justify-start">
                 <button disabled={loading} type="button" onClick={clearFilters} className="appearance-none border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline disabled:opacity-50">
                   Clear filters
                 </button>

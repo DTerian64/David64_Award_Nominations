@@ -42,8 +42,18 @@ from sentence_transformers import SentenceTransformer
 
 try:
     from . import labels as labels_mod
+    from .artifact_manifest import (
+        MANIFEST_SCHEMA_VERSION,
+        artifact_descriptor,
+        write_manifest,
+    )
 except ImportError:  # pragma: no cover - standalone ``python modeling/...`` path
     import labels as labels_mod
+    from artifact_manifest import (
+        MANIFEST_SCHEMA_VERSION,
+        artifact_descriptor,
+        write_manifest,
+    )
 from utils.component_status import upsert_component_status
 
 # Default sentence-transformer model for English tenants.
@@ -115,6 +125,89 @@ MIN_TRAINING_SAMPLES = 50
 # All generated artefacts (.pkl models, .png charts) are written here.
 OUTPUT_DIR = JOB_DIR / "Output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _rf_classifier_summary(model, feature_columns: list[str]) -> dict:
+    """Build a JSON-safe structural summary of one fitted RF classifier."""
+    if model is None:
+        return {"available": False, "feature_count": len(feature_columns), "features": []}
+
+    trees = list(model.estimators_)
+    params = model.get_params(deep=False)
+    features = sorted(
+        (
+            {"name": name, "importance": float(importance)}
+            for name, importance in zip(feature_columns, model.feature_importances_)
+        ),
+        key=lambda item: item["importance"],
+        reverse=True,
+    )
+    depths = [int(tree.tree_.max_depth) for tree in trees]
+    node_counts = [int(tree.tree_.node_count) for tree in trees]
+    return {
+        "available": True,
+        "estimator": type(model).__name__,
+        "classes": [str(value) for value in model.classes_],
+        "feature_count": len(feature_columns),
+        "tree_count": len(trees),
+        "hyperparameters": {
+            key: params.get(key)
+            for key in (
+                "n_estimators", "max_depth", "min_samples_split",
+                "min_samples_leaf", "class_weight", "random_state",
+            )
+        },
+        "tree_statistics": {
+            "minimum_depth": min(depths),
+            "maximum_depth": max(depths),
+            "average_depth": sum(depths) / len(depths),
+            "minimum_nodes": min(node_counts),
+            "maximum_nodes": max(node_counts),
+            "average_nodes": sum(node_counts) / len(node_counts),
+        },
+        "features": features,
+    }
+
+
+def _write_rf_manifest(
+    tenant_id: int,
+    model_data: dict,
+    training_metrics: dict,
+    pkl_path: Path,
+    png_path: Path,
+) -> Path:
+    """Publish a non-executable representation of the RF training output."""
+    manifest_path = OUTPUT_DIR / f"random_forest_tenant_{tenant_id}.manifest.json"
+    manifest = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "artifact_type": "random_forest",
+        "tenant_id": tenant_id,
+        "model_version": model_data["model_version"],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "description": "Tenant-scoped Random Forest fraud models",
+        "models": {
+            "p2p": _rf_classifier_summary(
+                model_data["p2p_model"], model_data["p2p_feature_columns"]
+            ),
+            "approver": _rf_classifier_summary(
+                model_data["appr_model"], model_data["appr_feature_columns"]
+            ),
+        },
+        "training": training_metrics,
+        "data_profile": {
+            "amount_mean": model_data["amount_mean"],
+            "amount_std": model_data["amount_std"],
+            "category_count": len(model_data["category_fraud_rate"]),
+            "global_fraud_rate": model_data["global_fraud_rate"],
+            "embedding_model": model_data["embed_model_name"],
+        },
+        "artifacts": [
+            artifact_descriptor(pkl_path, "serving_model"),
+            artifact_descriptor(png_path, "score_distribution"),
+        ],
+    }
+    write_manifest(manifest_path, manifest)
+    return manifest_path
 
 
 # ============================================================================
@@ -1123,10 +1216,20 @@ def train_model(df: pd.DataFrame, tenant_id: int) -> tuple[dict, dict]:
     )
     create_visualizations(df, p2p_probs_viz, appr_probs_viz, tenant_id)
 
-    return model_data, {
+    training_metrics = {
         'p2p_auc': p2p_auc, 'appr_auc': appr_auc,
         'training_samples': len(df_train), 'model_version': model_version,
     }
+    manifest_path = _write_rf_manifest(
+        tenant_id=tenant_id,
+        model_data=model_data,
+        training_metrics=training_metrics,
+        pkl_path=pkl_filename,
+        png_path=OUTPUT_DIR / f"random_forest_tenant_{tenant_id}.png",
+    )
+    _upload_artefact(manifest_path)
+
+    return model_data, training_metrics
 
 
 # ============================================================================

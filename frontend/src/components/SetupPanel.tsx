@@ -15,6 +15,7 @@ import {
 import { getAccessToken } from '../services/api';
 import CodeMirror from '@uiw/react-codemirror';
 import { html } from '@codemirror/lang-html';
+import { ModelInspectionModal, type InspectableModel } from './ModelInspectionModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -152,6 +153,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
   const [rows, setRows] = useState<DetectionEngineStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inspection, setInspection] = useState<InspectableModel | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -226,6 +228,9 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
               description: 'Integrity detection engine',
             };
             const diagnostics = Object.entries(row.diagnostics || {});
+            const inspectable: InspectableModel | null = row.component === 'RF'
+              ? 'rf'
+              : row.component === 'GNN' ? 'gnn' : null;
             return (
               <section key={row.component} className="border border-gray-200 rounded-lg p-4 space-y-4">
                 <div>
@@ -233,6 +238,15 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                     <div>
                       <h3 className="font-semibold text-gray-800">{metadata.name}</h3>
                       <p className="text-xs text-gray-500 mt-0.5">{metadata.description}</p>
+                      {inspectable && (
+                        <button
+                          type="button"
+                          onClick={() => setInspection(inspectable)}
+                          className="mt-2 inline-flex appearance-none items-center gap-1 border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline"
+                        >
+                          <Eye className="h-3.5 w-3.5" /> Inspect model
+                        </button>
+                      )}
                     </div>
                     <span className={`shrink-0 px-2 py-0.5 rounded-full border text-xs font-medium ${statusClass(row.serving_status)}`}>
                       {row.serving_status}
@@ -300,6 +314,14 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
             );
           })}
         </div>
+      )}
+
+      {inspection && (
+        <ModelInspectionModal
+          component={inspection}
+          impersonatedUPN={impersonatedUPN}
+          onClose={() => setInspection(null)}
+        />
       )}
     </div>
   );
