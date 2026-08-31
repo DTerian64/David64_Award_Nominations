@@ -127,7 +127,12 @@ async def list_roles(admin: dict = Depends(require_setup_admin)):
 @router.post("/api/admin/setup/roles/grant")
 async def grant_role(payload: RoleChange, admin: dict = Depends(require_setup_admin)):
     _validate_role_change(payload, admin)
-    sqlhelper.assign_user_role(payload.user_id, payload.role, admin["UserId"])
+    sqlhelper.assign_user_role(
+        payload.user_id,
+        payload.role,
+        admin["UserId"],
+        admin["TenantId"],
+    )
     logger.info(
         "Role granted",
         extra={"tenant_id": admin["TenantId"], "target_user": payload.user_id,

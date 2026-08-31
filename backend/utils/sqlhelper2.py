@@ -2928,7 +2928,7 @@ def get_user_roles(user_id: int) -> list[str]:
         return [r[0] for r in rows]
 
 
-def assign_user_role(user_id: int, role: str, assigned_by: int) -> bool:
+def assign_user_role(user_id: int, role: str, assigned_by: int, tenant_id: int) -> bool:
     """
     Grant *role* to *user_id*.  Idempotent — silently succeeds if already assigned.
     Returns True if newly inserted, False if already existed.
@@ -2937,13 +2937,19 @@ def assign_user_role(user_id: int, role: str, assigned_by: int) -> bool:
         result = session.execute(
             text("""
                 MERGE dbo.UserRoles AS target
-                USING (SELECT :uid AS UserId, :role AS Role) AS src
+                USING (SELECT :uid AS UserId, :tenant_id AS TenantId, :role AS Role) AS src
                 ON target.UserId = src.UserId AND target.Role = src.Role
                 WHEN NOT MATCHED THEN
-                    INSERT (UserId, Role, AssignedBy, created_by, updated_by)
-                    VALUES (:uid, :role, :assigned_by, :audit_by, :audit_by);
+                    INSERT (UserId, TenantId, Role, AssignedBy, created_by, updated_by)
+                    VALUES (src.UserId, src.TenantId, src.Role, :assigned_by, :audit_by, :audit_by);
             """),
-            {"uid": user_id, "role": role, "assigned_by": assigned_by, "audit_by": get_actor()},
+            {
+                "uid": user_id,
+                "tenant_id": tenant_id,
+                "role": role,
+                "assigned_by": assigned_by,
+                "audit_by": get_actor(),
+            },
         )
         session.commit()
         return result.rowcount > 0
