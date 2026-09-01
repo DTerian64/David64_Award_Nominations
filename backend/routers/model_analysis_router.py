@@ -1,13 +1,18 @@
-"""Read-only nomination model analysis for Data Scientists and administrators."""
+"""Tenant-scoped model analysis for Data Scientists and administrators.
+
+Model evidence and active policies are read-only. Data Scientists may submit
+fine-tuning requests; Graph policy mutation remains on Admin-only routes.
+"""
 
 from datetime import date
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
 
 import utils.sqlhelper2 as sqlhelper
 from utils import model_artifacts
-from auth import require_analytics_access
+from auth import is_admin, require_analytics_access
 
 
 router = APIRouter(prefix="/api/model-analysis", tags=["model-analysis"])
@@ -17,6 +22,17 @@ NominationStatus = Literal[
 ]
 RiskLevel = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE", "UNKNOWN"]
 ModelComponent = Literal["rf", "gnn"]
+_GRAPH_PATTERNS = {
+    "Ring", "SuperNominator", "Desert", "CopyPaste",
+    "TransactionalLanguage", "HiddenCandidate",
+}
+
+
+class GraphFineTuningRequest(BaseModel):
+    pattern_type: Optional[str] = None
+    request_text: str
+    suggested_parameters: Optional[dict] = None
+    supporting_nomination_ids: list[int] = Field(default_factory=list)
 
 
 @router.get("/setup/fraud-integrity")
@@ -35,6 +51,63 @@ async def get_decision_engines_setup(
     """Return tenant decision-engine operational status as a read-only view."""
     tenant_id = user_context["effective_user"]["TenantId"]
     return {"rows": sqlhelper.get_integrity_component_statuses(tenant_id)}
+
+
+@router.get("/setup/graph-policy")
+async def get_graph_scoring_policy(
+    user_context: dict = Depends(require_analytics_access),
+):
+    """Inspect the effective tenant's Graph policy and fine-tuning requests."""
+    tenant_id = user_context["effective_user"]["TenantId"]
+    result = sqlhelper.get_graph_scoring_policy_bundle(tenant_id)
+    can_edit = bool(
+        is_admin(user_context["actual_user"])
+        and not user_context.get("is_impersonating")
+    )
+    result["can_edit"] = can_edit
+    result["can_request"] = not user_context.get("is_impersonating")
+    if not can_edit:
+        result["draft_policy"] = None
+        result["history"] = [
+            item for item in result.get("history", [])
+            if item.get("status") != "DRAFT"
+        ]
+    return result
+
+
+@router.post("/setup/graph-policy/requests")
+async def request_graph_scoring_change(
+    payload: GraphFineTuningRequest,
+    user_context: dict = Depends(require_analytics_access),
+):
+    if user_context.get("is_impersonating"):
+        raise HTTPException(
+            status_code=403,
+            detail="Fine-tuning requests cannot be submitted while impersonating",
+        )
+    text_value = payload.request_text.strip()
+    if not text_value:
+        raise HTTPException(status_code=422, detail="Please describe the requested change")
+    if len(text_value) > 2000:
+        raise HTTPException(status_code=422, detail="The request must be 2,000 characters or fewer")
+    nomination_ids = list(dict.fromkeys(payload.supporting_nomination_ids))
+    if payload.pattern_type and payload.pattern_type not in _GRAPH_PATTERNS:
+        raise HTTPException(status_code=422, detail="Unknown Graph detector")
+    if any(value <= 0 for value in nomination_ids):
+        raise HTTPException(status_code=422, detail="Nomination numbers must be positive")
+    effective = user_context["effective_user"]
+    try:
+        request_id = sqlhelper.create_graph_scoring_change_request(
+            tenant_id=effective["TenantId"],
+            actor=effective.get("userPrincipalName", "unknown"),
+            request_text=text_value,
+            pattern_type=payload.pattern_type,
+            suggested_parameters=payload.suggested_parameters,
+            supporting_nomination_ids=nomination_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"request_id": request_id, "status": "REQUESTED"}
 
 
 @router.get("/setup/models/{component}")

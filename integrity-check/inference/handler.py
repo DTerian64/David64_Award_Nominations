@@ -265,6 +265,11 @@ def handle(message_id: str, payload: dict) -> None:
             risk_level=graph_result["risk_level"],
             graph_flags=", ".join(graph_result["warning_flags"]) or None,
             snapshot_as_of=graph_result["snapshot_as_of"],
+            winning_finding_hash=graph_result.get("winning_finding_hash"),
+            winning_pattern_type=graph_result.get("winning_pattern_type"),
+            scoring_strategy=graph_result.get("scoring_strategy"),
+            scoring_policy_version=graph_result.get("scoring_policy_version"),
+            snapshot_run_id=graph_result.get("snapshot_run_id"),
         )
 
     if gnn_result["model_available"]:

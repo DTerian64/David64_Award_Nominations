@@ -75,7 +75,17 @@ def graph_result(result: dict) -> dict:
     payload.update({
         "source_severity": result.get("source_severity"),
         "snapshot_as_of": result.get("snapshot_as_of"),
+        "snapshot_run_id": result.get("snapshot_run_id"),
+        "snapshot_finding_count": result.get("snapshot_finding_count"),
+        "snapshot_age_days": result.get("snapshot_age_days"),
         "affected_user_ids": list(result.get("affected_user_ids") or []),
+        "pattern_findings": list(result.get("pattern_findings") or []),
+        "winning_finding_hash": result.get("winning_finding_hash"),
+        "winning_pattern_type": result.get("winning_pattern_type"),
+        "scoring_strategy": result.get("scoring_strategy"),
+        "scoring_policy_version": result.get("scoring_policy_version"),
+        "score_thresholds": result.get("score_thresholds"),
+        "score_derivation": result.get("score_derivation"),
     })
     return payload
 

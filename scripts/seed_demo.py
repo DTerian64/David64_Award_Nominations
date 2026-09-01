@@ -16,7 +16,7 @@ What it creates
   FraudScores : Pre-populated for every nomination (no need to wait for Monday run)
   GraphPatternFindings : Pre-seeded fraud patterns visible in the Integrity tab
              ▸ 3 nomination rings (3-, 4-, 5-person directed cycles)
-             ▸ 2 approver-affinity clusters
+             ▸ approver activity retained as ordinary nomination history
              ▸ 8 copy-paste nomination clusters
              ▸ 4 transactional-language clusters
 
@@ -1174,15 +1174,14 @@ def seed_graph_findings(
 
     Findings:
       3 × Ring              (one per ring size)
-      2 × ApproverAffinity  (one per cluster)
       8 × CopyPaste         (one per cluster)
       4 × TransactionalLanguage (one per cluster)
-    Total: 17 findings
+    Total: 15 findings
     """
-    print(f"\n[Phase 5] Seeding graph pattern findings (17 total)...")
+    print(f"\n[Phase 5] Seeding graph pattern findings (15 total)...")
 
     if dry_run:
-        print("  [dry-run] Would insert 17 GraphPatternFindings")
+        print("  [dry-run] Would insert 15 GraphPatternFindings")
         return
 
     run_id    = str(uuid.uuid4())
@@ -1246,29 +1245,6 @@ def seed_graph_findings(
         )
         total_amount = int(cur.fetchone()[0])
         findings.append(_finding("Ring", severity, ring_users, ring_nids, detail, total_amount))
-
-    # ── Approver-affinity findings ────────────────────────────────────────────
-    affinity_labels = ["Engineering team", "Sales team"]
-    for cluster_idx in range(2):
-        nom_id, apr_id = tracking["affinity_user_ids"][cluster_idx]
-        nom_nids       = tracking["affinity_noms"][cluster_idx]
-        approval_rate  = round(rng.uniform(0.80, 0.92), 2)
-        detail = (
-            f"{names.get(nom_id, str(nom_id))} submitted {len(nom_nids)} nominations "
-            f"targeting the {affinity_labels[cluster_idx]} exclusively. "
-            f"Approval rate: {int(approval_rate*100)}% vs ~40% baseline. "
-            f"Approver: {names.get(apr_id, str(apr_id))}."
-        )
-        cur.execute(
-            f"SELECT ISNULL(SUM(Amount),0) FROM dbo.Nominations WHERE NominationId IN "
-            f"({','.join('?' for _ in nom_nids)})",
-            nom_nids,
-        )
-        total_amount = int(cur.fetchone()[0])
-        findings.append(_finding(
-            "ApproverAffinity", "High",
-            [nom_id, apr_id], nom_nids, detail, total_amount,
-        ))
 
     # ── Copy-paste findings ───────────────────────────────────────────────────
     family_names = [

@@ -13,12 +13,15 @@ os.environ.setdefault("CLIENT_ID", "unit-test-client")
 
 from auth import require_analytics_access
 from routers.model_analysis_router import (
+    GraphFineTuningRequest,
     get_decision_engines_setup,
     get_fraud_integrity_setup,
+    get_graph_scoring_policy,
     get_model_manifest,
     get_nomination_analysis,
     get_rf_model_visualization,
     search_nominations,
+    request_graph_scoring_change,
 )
 from utils import sqlhelper2
 
@@ -103,6 +106,68 @@ class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
         result = await get_decision_engines_setup(context)
         get_statuses.assert_called_once_with(4)
         self.assertEqual(result["rows"][0]["component"], "RF")
+
+    @patch("routers.model_analysis_router.sqlhelper.get_graph_scoring_policy_bundle")
+    async def test_data_scientist_can_inspect_but_not_edit_policy(self, get_policy):
+        get_policy.return_value = {
+            "active_policy": {"policy_version": 2},
+            "draft_policy": {"policy_version": 3},
+            "history": [
+                {"policy_version": 3, "status": "DRAFT"},
+                {"policy_version": 2, "status": "ACTIVE"},
+            ],
+        }
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+            "is_impersonating": False,
+        }
+        result = await get_graph_scoring_policy(context)
+        get_policy.assert_called_once_with(4)
+        self.assertFalse(result["can_edit"])
+        self.assertIsNone(result["draft_policy"])
+        self.assertEqual([item["policy_version"] for item in result["history"]], [2])
+
+    @patch("routers.model_analysis_router.sqlhelper.create_graph_scoring_change_request")
+    async def test_fine_tuning_request_is_tenant_scoped(self, create_request):
+        create_request.return_value = 81
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {
+                "UserId": 19, "TenantId": 4,
+                "userPrincipalName": "scientist@example.com",
+            },
+            "is_impersonating": False,
+        }
+        result = await request_graph_scoring_change(
+            GraphFineTuningRequest(
+                pattern_type="Ring",
+                request_text="Review false positives",
+                supporting_nomination_ids=[12, 12, 15],
+            ),
+            context,
+        )
+        self.assertEqual(result["request_id"], 81)
+        self.assertEqual(
+            create_request.call_args.kwargs["supporting_nomination_ids"],
+            [12, 15],
+        )
+
+    async def test_fine_tuning_request_is_blocked_during_impersonation(self):
+        context = {
+            "actual_user": {"roles": ["AWard_Nomination_Admin"]},
+            "effective_user": {
+                "UserId": 19, "TenantId": 4,
+                "userPrincipalName": "scientist@example.com",
+            },
+            "is_impersonating": True,
+        }
+        with self.assertRaises(HTTPException) as raised:
+            await request_graph_scoring_change(
+                GraphFineTuningRequest(request_text="Change Ring scoring"),
+                context,
+            )
+        self.assertEqual(raised.exception.status_code, 403)
 
     @patch("routers.model_analysis_router.sqlhelper.search_model_analysis_nominations")
     async def test_search_uses_effective_tenant(self, search):

@@ -121,6 +121,8 @@ interface IntegrityFinding {
   detail: string;
   detectedAt: string;
   totalAmount?: number;
+  findingScore?: number | null;
+  scoringPolicyVersion?: number | null;
 }
 
 // Human-readable labels and icons per pattern type
@@ -128,7 +130,7 @@ const PATTERN_META: Record<string, { label: string; description: string }> = {
   Ring:                { label: 'Nomination Ring',        description: 'Directed cycle of mutual nominations' },
   SuperNominator:      { label: 'Super Nominator',        description: 'Unusually high nomination volume' },
   Desert:              { label: 'Nomination Desert',      description: 'Entire team absent from all nominations' },
-  ApproverAffinity:    { label: 'Approver Affinity',      description: 'Elevated approval rate for specific pair' },
+  ApproverAffinity:    { label: 'Approver Affinity (legacy)', description: 'Historical finding retained for audit only' },
   CopyPaste:           { label: 'Copy-Paste Fraud',       description: 'Near-identical nomination descriptions' },
   TransactionalLanguage: { label: 'Transactional Language', description: 'Personal-benefit phrasing in description' },
   HiddenCandidate:     { label: 'Hidden Candidate',       description: 'Named in descriptions but never nominated' },
@@ -1607,6 +1609,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
                               <span className="font-semibold text-gray-900 truncate">
                                 {meta?.label ?? finding.patternType}
                               </span>
+                              {finding.findingScore != null && (
+                                <span className="shrink-0 rounded bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                                  Score {finding.findingScore.toFixed(2)}
+                                </span>
+                              )}
                               <span className="shrink-0 font-mono text-xs text-gray-400 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">
                                 #{finding.findingId}
                               </span>

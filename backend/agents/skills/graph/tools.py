@@ -231,7 +231,7 @@ async def _graph_get_integrity_findings(
                 SELECT TOP {limit}
                        FindingId, PatternType, Severity,
                        AffectedUsers, NominationIds, TotalAmount,
-                       Detail, DetectedAt, RunId
+                       Detail, DetectedAt, RunId, FindingScore, ScoringPolicyVersion
                 FROM   dbo.GraphPatternFindings
                 WHERE  {where}
                 ORDER BY
@@ -244,7 +244,9 @@ async def _graph_get_integrity_findings(
         results = [
             {"FindingId": r[0], "PatternType": r[1], "Severity": r[2],
              "AffectedUsers": r[3], "NominationIds": r[4], "TotalAmount": r[5],
-             "Detail": r[6], "DetectedAt": str(r[7]) if r[7] else None, "RunId": r[8]}
+             "Detail": r[6], "DetectedAt": str(r[7]) if r[7] else None,
+             "RunId": r[8], "FindingScore": float(r[9]) if r[9] is not None else None,
+             "ScoringPolicyVersion": r[10]}
             for r in rows
         ]
         logger.info("tool:graph_get_integrity_findings — %d finding(s) returned", len(results))
@@ -369,7 +371,8 @@ SCHEMAS = [
             "description": (
                 "Query GraphPatternFindings — fraud and integrity patterns from the weekly analytics job. "
                 "All filters optional. Use for questions about rings, suspicious clusters, copy-paste, "
-                "super-nominators, deserts, approver affinity, transactional language, hidden candidates, "
+                "super-nominators, deserts, transactional language, hidden candidates, "
+                "or historical approver-affinity audit records, "
                 "or to look up a specific finding by FindingId."
             ),
             "parameters": {

@@ -12,6 +12,7 @@ Audit & Access Review.
 """
 
 import logging
+import math
 import os
 from typing import Optional
 
@@ -242,11 +243,6 @@ class FraudConfig(BaseModel):
     gnn_medium_threshold:   int = 45
     gnn_high_threshold:     int = 65
     gnn_critical_threshold: int = 85
-    graph_low_threshold:      int = 25
-    graph_medium_threshold:   int = 50
-    graph_high_threshold:     int = 75
-    graph_critical_threshold: int = 100
-    detection_window_days: int
     # Description quality
     use_char_count:                 bool
     min_char_count:                 int
@@ -257,6 +253,86 @@ class FraudConfig(BaseModel):
     llm_fit_threshold:              float
     llm_instructions:               Optional[str] = None
     boilerplate_phrases:            list = []
+
+
+class GraphThresholds(BaseModel):
+    low: float
+    medium: float
+    high: float
+    critical: float
+
+
+class GraphPatternPolicy(BaseModel):
+    pattern_type: str
+    enabled: bool
+    enabled_for_routing: bool
+    applicable_roles: list[str]
+    base_score: float
+    minimum_score: float
+    maximum_score: float
+    parameters: dict[str, float]
+
+
+class GraphPolicyDraft(BaseModel):
+    thresholds: GraphThresholds
+    detection_window_days: int
+    snapshot_max_age_days: int
+    patterns: list[GraphPatternPolicy]
+
+
+class GraphRequestReview(BaseModel):
+    status: str
+    admin_response: Optional[str] = None
+
+
+_GRAPH_PATTERNS = {
+    "Ring", "SuperNominator", "Desert", "CopyPaste",
+    "TransactionalLanguage", "HiddenCandidate",
+}
+_GRAPH_ROLES = {"nominator", "beneficiary"}
+_REQUEST_REVIEW_STATUSES = {
+    "UNDER_REVIEW", "APPROVED", "REJECTED", "PUBLISHED",
+}
+
+
+def _validate_graph_policy(payload: GraphPolicyDraft) -> None:
+    values = [
+        payload.thresholds.low, payload.thresholds.medium,
+        payload.thresholds.high, payload.thresholds.critical,
+    ]
+    if not all(math.isfinite(value) and 0 <= value <= 100 for value in values):
+        raise HTTPException(status_code=422, detail="Graph thresholds must be between 0 and 100")
+    if values != sorted(values):
+        raise HTTPException(
+            status_code=422,
+            detail="Graph thresholds must be ordered Low, Medium, High, Critical",
+        )
+    if payload.detection_window_days <= 0 or payload.snapshot_max_age_days <= 0:
+        raise HTTPException(status_code=422, detail="Graph time windows must be positive")
+    names = [item.pattern_type for item in payload.patterns]
+    if set(names) != _GRAPH_PATTERNS or len(names) != len(_GRAPH_PATTERNS):
+        raise HTTPException(status_code=422, detail="Every Graph detector must appear exactly once")
+    for item in payload.patterns:
+        if item.enabled_for_routing and not item.enabled:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{item.pattern_type} cannot route while detection is disabled",
+            )
+        if not item.applicable_roles or not set(item.applicable_roles) <= _GRAPH_ROLES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{item.pattern_type} has invalid participant roles",
+            )
+        scores = [item.base_score, item.minimum_score, item.maximum_score]
+        if not all(math.isfinite(value) and 0 <= value <= 100 for value in scores):
+            raise HTTPException(status_code=422, detail=f"{item.pattern_type} scores must be 0–100")
+        if item.minimum_score > item.maximum_score:
+            raise HTTPException(status_code=422, detail=f"{item.pattern_type} score range is invalid")
+        if not all(math.isfinite(value) and value >= 0 for value in item.parameters.values()):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{item.pattern_type} parameters must be non-negative numbers",
+            )
 
 
 def _validate_fraud(p: "FraudConfig") -> None:
@@ -276,23 +352,13 @@ def _validate_fraud(p: "FraudConfig") -> None:
             status_code=422,
             detail="GNN score thresholds must be non-decreasing: low <= medium <= high <= critical.",
         )
-    graph_routing = [p.graph_low_threshold, p.graph_medium_threshold,
-                     p.graph_high_threshold, p.graph_critical_threshold]
-    if not all(0 <= x <= 100 for x in graph_routing):
-        raise HTTPException(status_code=422, detail="Graph score thresholds must be between 0 and 100.")
-    if not (p.graph_low_threshold <= p.graph_medium_threshold
-            <= p.graph_high_threshold <= p.graph_critical_threshold):
-        raise HTTPException(
-            status_code=422,
-            detail="Graph score thresholds must be non-decreasing: low <= medium <= high <= critical.",
-        )
     for name, val in (("Category alignment", p.category_alignment_threshold),
                       ("Duplicate similarity", p.duplicate_similarity_threshold),
                       ("LLM fit", p.llm_fit_threshold)):
         if not (0.0 <= val <= 1.0):
             raise HTTPException(status_code=422, detail=f"{name} threshold must be between 0 and 1.")
-    if p.min_char_count < 0 or p.min_word_count < 0 or p.detection_window_days < 1:
-        raise HTTPException(status_code=422, detail="Counts and the detection window must be positive.")
+    if p.min_char_count < 0 or p.min_word_count < 0:
+        raise HTTPException(status_code=422, detail="Counts must be non-negative.")
 
 
 @router.get("/api/admin/setup/fraud")
@@ -316,6 +382,73 @@ async def update_fraud(payload: FraudConfig, admin: dict = Depends(require_setup
 async def get_detection_engines(admin: dict = Depends(require_setup_admin)):
     """Return producer-owned RF, Graph Analytics, and GNN status for this tenant."""
     return {"rows": sqlhelper.get_integrity_component_statuses(admin["TenantId"])}
+
+
+@router.post("/api/admin/setup/graph-policy/draft")
+async def create_graph_policy_draft(admin: dict = Depends(require_setup_admin)):
+    actor = admin.get("userPrincipalName", "unknown")
+    try:
+        policy_id = sqlhelper.create_graph_scoring_policy_draft(
+            admin["TenantId"], actor
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"policy_id": policy_id, "status": "DRAFT"}
+
+
+@router.put("/api/admin/setup/graph-policy/draft")
+async def update_graph_policy_draft(
+    payload: GraphPolicyDraft,
+    admin: dict = Depends(require_setup_admin),
+):
+    _validate_graph_policy(payload)
+    try:
+        sqlhelper.update_graph_scoring_policy_draft(
+            admin["TenantId"],
+            admin.get("userPrincipalName", "unknown"),
+            payload.dict(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/api/admin/setup/graph-policy/draft/publish")
+async def publish_graph_policy_draft(admin: dict = Depends(require_setup_admin)):
+    try:
+        policy_id = sqlhelper.publish_graph_scoring_policy_draft(
+            admin["TenantId"], admin.get("userPrincipalName", "unknown")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "policy_id": policy_id,
+        "status": "ACTIVE",
+        "message": "The new policy will be used by the next weekly Graph Analytics run.",
+    }
+
+
+@router.patch("/api/admin/setup/graph-policy/requests/{request_id}")
+async def review_graph_policy_request(
+    request_id: int,
+    payload: GraphRequestReview,
+    admin: dict = Depends(require_setup_admin),
+):
+    status_value = payload.status.upper()
+    if status_value not in _REQUEST_REVIEW_STATUSES:
+        raise HTTPException(status_code=422, detail="Invalid request status")
+    if payload.admin_response and len(payload.admin_response) > 2000:
+        raise HTTPException(status_code=422, detail="The response must be 2,000 characters or fewer")
+    try:
+        sqlhelper.review_graph_scoring_change_request(
+            admin["TenantId"], request_id,
+            admin.get("userPrincipalName", "unknown"),
+            status_value, payload.admin_response,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc).lower() else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    return {"ok": True, "status": status_value}
 
 
 # ── Payroll Integration ───────────────────────────────────────────────────────

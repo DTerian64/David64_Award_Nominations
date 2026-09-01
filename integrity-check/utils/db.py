@@ -25,7 +25,6 @@ Focused subset of queries needed by inference/handler.py and its checks:
     get_nominator_descriptions()    — past descriptions written BY the nominator
 
   Graph component lookups:
-    get_approver_graph_flags()      — latest UserGraphFlags + ApproverPairFlags for approver
     get_graph_component_snapshot()  — latest complete snapshot for independent graph scoring
 
   Fraud score persistence:
@@ -242,14 +241,6 @@ def get_tenant_integrity_config(tenant_id: int) -> dict:
               "low_threshold":      25
           }
       },
-      "graph": {
-          "score_routing": {
-              "critical_threshold": 100,
-              "high_threshold":      75,
-              "medium_threshold":    50,
-              "low_threshold":       25
-          }
-      }
     }
 
     The cache lifetime is the container process lifetime — config changes
@@ -541,56 +532,15 @@ def get_nominator_descriptions(
 
 # ── Graph component lookups ──────────────────────────────────────────────────
 
-def get_approver_graph_flags(
-    tenant_id:     int,
-    approver_id:   int,
-    nominator_id:  int,
-    beneficiary_id: int,
-) -> dict:
-    """
-    Return the latest graph flags for the approver role:
-
-      ApproverAffinityFlag    — approver is in an ApproverAffinity finding
-      GraphApproverPairCount  — how many times this approver has approved
-                                this exact nominator→beneficiary pair
-
-    Returns all-zero dict when no snapshot exists.
-    """
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-
-        # ApproverAffinityFlag from UserGraphFlags
-        cursor.execute("""
-            SELECT TOP 1 IsApproverAffinity
-            FROM   dbo.UserGraphFlags
-            WHERE  TenantId = ? AND UserId = ?
-            ORDER  BY AsOfDate DESC
-        """, (tenant_id, approver_id))
-        a_row = cursor.fetchone()
-
-        # GraphApproverPairCount from ApproverPairFlags
-        cursor.execute("""
-            SELECT TOP 1 PairApprovalCount
-            FROM   dbo.ApproverPairFlags
-            WHERE  TenantId      = ?
-              AND  ApproverId    = ?
-              AND  NominatorId   = ?
-              AND  BeneficiaryId = ?
-            ORDER  BY AsOfDate DESC
-        """, (tenant_id, approver_id, nominator_id, beneficiary_id))
-        p_row = cursor.fetchone()
-
-    return {
-        "ApproverAffinityFlag":   int(bool(a_row[0])) if a_row else 0,
-        "GraphApproverPairCount": int(p_row[0])        if p_row else 0,
-    }
-
-
-def get_graph_component_snapshot(tenant_id: int, user_ids: list[int]) -> Optional[dict]:
+def get_graph_component_snapshot(
+    tenant_id: int,
+    user_ids: list[int],
+    component_status: Optional[dict] = None,
+) -> Optional[dict]:
     """Return the latest completed graph snapshot for the requested users.
 
-    The latest date is selected across both graph snapshot tables.  A missing
-    user row on that date means the user had no finding in that run; it does not
+    IntegrityComponentStatus is the authoritative completed-run marker. A
+    missing user row on that date means the user had no finding in that run; it does not
     fall back to an older finding.  Falling back would keep a resolved graph
     pattern alive forever and would make the live graph opinion incorrect.
 
@@ -599,25 +549,24 @@ def get_graph_component_snapshot(tenant_id: int, user_ids: list[int]) -> Optiona
     """
     unique_ids = list(dict.fromkeys(int(uid) for uid in user_ids if uid is not None))
 
+    status = component_status
+    if status is None:
+        status = get_integrity_component_statuses(tenant_id).get("GRAPH")
+    if not status or str(status.get("serving_status") or "").upper() != "AVAILABLE":
+        return None
+    serving_as_of = status.get("serving_as_of")
+    if not serving_as_of:
+        return None
+    as_of = serving_as_of.date() if hasattr(serving_as_of, "date") else serving_as_of
+    diagnostics = status.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        try:
+            diagnostics = json.loads(status.get("diagnostics_json") or "{}")
+        except (TypeError, ValueError):
+            diagnostics = {}
+
     with _get_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT MAX(AsOfDate)
-            FROM (
-                SELECT MAX(AsOfDate) AS AsOfDate
-                FROM dbo.UserGraphFlags
-                WHERE TenantId = ?
-                UNION ALL
-                SELECT MAX(AsOfDate) AS AsOfDate
-                FROM dbo.ApproverPairFlags
-                WHERE TenantId = ?
-            ) snapshots
-        """, (tenant_id, tenant_id))
-        row = cursor.fetchone()
-        as_of = row[0] if row else None
-        if as_of is None:
-            return None
-
         users: dict[int, dict] = {}
         if unique_ids:
             placeholders = ", ".join("?" for _ in unique_ids)
@@ -625,25 +574,81 @@ def get_graph_component_snapshot(tenant_id: int, user_ids: list[int]) -> Optiona
                 SELECT UserId,
                        IsInRing, IsSuperNominator,
                        IsInCopyPasteCluster, CopyPasteClusterSize,
-                       HasTransactionalLanguage, IsApproverAffinity,
-                       HighestSeverity
+                       HasTransactionalLanguage, HighestSeverity, FindingsJson
                 FROM dbo.UserGraphFlags
                 WHERE TenantId = ?
                   AND AsOfDate = ?
                   AND UserId IN ({placeholders})
             """, [tenant_id, as_of, *unique_ids])
             for found in cursor.fetchall():
+                try:
+                    findings = json.loads(found[7]) if found[7] else []
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Invalid FindingsJson for tenant %d user %s snapshot %s",
+                        tenant_id, found[0], as_of,
+                    )
+                    findings = []
+                if not isinstance(findings, list):
+                    findings = []
                 users[int(found[0])] = {
                     "is_in_ring": bool(found[1]),
                     "is_super_nominator": bool(found[2]),
                     "is_in_copy_paste_cluster": bool(found[3]),
                     "copy_paste_cluster_size": int(found[4] or 0),
                     "has_transactional_language": bool(found[5]),
-                    "is_approver_affinity": bool(found[6]),
-                    "highest_severity": found[7],
+                    "highest_severity": found[6],
+                    "findings": findings,
                 }
 
-    return {"snapshot_as_of": as_of, "users": users}
+    return {
+        "snapshot_as_of": as_of,
+        "snapshot_run_id": status.get("run_id"),
+        "snapshot_finding_count": int(diagnostics.get("finding_count", 0)),
+        "scoring_policy_version": diagnostics.get("scoring_policy_version"),
+        "users": users,
+    }
+
+
+def get_graph_scoring_policy(
+    tenant_id: int,
+    policy_version: Optional[int] = None,
+) -> Optional[dict]:
+    """Return one tenant policy used to interpret a Graph snapshot."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        if policy_version is None:
+            cursor.execute("""
+                SELECT TOP 1 PolicyId, PolicyVersion, Status, ScoringStrategy,
+                       LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
+                       DetectionWindowDays, SnapshotMaxAgeDays
+                FROM dbo.GraphScoringPolicies
+                WHERE TenantId = ? AND Status = 'ACTIVE'
+                ORDER BY PolicyVersion DESC
+            """, tenant_id)
+        else:
+            cursor.execute("""
+                SELECT TOP 1 PolicyId, PolicyVersion, Status, ScoringStrategy,
+                       LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
+                       DetectionWindowDays, SnapshotMaxAgeDays
+                FROM dbo.GraphScoringPolicies
+                WHERE TenantId = ? AND PolicyVersion = ?
+            """, tenant_id, policy_version)
+        row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "policy_id": int(row[0]),
+        "policy_version": int(row[1]),
+        "status": row[2],
+        "scoring_strategy": row[3],
+        "thresholds": {
+            "low": float(row[4]), "medium": float(row[5]),
+            "high": float(row[6]), "critical": float(row[7]),
+        },
+        "detection_window_days": int(row[8]),
+        "snapshot_max_age_days": int(row[9]),
+    }
 
 
 # ── Fraud score persistence ───────────────────────────────────────────────────
@@ -679,8 +684,14 @@ def save_graph_fraud_score(
     risk_level: str,
     graph_flags: Optional[str],
     snapshot_as_of: object,
+    winning_finding_hash: Optional[str] = None,
+    winning_pattern_type: Optional[str] = None,
+    scoring_strategy: Optional[str] = None,
+    scoring_policy_version: Optional[int] = None,
+    snapshot_run_id: Optional[str] = None,
 ) -> None:
     """Upsert the graph analytics component score for one snapshot."""
+    graph_flags = graph_flags[:1000] if graph_flags else None
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -690,16 +701,23 @@ def save_graph_fraud_score(
                 AND target.SnapshotAsOfDate = source.SnapshotAsOfDate
             WHEN MATCHED THEN
                 UPDATE SET GraphScore = ?, RiskLevel = ?, GraphFlags = ?,
+                           WinningFindingHash = ?, WinningPatternType = ?,
+                           ScoringStrategy = ?, ScoringPolicyVersion = ?,
+                           SnapshotRunId = ?,
                            ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN
                 INSERT (NominationId, GraphScore, RiskLevel, GraphFlags,
-                        SnapshotAsOfDate, ScoredBy)
-                VALUES (?, ?, ?, ?, ?, ?);
+                        SnapshotAsOfDate, WinningFindingHash, WinningPatternType,
+                        ScoringStrategy, ScoringPolicyVersion, SnapshotRunId, ScoredBy)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, (
             nomination_id, snapshot_as_of,
-            graph_score, risk_level, graph_flags, _AUDIT_ACTOR,
+            graph_score, risk_level, graph_flags,
+            winning_finding_hash, winning_pattern_type, scoring_strategy,
+            scoring_policy_version, snapshot_run_id, _AUDIT_ACTOR,
             nomination_id, graph_score, risk_level, graph_flags,
-            snapshot_as_of, _AUDIT_ACTOR,
+            snapshot_as_of, winning_finding_hash, winning_pattern_type,
+            scoring_strategy, scoring_policy_version, snapshot_run_id, _AUDIT_ACTOR,
         ))
         conn.commit()
 

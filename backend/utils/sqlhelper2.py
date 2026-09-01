@@ -1988,7 +1988,8 @@ def get_integrity_findings(tenant_id: int, run_id: str) -> list[dict]:
     with get_db_context() as session:
         rows = session.execute(text("""
             SELECT FindingId, PatternType, Severity,
-                   AffectedUsers, NominationIds, Detail, DetectedAt, TotalAmount
+                   AffectedUsers, NominationIds, Detail, DetectedAt, TotalAmount,
+                   FindingScore, ScoringPolicyVersion
             FROM   dbo.GraphPatternFindings
             WHERE  TenantId = :tid
               AND  RunId    = :run_id
@@ -2011,6 +2012,8 @@ def get_integrity_findings(tenant_id: int, run_id: str) -> list[dict]:
                 "detail":        row[5],
                 "detectedAt":    row[6].isoformat() if row[6] else None,
                 "totalAmount":   row[7],
+                "findingScore":  float(row[8]) if row[8] is not None else None,
+                "scoringPolicyVersion": row[9],
             }
             for row in rows
         ]
@@ -3438,10 +3441,6 @@ def get_fraud_settings(tenant_id: int) -> dict:
     dcc = _parse(row[0]) if row else {}
     ic  = _parse(row[1]) if row else {}
     routing = ic.get("score_routing") if isinstance(ic.get("score_routing"), dict) else {}
-    graph   = ic.get("graph_pattern") if isinstance(ic.get("graph_pattern"), dict) else {}
-    graph_score = ic.get("graph") if isinstance(ic.get("graph"), dict) else {}
-    graph_routing = (graph_score.get("score_routing")
-                     if isinstance(graph_score.get("score_routing"), dict) else {})
     gnn     = ic.get("gnn") if isinstance(ic.get("gnn"), dict) else {}
     gnn_routing = gnn.get("score_routing") if isinstance(gnn.get("score_routing"), dict) else {}
     phrases = dcc.get("boilerplate_phrases")
@@ -3456,12 +3455,6 @@ def get_fraud_settings(tenant_id: int) -> dict:
         "gnn_medium_threshold":           int(gnn_routing.get("medium_threshold", 45)),
         "gnn_high_threshold":             int(gnn_routing.get("high_threshold", 65)),
         "gnn_critical_threshold":         int(gnn_routing.get("critical_threshold", 85)),
-        # Graph analytics routing for its independent 0..100 component score
-        "graph_low_threshold":            int(graph_routing.get("low_threshold", 25)),
-        "graph_medium_threshold":         int(graph_routing.get("medium_threshold", 50)),
-        "graph_high_threshold":           int(graph_routing.get("high_threshold", 75)),
-        "graph_critical_threshold":       int(graph_routing.get("critical_threshold", 100)),
-        "detection_window_days":          int(graph.get("detection_window_days", 365)),
         # Description quality
         "use_char_count":                 bool(dcc.get("use_char_count", False)),
         "min_char_count":                 int(dcc.get("min_char_count", 12)),
@@ -3518,18 +3511,6 @@ def update_fraud_settings(tenant_id: int, data: dict, actor: str) -> None:
         gnn_routing["critical_threshold"] = int(data["gnn_critical_threshold"])
         gnn["score_routing"] = gnn_routing
         ic["gnn"] = gnn
-        graph_score = ic.get("graph") if isinstance(ic.get("graph"), dict) else {}
-        graph_routing = (graph_score.get("score_routing")
-                         if isinstance(graph_score.get("score_routing"), dict) else {})
-        graph_routing["low_threshold"] = int(data["graph_low_threshold"])
-        graph_routing["medium_threshold"] = int(data["graph_medium_threshold"])
-        graph_routing["high_threshold"] = int(data["graph_high_threshold"])
-        graph_routing["critical_threshold"] = int(data["graph_critical_threshold"])
-        graph_score["score_routing"] = graph_routing
-        ic["graph"] = graph_score
-        graph = ic.get("graph_pattern") if isinstance(ic.get("graph_pattern"), dict) else {}
-        graph["detection_window_days"] = int(data["detection_window_days"])
-        ic["graph_pattern"] = graph
 
         session.execute(
             text("""
@@ -3668,6 +3649,328 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
             "updated_by":            row[12],
         })
     return result
+
+
+def _json_value(raw, fallback):
+    if not raw:
+        return fallback
+    try:
+        value = json.loads(raw)
+        return value
+    except (json.JSONDecodeError, TypeError):
+        return fallback
+
+
+def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
+    """Return active/draft Graph policies, their parameters, history, and requests."""
+    with get_db_context() as session:
+        policy_rows = session.execute(text("""
+            SELECT PolicyId, PolicyVersion, Status, ScoringStrategy,
+                   LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
+                   DetectionWindowDays, SnapshotMaxAgeDays,
+                   CreatedAt, CreatedBy, UpdatedAt, UpdatedBy, PublishedAt, PublishedBy
+            FROM dbo.GraphScoringPolicies
+            WHERE TenantId = :tid
+            ORDER BY PolicyVersion DESC
+        """), {"tid": tenant_id}).fetchall()
+        policy_ids = [int(row[0]) for row in policy_rows]
+        pattern_rows = []
+        if policy_ids:
+            placeholders = ", ".join(f":p{i}" for i in range(len(policy_ids)))
+            params = {f"p{i}": value for i, value in enumerate(policy_ids)}
+            pattern_rows = session.execute(text(f"""
+                SELECT PolicyId, PatternType, Enabled, EnabledForRouting,
+                       ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
+                       ParametersJson
+                FROM dbo.GraphScoringPatternParameters
+                WHERE PolicyId IN ({placeholders})
+                ORDER BY PatternType
+            """), params).fetchall()
+        request_rows = session.execute(text("""
+            SELECT TOP 200 RequestId, PolicyId, ResolvedPolicyId,
+                   PatternType, RequestText,
+                   SuggestedParametersJson, SupportingNominationIdsJson,
+                   Status, RequestedAt, RequestedBy, ReviewedAt, ReviewedBy,
+                   AdminResponse
+            FROM dbo.GraphScoringChangeRequests
+            WHERE TenantId = :tid
+            ORDER BY RequestedAt DESC
+        """), {"tid": tenant_id}).fetchall()
+
+    patterns_by_policy: dict[int, list[dict]] = {}
+    for row in pattern_rows:
+        patterns_by_policy.setdefault(int(row[0]), []).append({
+            "pattern_type": row[1],
+            "enabled": bool(row[2]),
+            "enabled_for_routing": bool(row[3]),
+            "applicable_roles": _json_value(row[4], []),
+            "base_score": float(row[5]),
+            "minimum_score": float(row[6]),
+            "maximum_score": float(row[7]),
+            "parameters": _json_value(row[8], {}),
+        })
+
+    policies = [{
+        "policy_id": int(row[0]),
+        "policy_version": int(row[1]),
+        "status": row[2],
+        "scoring_strategy": row[3],
+        "thresholds": {
+            "low": float(row[4]), "medium": float(row[5]),
+            "high": float(row[6]), "critical": float(row[7]),
+        },
+        "detection_window_days": int(row[8]),
+        "snapshot_max_age_days": int(row[9]),
+        "created_at": _iso_utc(row[10]), "created_by": row[11],
+        "updated_at": _iso_utc(row[12]), "updated_by": row[13],
+        "published_at": _iso_utc(row[14]), "published_by": row[15],
+        "patterns": patterns_by_policy.get(int(row[0]), []),
+    } for row in policy_rows]
+
+    requests = [{
+        "request_id": int(row[0]), "policy_id": row[1],
+        "resolved_policy_id": row[2],
+        "pattern_type": row[3], "request_text": row[4],
+        "suggested_parameters": _json_value(row[5], None),
+        "supporting_nomination_ids": _json_value(row[6], []),
+        "status": row[7], "requested_at": _iso_utc(row[8]),
+        "requested_by": row[9], "reviewed_at": _iso_utc(row[10]),
+        "reviewed_by": row[11], "admin_response": row[12],
+    } for row in request_rows]
+    return {
+        "active_policy": next((p for p in policies if p["status"] == "ACTIVE"), None),
+        "draft_policy": next((p for p in policies if p["status"] == "DRAFT"), None),
+        "history": policies,
+        "requests": requests,
+    }
+
+
+def create_graph_scoring_change_request(
+    tenant_id: int,
+    actor: str,
+    request_text: str,
+    pattern_type: Optional[str] = None,
+    suggested_parameters: Optional[dict] = None,
+    supporting_nomination_ids: Optional[list[int]] = None,
+) -> int:
+    with get_db_context() as session:
+        nomination_ids = list(dict.fromkeys(supporting_nomination_ids or []))
+        if nomination_ids:
+            placeholders = ", ".join(
+                f":nomination_{index}" for index in range(len(nomination_ids))
+            )
+            nomination_params = {
+                f"nomination_{index}": value
+                for index, value in enumerate(nomination_ids)
+            }
+            nomination_params["tid"] = tenant_id
+            found_count = session.execute(text(f"""
+                SELECT COUNT(DISTINCT n.NominationId)
+                FROM dbo.Nominations n
+                JOIN dbo.Users nominator ON nominator.UserId=n.NominatorId
+                WHERE nominator.TenantId=:tid
+                  AND n.NominationId IN ({placeholders})
+            """), nomination_params).scalar_one()
+            if int(found_count) != len(nomination_ids):
+                raise ValueError(
+                    "One or more supporting nominations are outside your organization"
+                )
+        request_id = session.execute(text("""
+            INSERT INTO dbo.GraphScoringChangeRequests (
+                TenantId, PolicyId, PatternType, RequestText,
+                SuggestedParametersJson, SupportingNominationIdsJson, RequestedBy
+            )
+            OUTPUT INSERTED.RequestId
+            SELECT :tid, PolicyId, :pattern, :request_text,
+                   :suggested, :nominations, :actor
+            FROM dbo.GraphScoringPolicies
+            WHERE TenantId=:tid AND Status='ACTIVE'
+        """), {
+            "tid": tenant_id, "pattern": pattern_type,
+            "request_text": request_text,
+            "suggested": (
+                json.dumps(suggested_parameters, separators=(",", ":"))
+                if suggested_parameters is not None else None
+            ),
+            "nominations": json.dumps(nomination_ids, separators=(",", ":")),
+            "actor": actor,
+        }).scalar_one_or_none()
+        if request_id is None:
+            raise ValueError("No active Graph Analytics policy exists")
+        session.commit()
+        return int(request_id)
+
+
+def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
+    """Clone the active policy; return the existing draft when one is present."""
+    with get_db_context() as session:
+        existing = session.execute(text("""
+            SELECT TOP 1 PolicyId FROM dbo.GraphScoringPolicies
+            WHERE TenantId=:tid AND Status='DRAFT'
+        """), {"tid": tenant_id}).scalar_one_or_none()
+        if existing is not None:
+            return int(existing)
+        active = session.execute(text("""
+            SELECT TOP 1 PolicyId, PolicyVersion, ScoringStrategy,
+                   LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
+                   DetectionWindowDays, SnapshotMaxAgeDays
+            FROM dbo.GraphScoringPolicies
+            WHERE TenantId=:tid AND Status='ACTIVE'
+        """), {"tid": tenant_id}).fetchone()
+        if not active:
+            raise ValueError("No active Graph Analytics policy exists")
+        next_version = int(active[1]) + 1
+        draft_id = session.execute(text("""
+            INSERT INTO dbo.GraphScoringPolicies (
+                TenantId, PolicyVersion, Status, ScoringStrategy,
+                LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
+                DetectionWindowDays, SnapshotMaxAgeDays, CreatedBy, UpdatedBy
+            ) OUTPUT INSERTED.PolicyId
+            VALUES (:tid, :version, 'DRAFT', :strategy, :low, :medium, :high,
+                    :critical, :window, :max_age, :actor, :actor)
+        """), {
+            "tid": tenant_id, "version": next_version, "strategy": active[2],
+            "low": active[3], "medium": active[4], "high": active[5],
+            "critical": active[6], "window": active[7], "max_age": active[8],
+            "actor": actor,
+        }).scalar_one()
+        session.execute(text("""
+            INSERT INTO dbo.GraphScoringPatternParameters (
+                PolicyId, PatternType, Enabled, EnabledForRouting,
+                ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
+                ParametersJson, CreatedBy, UpdatedBy
+            )
+            SELECT :draft_id, PatternType, Enabled, EnabledForRouting,
+                   ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
+                   ParametersJson, :actor, :actor
+            FROM dbo.GraphScoringPatternParameters WHERE PolicyId=:active_id
+        """), {"draft_id": draft_id, "active_id": active[0], "actor": actor})
+        session.commit()
+        return int(draft_id)
+
+
+def update_graph_scoring_policy_draft(
+    tenant_id: int,
+    actor: str,
+    payload: dict,
+) -> None:
+    with get_db_context() as session:
+        draft_id = session.execute(text("""
+            SELECT TOP 1 PolicyId FROM dbo.GraphScoringPolicies
+            WHERE TenantId=:tid AND Status='DRAFT'
+        """), {"tid": tenant_id}).scalar_one_or_none()
+        if draft_id is None:
+            raise ValueError("Create a draft policy before editing")
+        thresholds = payload["thresholds"]
+        session.execute(text("""
+            UPDATE dbo.GraphScoringPolicies SET
+                LowThreshold=:low, MediumThreshold=:medium,
+                HighThreshold=:high, CriticalThreshold=:critical,
+                DetectionWindowDays=:window, SnapshotMaxAgeDays=:max_age,
+                UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
+            WHERE PolicyId=:policy_id AND TenantId=:tid AND Status='DRAFT'
+        """), {
+            "low": thresholds["low"], "medium": thresholds["medium"],
+            "high": thresholds["high"], "critical": thresholds["critical"],
+            "window": payload["detection_window_days"],
+            "max_age": payload["snapshot_max_age_days"],
+            "actor": actor, "policy_id": draft_id, "tid": tenant_id,
+        })
+        session.execute(text("""
+            DELETE FROM dbo.GraphScoringPatternParameters WHERE PolicyId=:policy_id
+        """), {"policy_id": draft_id})
+        for pattern in payload["patterns"]:
+            session.execute(text("""
+                INSERT INTO dbo.GraphScoringPatternParameters (
+                    PolicyId, PatternType, Enabled, EnabledForRouting,
+                    ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
+                    ParametersJson, CreatedBy, UpdatedBy
+                ) VALUES (
+                    :policy_id, :pattern, :enabled, :routing, :roles,
+                    :base, :minimum, :maximum, :parameters, :actor, :actor
+                )
+            """), {
+                "policy_id": draft_id, "pattern": pattern["pattern_type"],
+                "enabled": int(pattern["enabled"]),
+                "routing": int(pattern["enabled_for_routing"]),
+                "roles": json.dumps(pattern["applicable_roles"], separators=(",", ":")),
+                "base": pattern["base_score"], "minimum": pattern["minimum_score"],
+                "maximum": pattern["maximum_score"],
+                "parameters": json.dumps(pattern["parameters"], separators=(",", ":")),
+                "actor": actor,
+            })
+        session.commit()
+
+
+def publish_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
+    with get_db_context() as session:
+        draft_id = session.execute(text("""
+            SELECT TOP 1 PolicyId FROM dbo.GraphScoringPolicies
+            WHERE TenantId=:tid AND Status='DRAFT'
+        """), {"tid": tenant_id}).scalar_one_or_none()
+        if draft_id is None:
+            raise ValueError("No draft Graph Analytics policy exists")
+        session.execute(text("""
+            UPDATE dbo.GraphScoringPolicies
+            SET Status='RETIRED', UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
+            WHERE TenantId=:tid AND Status='ACTIVE'
+        """), {"tid": tenant_id, "actor": actor})
+        session.execute(text("""
+            UPDATE dbo.GraphScoringPolicies
+            SET Status='ACTIVE', PublishedAt=SYSUTCDATETIME(), PublishedBy=:actor,
+                UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
+            WHERE PolicyId=:policy_id AND TenantId=:tid AND Status='DRAFT'
+        """), {"policy_id": draft_id, "tid": tenant_id, "actor": actor})
+        session.commit()
+        return int(draft_id)
+
+
+def review_graph_scoring_change_request(
+    tenant_id: int,
+    request_id: int,
+    actor: str,
+    status_value: str,
+    admin_response: Optional[str],
+) -> None:
+    with get_db_context() as session:
+        current_status = session.execute(text("""
+            SELECT Status FROM dbo.GraphScoringChangeRequests
+            WHERE TenantId=:tid AND RequestId=:request_id
+        """), {"tid": tenant_id, "request_id": request_id}).scalar_one_or_none()
+        if current_status is None:
+            raise ValueError("Fine-tuning request not found")
+        transitions = {
+            "REQUESTED": {"UNDER_REVIEW", "APPROVED", "REJECTED"},
+            "UNDER_REVIEW": {"APPROVED", "REJECTED"},
+            "APPROVED": {"PUBLISHED", "REJECTED"},
+            "REJECTED": set(),
+            "PUBLISHED": set(),
+        }
+        if status_value not in transitions.get(str(current_status), set()):
+            raise ValueError(
+                f"Request cannot move from {current_status} to {status_value}"
+            )
+        resolved_policy_id = None
+        if status_value == "PUBLISHED":
+            resolved_policy_id = session.execute(text("""
+                SELECT TOP 1 PolicyId FROM dbo.GraphScoringPolicies
+                WHERE TenantId=:tid AND Status='ACTIVE'
+            """), {"tid": tenant_id}).scalar_one_or_none()
+        result = session.execute(text("""
+            UPDATE dbo.GraphScoringChangeRequests SET
+                Status=:status, AdminResponse=:response,
+                ReviewedAt=SYSUTCDATETIME(), ReviewedBy=:actor,
+                ResolvedPolicyId=COALESCE(:resolved_policy_id, ResolvedPolicyId)
+            WHERE TenantId=:tid AND RequestId=:request_id AND Status=:current_status
+        """), {
+            "status": status_value, "response": admin_response,
+            "actor": actor, "tid": tenant_id, "request_id": request_id,
+            "current_status": current_status,
+            "resolved_policy_id": resolved_policy_id,
+        })
+        if result.rowcount != 1:
+            raise ValueError("Fine-tuning request not found")
+        session.commit()
 
 
 def get_access_review(tenant_id: int) -> List[dict]:

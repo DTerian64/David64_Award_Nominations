@@ -16,6 +16,7 @@ import { getAccessToken } from '../services/api';
 import CodeMirror from '@uiw/react-codemirror';
 import { html } from '@codemirror/lang-html';
 import { ModelInspectionModal, type InspectableModel } from './ModelInspectionModal';
+import { GraphPolicyModal } from './GraphPolicyModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -154,6 +155,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [inspection, setInspection] = useState<InspectableModel | null>(null);
+  const [showGraphPolicy, setShowGraphPolicy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -184,7 +186,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
           <h2 className="text-lg font-semibold text-gray-800">Decision Engines</h2>
           <p className="text-sm text-gray-500 mt-1">
             Read-only operational status for the independent fraud-detection engines.
-            Thresholds and routing remain under Fraud / Integrity.
+            Inspect deployed models and the active Graph Analytics scoring policy.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -245,6 +247,15 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                           className="mt-2 inline-flex appearance-none items-center gap-1 border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline"
                         >
                           <Eye className="h-3.5 w-3.5" /> Inspect model
+                        </button>
+                      )}
+                      {row.component === 'GRAPH' && (
+                        <button
+                          type="button"
+                          onClick={() => setShowGraphPolicy(true)}
+                          className="mt-2 inline-flex appearance-none items-center gap-1 border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline"
+                        >
+                          <Eye className="h-3.5 w-3.5" /> Inspect scoring policy
                         </button>
                       )}
                     </div>
@@ -321,6 +332,12 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
           component={inspection}
           impersonatedUPN={impersonatedUPN}
           onClose={() => setInspection(null)}
+        />
+      )}
+      {showGraphPolicy && (
+        <GraphPolicyModal
+          impersonatedUPN={impersonatedUPN}
+          onClose={() => setShowGraphPolicy(false)}
         />
       )}
     </div>
@@ -825,11 +842,6 @@ interface FraudSettings {
   gnn_medium_threshold: number;
   gnn_high_threshold: number;
   gnn_critical_threshold: number;
-  graph_low_threshold: number;
-  graph_medium_threshold: number;
-  graph_high_threshold: number;
-  graph_critical_threshold: number;
-  detection_window_days: number;
   use_char_count: boolean;
   min_char_count: number;
   min_word_count: number;
@@ -975,22 +987,6 @@ export const FraudPanel: React.FC<FraudPanelProps> = ({
           {numField('high_threshold', 'High', { min: 0, max: 100 })}
           {numField('critical_threshold', 'Critical', { min: 0, max: 100 })}
         </div>
-      </div>
-
-      {/* Graph analytics score routing */}
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-4 sm:p-5">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-emerald-700">GRAPH</span>
-          <h3 className="text-sm font-semibold text-gray-800">Graph analytics score routing (0–100)</h3>
-        </div>
-        <p className="text-xs text-gray-500 mb-3">Graph component scores map to routing levels independently from RF and GNN.</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {numField('graph_low_threshold', 'Low', { min: 0, max: 100 })}
-          {numField('graph_medium_threshold', 'Medium', { min: 0, max: 100 })}
-          {numField('graph_high_threshold', 'High', { min: 0, max: 100 })}
-          {numField('graph_critical_threshold', 'Critical', { min: 0, max: 100 })}
-        </div>
-        <div className="mt-3 sm:w-1/2">{numField('detection_window_days', 'Detection window (days)', { min: 1 })}</div>
       </div>
 
       {/* GNN score routing */}

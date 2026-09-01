@@ -25,7 +25,8 @@ Used to assign elevated roles to users beyond the default employee view.
 | AssignedBy  | INT           | FK → Users.UserId (who assigned the role); may be NULL         |
 
 Role meanings:
-- **DataScientist** — tenant-scoped Analytics and read-only model analysis
+- **DataScientist** — tenant-scoped Analytics/model analysis; may request Graph
+  scoring fine-tuning but cannot change or publish scoring policies
 - **HRBP** — reviews nominations held in PendingHRBPReview by the fraud model
 - **Support** — receives payroll failure alert emails when the broker cannot submit to the provider
 - **PayrollBP** — may look up employee payroll data via the Payroll tab
@@ -100,6 +101,26 @@ and rollback until a later retention decision; do not treat it as current.
 | CreatedAt    | DATETIME       | When the score was written                         |
 
 Note: same tenant isolation pattern as P2P_FraudScores — join through Nominations → Users.
+
+## Graph Analytics scoring
+
+- `dbo.GraphPatternFindings` stores weekly pattern evidence. Current rows include
+  continuous `FindingScore`, derived `Severity`, `ScoringPolicyVersion`, and
+  `ScoreComponentsJson`. `ApproverAffinity` rows are historical audit records
+  only and are not produced or routed.
+- `dbo.GraphScoringPolicies` stores immutable tenant policy versions. Exactly one
+  version is ACTIVE and at most one is DRAFT. The scoring strategy is
+  `MAX_RELEVANT_FINDING`.
+- `dbo.GraphScoringPatternParameters` stores detector enablement, routing
+  participation, participant roles, base scores, weights, and parameters for
+  one policy version.
+- `dbo.GraphScoringChangeRequests` stores Data Scientist fine-tuning requests
+  and the Admin review outcome.
+- `dbo.Graph_FraudScores` stores the nomination-time continuous Graph score,
+  derived risk, winning finding, policy version, and snapshot provenance.
+
+All policy and request tables have `TenantId` directly or join to a policy that
+does. Always filter by the caller's tenant.
 
 ## dbo.DemoRegistrationRequests
 Public self-registration audit log written by `POST /api/demo/request`
