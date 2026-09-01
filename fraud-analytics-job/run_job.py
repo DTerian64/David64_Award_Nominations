@@ -6,12 +6,11 @@ below (STAGES) is the single source of truth; this list documents it.
 
   Stage 1: modeling/graph_analytics.py
       Syncs the Azure SQL Graph tables (NomGraph_Person, NomGraph_Nominated).
-      Runs MATCH queries for ring detection and approver affinity.
-      Runs networkx analysis for super-nominators and nomination deserts.
+      Runs ring, super-nominator, and nomination-desert graph analysis.
       Runs sentence-transformers for copy-paste and transactional language.
       Upserts findings into dbo.GraphPatternFindings.
       Materialises per-user graph flag snapshots into dbo.UserGraphFlags
-      and dbo.ApproverPairFlags for graph analysis and audit use cases.
+      for nomination-time graph analysis and audit use cases.
 
   Stage 2: modeling/train_rf_model.py
       Per-tenant Random Forest retrain on Nominations + FraudScores tables.

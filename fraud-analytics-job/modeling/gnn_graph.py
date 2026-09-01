@@ -14,8 +14,8 @@ Design constraints
    data; reading them would create an ordering dependency on
    graph_analytics for no modelling benefit.
 
-2. dbo.UserGraphFlags is NOT a feature source. The GNN must rediscover ring and
-   approver-affinity structure from raw topology. If it were handed the
+2. dbo.UserGraphFlags is NOT a feature source. The GNN must rediscover graph
+   structure from raw topology. If it were handed the
    detectors' verdicts, its agreement with them would carry no information —
    which is the entire reason the model is being built.
 

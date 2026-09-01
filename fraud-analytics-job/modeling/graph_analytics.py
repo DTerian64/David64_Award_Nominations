@@ -3,7 +3,7 @@ graph_analytics.py
 ==================
 Stage 1 of the fraud-analytics-job pipeline.
 
-Detects seven structural and semantic behavioural patterns in the Nominations
+Detects six structural and semantic behavioural patterns in the Nominations
 graph for each tenant and upserts findings into dbo.GraphPatternFindings.
 
 Pattern catalogue
@@ -11,10 +11,9 @@ Pattern catalogue
 1. Ring              — directed cycles ≥ 3 hops (networkx simple_cycles)
 2. SuperNominator    — degree-distribution outlier (mean + 2σ, min 3× median)
 3. Desert            — whole team absent from both sides of the graph
-4. ApproverAffinity  — per-pair approval rate ≥ 2× tenant baseline, min 5 noms
-5. CopyPaste         — cosine similarity ≥ 0.92 between descriptions, min cluster 3
-6. TransactionalLanguage — personal-benefit regex phrases in description text
-7. HiddenCandidate   — name appears ≥ 5× in descriptions but never a BeneficiaryId
+4. CopyPaste         — cosine similarity ≥ 0.92 between descriptions, min cluster 3
+5. TransactionalLanguage — personal-benefit regex phrases in description text
+6. HiddenCandidate   — name appears ≥ 5× in descriptions but never a BeneficiaryId
 
 Environment variables (all injected by the Container Apps Job)
 --------------------------------------------------------------
@@ -54,6 +53,113 @@ env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
 logger = logging.getLogger(__name__)
+
+_SEVERITY_SCORE = {"Low": 25.0, "Medium": 50.0, "High": 75.0, "Critical": 100.0}
+
+
+def _risk_level(score: float, thresholds: dict[str, float]) -> str:
+    if score >= thresholds["critical"]:
+        return "Critical"
+    if score >= thresholds["high"]:
+        return "High"
+    if score >= thresholds["medium"]:
+        return "Medium"
+    if score >= thresholds["low"]:
+        return "Low"
+    return "None"
+
+
+def _pattern_config(policy: dict | None, pattern_type: str) -> dict:
+    if not policy:
+        return {}
+    return (policy.get("patterns") or {}).get(pattern_type, {})
+
+
+def _continuous_score(
+    policy: dict,
+    pattern_type: str,
+    signals: dict[str, float],
+) -> tuple[float, str, dict]:
+    """Score one finding from normalized 0..1 signals and policy weights."""
+    pattern = _pattern_config(policy, pattern_type)
+    parameters = pattern.get("parameters") or {}
+    base = float(pattern.get("base_score", 0))
+    contributions: dict[str, float] = {}
+    for name, raw_value in signals.items():
+        value = max(0.0, min(1.0, float(raw_value)))
+        weight = float(parameters.get(f"{name}_weight", 0))
+        contributions[name] = round(value * weight, 4)
+    minimum = float(pattern.get("minimum_score", 0))
+    maximum = float(pattern.get("maximum_score", 100))
+    score = round(max(minimum, min(maximum, base + sum(contributions.values()))), 2)
+    severity = _risk_level(score, policy["thresholds"])
+    return score, severity, {
+        "base_score": base,
+        "signals": {key: round(max(0.0, min(1.0, float(value))), 4)
+                    for key, value in signals.items()},
+        "weights": {key: float(parameters.get(f"{key}_weight", 0))
+                    for key in signals},
+        "contributions": contributions,
+        "finding_score": score,
+    }
+
+
+def _load_active_graph_policy(
+    conn: pyodbc.Connection,
+    tenant_id: int,
+    default_window_days: int,
+) -> dict:
+    """Load the immutable active scoring policy and its detector parameters."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT TOP 1 PolicyId, PolicyVersion, ScoringStrategy,
+               LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
+               DetectionWindowDays, SnapshotMaxAgeDays
+        FROM dbo.GraphScoringPolicies
+        WHERE TenantId = ? AND Status = 'ACTIVE'
+        ORDER BY PolicyVersion DESC
+    """, tenant_id)
+    row = cur.fetchone()
+    if not row:
+        raise RuntimeError(
+            f"Tenant {tenant_id} has no active Graph Analytics scoring policy"
+        )
+    policy = {
+        "policy_id": int(row[0]),
+        "version": int(row[1]),
+        "strategy": str(row[2]),
+        "thresholds": {
+            "low": float(row[3]), "medium": float(row[4]),
+            "high": float(row[5]), "critical": float(row[6]),
+        },
+        "detection_window_days": int(row[7] or default_window_days),
+        "snapshot_max_age_days": int(row[8] or 14),
+        "patterns": {},
+    }
+    cur.execute("""
+        SELECT PatternType, Enabled, EnabledForRouting, ApplicableRolesJson,
+               BaseScore, MinimumScore, MaximumScore, ParametersJson
+        FROM dbo.GraphScoringPatternParameters
+        WHERE PolicyId = ?
+    """, policy["policy_id"])
+    for item in cur.fetchall():
+        try:
+            roles = json.loads(item[3]) if item[3] else []
+            parameters = json.loads(item[7]) if item[7] else {}
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise RuntimeError(
+                f"Invalid Graph policy JSON for tenant {tenant_id}, pattern {item[0]}"
+            ) from exc
+        policy["patterns"][str(item[0])] = {
+            "enabled": bool(item[1]),
+            "enabled_for_routing": bool(item[2]),
+            "applicable_roles": roles,
+            "base_score": float(item[4]),
+            "minimum_score": float(item[5]),
+            "maximum_score": float(item[6]),
+            "parameters": parameters,
+        }
+    return policy
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
@@ -146,16 +252,15 @@ def _load_nominations(
     financial exposure.  Pending/Rejected nominations are excluded so rings,
     super-nominators, and copy-paste clusters reflect committed spend.
 
-    window_days controls how far back to look.  All seven detectors share
-    this window; the ring / approver-affinity detectors need the longest
-    horizon (~180 days), so that value drives the single shared parameter.
+    window_days controls how far back to look. All six active detectors share
+    this tenant-policy value.
 
     Set DETECTION_WINDOW_DAYS=3650 on first deploy to process full history.
     """
     cur = conn.cursor()
     cur.execute("""
         SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
-               n.ApproverId,   n.Status,      n.Amount,
+               n.Status,       n.Amount,
                n.NominationDescription AS Description,  n.NominationDate AS CreatedAt
         FROM   dbo.Nominations n
         JOIN   dbo.Users u ON u.UserId = n.NominatorId
@@ -212,6 +317,21 @@ def _load_tenants(conn: pyodbc.Connection) -> list[int]:
     return [row[0] for row in cur.fetchall()]
 
 
+def _maximum_active_detection_window(
+    conn: pyodbc.Connection,
+    fallback_days: int,
+) -> int:
+    """Preserve embeddings needed by the tenant with the longest active policy."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT MAX(DetectionWindowDays)
+        FROM dbo.GraphScoringPolicies
+        WHERE Status = 'ACTIVE'
+    """)
+    row = cur.fetchone()
+    return max(int(row[0] or fallback_days), fallback_days)
+
+
 # ── Finding helpers ───────────────────────────────────────────────────────────
 
 def _fingerprint(
@@ -219,6 +339,7 @@ def _fingerprint(
     pattern_type: str,
     affected_users: list[int],   # must already be sorted
     nomination_ids: list[int],   # must already be sorted
+    policy_version: int | None = None,
 ) -> str:
     """
     Deterministic SHA-256 fingerprint (64 hex chars) of a finding's content.
@@ -230,7 +351,10 @@ def _fingerprint(
     Same content → same hash → not re-inserted (idempotent).
     Evolved content (e.g. new nominations added to a ring) → new hash → inserted.
     """
-    key = f"{tenant_id}|{pattern_type}|{json.dumps(affected_users)}|{json.dumps(nomination_ids)}"
+    key = (
+        f"{tenant_id}|{pattern_type}|{json.dumps(affected_users)}|"
+        f"{json.dumps(nomination_ids)}|policy:{policy_version or 'legacy'}"
+    )
     return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -243,7 +367,24 @@ def _finding(
     nomination_ids: list[int],   # must already be sorted
     detail: str,
     total_amount: int = 0,
+    *,
+    policy: dict | None = None,
+    signals: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    if policy:
+        score, severity, score_components = _continuous_score(
+            policy, pattern_type, signals or {}
+        )
+        policy_version = int(policy["version"])
+        pattern = _pattern_config(policy, pattern_type)
+    else:
+        score = _SEVERITY_SCORE.get(severity, 0.0)
+        score_components = {
+            "legacy_severity_mapping": True,
+            "finding_score": score,
+        }
+        policy_version = None
+        pattern = {}
     return {
         "TenantId":      tenant_id,
         "PatternType":   pattern_type,
@@ -253,8 +394,17 @@ def _finding(
         "Detail":        detail[:1000],
         "DetectedAt":    datetime.now(timezone.utc),
         "RunId":         run_id,
-        "FindingHash":   _fingerprint(tenant_id, pattern_type, affected_users, nomination_ids),
+        "FindingHash":   _fingerprint(
+            tenant_id, pattern_type, affected_users, nomination_ids, policy_version
+        ),
         "TotalAmount":   total_amount,
+        "FindingScore":  score,
+        "ScoringPolicyVersion": policy_version,
+        "ScoreComponentsJson": json.dumps(score_components, separators=(",", ":")),
+        "EnabledForRouting": bool(pattern.get("enabled_for_routing", True)),
+        "ApplicableRoles": list(pattern.get(
+            "applicable_roles", ["nominator", "beneficiary"]
+        )),
     }
 
 
@@ -325,8 +475,8 @@ def _save_findings(
         INSERT INTO {table}
                (TenantId, PatternType, Severity,
                 AffectedUsers, NominationIds, Detail, DetectedAt, RunId, FindingHash,
-                TotalAmount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                TotalAmount, FindingScore, ScoringPolicyVersion, ScoreComponentsJson)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     rows = [
         (
@@ -340,6 +490,9 @@ def _save_findings(
             f["RunId"],
             f["FindingHash"],
             f.get("TotalAmount", 0),
+            f.get("FindingScore"),
+            f.get("ScoringPolicyVersion"),
+            f.get("ScoreComponentsJson"),
         )
         for f in new_findings
     ]
@@ -356,6 +509,7 @@ def detect_rings(
     tenant_id: int,
     run_id: str,
     max_cluster_size: int = 0,
+    policy: dict | None = None,
 ) -> list[dict]:
     """
     Detects nomination rings using simple_cycles() with frozenset deduplication.
@@ -458,6 +612,15 @@ def detect_rings(
                 f"coordinated reciprocal recognition. "
                 f"(Total approved/paid: ${total_amount:,})",
                 total_amount=total_amount,
+                policy=policy,
+                signals={
+                    "exposure": min(total_amount / max(float(
+                        _pattern_config(policy, "Ring").get("parameters", {})
+                        .get("amount_reference", 10_000)
+                    ), 1.0), 1.0),
+                    "repeat": min(len(nom_ids) / max(size * 3, 1), 1.0),
+                    "compactness": max(0.0, 1.0 - ((size - 3) / 5.0)),
+                },
             ))
 
     logger.info(
@@ -473,6 +636,7 @@ def detect_super_nominators(
     nominations: list[dict],
     tenant_id: int,
     run_id: str,
+    policy: dict | None = None,
 ) -> list[dict]:
     """
     Users whose out-degree (nominations sent) is a statistical outlier.
@@ -493,7 +657,12 @@ def detect_super_nominators(
     std    = counts.std()
     median = float(np.median(counts))
 
-    threshold = max(mean + 2 * std, 3 * median, 5.0)
+    parameters = _pattern_config(policy, "SuperNominator").get("parameters", {})
+    threshold = max(
+        mean + float(parameters.get("standard_deviations", 2.0)) * std,
+        float(parameters.get("median_multiplier", 3.0)) * median,
+        float(parameters.get("minimum_count", 5)),
+    )
 
     findings: list[dict] = []
     for user_id, nom_ids in out_degree.items():
@@ -508,6 +677,14 @@ def detect_super_nominators(
                 f"(tenant mean={mean:.1f}, threshold={threshold:.1f}, "
                 f"total approved/paid: ${total_amount:,})",
                 total_amount=total_amount,
+                policy=policy,
+                signals={
+                    "excess": min(max((cnt / max(threshold, 1)) - 1.0, 0.0), 1.0),
+                    "volume": min(cnt / max(threshold * 2.0, 1.0), 1.0),
+                    "exposure": min(total_amount / max(float(
+                        parameters.get("amount_reference", 10_000)
+                    ), 1.0), 1.0),
+                },
             ))
 
     logger.info("  SuperNominators: %d detected", len(findings))
@@ -521,6 +698,7 @@ def detect_deserts(
     users: list[dict],
     tenant_id: int,
     run_id: str,
+    policy: dict | None = None,
 ) -> list[dict]:
     """
     Teams (grouped by ManagerId) where no member has ever appeared on either
@@ -540,9 +718,12 @@ def detect_deserts(
         if user["ManagerId"] is not None:
             teams[user["ManagerId"]].append(user["UserId"])
 
+    parameters = _pattern_config(policy, "Desert").get("parameters", {})
+    minimum_team_size = int(parameters.get("minimum_team_size", 3))
+    team_reference = max(float(parameters.get("team_size_reference", 10)), 1.0)
     findings: list[dict] = []
     for manager_id, members in teams.items():
-        if len(members) < 3:
+        if len(members) < minimum_team_size:
             continue
         absent = [m for m in members if m not in all_participants]
         if len(absent) == len(members):  # entire team is absent
@@ -551,67 +732,11 @@ def detect_deserts(
                 members, [],
                 f"Team under manager {manager_id} ({len(members)} members) "
                 "has zero nomination activity on either side.",
+                policy=policy,
+                signals={"team_size": min(len(members) / team_reference, 1.0)},
             ))
 
     logger.info("  Deserts: %d detected", len(findings))
-    return findings
-
-
-# ── Pattern 4: Approver affinity ──────────────────────────────────────────────
-
-def detect_approver_affinity(
-    nominations: list[dict],
-    tenant_id: int,
-    run_id: str,
-) -> list[dict]:
-    """
-    Specific (nominator, approver) pairs whose approval rate is ≥ 2× the
-    tenant-wide baseline, with at least 5 nominations in the pair sample.
-
-    "Approval" means Status in ('Approved', 'Paid').
-    """
-    approved_statuses = {"Approved", "Paid"}
-
-    total   = len(nominations)
-    n_approved = sum(1 for n in nominations if n["Status"] in approved_statuses)
-    if total == 0:
-        return []
-    baseline = n_approved / total
-
-    pair_total:    dict[tuple, int]       = defaultdict(int)
-    pair_approved: dict[tuple, int]       = defaultdict(int)
-    pair_noms:     dict[tuple, list[int]] = defaultdict(list)
-    pair_amounts:  dict[tuple, int]       = defaultdict(int)
-
-    for nom in nominations:
-        if nom["ApproverId"] is None:
-            continue
-        key = (nom["NominatorId"], nom["ApproverId"])
-        pair_total[key]   += 1
-        pair_noms[key].append(nom["NominationId"])
-        pair_amounts[key] += nom["Amount"] or 0
-        if nom["Status"] in approved_statuses:
-            pair_approved[key] += 1
-
-    findings: list[dict] = []
-    for key, cnt in pair_total.items():
-        if cnt < 5:
-            continue
-        rate = pair_approved[key] / cnt
-        if rate >= 2 * baseline and baseline > 0:
-            nominator_id, approver_id = key
-            total_amount = pair_amounts[key]
-            severity = "High" if rate >= 3 * baseline else "Medium"
-            findings.append(_finding(
-                tenant_id, run_id, "ApproverAffinity", severity,
-                [nominator_id, approver_id], pair_noms[key],
-                f"Nominator {nominator_id} / Approver {approver_id}: "
-                f"approval rate {rate:.0%} vs tenant baseline {baseline:.0%} "
-                f"({cnt} nominations, total approved/paid: ${total_amount:,})",
-                total_amount=total_amount,
-            ))
-
-    logger.info("  ApproverAffinity: %d detected", len(findings))
     return findings
 
 
@@ -708,7 +833,7 @@ def _save_embeddings(
     logger.info("  Cached %d new embedding(s).", len(embeddings))
 
 
-# ── Pattern 5: Copy-paste fraud ───────────────────────────────────────────────
+# ── Pattern 4: Copy-paste fraud ───────────────────────────────────────────────
 
 def detect_copy_paste(
     nominations: list[dict],
@@ -718,6 +843,7 @@ def detect_copy_paste(
     similarity_threshold: float = 0.92,
     min_cluster_size: int = 3,
     chunk_size: int = 512,
+    policy: dict | None = None,
 ) -> list[dict]:
     """
     Clusters of nominations whose description embeddings are mutually similar
@@ -751,6 +877,14 @@ def detect_copy_paste(
 
     Only clusters of ≥ min_cluster_size nominations are flagged.
     """
+    parameters = _pattern_config(policy, "CopyPaste").get("parameters", {})
+    similarity_threshold = float(
+        parameters.get("similarity_threshold", similarity_threshold)
+    )
+    min_cluster_size = int(
+        parameters.get("minimum_cluster_size", min_cluster_size)
+    )
+
     # Filter to nominations with non-trivial descriptions
     eligible = [
         n for n in nominations
@@ -885,13 +1019,30 @@ def detect_copy_paste(
             f"similarity {avg_sim:.3f} (threshold {similarity_threshold}, "
             f"total approved/paid: ${total_amount:,})",
             total_amount=total_amount,
+            policy=policy,
+            signals={
+                "similarity": min(max(
+                    (avg_sim - similarity_threshold) /
+                    max(1.0 - similarity_threshold, 0.001), 0.0
+                ), 1.0),
+                "cluster_size": min(
+                    len(members) / max(float(
+                        parameters.get("cluster_size_reference", 8)
+                    ), 1.0), 1.0
+                ),
+                "exposure": min(
+                    total_amount / max(float(
+                        parameters.get("amount_reference", 10_000)
+                    ), 1.0), 1.0
+                ),
+            },
         ))
 
     logger.info("  CopyPaste: %d clusters detected", len(findings))
     return findings
 
 
-# ── Pattern 6: Transactional language ────────────────────────────────────────
+# ── Pattern 5: Transactional language ────────────────────────────────────────
 
 _TRANSACTIONAL_PATTERNS = re.compile(
     r"\b("
@@ -914,11 +1065,16 @@ def detect_transactional(
     tenant_id: int,
     run_id: str,
     min_hits: int = 2,
+    policy: dict | None = None,
 ) -> list[dict]:
     """
     Nominations whose description text contains ≥ min_hits transactional
     phrases (personal-benefit or quid-pro-quo language).
     """
+    parameters = _pattern_config(policy, "TransactionalLanguage").get(
+        "parameters", {}
+    )
+    min_hits = int(parameters.get("minimum_hits", min_hits))
     findings: list[dict] = []
 
     for nom in nominations:
@@ -935,13 +1091,25 @@ def detect_transactional(
                 f"{', '.join(repr(h) for h in hits[:5])} "
                 f"(approved/paid: ${total_amount:,})",
                 total_amount=total_amount,
+                policy=policy,
+                signals={
+                    "hit": min(
+                        len(hits) / max(float(parameters.get("hit_reference", 6)), 1.0),
+                        1.0,
+                    ),
+                    "exposure": min(
+                        total_amount / max(float(
+                            parameters.get("amount_reference", 5_000)
+                        ), 1.0), 1.0
+                    ),
+                },
             ))
 
     logger.info("  TransactionalLanguage: %d detected", len(findings))
     return findings
 
 
-# ── Pattern 7: Hidden candidate ───────────────────────────────────────────────
+# ── Pattern 6: Hidden candidate ───────────────────────────────────────────────
 
 def detect_hidden_candidate(
     nominations: list[dict],
@@ -949,6 +1117,7 @@ def detect_hidden_candidate(
     tenant_id: int,
     run_id: str,
     min_text_mentions: int = 5,
+    policy: dict | None = None,
 ) -> list[dict]:
     """
     Users whose full name appears frequently in nomination description text
@@ -959,6 +1128,9 @@ def detect_hidden_candidate(
     BeneficiaryId) are considered as candidates, to avoid matching
     ex-employees mentioned in historical text.
     """
+    parameters = _pattern_config(policy, "HiddenCandidate").get("parameters", {})
+    min_text_mentions = int(parameters.get("minimum_mentions", min_text_mentions))
+    mention_reference = max(float(parameters.get("mention_reference", 15)), 1.0)
     active_user_ids = set()
     for nom in nominations:
         active_user_ids.add(nom["NominatorId"])
@@ -988,90 +1160,36 @@ def detect_hidden_candidate(
                 [user_id], [],
                 f"User {user_id} ('{name}') mentioned {count}× in nomination "
                 "descriptions but never appears as a formal BeneficiaryId.",
+                policy=policy,
+                signals={"mention": min(count / mention_reference, 1.0)},
             ))
 
     logger.info("  HiddenCandidate: %d detected", len(findings))
     return findings
 
 
-# ── UserGraphFlags / ApproverPairFlags snapshot ───────────────────────────────
-
-def _has_user_graph_flags(conn: pyodbc.Connection, tenant_id: int) -> bool:
-    """Return True if at least one UserGraphFlags snapshot already exists for this tenant."""
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT TOP 1 1 FROM dbo.UserGraphFlags WHERE TenantId = ?", tenant_id
-    )
-    return cur.fetchone() is not None
-
-
-def _load_all_findings_for_snapshot(
-    conn: pyodbc.Connection,
-    tenant_id: int,
-    table: str,
-) -> list[dict]:
-    """
-    Load all findings from GraphPatternFindings for this tenant.
-
-    Used ONCE as a bootstrap when UserGraphFlags has no rows for the tenant —
-    i.e. the first time graph_analytics runs after migration 0028.
-    Subsequent runs use the in-memory detected_findings list (pre-dedup,
-    window-bounded) so the snapshot never needs a full table scan.
-    """
-    cur = conn.cursor()
-    cur.execute(f"""
-        SELECT PatternType, Severity, AffectedUsers, NominationIds
-        FROM   {table}
-        WHERE  TenantId      = ?
-          AND  AffectedUsers IS NOT NULL
-          AND  AffectedUsers <> '[]'
-    """, tenant_id)
-    return [
-        {
-            "PatternType":   row[0],
-            "Severity":      row[1],
-            "AffectedUsers": row[2],
-            "NominationIds": row[3] or "[]",
-        }
-        for row in cur.fetchall()
-    ]
-
+# ── Complete Graph snapshot ──────────────────────────────────────────────────
 
 def _populate_graph_flag_snapshots(
     conn: pyodbc.Connection,
     tenant_id: int,
     findings: list[dict],
-    nominations: list[dict],
     as_of_date: str,
+    run_id: str,
 ) -> None:
-    """
-    Materialise graph flag snapshots into dbo.UserGraphFlags and
-    dbo.ApproverPairFlags for the RF to read at training and inference time.
+    """Materialise one complete, evidence-rich Graph snapshot.
 
-    `findings` is the caller's choice of source:
-      • Bootstrap (first run after migration): all findings from GraphPatternFindings
-        loaded by _load_all_findings_for_snapshot() — covers full history.
-      • Normal weekly run: detected_findings (pre-dedup, window-bounded) — cost
-        stays proportional to the detection window, never grows with the table.
-
-    UserGraphFlags — one row per (TenantId, UserId, AsOfDate).
-      Built by scanning `findings` in memory. MERGE is idempotent if rerun on
-      the same AsOfDate.
-
-    ApproverPairFlags — one row per (TenantId, ApproverId, NominatorId,
-      BeneficiaryId, AsOfDate).
-      Computed from the approved/paid `nominations` list: count how many times
-      each (approver, nominator, beneficiary) triple appears.
+    IntegrityComponentStatus is updated after this transaction and records
+    every successful run, including a clean run with zero findings.
+    UserGraphFlags contains only affected nominators and beneficiaries.
     """
     cur = conn.cursor()
 
-    # ── Build per-user flag aggregates from in-memory findings ────────────────
-    # Each finding's AffectedUsers is a JSON list of user IDs.
-    # We accumulate flags per user across all pattern types.
-
-    from collections import defaultdict
-
     _SEVERITY_RANK = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+    active_findings = [
+        finding for finding in findings
+        if finding.get("PatternType") != "ApproverAffinity"
+    ]
 
     user_flags: dict[int, dict] = defaultdict(lambda: {
         "IsInRing":                 0,
@@ -1081,8 +1199,8 @@ def _populate_graph_flag_snapshots(
         "IsInCopyPasteCluster":     0,
         "CopyPasteClusterSize":     0,
         "HasTransactionalLanguage": 0,
-        "IsApproverAffinity":       0,
         "HighestSeverity":          None,
+        "Findings":                 [],
         "_severity_rank":           0,
     })
 
@@ -1092,15 +1210,34 @@ def _populate_graph_flag_snapshots(
             flags["_severity_rank"] = rank
             flags["HighestSeverity"] = severity
 
-    for f in findings:
+    for f in active_findings:
         ptype    = f["PatternType"]
         severity = f["Severity"]
         users    = json.loads(f["AffectedUsers"])
         nom_ids  = json.loads(f.get("NominationIds") or "[]")
 
+        evidence = {
+            "finding_hash": f.get("FindingHash"),
+            "pattern_type": ptype,
+            "severity": severity,
+            "nomination_ids": nom_ids,
+            "detail": f.get("Detail"),
+            "total_amount": f.get("TotalAmount", 0),
+            "finding_score": float(f.get("FindingScore") or 0),
+            "scoring_policy_version": f.get("ScoringPolicyVersion"),
+            "score_components": json.loads(
+                f.get("ScoreComponentsJson") or "{}"
+            ),
+            "enabled_for_routing": bool(f.get("EnabledForRouting", True)),
+            "applicable_roles": list(f.get(
+                "ApplicableRoles", ["nominator", "beneficiary"]
+            )),
+        }
+
         for uid in users:
             uf = user_flags[uid]
             _update_severity(uf, severity)
+            uf["Findings"].append(evidence)
 
             if ptype == "Ring":
                 uf["IsInRing"] = 1
@@ -1117,8 +1254,12 @@ def _populate_graph_flag_snapshots(
                 )
             elif ptype == "TransactionalLanguage":
                 uf["HasTransactionalLanguage"] = 1
-            elif ptype == "ApproverAffinity":
-                uf["IsApproverAffinity"] = 1
+
+    # A same-day rerun is a full replacement, not a partial merge.
+    cur.execute(
+        "DELETE FROM dbo.UserGraphFlags WHERE TenantId = ? AND AsOfDate = ?",
+        (tenant_id, as_of_date),
+    )
 
     if user_flags:
         rows_ugf = [
@@ -1133,97 +1274,32 @@ def _populate_graph_flag_snapshots(
                 uf["IsInCopyPasteCluster"],
                 uf["CopyPasteClusterSize"],
                 uf["HasTransactionalLanguage"],
-                uf["IsApproverAffinity"],
                 uf["HighestSeverity"],
+                json.dumps(uf["Findings"], separators=(",", ":")),
             )
             for uid, uf in user_flags.items()
         ]
 
         cur.executemany("""
-            MERGE dbo.UserGraphFlags AS target
-            USING (VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?))
-                  AS source (TenantId, UserId, AsOfDate,
-                             IsInRing, RingMaxUserCount, RingMaxNominationCount,
-                             IsSuperNominator,
-                             IsInCopyPasteCluster, CopyPasteClusterSize,
-                             HasTransactionalLanguage,
-                             IsApproverAffinity, HighestSeverity)
-            ON  target.TenantId = source.TenantId
-            AND target.UserId   = source.UserId
-            AND target.AsOfDate = source.AsOfDate
-            WHEN MATCHED THEN
-                UPDATE SET
-                    IsInRing                 = source.IsInRing,
-                    RingMaxUserCount         = source.RingMaxUserCount,
-                    RingMaxNominationCount   = source.RingMaxNominationCount,
-                    IsSuperNominator         = source.IsSuperNominator,
-                    IsInCopyPasteCluster     = source.IsInCopyPasteCluster,
-                    CopyPasteClusterSize     = source.CopyPasteClusterSize,
-                    HasTransactionalLanguage = source.HasTransactionalLanguage,
-                    IsApproverAffinity       = source.IsApproverAffinity,
-                    HighestSeverity          = source.HighestSeverity,
-                    LastUpdatedUtc           = SYSUTCDATETIME()
-            WHEN NOT MATCHED THEN
-                INSERT (TenantId, UserId, AsOfDate,
-                        IsInRing, RingMaxUserCount, RingMaxNominationCount,
-                        IsSuperNominator,
-                        IsInCopyPasteCluster, CopyPasteClusterSize,
-                        HasTransactionalLanguage,
-                        IsApproverAffinity, HighestSeverity)
-                VALUES (source.TenantId, source.UserId, source.AsOfDate,
-                        source.IsInRing, source.RingMaxUserCount,
-                        source.RingMaxNominationCount,
-                        source.IsSuperNominator,
-                        source.IsInCopyPasteCluster, source.CopyPasteClusterSize,
-                        source.HasTransactionalLanguage,
-                        source.IsApproverAffinity, source.HighestSeverity);
+            INSERT INTO dbo.UserGraphFlags
+                (TenantId, UserId, AsOfDate,
+                 IsInRing, RingMaxUserCount, RingMaxNominationCount,
+                 IsSuperNominator,
+                 IsInCopyPasteCluster, CopyPasteClusterSize,
+                 HasTransactionalLanguage, HighestSeverity, FindingsJson)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, rows_ugf)
 
         logger.info(
-            "  UserGraphFlags: upserted %d user snapshot(s) for AsOfDate=%s",
+            "  UserGraphFlags: inserted %d affected-user row(s) for AsOfDate=%s",
             len(rows_ugf), as_of_date,
         )
 
-    # ── Build ApproverPairFlags from nomination history ───────────────────────
-    # Count (approver, nominator, beneficiary) triples from Approved/Paid noms.
-    pair_counts: dict[tuple, int] = defaultdict(int)
-    for nom in nominations:
-        if nom.get("ApproverId") is not None:
-            key = (nom["ApproverId"], nom["NominatorId"], nom["BeneficiaryId"])
-            pair_counts[key] += 1
-
-    if pair_counts:
-        rows_apf = [
-            (tenant_id, approver_id, nominator_id, beneficiary_id, as_of_date, count)
-            for (approver_id, nominator_id, beneficiary_id), count in pair_counts.items()
-        ]
-
-        cur.executemany("""
-            MERGE dbo.ApproverPairFlags AS target
-            USING (VALUES (?, ?, ?, ?, ?, ?))
-                  AS source (TenantId, ApproverId, NominatorId, BeneficiaryId,
-                             AsOfDate, PairApprovalCount)
-            ON  target.TenantId      = source.TenantId
-            AND target.ApproverId    = source.ApproverId
-            AND target.NominatorId   = source.NominatorId
-            AND target.BeneficiaryId = source.BeneficiaryId
-            AND target.AsOfDate      = source.AsOfDate
-            WHEN MATCHED THEN
-                UPDATE SET PairApprovalCount = source.PairApprovalCount,
-                           LastUpdatedUtc    = SYSUTCDATETIME()
-            WHEN NOT MATCHED THEN
-                INSERT (TenantId, ApproverId, NominatorId, BeneficiaryId,
-                        AsOfDate, PairApprovalCount)
-                VALUES (source.TenantId, source.ApproverId, source.NominatorId,
-                        source.BeneficiaryId, source.AsOfDate, source.PairApprovalCount);
-        """, rows_apf)
-
-        logger.info(
-            "  ApproverPairFlags: upserted %d pair snapshot(s) for AsOfDate=%s",
-            len(rows_apf), as_of_date,
-        )
-
-    conn.commit()
+    logger.info(
+        "  Complete Graph snapshot staged for AsOfDate=%s (%d finding(s)); "
+        "component status will commit it atomically",
+        as_of_date, len(active_findings),
+    )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -1239,15 +1315,12 @@ def _process_tenant(
     """Detect and persist one tenant's graph snapshot and component status."""
     logger.info("Tenant %d", tenant_id)
 
-    tenant_config = _load_tenant_integrity_config(conn, tenant_id)
-    window_days = int(
-        tenant_config.get("graph_pattern", {})
-                     .get("detection_window_days", default_window_days)
+    policy = _load_active_graph_policy(conn, tenant_id, default_window_days)
+    window_days = int(policy["detection_window_days"])
+    logger.info(
+        "  Graph policy: v%d, %s; detection window: %d days",
+        policy["version"], policy["strategy"], window_days,
     )
-    if tenant_config.get("graph_pattern", {}).get("detection_window_days"):
-        logger.info("  Detection window: %d days (tenant config)", window_days)
-    else:
-        logger.info("  Detection window: %d days (default)", window_days)
 
     nominations = _load_nominations(conn, tenant_id, window_days)
     users = _load_users(conn, tenant_id)
@@ -1257,66 +1330,68 @@ def _process_tenant(
         window_days, len(nominations), len(users), len(ever_active_ids),
     )
     if not nominations:
-        logger.info("  No nominations in window — skipping.")
-        upsert_component_status(
-            conn, tenant_id=tenant_id, component="GRAPH", attempt_status="SKIPPED",
-            reason_code="NO_NOMINATIONS_IN_WINDOW",
-            reason_detail=f"No nominations were found in the {window_days}-day detection window.",
-            diagnostics={
-                "nomination_count": 0, "user_count": len(users),
-                "window_days": window_days,
-            },
-            run_id=run_id,
+        logger.info(
+            "  No approved/paid nominations in window — recording a complete "
+            "snapshot after non-nomination detectors run."
         )
-        return 0
 
     existing_hashes = _load_existing_hashes(conn, tenant_id, findings_table)
     logger.info("  Existing hashes in table: %d", len(existing_hashes))
 
     detected_findings: list[dict] = []
-    detected_findings.extend(detect_rings(nominations, users, tenant_id, run_id, ring_max_cluster))
-    detected_findings.extend(detect_super_nominators(nominations, tenant_id, run_id))
-    detected_findings.extend(detect_deserts(ever_active_ids, users, tenant_id, run_id))
-    detected_findings.extend(detect_approver_affinity(nominations, tenant_id, run_id))
-    detected_findings.extend(detect_copy_paste(nominations, tenant_id, run_id, conn))
-    detected_findings.extend(detect_transactional(nominations, tenant_id, run_id))
-    detected_findings.extend(detect_hidden_candidate(nominations, users, tenant_id, run_id))
+
+    def enabled(pattern_type: str) -> bool:
+        return bool(_pattern_config(policy, pattern_type).get("enabled", False))
+
+    if enabled("Ring"):
+        detected_findings.extend(detect_rings(
+            nominations, users, tenant_id, run_id, ring_max_cluster, policy
+        ))
+    if enabled("SuperNominator"):
+        detected_findings.extend(detect_super_nominators(
+            nominations, tenant_id, run_id, policy
+        ))
+    if enabled("Desert"):
+        detected_findings.extend(detect_deserts(
+            ever_active_ids, users, tenant_id, run_id, policy
+        ))
+    if enabled("CopyPaste"):
+        detected_findings.extend(detect_copy_paste(
+            nominations, tenant_id, run_id, conn, policy=policy
+        ))
+    if enabled("TransactionalLanguage"):
+        detected_findings.extend(detect_transactional(
+            nominations, tenant_id, run_id, policy=policy
+        ))
+    if enabled("HiddenCandidate"):
+        detected_findings.extend(detect_hidden_candidate(
+            nominations, users, tenant_id, run_id, policy=policy
+        ))
 
     _save_findings(conn, detected_findings, findings_table, existing_hashes)
     logger.info("  Tenant %d total findings: %d", tenant_id, len(detected_findings))
 
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if not _has_user_graph_flags(conn, tenant_id):
-        snapshot_source = _load_all_findings_for_snapshot(conn, tenant_id, findings_table)
-        logger.info(
-            "  Bootstrap: no prior UserGraphFlags for tenant %d — "
-            "loading %d finding(s) from %s",
-            tenant_id, len(snapshot_source), findings_table,
-        )
-    else:
-        snapshot_source = detected_findings
-        logger.info(
-            "  Snapshot source: %d detected finding(s) (pre-dedup, window-bounded)",
-            len(detected_findings),
-        )
-
     _populate_graph_flag_snapshots(
-        conn, tenant_id, snapshot_source, nominations, as_of_date
+        conn, tenant_id, detected_findings, as_of_date, run_id
     )
     upsert_component_status(
         conn, tenant_id=tenant_id, component="GRAPH", attempt_status="SUCCEEDED",
         serving_status="AVAILABLE",
-        serving_version=f"graph-{as_of_date}-{run_id[:8]}",
+        serving_version=f"graph-policy-v{policy['version']}",
         serving_as_of=as_of_date,
         diagnostics={
             "nomination_count": len(nominations), "user_count": len(users),
             "finding_count": len(detected_findings), "window_days": window_days,
+            "scoring_policy_version": policy["version"],
+            "scoring_strategy": policy["strategy"],
+            "snapshot_max_age_days": policy["snapshot_max_age_days"],
         },
         run_id=run_id,
     )
 
     finding_count = len(detected_findings)
-    del nominations, users, detected_findings, snapshot_source
+    del nominations, users, detected_findings
     gc.collect()
     logger.info("  Tenant %d memory freed.", tenant_id)
     return finding_count
@@ -1348,10 +1423,11 @@ def main(tenants_to_process: list | None = None) -> None:
     # Refresh graph tables from live Nominations / Users
     sync_graph_tables(conn)
 
-    # Evict embeddings that have aged out of the detection window.
-    # Uses the global default window — conservative (keeps more rather than
-    # fewer) so tenants with longer per-tenant windows are not penalised.
-    _evict_stale_embeddings(conn, default_window_days)
+    # Evict only embeddings older than every active tenant policy requires.
+    embedding_window_days = _maximum_active_detection_window(
+        conn, default_window_days
+    )
+    _evict_stale_embeddings(conn, embedding_window_days)
 
     tenants = _load_tenants(conn)
     if tenants_to_process is not None:
