@@ -23,8 +23,8 @@ so fresh models propagate automatically within one TTL period of upload — no
 container restart required.
 """
 
-import json
 import os
+import re
 import uuid
 import pandas as pd
 import numpy as np
@@ -62,7 +62,31 @@ from utils.component_status import upsert_component_status
 # model at inference time (e.g. 'paraphrase-multilingual-MiniLM-L12-v2'
 # for Korean / Japanese / other non-English tenants).
 DEFAULT_EMBED_MODEL_NAME = 'all-MiniLM-L6-v2'
-RF_FEATURE_CONTRACT = 'rf-native-v2'
+RF_FEATURE_CONTRACT = 'rf-native-v3'
+TRANSACTIONAL_PHRASE_RULE_VERSION = 'transactional-phrase-score-v1'
+_TRANSACTIONAL_PHRASE_REFERENCE_HITS = 6.0
+_TRANSACTIONAL_PHRASE_PATTERN = re.compile(
+    r'\b(?:'
+    r'helped me|help me|'
+    r'my deadline|our deadline|'
+    r'saved my|saved the day|'
+    r'owe[sd]? (?:him|her|them|me)|'
+    r'in return|return the favor|'
+    r'scratch my back|you scratch|'
+    r'promised|will nominate|going to nominate|'
+    r'nominate (?:you|him|her|them) (?:next|back|in return)|'
+    r'my project|my task|my work'
+    r')\b',
+    re.IGNORECASE,
+)
+
+
+def transactional_phrase_score(description: str | None) -> float:
+    """Return the RF-owned continuous 0..1 phrase feature."""
+    hits = sum(
+        1 for _match in _TRANSACTIONAL_PHRASE_PATTERN.finditer(description or '')
+    )
+    return round(min(hits / _TRANSACTIONAL_PHRASE_REFERENCE_HITS, 1.0), 4)
 
 JOB_DIR = Path(__file__).resolve().parents[1]
 env_path = JOB_DIR.parent / ".env"
@@ -199,6 +223,9 @@ def _write_rf_manifest(
             "category_count": len(model_data["category_fraud_rate"]),
             "global_fraud_rate": model_data["global_fraud_rate"],
             "embedding_model": model_data["embed_model_name"],
+            "transactional_phrase_rule_version": model_data[
+                "transactional_phrase_rule_version"
+            ],
         },
         "artifacts": [
             artifact_descriptor(pkl_path, "serving_model"),
@@ -424,6 +451,12 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     print("  Extracting features ...")
 
+    # RF-native text feature. It is calculated from the nomination description
+    # here and independently at inference; no Graph snapshot is consulted.
+    df['TransactionalPhraseScore'] = (
+        df['NominationDescription'].fillna('').map(transactional_phrase_score)
+    )
+
     # ── Date parsing ────────────────────────────────────────────────────────
     df['NominationDate'] = pd.to_datetime(df['NominationDate'])
 
@@ -524,9 +557,7 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     """
     Derive pseudo-labels when no confirmed P2P_FraudScores exist yet (cold start).
 
-    Two-stage strategy:
-
-    Stage 1 — Isolation Forest (primary):
+    Isolation Forest strategy:
         Trains an IsolationForest on P2P_FEATURE_COLUMNS with no labels.
         Anomalies are observations isolated in fewer random splits — exactly
         the property that makes fraudulent nominations stand out (unusual
@@ -534,12 +565,6 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
         contamination=0.10 flags the most anomalous ~10% as IsFraud=1.
         These pseudo-labels bootstrap the first Random Forest regardless of
         whether the data is synthetic or real-world.
-
-    Stage 2 — Graph findings (supplementary):
-        Adds any nominations referenced by HIGH/CRITICAL GraphPatternFindings
-        as additional IsFraud=1 labels on top of the IF output.  Graph
-        findings capture structural patterns (rings, copy-paste clusters)
-        that the IF may score less confidently due to feature representation.
 
     Returns None if fewer than MIN_FRAUD_BOOTSTRAP labels are found (the
     dataset is too clean or too small to train a meaningful model).
@@ -554,7 +579,9 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
         return None
     df.loc[eligible_index, 'IsFraud'] = 0
 
-    # ── Stage 1: Isolation Forest ─────────────────────────────────────────────
+    # RF cold-start labels are derived only from its own feature space. Graph
+    # findings are deliberately excluded so cross-engine agreement remains
+    # meaningful after the synthetic-data reset.
     X = df.loc[eligible_index, P2P_FEATURE_COLUMNS].fillna(0)
 
     iso = IsolationForest(
@@ -576,40 +603,6 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
         f"{if_fraud_n} anomalies ({if_fraud_n / len(df) * 100:.1f}%) "
         f"from {len(eligible_index)} eligible nominations  (contamination=0.10)"
     )
-
-    # ── Stage 2: graph findings supplement ────────────────────────────────────
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT NominationIds
-            FROM   dbo.GraphPatternFindings
-            WHERE  TenantId     = ?
-              AND  Severity     IN ('Critical', 'High')
-              AND  NominationIds IS NOT NULL
-              AND  NominationIds != '[]'
-        """, tenant_id)
-        rows = cursor.fetchall()
-        conn.close()
-
-        graph_nom_ids: set[int] = set()
-        for row in rows:
-            graph_nom_ids.update(json.loads(row[0]))
-
-        if graph_nom_ids:
-            before = int(df['IsFraud'].sum())
-            graph_mask = (
-                df['NominationId'].isin(graph_nom_ids) & ~excluded_mask
-            )
-            df.loc[graph_mask, 'IsFraud'] = 1
-            added = int(df['IsFraud'].sum()) - before
-            if added:
-                print(
-                    f"[Tenant {tenant_id}]   Graph findings added {added} label(s) "
-                    f"from {len(rows)} HIGH/CRITICAL finding(s)"
-                )
-    except Exception as exc:
-        print(f"[Tenant {tenant_id}] Graph findings query failed (non-fatal): {exc}")
 
     fraud_n = int(df['IsFraud'].sum())
     legit_n = len(eligible_index) - fraud_n
@@ -658,6 +651,7 @@ P2P_FEATURE_COLUMNS = [
     'CategoryFraudRate',
     'DescriptionCosineSim',
     'DescriptionEmbDistance',
+    'TransactionalPhraseScore',
 ]
 
 
@@ -922,6 +916,7 @@ def train_model(
         'global_fraud_rate':    float(global_fraud_rate),
         # Sentence-transformer model name — integrity-check inference loads the same model
         'embed_model_name':     embed_model_name,
+        'transactional_phrase_rule_version': TRANSACTIONAL_PHRASE_RULE_VERSION,
     }
 
     pkl_filename = OUTPUT_DIR / f"random_forest_tenant_{tenant_id}.pkl"

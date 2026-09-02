@@ -23,8 +23,7 @@ NominationStatus = Literal[
 RiskLevel = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE", "UNKNOWN"]
 ModelComponent = Literal["rf", "gnn"]
 _GRAPH_PATTERNS = {
-    "Ring", "SuperNominator", "Desert", "CopyPaste",
-    "TransactionalLanguage", "HiddenCandidate",
+    "Ring", "SuperNominator", "Desert", "CopyPaste", "HiddenCandidate",
 }
 
 

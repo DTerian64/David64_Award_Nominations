@@ -19,14 +19,6 @@ POLICY = {
                 "repeat_weight": 15, "compactness_weight": 15,
             },
         },
-        "TransactionalLanguage": {
-            "base_score": 40, "minimum_score": 0, "maximum_score": 100,
-            "enabled_for_routing": True, "applicable_roles": ["nominator"],
-            "parameters": {
-                "minimum_hits": 2, "hit_reference": 6, "hit_weight": 45,
-                "exposure_weight": 15, "amount_reference": 5000,
-            },
-        },
     },
 }
 
@@ -81,20 +73,6 @@ def test_ring_score_increases_with_financial_exposure():
     assert high["ScoringPolicyVersion"] == 3
     components = json.loads(high["ScoreComponentsJson"])
     assert components["signals"]["exposure"] == 1.0
-
-
-def test_transactional_detector_persists_continuous_explanation():
-    nominations = [_nomination(
-        10, 1, 2, 2500,
-        "You helped me with my project, so I will nominate you back.",
-    )]
-    finding = graph.detect_transactional(
-        nominations, tenant_id=7, run_id="run-1", policy=POLICY
-    )[0]
-    assert 0 < finding["FindingScore"] <= 100
-    assert finding["EnabledForRouting"]
-    assert finding["ApplicableRoles"] == ["nominator"]
-    assert json.loads(finding["NominationIds"]) == [10]
 
 
 def test_clean_run_uses_status_as_marker_and_writes_no_user_rows():

@@ -264,6 +264,7 @@ class GraphThresholds(BaseModel):
 
 class GraphPatternPolicy(BaseModel):
     pattern_type: str
+    display_order: int
     enabled: bool
     enabled_for_routing: bool
     applicable_roles: list[str]
@@ -286,8 +287,7 @@ class GraphRequestReview(BaseModel):
 
 
 _GRAPH_PATTERNS = {
-    "Ring", "SuperNominator", "Desert", "CopyPaste",
-    "TransactionalLanguage", "HiddenCandidate",
+    "Ring", "SuperNominator", "Desert", "CopyPaste", "HiddenCandidate",
 }
 _GRAPH_ROLES = {"nominator", "beneficiary"}
 _REQUEST_REVIEW_STATUSES = {
@@ -312,6 +312,12 @@ def _validate_graph_policy(payload: GraphPolicyDraft) -> None:
     names = [item.pattern_type for item in payload.patterns]
     if set(names) != _GRAPH_PATTERNS or len(names) != len(_GRAPH_PATTERNS):
         raise HTTPException(status_code=422, detail="Every Graph detector must appear exactly once")
+    display_orders = [item.display_order for item in payload.patterns]
+    if sorted(display_orders) != list(range(1, len(_GRAPH_PATTERNS) + 1)):
+        raise HTTPException(
+            status_code=422,
+            detail="Graph detector display order must use each position exactly once",
+        )
     for item in payload.patterns:
         if item.enabled_for_routing and not item.enabled:
             raise HTTPException(

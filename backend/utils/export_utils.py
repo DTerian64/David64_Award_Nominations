@@ -26,7 +26,6 @@ PATTERN_LABEL = {
     "Desert":                "Nomination Desert",
     "ApproverAffinity":      "Approver Affinity (Legacy)",
     "CopyPaste":             "Copy-Paste Fraud",
-    "TransactionalLanguage": "Transactional Language",
     "HiddenCandidate":       "Hidden Candidate",
 }
 
@@ -36,7 +35,6 @@ PATTERN_DESC = {
     "Desert":                "Entire team absent from all nominations",
     "ApproverAffinity":      "Historical approver finding retained for audit",
     "CopyPaste":             "Near-identical nomination descriptions",
-    "TransactionalLanguage": "Personal-benefit phrasing in description",
     "HiddenCandidate":       "Named in descriptions but never nominated",
 }
 

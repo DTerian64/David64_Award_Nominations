@@ -205,11 +205,14 @@ async def _graph_get_integrity_findings(
         conditions = ["TenantId = :tid"]
         params: dict[str, Any] = {"tid": tenant_id}
         if pattern_type:
-            conditions.append("PatternType = :pt");  params["pt"]      = pattern_type
+            conditions.append("PatternType = :pt")
+            params["pt"] = pattern_type
         if severity:
-            conditions.append("Severity = :sev");    params["sev"]     = severity
+            conditions.append("Severity = :sev")
+            params["sev"] = severity
         if finding_id is not None:
-            conditions.append("FindingId = :fid");   params["fid"]     = finding_id
+            conditions.append("FindingId = :fid")
+            params["fid"] = finding_id
         if user_id is not None:
             # AffectedUsers is a JSON array string e.g. "[14, 16, 23]".
             # A bare LIKE '%16%' would falsely match 116, 160, 216 etc.
@@ -371,7 +374,7 @@ SCHEMAS = [
             "description": (
                 "Query GraphPatternFindings — fraud and integrity patterns from the weekly analytics job. "
                 "All filters optional. Use for questions about rings, suspicious clusters, copy-paste, "
-                "super-nominators, deserts, transactional language, hidden candidates, "
+                "super-nominators, deserts, and hidden candidates, "
                 "or historical approver-affinity audit records, "
                 "or to look up a specific finding by FindingId."
             ),
@@ -381,7 +384,7 @@ SCHEMAS = [
                     "pattern_type": {
                         "type": "string",
                         "enum": ["Ring", "SuperNominator", "Desert", "ApproverAffinity",
-                                 "CopyPaste", "TransactionalLanguage", "HiddenCandidate"],
+                                 "CopyPaste", "HiddenCandidate"],
                         "description": "Filter to a specific pattern type."
                     },
                     "severity": {

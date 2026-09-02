@@ -77,7 +77,6 @@ FindingId can look up full details directly in the database.
 | Desert                | Entire team under one manager with zero nomination activity          |
 | ApproverAffinity      | Legacy historical finding retained for audit; no longer produced    |
 | CopyPaste             | Cluster of near-identical nomination descriptions (cosine ≥ 0.92)   |
-| TransactionalLanguage | Description contains quid-pro-quo or personal-benefit phrasing      |
 | HiddenCandidate       | Name appears frequently in descriptions but never as a BeneficiaryId |
 
 ## Finding scores and derived severity

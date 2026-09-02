@@ -127,10 +127,10 @@ def test_no_userGraphFlags_column_leaks_into_user_features():
     """Model-independence constraint, asserted mechanically rather than by review."""
     forbidden = {
         "IsInRing", "RingMaxUserCount", "RingMaxNominationCount", "IsSuperNominator",
-        "IsInCopyPasteCluster", "CopyPasteClusterSize", "HasTransactionalLanguage",
+        "IsInCopyPasteCluster", "CopyPasteClusterSize",
         "IsApproverAffinity", "HighestSeverity", "PairApprovalCount",
         "GraphCycleFlag", "GraphReciprocalFlag", "GraphClusterSize",
-        "SuperNominatorFlag", "TransactionalLanguageFlag", "ApproverAffinityFlag",
+        "SuperNominatorFlag", "ApproverAffinityFlag",
         "GraphApproverPairCount",
     }
     assert not (set(G.USER_FEATURE_COLUMNS) & forbidden)

@@ -574,7 +574,7 @@ def get_graph_component_snapshot(
                 SELECT UserId,
                        IsInRing, IsSuperNominator,
                        IsInCopyPasteCluster, CopyPasteClusterSize,
-                       HasTransactionalLanguage, HighestSeverity, FindingsJson
+                       HighestSeverity, FindingsJson
                 FROM dbo.UserGraphFlags
                 WHERE TenantId = ?
                   AND AsOfDate = ?
@@ -582,7 +582,7 @@ def get_graph_component_snapshot(
             """, [tenant_id, as_of, *unique_ids])
             for found in cursor.fetchall():
                 try:
-                    findings = json.loads(found[7]) if found[7] else []
+                    findings = json.loads(found[6]) if found[6] else []
                 except (TypeError, ValueError):
                     logger.warning(
                         "Invalid FindingsJson for tenant %d user %s snapshot %s",
@@ -596,8 +596,7 @@ def get_graph_component_snapshot(
                     "is_super_nominator": bool(found[2]),
                     "is_in_copy_paste_cluster": bool(found[3]),
                     "copy_paste_cluster_size": int(found[4] or 0),
-                    "has_transactional_language": bool(found[5]),
-                    "highest_severity": found[6],
+                    "highest_severity": found[5],
                     "findings": findings,
                 }
 

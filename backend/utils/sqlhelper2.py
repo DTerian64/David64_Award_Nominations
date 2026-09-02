@@ -3679,12 +3679,12 @@ def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
             placeholders = ", ".join(f":p{i}" for i in range(len(policy_ids)))
             params = {f"p{i}": value for i, value in enumerate(policy_ids)}
             pattern_rows = session.execute(text(f"""
-                SELECT PolicyId, PatternType, Enabled, EnabledForRouting,
+                SELECT PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                        ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                        ParametersJson
                 FROM dbo.GraphScoringPatternParameters
                 WHERE PolicyId IN ({placeholders})
-                ORDER BY PatternType
+                ORDER BY PolicyId, DisplayOrder
             """), params).fetchall()
         request_rows = session.execute(text("""
             SELECT TOP 200 RequestId, PolicyId, ResolvedPolicyId,
@@ -3701,13 +3701,14 @@ def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
     for row in pattern_rows:
         patterns_by_policy.setdefault(int(row[0]), []).append({
             "pattern_type": row[1],
-            "enabled": bool(row[2]),
-            "enabled_for_routing": bool(row[3]),
-            "applicable_roles": _json_value(row[4], []),
-            "base_score": float(row[5]),
-            "minimum_score": float(row[6]),
-            "maximum_score": float(row[7]),
-            "parameters": _json_value(row[8], {}),
+            "display_order": int(row[2]),
+            "enabled": bool(row[3]),
+            "enabled_for_routing": bool(row[4]),
+            "applicable_roles": _json_value(row[5], []),
+            "base_score": float(row[6]),
+            "minimum_score": float(row[7]),
+            "maximum_score": float(row[8]),
+            "parameters": _json_value(row[9], {}),
         })
 
     policies = [{
@@ -3836,11 +3837,11 @@ def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
         }).scalar_one()
         session.execute(text("""
             INSERT INTO dbo.GraphScoringPatternParameters (
-                PolicyId, PatternType, Enabled, EnabledForRouting,
+                PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                 ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                 ParametersJson, CreatedBy, UpdatedBy
             )
-            SELECT :draft_id, PatternType, Enabled, EnabledForRouting,
+            SELECT :draft_id, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                    ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                    ParametersJson, :actor, :actor
             FROM dbo.GraphScoringPatternParameters WHERE PolicyId=:active_id
@@ -3882,15 +3883,16 @@ def update_graph_scoring_policy_draft(
         for pattern in payload["patterns"]:
             session.execute(text("""
                 INSERT INTO dbo.GraphScoringPatternParameters (
-                    PolicyId, PatternType, Enabled, EnabledForRouting,
+                    PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                     ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                     ParametersJson, CreatedBy, UpdatedBy
                 ) VALUES (
-                    :policy_id, :pattern, :enabled, :routing, :roles,
+                    :policy_id, :pattern, :display_order, :enabled, :routing, :roles,
                     :base, :minimum, :maximum, :parameters, :actor, :actor
                 )
             """), {
                 "policy_id": draft_id, "pattern": pattern["pattern_type"],
+                "display_order": pattern["display_order"],
                 "enabled": int(pattern["enabled"]),
                 "routing": int(pattern["enabled_for_routing"]),
                 "roles": json.dumps(pattern["applicable_roles"], separators=(",", ":")),

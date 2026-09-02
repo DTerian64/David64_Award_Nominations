@@ -7,7 +7,7 @@ below (STAGES) is the single source of truth; this list documents it.
   Stage 1: modeling/graph_analytics.py
       Syncs the Azure SQL Graph tables (NomGraph_Person, NomGraph_Nominated).
       Runs ring, super-nominator, and nomination-desert graph analysis.
-      Runs sentence-transformers for copy-paste and transactional language.
+      Runs sentence-transformers for copy-paste analysis.
       Upserts findings into dbo.GraphPatternFindings.
       Materialises per-user graph flag snapshots into dbo.UserGraphFlags
       for nomination-time graph analysis and audit use cases.

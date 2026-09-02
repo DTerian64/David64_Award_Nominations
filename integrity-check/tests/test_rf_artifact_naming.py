@@ -54,7 +54,11 @@ class RfArtifactNamingTests(unittest.TestCase):
         attempts = []
         payload = pickle.dumps({
             "model_version": "rf-test",
-            "p2p_feature_columns": ["Amount", "HasReciprocalNomination"],
+            "feature_contract": "rf-native-v3",
+            "transactional_phrase_rule_version": "transactional-phrase-score-v1",
+            "p2p_feature_columns": [
+                "Amount", "HasReciprocalNomination", "TransactionalPhraseScore",
+            ],
         })
         fake_service = _BlobService(attempts, payload)
 

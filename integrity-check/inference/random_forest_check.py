@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 import os
 import pickle
+import re
 import threading
 from datetime import datetime, timezone
 
@@ -57,8 +58,32 @@ _LEGACY_GRAPH_DERIVED_FEATURES = frozenset({
     "GraphReciprocalFlag",
     "GraphClusterSize",
     "SuperNominatorFlag",
-    "TransactionalLanguageFlag",
 })
+_RF_FEATURE_CONTRACT = "rf-native-v3"
+TRANSACTIONAL_PHRASE_RULE_VERSION = "transactional-phrase-score-v1"
+_TRANSACTIONAL_PHRASE_REFERENCE_HITS = 6.0
+_TRANSACTIONAL_PHRASE_PATTERN = re.compile(
+    r"\b(?:"
+    r"helped me|help me|"
+    r"my deadline|our deadline|"
+    r"saved my|saved the day|"
+    r"owe[sd]? (?:him|her|them|me)|"
+    r"in return|return the favor|"
+    r"scratch my back|you scratch|"
+    r"promised|will nominate|going to nominate|"
+    r"nominate (?:you|him|her|them) (?:next|back|in return)|"
+    r"my project|my task|my work"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def transactional_phrase_score(description: str | None) -> float:
+    """Return the RF-owned continuous 0..1 phrase feature."""
+    hits = sum(
+        1 for _match in _TRANSACTIONAL_PHRASE_PATTERN.finditer(description or "")
+    )
+    return round(min(hits / _TRANSACTIONAL_PHRASE_REFERENCE_HITS, 1.0), 4)
 
 
 def _is_independent_rf_artifact(model_data: object) -> bool:
@@ -68,7 +93,13 @@ def _is_independent_rf_artifact(model_data: object) -> bool:
     feature_columns = model_data.get("p2p_feature_columns")
     if not isinstance(feature_columns, (list, tuple)):
         return False
-    return _LEGACY_GRAPH_DERIVED_FEATURES.isdisjoint(feature_columns)
+    return bool(
+        _LEGACY_GRAPH_DERIVED_FEATURES.isdisjoint(feature_columns)
+        and model_data.get("feature_contract") == _RF_FEATURE_CONTRACT
+        and "TransactionalPhraseScore" in feature_columns
+        and model_data.get("transactional_phrase_rule_version")
+        == TRANSACTIONAL_PHRASE_RULE_VERSION
+    )
 
 
 # ── Per-tenant model cache ────────────────────────────────────────────────────
@@ -167,8 +198,9 @@ def _stream_from_blob(tenant_id: int) -> dict | None:
         model_data = pickle.loads(data)
         if not _is_independent_rf_artifact(model_data):
             logger.error(
-                "Refusing legacy RF model %s because its feature contract "
-                "depends on Graph Analytics; retrain and republish the RF artifact",
+                "Refusing incompatible RF model %s because it does not satisfy "
+                "the current independent feature contract; retrain and republish "
+                "the RF artifact",
                 blob_name,
                 extra={"tenant_id": tenant_id},
             )
@@ -291,6 +323,7 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
     else:
         desc_cosine_sim   = 0.0
         desc_emb_distance = 1.0
+    phrase_score = transactional_phrase_score(nom_description)
 
     # ── Assemble + scale ──────────────────────────────────────────────────────
     feature_cols = model_data["p2p_feature_columns"]
@@ -313,6 +346,7 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
         "CategoryFraudRate":            category_fraud_rate,
         "DescriptionCosineSim":         desc_cosine_sim,
         "DescriptionEmbDistance":       desc_emb_distance,
+        "TransactionalPhraseScore":     phrase_score,
     }
 
     X = np.array([[feature_vals.get(c, 0.0) for c in feature_cols]], dtype=float)
@@ -330,6 +364,7 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
             "concentration":          round(float(concentration_ratio), 3),
             "cosine_sim":             round(float(desc_cosine_sim), 4),
             "emb_distance":           round(float(desc_emb_distance), 4),
+            "transactional_phrase_score": phrase_score,
         },
     )
 
@@ -393,6 +428,7 @@ _FEATURE_LABELS: dict[str, str] = {
     "BeneficiaryAvgAmountReceived": "average award amount this person typically receives",
     "DescriptionCosineSim":         "similarity of this description to past nominations for this beneficiary",
     "DescriptionEmbDistance":       "semantic distance of this description from prior nominations",
+    "TransactionalPhraseScore":     "normalized transactional phrase evidence in this description",
     "CategoryFraudRate":            "historical fraud rate for this award category",
     "NominatorAvgAmount":           "this nominator's typical award amount",
     "NominatorStdAmount":           "variability in this nominator's award amounts",

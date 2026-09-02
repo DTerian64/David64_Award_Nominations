@@ -17,7 +17,6 @@ GRAPH_DERIVED_FEATURES = {
     "GraphReciprocalFlag",
     "GraphClusterSize",
     "SuperNominatorFlag",
-    "TransactionalLanguageFlag",
 }
 
 
@@ -82,6 +81,18 @@ def test_historical_rf_scoring_never_writes_approver_scores():
 def test_rf_feature_contract_excludes_graph_analytics_outputs():
     assert GRAPH_DERIVED_FEATURES.isdisjoint(train_rf_model.P2P_FEATURE_COLUMNS)
     assert "HasReciprocalNomination" in train_rf_model.P2P_FEATURE_COLUMNS
+    assert "TransactionalPhraseScore" in train_rf_model.P2P_FEATURE_COLUMNS
+
+
+def test_transactional_phrase_score_is_continuous_and_capped():
+    score = train_rf_model.transactional_phrase_score
+
+    assert score("Consistently exceeded expectations.") == 0.0
+    assert score("You helped me, so I owe them in return.") == 0.5
+    assert score(
+        "You helped me, saved my deadline and my project; I owe them, "
+        "will nominate them back in return."
+    ) == 1.0
 
 
 def test_rf_training_query_does_not_read_graph_snapshots():
@@ -125,6 +136,9 @@ def test_rf_manifest_contains_only_the_nomination_model():
             "category_fraud_rate": {},
             "global_fraud_rate": 0.1,
             "embed_model_name": "test-embedding",
+            "transactional_phrase_rule_version": (
+                train_rf_model.TRANSACTIONAL_PHRASE_RULE_VERSION
+            ),
         }
 
         with patch.object(train_rf_model, "OUTPUT_DIR", root):
@@ -139,7 +153,33 @@ def test_rf_manifest_contains_only_the_nomination_model():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert list(manifest["models"]) == ["p2p"]
         assert "approver" not in json.dumps(manifest).lower()
-        assert manifest["data_profile"]["feature_contract"] == "rf-native-v2"
+        assert manifest["data_profile"]["feature_contract"] == "rf-native-v3"
+        assert manifest["data_profile"]["transactional_phrase_rule_version"] == (
+            train_rf_model.TRANSACTIONAL_PHRASE_RULE_VERSION
+        )
+
+
+def test_rf_cold_start_does_not_read_graph_findings():
+    rows = []
+    for index in range(60):
+        row = {
+            column: float(index % (position + 2))
+            for position, column in enumerate(train_rf_model.P2P_FEATURE_COLUMNS)
+        }
+        row["IsFraud"] = 0
+        rows.append(row)
+
+    with patch.object(
+        train_rf_model,
+        "get_db_connection",
+        side_effect=AssertionError("RF cold-start must not query Graph Analytics"),
+    ):
+        result = train_rf_model.bootstrap_fraud_labels(
+            pd.DataFrame(rows), tenant_id=1
+        )
+
+    assert result is not None
+    assert int(result["IsFraud"].sum()) >= 5
 
 
 def test_rf_visualization_title_uses_tenant_name():

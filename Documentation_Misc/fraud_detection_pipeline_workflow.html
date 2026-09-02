@@ -219,7 +219,7 @@
 </style>
 </head>
 <body>
-<h2 class="sr-only">Fraud Detection Pipeline: Weekly batch job feeds graph flags and model training; real-time nomination submission triggers ML scoring and routing.</h2>
+<h2 class="sr-only">Fraud Detection Pipeline: the weekly job independently prepares Graph, Random Forest, and GNN outputs; nomination submission triggers independent scoring and routing.</h2>
 
 <div class="diagram">
 
@@ -242,10 +242,9 @@
         <div class="tag tag-cron">STAGE 1</div>
         <div class="box-title">modeling.graph_analytics</div>
         <div class="box-sub">
-          5 detectors (Ring, SuperNominator, ApproverAffinity, CopyPaste, TransactionalLanguage)<br>
+          5 detectors (Ring, SuperNominator, CopyPaste, HiddenCandidate, Desert)<br>
           → GraphPatternFindings<br>
-          → UserGraphFlags snapshot<br>
-          → ApproverPairFlags snapshot
+          → UserGraphFlags snapshot
         </div>
       </div>
       <span class="arr">→</span>
@@ -255,9 +254,9 @@
         <div class="tag tag-cron">STAGE 2</div>
         <div class="box-title">modeling.train_rf_model</div>
         <div class="box-sub">
-          Point-in-time OUTER APPLY join<br>
-          P2P RF (23 features) + Approver RF (7 features)<br>
-          → ScaleScaler fit<br>
+          RF-native nomination features only<br>
+          Peer-to-Peer RF (19 features, including TransactionalPhraseScore)<br>
+          → StandardScaler fit<br>
           → SHAP explainer<br>
           → .pkl → Azure Blob
         </div>
@@ -272,8 +271,8 @@
 
     <!-- UGF detail row -->
     <div class="note">
-      Bootstrap run: loads ALL GraphPatternFindings → populates UserGraphFlags &amp; ApproverPairFlags once.
-      Subsequent runs: uses pre-dedup detected_findings (bounded by detection window) for incremental snapshot.
+      Graph findings and RF features are deliberately independent. Graph produces an
+      evidence-rich current snapshot; RF cold-start labels come only from its own feature space.
     </div>
   </div>
 
@@ -309,7 +308,8 @@
         <div class="box-title">random_forest_check.assess()</div>
         <div class="box-sub">
           Load .pkl from blob cache<br>
-          DB: history + UserGraphFlags + ApproverPairFlags<br>
+          DB: nomination and participant history<br>
+          TransactionalPhraseScore from description text<br>
           P2P RF → StandardScaler → fraud_score<br>
           TreeSHAP → top feature explanations<br>
           CRITICAL → Azure OpenAI → rejection text
@@ -341,10 +341,9 @@
       </div>
     </div>
 
-    <!-- Approver path note -->
     <div class="note" style="margin-top:6px;">
-      After manager approves: Approver RF (7 features incl. ApproverAffinityFlag, GraphApproverPairCount)
-      scores the approval decision → HRBP_FraudFlags if flagged.
+      Approver integrity is intentionally outside the nomination-time engines and can be
+      introduced later as a separate post-approval, pre-payroll control.
     </div>
   </div>
 
@@ -357,14 +356,13 @@
       <div class="db-pill db-sql">dbo.Nominations</div>
       <div class="db-pill db-sql">dbo.GraphPatternFindings</div>
       <div class="db-pill db-sql">dbo.UserGraphFlags<br><span style="font-weight:400;font-size:9px;">(TenantId, UserId, AsOfDate) PK</span></div>
-      <div class="db-pill db-sql">dbo.ApproverPairFlags<br><span style="font-weight:400;font-size:9px;">(TenantId, ApproverId, NominatorId, BeneficiaryId, AsOfDate) PK</span></div>
       <div class="db-pill db-sql">dbo.P2P_FraudScores</div>
-      <div class="db-pill db-sql">dbo.Appr_FraudScores</div>
       <div class="db-pill db-sql">dbo.HRBP_FraudFlags</div>
       <div class="db-blob">Azure Blob: {tenant}.pkl<br><span style="font-weight:400;font-size:9px;">model + scaler + SHAP explainer</span></div>
     </div>
     <div class="note" style="margin-top:5px;">
-      UserGraphFlags &amp; ApproverPairFlags are append-only (never overwritten). Training uses OUTER APPLY point-in-time joins to eliminate data leakage. Inference reads latest AsOfDate row.
+      UserGraphFlags belongs only to the Graph engine. RF training and inference derive
+      their feature vector independently and do not consume Graph findings or snapshots.
     </div>
   </div>
 

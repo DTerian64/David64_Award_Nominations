@@ -316,8 +316,8 @@ variable "fraud_analytics_detection_window_days" {
   description = <<-EOT
     Rolling lookback window (in days) for graph pattern detection.
     Only nominations submitted within this window are loaded into the
-    detector. Ring patterns typically need a longer window than CopyPaste /
-    TransactionalLanguage, so a single value covers the longest horizon.
+    detector. Ring patterns typically need a longer window than CopyPaste,
+    so a single value covers the longest horizon.
 
     Set to a large value (e.g. 3650) on first deploy to process full
     history, then lower to 180 for steady-state weekly runs.

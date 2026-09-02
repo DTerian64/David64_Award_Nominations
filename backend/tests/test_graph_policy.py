@@ -20,12 +20,13 @@ from routers.setup_router import (
 
 def _patterns():
     names = [
-        "Ring", "SuperNominator", "Desert", "CopyPaste",
-        "TransactionalLanguage", "HiddenCandidate",
+        "Ring", "SuperNominator", "CopyPaste", "HiddenCandidate",
+        "Desert",
     ]
     return [
         GraphPatternPolicy(
             pattern_type=name,
+            display_order=display_order,
             enabled=True,
             enabled_for_routing=name not in {"Desert", "HiddenCandidate"},
             applicable_roles=["nominator"],
@@ -34,7 +35,7 @@ def _patterns():
             maximum_score=100,
             parameters={"evidence_weight": 50},
         )
-        for name in names
+        for display_order, name in enumerate(names, start=1)
     ]
 
 
@@ -50,6 +51,18 @@ class GraphPolicyValidationTests(unittest.TestCase):
     def test_routing_detector_must_be_enabled(self):
         patterns = _patterns()
         patterns[0].enabled = False
+        with self.assertRaises(HTTPException) as raised:
+            _validate_graph_policy(GraphPolicyDraft(
+                thresholds=GraphThresholds(low=25, medium=50, high=75, critical=90),
+                detection_window_days=365,
+                snapshot_max_age_days=14,
+                patterns=patterns,
+            ))
+        self.assertEqual(raised.exception.status_code, 422)
+
+    def test_display_order_must_be_unique_and_contiguous(self):
+        patterns = _patterns()
+        patterns[1].display_order = 1
         with self.assertRaises(HTTPException) as raised:
             _validate_graph_policy(GraphPolicyDraft(
                 thresholds=GraphThresholds(low=25, medium=50, high=75, critical=90),

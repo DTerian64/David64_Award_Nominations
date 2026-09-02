@@ -3,7 +3,7 @@ graph_analytics.py
 ==================
 Stage 1 of the fraud-analytics-job pipeline.
 
-Detects six structural and semantic behavioural patterns in the Nominations
+Detects five structural and semantic behavioural patterns in the Nominations
 graph for each tenant and upserts findings into dbo.GraphPatternFindings.
 
 Pattern catalogue
@@ -12,8 +12,7 @@ Pattern catalogue
 2. SuperNominator    — degree-distribution outlier (mean + 2σ, min 3× median)
 3. Desert            — whole team absent from both sides of the graph
 4. CopyPaste         — cosine similarity ≥ 0.92 between descriptions, min cluster 3
-5. TransactionalLanguage — personal-benefit regex phrases in description text
-6. HiddenCandidate   — name appears ≥ 5× in descriptions but never a BeneficiaryId
+5. HiddenCandidate   — name appears ≥ 5× in descriptions but never a BeneficiaryId
 
 Environment variables (all injected by the Container Apps Job)
 --------------------------------------------------------------
@@ -32,7 +31,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -1042,74 +1040,7 @@ def detect_copy_paste(
     return findings
 
 
-# ── Pattern 5: Transactional language ────────────────────────────────────────
-
-_TRANSACTIONAL_PATTERNS = re.compile(
-    r"\b("
-    r"helped me|help me|"
-    r"my deadline|our deadline|"
-    r"saved my|saved the day|"
-    r"owe[sd]? (him|her|them|me)|"
-    r"in return|return the favor|"
-    r"scratch my back|you scratch|"
-    r"promised|will nominate|going to nominate|"
-    r"nominate (you|him|her|them) (next|back|in return)|"
-    r"my project|my task|my work"
-    r")\b",
-    re.IGNORECASE,
-)
-
-
-def detect_transactional(
-    nominations: list[dict],
-    tenant_id: int,
-    run_id: str,
-    min_hits: int = 2,
-    policy: dict | None = None,
-) -> list[dict]:
-    """
-    Nominations whose description text contains ≥ min_hits transactional
-    phrases (personal-benefit or quid-pro-quo language).
-    """
-    parameters = _pattern_config(policy, "TransactionalLanguage").get(
-        "parameters", {}
-    )
-    min_hits = int(parameters.get("minimum_hits", min_hits))
-    findings: list[dict] = []
-
-    for nom in nominations:
-        desc = nom.get("Description") or ""
-        hits = _TRANSACTIONAL_PATTERNS.findall(desc)
-        if len(hits) >= min_hits:
-            total_amount = nom["Amount"] or 0
-            severity = "High" if len(hits) >= 4 else "Medium"
-            findings.append(_finding(
-                tenant_id, run_id, "TransactionalLanguage", severity,
-                [nom["NominatorId"], nom["BeneficiaryId"]],
-                [nom["NominationId"]],
-                f"Description contains {len(hits)} transactional phrase(s): "
-                f"{', '.join(repr(h) for h in hits[:5])} "
-                f"(approved/paid: ${total_amount:,})",
-                total_amount=total_amount,
-                policy=policy,
-                signals={
-                    "hit": min(
-                        len(hits) / max(float(parameters.get("hit_reference", 6)), 1.0),
-                        1.0,
-                    ),
-                    "exposure": min(
-                        total_amount / max(float(
-                            parameters.get("amount_reference", 5_000)
-                        ), 1.0), 1.0
-                    ),
-                },
-            ))
-
-    logger.info("  TransactionalLanguage: %d detected", len(findings))
-    return findings
-
-
-# ── Pattern 6: Hidden candidate ───────────────────────────────────────────────
+# ── Pattern 5: Hidden candidate ───────────────────────────────────────────────
 
 def detect_hidden_candidate(
     nominations: list[dict],
@@ -1198,7 +1129,6 @@ def _populate_graph_flag_snapshots(
         "IsSuperNominator":         0,
         "IsInCopyPasteCluster":     0,
         "CopyPasteClusterSize":     0,
-        "HasTransactionalLanguage": 0,
         "HighestSeverity":          None,
         "Findings":                 [],
         "_severity_rank":           0,
@@ -1252,9 +1182,6 @@ def _populate_graph_flag_snapshots(
                 uf["CopyPasteClusterSize"] = max(
                     uf["CopyPasteClusterSize"], len(nom_ids)
                 )
-            elif ptype == "TransactionalLanguage":
-                uf["HasTransactionalLanguage"] = 1
-
     # A same-day rerun is a full replacement, not a partial merge.
     cur.execute(
         "DELETE FROM dbo.UserGraphFlags WHERE TenantId = ? AND AsOfDate = ?",
@@ -1273,7 +1200,6 @@ def _populate_graph_flag_snapshots(
                 uf["IsSuperNominator"],
                 uf["IsInCopyPasteCluster"],
                 uf["CopyPasteClusterSize"],
-                uf["HasTransactionalLanguage"],
                 uf["HighestSeverity"],
                 json.dumps(uf["Findings"], separators=(",", ":")),
             )
@@ -1286,8 +1212,8 @@ def _populate_graph_flag_snapshots(
                  IsInRing, RingMaxUserCount, RingMaxNominationCount,
                  IsSuperNominator,
                  IsInCopyPasteCluster, CopyPasteClusterSize,
-                 HasTransactionalLanguage, HighestSeverity, FindingsJson)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 HighestSeverity, FindingsJson)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, rows_ugf)
 
         logger.info(
@@ -1358,10 +1284,6 @@ def _process_tenant(
     if enabled("CopyPaste"):
         detected_findings.extend(detect_copy_paste(
             nominations, tenant_id, run_id, conn, policy=policy
-        ))
-    if enabled("TransactionalLanguage"):
-        detected_findings.extend(detect_transactional(
-            nominations, tenant_id, run_id, policy=policy
         ))
     if enabled("HiddenCandidate"):
         detected_findings.extend(detect_hidden_candidate(

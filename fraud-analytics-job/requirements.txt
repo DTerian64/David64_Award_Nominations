@@ -23,7 +23,7 @@ holidays>=0.50
 # ── Graph analytics ───────────────────────────────────────────────────────────
 networkx>=3.2.0
 
-# ── NLP — copy-paste / transactional language detection ──────────────────────
+# ── NLP — copy-paste detection and RF semantic features ──────────────────────
 # sentence-transformers pulls torch; ~700 MB added to image.
 # The 'all-MiniLM-L6-v2' model (80 MB) is downloaded on first run and cached
 # in /root/.cache inside the container — ephemeral but acceptable for a job.

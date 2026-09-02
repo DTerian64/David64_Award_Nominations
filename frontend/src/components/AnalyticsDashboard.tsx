@@ -132,7 +132,6 @@ const PATTERN_META: Record<string, { label: string; description: string }> = {
   Desert:              { label: 'Nomination Desert',      description: 'Entire team absent from all nominations' },
   ApproverAffinity:    { label: 'Approver Affinity (legacy)', description: 'Historical finding retained for audit only' },
   CopyPaste:           { label: 'Copy-Paste Fraud',       description: 'Near-identical nomination descriptions' },
-  TransactionalLanguage: { label: 'Transactional Language', description: 'Personal-benefit phrasing in description' },
   HiddenCandidate:     { label: 'Hidden Candidate',       description: 'Named in descriptions but never nominated' },
 };
 

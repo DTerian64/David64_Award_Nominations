@@ -1175,13 +1175,12 @@ def seed_graph_findings(
     Findings:
       3 × Ring              (one per ring size)
       8 × CopyPaste         (one per cluster)
-      4 × TransactionalLanguage (one per cluster)
-    Total: 15 findings
+    Total: 11 findings
     """
-    print(f"\n[Phase 5] Seeding graph pattern findings (15 total)...")
+    print(f"\n[Phase 5] Seeding graph pattern findings (11 total)...")
 
     if dry_run:
-        print("  [dry-run] Would insert 15 GraphPatternFindings")
+        print("  [dry-run] Would insert 11 GraphPatternFindings")
         return
 
     run_id    = str(uuid.uuid4())
@@ -1280,32 +1279,6 @@ def seed_graph_findings(
         findings.append(_finding(
             "CopyPaste", "High",
             cp_users, cp_nids, detail, total_amount,
-        ))
-
-    # ── Transactional-language findings ──────────────────────────────────────
-    for cluster_idx in range(4):
-        tl_nids = tracking["transact_noms"][cluster_idx]
-        detail = (
-            f"Transactional language cluster {cluster_idx + 1}: "
-            f"{len(tl_nids)} nominations contain personal-benefit framing "
-            f"('helped me', 'my project', 'my deliverable'). "
-            f"Nominations may reflect personal reciprocity rather than merit."
-        )
-        cur.execute(
-            f"SELECT NominatorId, BeneficiaryId FROM dbo.Nominations WHERE NominationId IN "
-            f"({','.join('?' for _ in tl_nids)})",
-            tl_nids,
-        )
-        tl_users = list({uid for row in cur.fetchall() for uid in row})
-        cur.execute(
-            f"SELECT ISNULL(SUM(Amount),0) FROM dbo.Nominations WHERE NominationId IN "
-            f"({','.join('?' for _ in tl_nids)})",
-            tl_nids,
-        )
-        total_amount = int(cur.fetchone()[0])
-        findings.append(_finding(
-            "TransactionalLanguage", "Medium",
-            tl_users, tl_nids, detail, total_amount,
         ))
 
     # ── Insert all findings ───────────────────────────────────────────────────

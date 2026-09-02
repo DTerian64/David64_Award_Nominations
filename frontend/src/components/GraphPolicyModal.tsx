@@ -6,6 +6,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 interface PatternPolicy {
   pattern_type: string;
+  display_order: number;
   enabled: boolean;
   enabled_for_routing: boolean;
   applicable_roles: string[];
@@ -65,6 +66,28 @@ interface DetectorFormula {
   signals: SignalFormula[];
 }
 
+interface CalculatorInput {
+  key: string;
+  name: string;
+  minimum: number;
+  maximum?: number;
+  step: number;
+  defaultValue: (pattern: PatternPolicy) => number;
+}
+
+interface CalculatedSignal {
+  rawEvidence: string;
+  normalized: number;
+}
+
+interface DetectorCalculator {
+  inputs: CalculatorInput[];
+  calculate: (
+    pattern: PatternPolicy,
+    values: Record<string, number>,
+  ) => Record<string, CalculatedSignal>;
+}
+
 const label = (value: string) =>
   value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ')
     .replace(/\b\w/g, character => character.toUpperCase());
@@ -75,6 +98,15 @@ const formatValue = (value: number) => Number.isInteger(value)
 
 const parameter = (pattern: PatternPolicy, key: string, fallback: number) =>
   Number(pattern.parameters[key] ?? fallback);
+
+const clamp = (value: number, minimum = 0, maximum = 1) =>
+  Math.max(minimum, Math.min(maximum, value));
+
+const inputValue = (
+  values: Record<string, number>,
+  input: CalculatorInput,
+  pattern: PatternPolicy,
+) => Number(values[input.key] ?? input.defaultValue(pattern));
 
 const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
   Ring: {
@@ -140,19 +172,6 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       },
     ],
   },
-  TransactionalLanguage: {
-    detectionCondition: pattern => `The nomination description contains at least ${formatValue(parameter(pattern, 'minimum_hits', 2))} configured transactional phrases.`,
-    signals: [
-      {
-        key: 'hit', name: 'Phrase hits',
-        expression: pattern => `clamp(transactional phrase hits ÷ ${formatValue(parameter(pattern, 'hit_reference', 6))}, 0, 1)`,
-      },
-      {
-        key: 'exposure', name: 'Exposure',
-        expression: pattern => `clamp(approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 5_000))}, 0, 1)`,
-      },
-    ],
-  },
   HiddenCandidate: {
     detectionCondition: pattern => `An active user's name appears at least ${formatValue(parameter(pattern, 'minimum_mentions', 5))} times in descriptions, while the user never appears as a formal beneficiary.`,
     signals: [
@@ -161,6 +180,127 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
         expression: pattern => `clamp(name mentions ÷ ${formatValue(parameter(pattern, 'mention_reference', 15))}, 0, 1)`,
       },
     ],
+  },
+};
+
+const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
+  Ring: {
+    inputs: [
+      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+      { key: 'people_in_cycle', name: 'People in cycle', minimum: 3, maximum: 8, step: 1, defaultValue: () => 3 },
+      { key: 'nominations_in_cycle', name: 'Nominations in cycle', minimum: 3, step: 1, defaultValue: () => 3 },
+    ],
+    calculate: (pattern, values) => {
+      const amount = Number(values.total_amount);
+      const people = Number(values.people_in_cycle);
+      const nominations = Number(values.nominations_in_cycle);
+      return {
+        exposure: {
+          rawEvidence: `$${formatValue(amount)}`,
+          normalized: clamp(amount / Math.max(parameter(pattern, 'amount_reference', 10_000), 1)),
+        },
+        repeat: {
+          rawEvidence: `${formatValue(nominations)} nominations ÷ (${formatValue(people)} people × 3)`,
+          normalized: clamp(nominations / Math.max(people * 3, 1)),
+        },
+        compactness: {
+          rawEvidence: `${formatValue(people)} people`,
+          normalized: clamp(1 - ((people - 3) / 5)),
+        },
+      };
+    },
+  },
+  SuperNominator: {
+    inputs: [
+      { key: 'nomination_count', name: 'Nominations sent', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_count', 5) },
+      { key: 'tenant_mean', name: 'Tenant mean', minimum: 0, step: 0.1, defaultValue: () => 2 },
+      { key: 'tenant_standard_deviation', name: 'Tenant standard deviation (σ)', minimum: 0, step: 0.1, defaultValue: () => 1 },
+      { key: 'tenant_median', name: 'Tenant median', minimum: 0, step: 0.1, defaultValue: () => 2 },
+      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+    ],
+    calculate: (pattern, values) => {
+      const count = Number(values.nomination_count);
+      const mean = Number(values.tenant_mean);
+      const deviation = Number(values.tenant_standard_deviation);
+      const median = Number(values.tenant_median);
+      const amount = Number(values.total_amount);
+      const threshold = Math.max(
+        mean + parameter(pattern, 'standard_deviations', 2) * deviation,
+        parameter(pattern, 'median_multiplier', 3) * median,
+        parameter(pattern, 'minimum_count', 5),
+      );
+      return {
+        excess: {
+          rawEvidence: `${formatValue(count)} nominations; T = ${formatValue(threshold)}`,
+          normalized: clamp((count / Math.max(threshold, 1)) - 1),
+        },
+        volume: {
+          rawEvidence: `${formatValue(count)} nominations; T = ${formatValue(threshold)}`,
+          normalized: clamp(count / Math.max(threshold * 2, 1)),
+        },
+        exposure: {
+          rawEvidence: `$${formatValue(amount)}`,
+          normalized: clamp(amount / Math.max(parameter(pattern, 'amount_reference', 10_000), 1)),
+        },
+      };
+    },
+  },
+  Desert: {
+    inputs: [
+      { key: 'team_members', name: 'People in inactive team', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_team_size', 3) },
+    ],
+    calculate: (pattern, values) => {
+      const members = Number(values.team_members);
+      return {
+        team_size: {
+          rawEvidence: `${formatValue(members)} people`,
+          normalized: clamp(members / Math.max(parameter(pattern, 'team_size_reference', 10), 1)),
+        },
+      };
+    },
+  },
+  CopyPaste: {
+    inputs: [
+      { key: 'average_similarity', name: 'Average cosine similarity', minimum: 0, maximum: 1, step: 0.01, defaultValue: pattern => parameter(pattern, 'similarity_threshold', 0.92) },
+      { key: 'cluster_size', name: 'Nominations in cluster', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_cluster_size', 3) },
+      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+    ],
+    calculate: (pattern, values) => {
+      const similarity = Number(values.average_similarity);
+      const size = Number(values.cluster_size);
+      const amount = Number(values.total_amount);
+      const threshold = parameter(pattern, 'similarity_threshold', 0.92);
+      return {
+        similarity: {
+          rawEvidence: `${formatValue(similarity)} average; ${formatValue(threshold)} threshold`,
+          normalized: clamp(
+            (similarity - threshold) / Math.max(1 - threshold, 0.001),
+          ),
+        },
+        cluster_size: {
+          rawEvidence: `${formatValue(size)} nominations`,
+          normalized: clamp(size / Math.max(parameter(pattern, 'cluster_size_reference', 8), 1)),
+        },
+        exposure: {
+          rawEvidence: `$${formatValue(amount)}`,
+          normalized: clamp(amount / Math.max(parameter(pattern, 'amount_reference', 10_000), 1)),
+        },
+      };
+    },
+  },
+  HiddenCandidate: {
+    inputs: [
+      { key: 'name_mentions', name: 'Name mentions', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_mentions', 5) },
+    ],
+    calculate: (pattern, values) => {
+      const mentions = Number(values.name_mentions);
+      return {
+        mention: {
+          rawEvidence: `${formatValue(mentions)} mentions`,
+          normalized: clamp(mentions / Math.max(parameter(pattern, 'mention_reference', 15), 1)),
+        },
+      };
+    },
   },
 };
 
@@ -179,6 +319,28 @@ const detectorFormula = (pattern: PatternPolicy): DetectorFormula => {
           expression: () => 'clamp(detector evidence, 0, 1)',
         };
       }),
+  };
+};
+
+const detectorCalculator = (pattern: PatternPolicy): DetectorCalculator => {
+  const configured = DETECTOR_CALCULATORS[pattern.pattern_type];
+  if (configured) return configured;
+  const formula = detectorFormula(pattern);
+  return {
+    inputs: formula.signals.map(signal => ({
+      key: signal.key,
+      name: `${signal.name} normalized value`,
+      minimum: 0,
+      maximum: 1,
+      step: 0.01,
+      defaultValue: () => 0,
+    })),
+    calculate: (_pattern, values) => Object.fromEntries(
+      formula.signals.map(signal => [signal.key, {
+        rawEvidence: formatValue(Number(values[signal.key])),
+        normalized: clamp(Number(values[signal.key])),
+      }]),
+    ),
   };
 };
 
@@ -238,7 +400,7 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
   const [requestNominations, setRequestNominations] = useState('');
   const [requestProposal, setRequestProposal] = useState('');
   const [simPattern, setSimPattern] = useState('');
-  const [simSignals, setSimSignals] = useState<Record<string, number>>({});
+  const [simInputs, setSimInputs] = useState<Record<string, number>>({});
   const [reviewResponses, setReviewResponses] = useState<Record<number, string>>({});
 
   const load = async () => {
@@ -269,23 +431,63 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const policy = draft || bundle?.active_policy || null;
-  const simulationPattern = useMemo(
-    () => bundle?.active_policy?.patterns.find(item => item.pattern_type === simPattern),
-    [bundle, simPattern],
+  const orderedPatterns = useMemo(
+    () => [...(policy?.patterns || [])].sort(
+      (left, right) => left.display_order - right.display_order,
+    ),
+    [policy],
   );
+  const simulationPattern = useMemo(
+    () => policy?.patterns.find(item => item.pattern_type === simPattern),
+    [policy, simPattern],
+  );
+  const simulationFormula = useMemo(
+    () => simulationPattern ? detectorFormula(simulationPattern) : null,
+    [simulationPattern],
+  );
+  const simulationCalculator = useMemo(
+    () => simulationPattern ? detectorCalculator(simulationPattern) : null,
+    [simulationPattern],
+  );
+  const resolvedSimulatorInputs = useMemo(() => {
+    if (!simulationPattern || !simulationCalculator) return {};
+    return Object.fromEntries(simulationCalculator.inputs.map(input => [
+      input.key,
+      inputValue(simInputs, input, simulationPattern),
+    ]));
+  }, [simulationPattern, simulationCalculator, simInputs]);
+  const simulatedSignals = useMemo(() => {
+    if (!simulationPattern || !simulationCalculator) return {};
+    return simulationCalculator.calculate(simulationPattern, resolvedSimulatorInputs);
+  }, [simulationPattern, simulationCalculator, resolvedSimulatorInputs]);
+  const simulatedContributions = useMemo(() => {
+    if (!simulationPattern || !simulationFormula) return [];
+    return simulationFormula.signals.map(signal => {
+      const normalized = simulatedSignals[signal.key]?.normalized ?? 0;
+      const weight = parameter(simulationPattern, `${signal.key}_weight`, 0);
+      return {
+        ...signal,
+        rawEvidence: simulatedSignals[signal.key]?.rawEvidence ?? '—',
+        normalized,
+        weight,
+        contribution: normalized * weight,
+      };
+    });
+  }, [simulationPattern, simulationFormula, simulatedSignals]);
+  const simulatedUnclampedScore = useMemo(() => {
+    if (!simulationPattern) return 0;
+    return simulationPattern.base_score + simulatedContributions.reduce(
+      (sum, signal) => sum + signal.contribution,
+      0,
+    );
+  }, [simulationPattern, simulatedContributions]);
   const simulatedScore = useMemo(() => {
     if (!simulationPattern) return 0;
-    const weighted = Object.entries(simulationPattern.parameters)
-      .filter(([key]) => key.endsWith('_weight'))
-      .reduce((sum, [key, weight]) => {
-        const signal = key.slice(0, -'_weight'.length);
-        return sum + Number(weight) * ((simSignals[signal] || 0) / 100);
-      }, 0);
     return Math.max(
       simulationPattern.minimum_score,
-      Math.min(simulationPattern.maximum_score, simulationPattern.base_score + weighted),
+      Math.min(simulationPattern.maximum_score, simulatedUnclampedScore),
     );
-  }, [simulationPattern, simSignals]);
+  }, [simulationPattern, simulatedUnclampedScore]);
 
   const mutate = async (path: string, method: string, body?: unknown) => {
     setSaving(true);
@@ -396,7 +598,10 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
               <section>
                 <h4 className="mb-2 text-sm font-semibold text-gray-700">Detector scoring</h4>
                 <div className="space-y-3">
-                  {policy.patterns.map((pattern, index) => {
+                  {orderedPatterns.map(pattern => {
+                    const index = policy.patterns.findIndex(
+                      item => item.pattern_type === pattern.pattern_type,
+                    );
                     const formula = detectorFormula(pattern);
                     return (
                     <details key={pattern.pattern_type} className="rounded-lg border border-gray-200 p-4">
@@ -455,26 +660,96 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
               </section>
 
               <section className="rounded-lg border border-blue-100 bg-blue-50/40 p-4">
-                <h4 className="text-sm font-semibold text-gray-700">Score simulator</h4>
-                <p className="mt-1 text-xs text-gray-500">Explore the active policy without changing any values.</p>
-                <div className="mt-3 grid gap-4 lg:grid-cols-[16rem_1fr_8rem]">
-                  <select value={simPattern} onChange={event => { setSimPattern(event.target.value); setSimSignals({}); }} className="rounded-md border border-gray-300 px-3 py-2 text-sm">
-                    {bundle?.active_policy?.patterns.map(item => <option key={item.pattern_type} value={item.pattern_type}>{label(item.pattern_type)}</option>)}
-                  </select>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {Object.keys(simulationPattern?.parameters || {}).filter(key => key.endsWith('_weight')).map(key => {
-                      const signal = key.slice(0, -'_weight'.length);
-                      return <label key={signal} className="text-xs text-gray-500">{label(signal)} evidence: {simSignals[signal] || 0}%<input type="range" min="0" max="100" value={simSignals[signal] || 0} onChange={event => setSimSignals(current => ({ ...current, [signal]: Number(event.target.value) }))} className="block w-full" /></label>;
-                    })}
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-700">Finding score calculator</h4>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Enter raw detector evidence. The calculator applies the same normalization and weighting as the weekly Graph Analytics job.
+                    </p>
                   </div>
-                  <div className="rounded-lg bg-white p-3 text-center"><div className="text-xs text-gray-400">Finding score</div><div className="text-2xl font-bold text-indigo-700">{simulatedScore.toFixed(2)}</div></div>
+                  <select
+                    value={simPattern}
+                    onChange={event => { setSimPattern(event.target.value); setSimInputs({}); }}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                  >
+                    {orderedPatterns.map(item => <option key={item.pattern_type} value={item.pattern_type}>{label(item.pattern_type)}</option>)}
+                  </select>
                 </div>
+
+                {simulationPattern && simulationCalculator && (
+                  <div className="mt-4 space-y-4">
+                    <div className="rounded-md border border-blue-100 bg-white/70 p-3">
+                      <p className="text-xs text-gray-600">
+                        <strong>Scoring assumption:</strong> the detector's condition has already been met and a finding exists. This calculator determines that finding's numeric score.
+                      </p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                        {simulationCalculator.inputs.map(input => (
+                          <label key={input.key} className="block text-xs text-gray-500">
+                            {input.name}
+                            <input
+                              type="number"
+                              value={resolvedSimulatorInputs[input.key] ?? ''}
+                              min={input.minimum}
+                              max={input.maximum}
+                              step={input.step}
+                              onChange={event => setSimInputs(current => ({
+                                ...current,
+                                [input.key]: Number(event.target.value),
+                              }))}
+                              className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-800"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-md border border-blue-100 bg-white">
+                      <table className="min-w-full text-left text-xs">
+                        <thead className="bg-blue-50 text-gray-600">
+                          <tr>
+                            <th className="px-3 py-2 font-semibold">Signal</th>
+                            <th className="px-3 py-2 font-semibold">Raw evidence</th>
+                            <th className="px-3 py-2 text-right font-semibold">Normalized 0–1</th>
+                            <th className="px-3 py-2 text-right font-semibold">Weight</th>
+                            <th className="px-3 py-2 text-right font-semibold">Contribution</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-blue-50">
+                          {simulatedContributions.map(signal => (
+                            <tr key={signal.key}>
+                              <td className="px-3 py-2 font-medium text-gray-700">{signal.name}</td>
+                              <td className="px-3 py-2 text-gray-600">{signal.rawEvidence}</td>
+                              <td className="px-3 py-2 text-right font-mono text-gray-700">{signal.normalized.toFixed(4)}</td>
+                              <td className="px-3 py-2 text-right font-mono text-gray-700">{formatValue(signal.weight)}</td>
+                              <td className="px-3 py-2 text-right font-mono font-semibold text-indigo-700">{signal.contribution.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="grid gap-3 rounded-md bg-indigo-950 p-4 text-white md:grid-cols-[1fr_auto] md:items-center">
+                      <div>
+                        <div className="text-xs text-indigo-200">Calculation</div>
+                        <div className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-xs">
+                          {formatValue(simulationPattern.base_score)} base
+                          {simulatedContributions.map(signal => ` + ${signal.contribution.toFixed(2)}`).join('')}
+                          {' = '}{simulatedUnclampedScore.toFixed(2)}, limited to [{formatValue(simulationPattern.minimum_score)}, {formatValue(simulationPattern.maximum_score)}]
+                        </div>
+                      </div>
+                      <div className="md:text-right">
+                        <div className="text-xs text-indigo-200">Finding score</div>
+                        <div className="text-3xl font-bold">{simulatedScore.toFixed(2)}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </section>
 
               {bundle?.can_request && <section className="rounded-lg border border-gray-200 p-4">
                 <h4 className="text-sm font-semibold text-gray-700">Request fine-tuning</h4>
                 <div className="mt-3 grid gap-3 lg:grid-cols-4">
-                  <select value={requestPattern} onChange={event => setRequestPattern(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2 text-sm"><option value="">Entire policy</option>{policy.patterns.map(item => <option key={item.pattern_type} value={item.pattern_type}>{label(item.pattern_type)}</option>)}</select>
+                  <select value={requestPattern} onChange={event => setRequestPattern(event.target.value)} className="rounded-md border border-gray-300 px-3 py-2 text-sm"><option value="">Entire policy</option>{orderedPatterns.map(item => <option key={item.pattern_type} value={item.pattern_type}>{label(item.pattern_type)}</option>)}</select>
                   <input value={requestNominations} onChange={event => setRequestNominations(event.target.value)} placeholder="Nomination numbers (optional)" className="rounded-md border border-gray-300 px-3 py-2 text-sm" />
                   <textarea value={requestText} onChange={event => setRequestText(event.target.value)} placeholder="Describe the observed issue and desired outcome" className="min-h-20 rounded-md border border-gray-300 px-3 py-2 text-sm lg:col-span-2" />
                   <textarea value={requestProposal} onChange={event => setRequestProposal(event.target.value)} placeholder="Suggested parameter changes (optional)" className="min-h-16 rounded-md border border-gray-300 px-3 py-2 text-sm lg:col-span-4" />

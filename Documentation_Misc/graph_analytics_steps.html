@@ -156,7 +156,7 @@
 </style>
 </head>
 <body>
-<h2 class="sr-only">Stage 1 deep-dive: modeling/graph_analytics.py runs initialization, loads data per tenant, runs 7 pattern detectors, deduplicates and saves findings, then populates UserGraphFlags and ApproverPairFlags snapshots.</h2>
+<h2 class="sr-only">Stage 1 deep-dive: modeling/graph_analytics.py loads tenant data, runs five independent graph detectors, saves evidence-rich findings, and replaces the current UserGraphFlags snapshot.</h2>
 
 <div class="title">Stage 1 — modeling/graph_analytics.py</div>
 
@@ -224,7 +224,7 @@
     <!-- DETECT -->
     <div class="arr-down">↓</div>
     <div class="section s-detect">
-      <div class="section-label">7 Pattern Detectors (run in series → detected_findings list)</div>
+      <div class="section-label">5 Pattern Detectors (run in series → detected_findings list)</div>
       <div class="det-grid">
         <div class="det d-ring">
           <div class="det-title">① Ring</div>
@@ -234,16 +234,8 @@
           <div class="det-title">② SuperNominator</div>
           <div class="det-sub">Out-degree &gt; mean+2σ AND &gt;3× median AND ≥5 sent.</div>
         </div>
-        <div class="det d-des">
-          <div class="det-title">③ Desert</div>
-          <div class="det-sub">Whole team (≥3 members) absent from both sides of all-time nominations.</div>
-        </div>
-        <div class="det d-aa">
-          <div class="det-title">④ ApproverAffinity</div>
-          <div class="det-sub">Per-pair approval rate ≥2× tenant baseline, min 5 nominations.</div>
-        </div>
         <div class="det d-cp">
-          <div class="det-title">⑤ CopyPaste</div>
+          <div class="det-title">③ CopyPaste</div>
           <div class="det-sub">
             Embedding cosine ≥0.92, cluster ≥3.
             <div class="embed-steps">
@@ -254,17 +246,17 @@
             </div>
           </div>
         </div>
-        <div class="det d-tl">
-          <div class="det-title">⑥ TransactionalLanguage</div>
-          <div class="det-sub">Regex: quid-pro-quo phrases in description, ≥2 hits.</div>
-        </div>
         <div class="det d-hc" style="grid-column: span 2;">
-          <div class="det-title">⑦ HiddenCandidate</div>
+          <div class="det-title">④ HiddenCandidate</div>
           <div class="det-sub">User name appears ≥5× in description text but never as BeneficiaryId. Active users only.</div>
+        </div>
+        <div class="det d-des">
+          <div class="det-title">⑤ Desert</div>
+          <div class="det-sub">Whole team (≥3 members) absent from both sides of all-time nominations.</div>
         </div>
       </div>
       <div class="note" style="margin-top:5px;">
-        All 7 detectors append to a single <code>detected_findings</code> list (pre-dedup). Each finding carries
+        All 5 detectors append to a single <code>detected_findings</code> list (pre-dedup). Each finding carries
         a deterministic SHA-256 fingerprint (TenantId + PatternType + sorted users + sorted nomination IDs).
       </div>
     </div>
@@ -289,48 +281,21 @@
     <!-- SNAPSHOT -->
     <div class="arr-down">↓</div>
     <div class="section s-snap">
-      <div class="section-label">Graph Flag Snapshots (per tenant)</div>
-      <div class="branch">
-        <div class="branch-q">UserGraphFlags empty for this tenant?</div>
-        <div class="branch-row">
-          <div class="branch-arm arm-yes">
-            <span class="badge badge-boot">BOOTSTRAP</span><br>
-            Load ALL findings from<br><code>GraphPatternFindings</code><br>
-            <span style="font-size:8.5px;">(one-time, full history)</span>
-          </div>
-          <div class="branch-arm arm-no">
-            <span class="badge badge-norm">NORMAL</span><br>
-            Use <code>detected_findings</code><br>
-            (pre-dedup, window-bounded)<br>
-            <span style="font-size:8.5px;">cost ∝ window, not table size</span>
-          </div>
-        </div>
-      </div>
+      <div class="section-label">Current Graph Flag Snapshot (per tenant)</div>
       <div style="margin-top:7px;">
         <div class="step-row">
           <div class="step-num">7</div>
           <div class="step-body">
-            <div class="step-title">MERGE → UserGraphFlags</div>
+            <div class="step-title">Replace → UserGraphFlags</div>
             <div class="step-sub">
               Aggregate per user from findings: IsInRing, RingMaxUserCount, RingMaxNominationCount,
               IsSuperNominator, IsInCopyPasteCluster, CopyPasteClusterSize,
-              HasTransactionalLanguage, IsApproverAffinity, HighestSeverity.
-              MERGE on (TenantId, UserId, AsOfDate) — idempotent rerun.
-            </div>
-          </div>
-        </div>
-        <div class="step-row">
-          <div class="step-num">8</div>
-          <div class="step-body">
-            <div class="step-title">MERGE → ApproverPairFlags</div>
-            <div class="step-sub">
-              Count (ApproverId, NominatorId, BeneficiaryId) triples from approved/paid nominations.
-              MERGE on (TenantId, ApproverId, NominatorId, BeneficiaryId, AsOfDate).
+              HighestSeverity, and FindingsJson. Same-day reruns fully replace the snapshot.
             </div>
           </div>
         </div>
       </div>
-      <div class="note">AsOfDate = today UTC. Rows are appended, never overwritten — time-series snapshots for point-in-time training joins.</div>
+      <div class="note">Graph output is consumed only by the independent Graph decision engine. RF training and inference do not read this snapshot.</div>
     </div>
 
     <!-- NEXT TENANT -->
@@ -377,13 +342,11 @@
     </div>
 
     <div class="section s-db" style="border-color:color-mix(in srgb,var(--accent-primary,#5B6AF0) 40%,transparent);">
-      <div class="section-label" style="color:var(--accent-primary,#5B6AF0);opacity:1;">Snapshot Outputs → Stage 2</div>
+      <div class="section-label" style="color:var(--accent-primary,#5B6AF0);opacity:1;">Independent Graph Snapshot Output</div>
       <span class="db-pill db-sql">dbo.UserGraphFlags</span>
-      <span class="db-pill db-sql">dbo.ApproverPairFlags</span>
       <div class="note" style="margin-top:4px;">
-        PK includes AsOfDate — append-only time series.
-        Stage 2 reads via OUTER APPLY point-in-time join.
-        Inference reads latest AsOfDate row per user.
+        Includes complete FindingsJson evidence for affected users.
+        The integrity worker reads the current successful snapshot; RF does not.
       </div>
     </div>
 
