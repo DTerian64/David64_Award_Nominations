@@ -54,9 +54,143 @@ interface Props {
   onClose: () => void;
 }
 
+interface SignalFormula {
+  key: string;
+  name: string;
+  expression: (pattern: PatternPolicy) => string;
+}
+
+interface DetectorFormula {
+  detectionCondition: (pattern: PatternPolicy) => string;
+  signals: SignalFormula[];
+}
+
 const label = (value: string) =>
   value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ')
     .replace(/\b\w/g, character => character.toUpperCase());
+
+const formatValue = (value: number) => Number.isInteger(value)
+  ? value.toLocaleString()
+  : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+
+const parameter = (pattern: PatternPolicy, key: string, fallback: number) =>
+  Number(pattern.parameters[key] ?? fallback);
+
+const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
+  Ring: {
+    detectionCondition: () => 'A directed nomination cycle containing at least 3 people is found.',
+    signals: [
+      {
+        key: 'exposure', name: 'Exposure',
+        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+      },
+      {
+        key: 'repeat', name: 'Repeat activity',
+        expression: () => 'clamp(nominations in the cycle ÷ (people in the cycle × 3), 0, 1)',
+      },
+      {
+        key: 'compactness', name: 'Compactness',
+        expression: () => 'clamp(1 − ((people in the cycle − 3) ÷ 5), 0, 1)',
+      },
+    ],
+  },
+  SuperNominator: {
+    detectionCondition: pattern => `Nomination count is at least T, where T = max(tenant mean + ${formatValue(parameter(pattern, 'standard_deviations', 2))} × σ, ${formatValue(parameter(pattern, 'median_multiplier', 3))} × tenant median, ${formatValue(parameter(pattern, 'minimum_count', 5))}).`,
+    signals: [
+      {
+        key: 'excess', name: 'Excess above threshold',
+        expression: () => 'clamp((nomination count ÷ max(T, 1)) − 1, 0, 1)',
+      },
+      {
+        key: 'volume', name: 'Volume',
+        expression: () => 'clamp(nomination count ÷ max(2 × T, 1), 0, 1)',
+      },
+      {
+        key: 'exposure', name: 'Exposure',
+        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+      },
+    ],
+  },
+  Desert: {
+    detectionCondition: pattern => `Every member of a manager's team has zero nomination activity, and the team has at least ${formatValue(parameter(pattern, 'minimum_team_size', 3))} members.`,
+    signals: [
+      {
+        key: 'team_size', name: 'Team size',
+        expression: pattern => `clamp(team members ÷ ${formatValue(parameter(pattern, 'team_size_reference', 10))}, 0, 1)`,
+      },
+    ],
+  },
+  CopyPaste: {
+    detectionCondition: pattern => `A cluster contains at least ${formatValue(parameter(pattern, 'minimum_cluster_size', 3))} nominations whose cosine similarity is at least ${formatValue(parameter(pattern, 'similarity_threshold', 0.92))}.`,
+    signals: [
+      {
+        key: 'similarity', name: 'Similarity above threshold',
+        expression: pattern => {
+          const threshold = formatValue(parameter(pattern, 'similarity_threshold', 0.92));
+          return `clamp((average similarity − ${threshold}) ÷ max(1 − ${threshold}, 0.001), 0, 1)`;
+        },
+      },
+      {
+        key: 'cluster_size', name: 'Cluster size',
+        expression: pattern => `clamp(nominations in cluster ÷ ${formatValue(parameter(pattern, 'cluster_size_reference', 8))}, 0, 1)`,
+      },
+      {
+        key: 'exposure', name: 'Exposure',
+        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+      },
+    ],
+  },
+  TransactionalLanguage: {
+    detectionCondition: pattern => `The nomination description contains at least ${formatValue(parameter(pattern, 'minimum_hits', 2))} configured transactional phrases.`,
+    signals: [
+      {
+        key: 'hit', name: 'Phrase hits',
+        expression: pattern => `clamp(transactional phrase hits ÷ ${formatValue(parameter(pattern, 'hit_reference', 6))}, 0, 1)`,
+      },
+      {
+        key: 'exposure', name: 'Exposure',
+        expression: pattern => `clamp(approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 5_000))}, 0, 1)`,
+      },
+    ],
+  },
+  HiddenCandidate: {
+    detectionCondition: pattern => `An active user's name appears at least ${formatValue(parameter(pattern, 'minimum_mentions', 5))} times in descriptions, while the user never appears as a formal beneficiary.`,
+    signals: [
+      {
+        key: 'mention', name: 'Name mentions',
+        expression: pattern => `clamp(name mentions ÷ ${formatValue(parameter(pattern, 'mention_reference', 15))}, 0, 1)`,
+      },
+    ],
+  },
+};
+
+const detectorFormula = (pattern: PatternPolicy): DetectorFormula => {
+  const configured = DETECTOR_FORMULAS[pattern.pattern_type];
+  if (configured) return configured;
+  return {
+    detectionCondition: () => 'The detector-specific eligibility condition is met.',
+    signals: Object.keys(pattern.parameters)
+      .filter(key => key.endsWith('_weight'))
+      .map(key => {
+        const signal = key.slice(0, -'_weight'.length);
+        return {
+          key: signal,
+          name: label(signal),
+          expression: () => 'clamp(detector evidence, 0, 1)',
+        };
+      }),
+  };
+};
+
+const configuredScoreFormula = (
+  pattern: PatternPolicy,
+  formula: DetectorFormula,
+) => {
+  const weightedSignals = formula.signals.map(signal =>
+    `${signal.name} × ${formatValue(parameter(pattern, `${signal.key}_weight`, 0))}`);
+  const terms = [formatValue(pattern.base_score), ...weightedSignals].join(' + ');
+  return `clamp(${terms}, ${formatValue(pattern.minimum_score)}, ${formatValue(pattern.maximum_score)})`;
+};
 
 const requestHeaders = async (impersonatedUPN?: string) => {
   const token = await getAccessToken();
@@ -262,16 +396,40 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
               <section>
                 <h4 className="mb-2 text-sm font-semibold text-gray-700">Detector scoring</h4>
                 <div className="space-y-3">
-                  {policy.patterns.map((pattern, index) => (
+                  {policy.patterns.map((pattern, index) => {
+                    const formula = detectorFormula(pattern);
+                    return (
                     <details key={pattern.pattern_type} className="rounded-lg border border-gray-200 p-4">
                       <summary className="cursor-pointer list-none">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <strong className="text-sm text-gray-800">{label(pattern.pattern_type)}</strong>
                           <span className={`rounded-full px-2 py-0.5 text-xs ${pattern.enabled_for_routing ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{pattern.enabled_for_routing ? 'Used for routing' : 'Analytics only'}</span>
                         </div>
+                        <div className="mt-2 overflow-x-auto rounded-md bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+                          <span className="mr-2 font-semibold">Finding score</span>
+                          <code className="whitespace-nowrap font-mono">{configuredScoreFormula(pattern, formula)}</code>
+                        </div>
                       </summary>
                       <div className="mt-4 space-y-4">
-                        <p className="text-xs text-gray-500">Finding score = base score + each normalized evidence signal × its weight, limited to the configured minimum and maximum.</p>
+                        <div className="rounded-md border border-indigo-100 bg-indigo-50/40 p-3 text-xs text-gray-700">
+                          <div>
+                            <span className="font-semibold text-gray-800">Detection condition: </span>
+                            {formula.detectionCondition(pattern)}
+                          </div>
+                          <div className="mt-3 font-semibold text-gray-800">Normalized signals</div>
+                          <div className="mt-1 divide-y divide-indigo-100">
+                            {formula.signals.map(signal => (
+                              <div key={signal.key} className="grid gap-1 py-2 sm:grid-cols-[12rem_1fr_6rem] sm:items-center">
+                                <span className="font-medium">{signal.name}</span>
+                                <code className="overflow-x-auto whitespace-nowrap font-mono text-[11px] text-indigo-800">{signal.expression(pattern)}</code>
+                                <span className="text-gray-500 sm:text-right">× {formatValue(parameter(pattern, `${signal.key}_weight`, 0))}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="mt-2 text-[11px] text-gray-500">
+                            Each signal is limited to 0–1 before weighting. The final result is limited to the detector's configured minimum and maximum, which must remain within 0–100.
+                          </p>
+                        </div>
                         <div className="flex flex-wrap gap-4 text-sm">
                           <label className="flex items-center gap-2"><input type="checkbox" checked={pattern.enabled} disabled={!draft} onChange={event => updatePattern(index, { enabled: event.target.checked, enabled_for_routing: event.target.checked ? pattern.enabled_for_routing : false })} />Detection enabled</label>
                           <label className="flex items-center gap-2"><input type="checkbox" checked={pattern.enabled_for_routing} disabled={!draft || !pattern.enabled} onChange={event => updatePattern(index, { enabled_for_routing: event.target.checked })} />Use for nomination routing</label>
@@ -291,7 +449,8 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
                         </div>
                       </div>
                     </details>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
 
