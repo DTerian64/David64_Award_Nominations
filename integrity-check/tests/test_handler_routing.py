@@ -166,24 +166,12 @@ class CompleteAssessmentTests(unittest.TestCase):
         for expected in (
             "RF assessment starting",
             "RF assessment completed",
-            "Graph Analytics assessment starting",
-            "Graph Analytics assessment completed",
             "GNN assessment starting",
             "GNN assessment completed",
             "Legacy and IntegrityDecisionResults persisted",
             "Rules-based routing decision",
         ):
             self.assertIn(expected, messages)
-
-        graph_completed = next(
-            record for record in logs.records
-            if record.getMessage() == "Graph Analytics assessment completed"
-        )
-        self.assertEqual(
-            graph_completed.warning_flags,
-            ["[Graph] nominator is a super-nominator outlier"],
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

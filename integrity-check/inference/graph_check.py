@@ -59,15 +59,56 @@ def assess_graph(
     tenant_id: int,
     component_status: dict | None = None,
 ) -> dict:
-    """Return the current Graph opinion; never raise to the handler."""
+    """Return the current Graph opinion and emit its nomination audit trail.
+
+    The nomination-scoped logging handler persists these records to
+    dbo.Nomination_Logs.  Keeping the lifecycle here means Graph assessments
+    remain auditable when this component is called outside the main handler.
+    """
+    nomination_id = details.get("nomination_id")
+    logger.info(
+        "Graph Analytics assessment starting",
+        extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
+    )
     try:
-        return _assess_graph_inner(details, tenant_id, component_status)
+        result = _assess_graph_inner(details, tenant_id, component_status)
     except Exception as exc:
         logger.error(
-            "Graph assessment failed for nomination %s (tenant %d): %s",
-            details.get("nomination_id"), tenant_id, exc, exc_info=True,
+            "Graph Analytics assessment failed",
+            extra={
+                "nomination_id": nomination_id,
+                "tenant_id": tenant_id,
+                "unavailable_reason": "INFERENCE_FAILED",
+                "error": str(exc),
+            },
+            exc_info=True,
         )
-        return _unavailable("INFERENCE_FAILED", component_status)
+        result = _unavailable("INFERENCE_FAILED", component_status)
+
+    logger.info(
+        "Graph Analytics assessment completed",
+        extra={
+            "nomination_id": nomination_id,
+            "tenant_id": tenant_id,
+            "model_available": result["model_available"],
+            "unavailable_reason": result.get("unavailable_reason"),
+            "unavailable_detail": result.get("unavailable_detail"),
+            "last_attempt_status": result.get("last_attempt_status"),
+            "fraud_score": result.get("fraud_score"),
+            "risk_level": result.get("risk_level"),
+            "flagged": result.get("flagged", False),
+            "warning_flags": result.get("warning_flags") or [],
+            "snapshot_as_of": result.get("snapshot_as_of"),
+            "snapshot_run_id": result.get("snapshot_run_id"),
+            "snapshot_age_days": result.get("snapshot_age_days"),
+            "scoring_strategy": result.get("scoring_strategy"),
+            "scoring_policy_version": result.get("scoring_policy_version"),
+            "winning_finding_hash": result.get("winning_finding_hash"),
+            "winning_pattern_type": result.get("winning_pattern_type"),
+            "finding_count": len(result.get("pattern_findings") or []),
+        },
+    )
+    return result
 
 
 def _assess_graph_inner(

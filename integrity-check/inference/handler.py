@@ -207,27 +207,9 @@ def handle(message_id: str, payload: dict) -> None:
         },
     )
 
-    logger.info(
-        "Graph Analytics assessment starting",
-        extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
-    )
     graph_result = graph_check.assess_graph(
         details, tenant_id, component_statuses.get("GRAPH")
     )
-    logger.info(
-        "Graph Analytics assessment completed",
-        extra={
-            "nomination_id": nomination_id,
-            "model_available": graph_result["model_available"],
-            "unavailable_reason": graph_result.get("unavailable_reason"),
-            "unavailable_detail": graph_result.get("unavailable_detail"),
-            "last_attempt_status": graph_result.get("last_attempt_status"),
-            "fraud_score": graph_result.get("fraud_score"),
-            "risk_level": graph_result.get("risk_level"),
-            "warning_flags": graph_result.get("warning_flags") or [],
-        },
-    )
-
     logger.info(
         "GNN assessment starting",
         extra={"nomination_id": nomination_id, "tenant_id": tenant_id},

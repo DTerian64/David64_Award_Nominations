@@ -3,16 +3,19 @@ graph_analytics.py
 ==================
 Stage 1 of the fraud-analytics-job pipeline.
 
-Detects five structural and semantic behavioural patterns in the Nominations
+Detects eight structural, temporal, and semantic behavioural patterns in the Nominations
 graph for each tenant and upserts findings into dbo.GraphPatternFindings.
 
 Pattern catalogue
 -----------------
-1. Ring              — directed cycles ≥ 3 hops (networkx simple_cycles)
-2. SuperNominator    — degree-distribution outlier (mean + 2σ, min 3× median)
-3. Desert            — whole team absent from both sides of the graph
-4. CopyPaste         — cosine similarity ≥ 0.92 between descriptions, min cluster 3
-5. HiddenCandidate   — name appears ≥ 5× in descriptions but never a BeneficiaryId
+1. Ring                — directed cycles ≥ 3 hops (networkx simple_cycles)
+2. BipartiteDenseBlock — highly overlapping many-to-few or few-to-many groups
+3. TemporalBurst       — nomination volume compressed into an anomalous short window
+4. SuperNominator      — out-degree distribution outlier
+5. SuperBeneficiary    — in-degree distribution outlier with broad support
+6. CopyPaste           — cosine similarity ≥ 0.92 between descriptions, min cluster 3
+7. HiddenCandidate     — name appears ≥ 5× in descriptions but never a BeneficiaryId
+8. Desert              — whole team absent from both sides of the graph
 
 Environment variables (all injected by the Container Apps Job)
 --------------------------------------------------------------
@@ -32,8 +35,9 @@ import json
 import logging
 import os
 import uuid
-from collections import defaultdict
-from datetime import datetime, timezone
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta, timezone
+from itertools import combinations
 from typing import Any
 
 import networkx as nx
@@ -250,7 +254,7 @@ def _load_nominations(
     financial exposure.  Pending/Rejected nominations are excluded so rings,
     super-nominators, and copy-paste clusters reflect committed spend.
 
-    window_days controls how far back to look. All six active detectors share
+    window_days controls how far back to look. All active detectors share
     this tenant-policy value.
 
     Set DETECTION_WINDOW_DAYS=3650 on first deploy to process full history.
@@ -499,7 +503,7 @@ def _save_findings(
     logger.info("  Saved %d new finding(s) to %s.", len(new_findings), table)
 
 
-# ── Pattern 1: Rings ──────────────────────────────────────────────────────────
+# ── Rings ─────────────────────────────────────────────────────────────────────
 
 def detect_rings(
     nominations: list[dict],
@@ -628,7 +632,7 @@ def detect_rings(
     return findings
 
 
-# ── Pattern 2: Super-nominators ───────────────────────────────────────────────
+# ── Super-nominators ──────────────────────────────────────────────────────────
 
 def detect_super_nominators(
     nominations: list[dict],
@@ -689,7 +693,442 @@ def detect_super_nominators(
     return findings
 
 
-# ── Pattern 3: Nomination deserts ─────────────────────────────────────────────
+def _as_date(value: Any) -> date | None:
+    """Normalize SQL, Python, and ISO timestamp values for temporal detectors."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+# ── Super beneficiaries ───────────────────────────────────────────────────────
+
+def detect_super_beneficiaries(
+    nominations: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """Find unusually frequent beneficiaries supported by several nominators."""
+    incoming: dict[int, list[dict]] = defaultdict(list)
+    for nomination in nominations:
+        incoming[nomination["BeneficiaryId"]].append(nomination)
+    if len(incoming) < 3:
+        return []
+
+    counts = np.array([len(items) for items in incoming.values()], dtype=float)
+    mean = float(counts.mean())
+    std = float(counts.std())
+    median = float(np.median(counts))
+    parameters = _pattern_config(policy, "SuperBeneficiary").get("parameters", {})
+    threshold = max(
+        mean + float(parameters.get("standard_deviations", 2.0)) * std,
+        float(parameters.get("median_multiplier", 3.0)) * median,
+        float(parameters.get("minimum_count", 5)),
+    )
+    minimum_unique = int(parameters.get("minimum_unique_nominators", 4))
+    unique_reference = max(float(parameters.get("unique_reference", 10)), 1.0)
+    compactness_reference = max(
+        float(parameters.get("compactness_reference_days", 14)), 1.0
+    )
+
+    findings: list[dict] = []
+    for beneficiary_id, items in incoming.items():
+        count = len(items)
+        nominators = [int(item["NominatorId"]) for item in items]
+        unique_nominators = len(set(nominators))
+        if count < threshold or unique_nominators < minimum_unique:
+            continue
+
+        dates = [
+            parsed for parsed in (_as_date(item.get("CreatedAt")) for item in items)
+            if parsed is not None
+        ]
+        span_days = (
+            (max(dates) - min(dates)).days + 1 if dates else compactness_reference + 1
+        )
+        total_amount = sum(float(item.get("Amount") or 0) for item in items)
+        nomination_ids = sorted({int(item["NominationId"]) for item in items})
+        dominant_count = max(Counter(nominators).values())
+        concentration_floor = 1.0 / unique_nominators
+        dominant_share = dominant_count / count
+        repeat_concentration = max(
+            0.0,
+            min(
+                (dominant_share - concentration_floor)
+                / max(1.0 - concentration_floor, 0.001),
+                1.0,
+            ),
+        )
+        severity = "High" if count >= threshold * 1.5 else "Medium"
+        findings.append(_finding(
+            tenant_id, run_id, "SuperBeneficiary", severity,
+            [beneficiary_id], nomination_ids,
+            f"User {beneficiary_id} received {count} nominations from "
+            f"{unique_nominators} distinct nominators "
+            f"(tenant mean={mean:.1f}, threshold={threshold:.1f}, "
+            f"activity span={span_days:.0f} day(s), "
+            f"total approved/paid: USD {total_amount:,.0f})",
+            total_amount=total_amount,
+            policy=policy,
+            signals={
+                "excess": min(max((count / max(threshold, 1)) - 1.0, 0.0), 1.0),
+                "breadth": min(unique_nominators / unique_reference, 1.0),
+                "repeat_concentration": repeat_concentration,
+                "compactness": max(
+                    0.0, 1.0 - ((span_days - 1) / compactness_reference)
+                ),
+                "exposure": min(total_amount / max(float(
+                    parameters.get("amount_reference", 10_000)
+                ), 1.0), 1.0),
+            },
+        ))
+
+    logger.info("  SuperBeneficiaries: %d detected", len(findings))
+    return findings
+
+
+# ── Temporal bursts ───────────────────────────────────────────────────────────
+
+def detect_temporal_bursts(
+    nominations: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """Find non-overlapping short windows with anomalous nomination volume."""
+    dated = [
+        (parsed, nomination)
+        for nomination in nominations
+        if (parsed := _as_date(nomination.get("CreatedAt"))) is not None
+    ]
+    if not dated:
+        return []
+
+    parameters = _pattern_config(policy, "TemporalBurst").get("parameters", {})
+    burst_days = max(int(parameters.get("burst_window_days", 3)), 1)
+    baseline_days = max(int(parameters.get("minimum_baseline_days", 21)), burst_days)
+    minimum_count = max(int(parameters.get("minimum_nominations", 8)), 1)
+    standard_deviations = float(parameters.get("standard_deviations", 3.0))
+    overlap_suppression = float(parameters.get("overlap_suppression", 0.6))
+
+    first_date = min(item[0] for item in dated)
+    last_date = max(item[0] for item in dated)
+    observed_days = (last_date - first_date).days + 1
+    if observed_days < baseline_days:
+        return []
+
+    by_date: dict[date, list[dict]] = defaultdict(list)
+    for nomination_date, nomination in dated:
+        by_date[nomination_date].append(nomination)
+
+    starts = [
+        first_date + timedelta(days=offset)
+        for offset in range(max(observed_days - burst_days + 1, 1))
+    ]
+    rolling_counts = np.array([
+        sum(
+            len(by_date.get(start + timedelta(days=offset), []))
+            for offset in range(burst_days)
+        )
+        for start in starts
+    ], dtype=float)
+    expected = float(np.median(rolling_counts))
+    median_absolute_deviation = float(
+        np.median(np.abs(rolling_counts - expected))
+    )
+    robust_deviation = max(
+        1.4826 * median_absolute_deviation,
+        float(np.sqrt(max(expected, 1.0))),
+    )
+    threshold = max(
+        minimum_count,
+        expected + standard_deviations * robust_deviation,
+    )
+
+    candidates: list[tuple[int, date, list[dict]]] = []
+    for start, count_value in zip(starts, rolling_counts):
+        count = int(count_value)
+        if count < threshold:
+            continue
+        items = [
+            nomination
+            for offset in range(burst_days)
+            for nomination in by_date.get(start + timedelta(days=offset), [])
+        ]
+        candidates.append((count, start, items))
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    accepted_sets: list[set[int]] = []
+    findings: list[dict] = []
+    for count, start, items in candidates:
+        nomination_ids = {int(item["NominationId"]) for item in items}
+        if any(
+            len(nomination_ids & existing)
+            / max(min(len(nomination_ids), len(existing)), 1)
+            >= overlap_suppression
+            for existing in accepted_sets
+        ):
+            continue
+        accepted_sets.append(nomination_ids)
+
+        nominators = [int(item["NominatorId"]) for item in items]
+        beneficiaries = [int(item["BeneficiaryId"]) for item in items]
+        affected_users = sorted(set(nominators) | set(beneficiaries))
+        total_amount = sum(float(item.get("Amount") or 0) for item in items)
+        daily_peak = max(
+            len(by_date.get(start + timedelta(days=offset), []))
+            for offset in range(burst_days)
+        )
+        dominant_participant_count = max(
+            max(Counter(nominators).values()),
+            max(Counter(beneficiaries).values()),
+        )
+        participant_concentration = dominant_participant_count / count
+        end = start + timedelta(days=burst_days - 1)
+        severity = "High" if count >= threshold * 1.5 else "Medium"
+        findings.append(_finding(
+            tenant_id, run_id, "TemporalBurst", severity,
+            affected_users, sorted(nomination_ids),
+            f"{count} nominations occurred from {start.isoformat()} through "
+            f"{end.isoformat()} (expected rolling count={expected:.1f}, "
+            f"threshold={threshold:.1f}, {len(set(nominators))} nominators, "
+            f"{len(set(beneficiaries))} beneficiaries, "
+            f"total approved/paid: USD {total_amount:,.0f})",
+            total_amount=total_amount,
+            policy=policy,
+            signals={
+                "excess": min(max((count / max(threshold, 1)) - 1.0, 0.0), 1.0),
+                "volume": min(count / max(float(
+                    parameters.get("count_reference", 20)
+                ), 1.0), 1.0),
+                "participant_concentration": participant_concentration,
+                "temporal_compactness": min(daily_peak / max(count, 1), 1.0),
+                "exposure": min(total_amount / max(float(
+                    parameters.get("amount_reference", 10_000)
+                ), 1.0), 1.0),
+            },
+        ))
+
+    logger.info("  TemporalBursts: %d detected", len(findings))
+    return findings
+
+
+def _average_pairwise_jaccard(
+    members: set[int],
+    neighbors: dict[int, set[int]],
+) -> float:
+    values = []
+    for left, right in combinations(sorted(members), 2):
+        union = neighbors[left] | neighbors[right]
+        if union:
+            values.append(len(neighbors[left] & neighbors[right]) / len(union))
+    return float(np.mean(values)) if values else 0.0
+
+
+def _overlap_components(
+    neighbors: dict[int, set[int]],
+    minimum_shared: int,
+    similarity_threshold: float,
+) -> list[set[int]]:
+    """Generate bounded dense-block candidates from neighbor-set overlap."""
+    graph = nx.Graph()
+    eligible = [
+        member for member, values in neighbors.items()
+        if len(values) >= minimum_shared
+    ]
+    graph.add_nodes_from(eligible)
+    for left, right in combinations(eligible, 2):
+        intersection = neighbors[left] & neighbors[right]
+        union = neighbors[left] | neighbors[right]
+        similarity = len(intersection) / len(union) if union else 0.0
+        if len(intersection) >= minimum_shared and similarity >= similarity_threshold:
+            graph.add_edge(left, right)
+    return [
+        set(component) for component in nx.connected_components(graph)
+        if len(component) >= 2
+    ]
+
+
+def _dense_neighbor_core(
+    members: set[int],
+    neighbors: dict[int, set[int]],
+    minimum_density: float,
+) -> set[int]:
+    """Remove incidental neighbors that are not shared by most block members."""
+    counts: dict[int, int] = defaultdict(int)
+    for member in members:
+        for neighbor in neighbors[member]:
+            counts[neighbor] += 1
+    return {
+        neighbor for neighbor, count in counts.items()
+        if count / max(len(members), 1) >= minimum_density
+    }
+
+
+# ── Bipartite dense blocks ────────────────────────────────────────────────────
+
+def detect_bipartite_dense_blocks(
+    nominations: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """Detect dense, overlapping nominator-to-beneficiary campaign blocks."""
+    outgoing: dict[int, set[int]] = defaultdict(set)
+    incoming: dict[int, set[int]] = defaultdict(set)
+    edge_items: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    for nomination in nominations:
+        left = int(nomination["NominatorId"])
+        right = int(nomination["BeneficiaryId"])
+        outgoing[left].add(right)
+        incoming[right].add(left)
+        edge_items[(left, right)].append(nomination)
+
+    parameters = _pattern_config(policy, "BipartiteDenseBlock").get(
+        "parameters", {}
+    )
+    minimum_side = max(int(parameters.get("minimum_side_size", 2)), 2)
+    minimum_large_side = max(
+        int(parameters.get("minimum_large_side_size", 3)), minimum_side
+    )
+    minimum_shared = max(int(parameters.get("minimum_shared_neighbors", 2)), 1)
+    similarity_threshold = float(parameters.get("overlap_threshold", 0.6))
+    minimum_density = float(parameters.get("minimum_density", 0.65))
+    minimum_edges = max(int(parameters.get("minimum_edges", 6)), 1)
+
+    candidate_keys: set[tuple[frozenset[int], frozenset[int]]] = set()
+    for left_group in _overlap_components(
+        outgoing, minimum_shared, similarity_threshold
+    ):
+        right_group = _dense_neighbor_core(
+            left_group, outgoing, minimum_density
+        )
+        candidate_keys.add((frozenset(left_group), frozenset(right_group)))
+    for right_group in _overlap_components(
+        incoming, minimum_shared, similarity_threshold
+    ):
+        left_group = _dense_neighbor_core(
+            right_group, incoming, minimum_density
+        )
+        candidate_keys.add((frozenset(left_group), frozenset(right_group)))
+
+    candidate_records: list[dict] = []
+    for frozen_left, frozen_right in candidate_keys:
+        left_group, right_group = set(frozen_left), set(frozen_right)
+        if (
+            len(left_group) < minimum_side
+            or len(right_group) < minimum_side
+            or max(len(left_group), len(right_group)) < minimum_large_side
+        ):
+            continue
+        internal_edges = {
+            (left, right)
+            for left in left_group for right in right_group
+            if (left, right) in edge_items
+        }
+        density = len(internal_edges) / max(
+            len(left_group) * len(right_group), 1
+        )
+        if len(internal_edges) < minimum_edges or density < minimum_density:
+            continue
+        items = [
+            item for edge in internal_edges for item in edge_items[edge]
+        ]
+        candidate_records.append({
+            "left": left_group,
+            "right": right_group,
+            "edges": internal_edges,
+            "items": items,
+            "density": density,
+        })
+
+    candidate_records.sort(
+        key=lambda item: (-item["density"], -len(item["edges"]))
+    )
+    accepted_edges: list[set[tuple[int, int]]] = []
+    findings: list[dict] = []
+    for candidate in candidate_records:
+        internal_edges = candidate["edges"]
+        if any(
+            len(internal_edges & existing)
+            / max(min(len(internal_edges), len(existing)), 1) >= 0.8
+            for existing in accepted_edges
+        ):
+            continue
+        accepted_edges.append(internal_edges)
+
+        left_group = candidate["left"]
+        right_group = candidate["right"]
+        items = candidate["items"]
+        nomination_ids = sorted({int(item["NominationId"]) for item in items})
+        total_amount = sum(float(item.get("Amount") or 0) for item in items)
+        overlap = max(
+            _average_pairwise_jaccard(left_group, outgoing),
+            _average_pairwise_jaccard(right_group, incoming),
+        )
+        exclusivity_values = [
+            len(outgoing[user] & right_group) / max(len(outgoing[user]), 1)
+            for user in left_group
+        ] + [
+            len(incoming[user] & left_group) / max(len(incoming[user]), 1)
+            for user in right_group
+        ]
+        exclusivity = float(np.mean(exclusivity_values))
+        repeat_rate = max(
+            (len(items) / max(len(internal_edges), 1)) - 1.0, 0.0
+        )
+        dates = [
+            parsed for parsed in (_as_date(item.get("CreatedAt")) for item in items)
+            if parsed is not None
+        ]
+        span_days = (max(dates) - min(dates)).days + 1 if dates else 0
+        compactness_reference = max(float(
+            parameters.get("compactness_reference_days", 14)
+        ), 1.0)
+        density = float(candidate["density"])
+        severity = "High" if density >= 0.85 else "Medium"
+        findings.append(_finding(
+            tenant_id, run_id, "BipartiteDenseBlock", severity,
+            sorted(left_group | right_group), nomination_ids,
+            f"Dense nomination block with {len(left_group)} nominators, "
+            f"{len(right_group)} beneficiaries, {len(internal_edges)} distinct "
+            f"edges, density={density:.3f}, overlap={overlap:.3f}, "
+            f"activity span={span_days} day(s), "
+            f"total approved/paid: USD {total_amount:,.0f}",
+            total_amount=total_amount,
+            policy=policy,
+            signals={
+                "density": min(max(
+                    (density - minimum_density)
+                    / max(1.0 - minimum_density, 0.001), 0.0
+                ), 1.0),
+                "overlap": min(overlap, 1.0),
+                "exclusivity": min(exclusivity, 1.0),
+                "repeat": min(repeat_rate / max(float(
+                    parameters.get("repeat_reference", 2)
+                ), 1.0), 1.0),
+                "compactness": (
+                    max(0.0, 1.0 - ((span_days - 1) / compactness_reference))
+                    if span_days else 0.0
+                ),
+                "exposure": min(total_amount / max(float(
+                    parameters.get("amount_reference", 10_000)
+                ), 1.0), 1.0),
+            },
+        ))
+
+    logger.info("  BipartiteDenseBlocks: %d detected", len(findings))
+    return findings
+
+
+# ── Nomination deserts ────────────────────────────────────────────────────────
 
 def detect_deserts(
     ever_active_ids: set[int],
@@ -831,7 +1270,7 @@ def _save_embeddings(
     logger.info("  Cached %d new embedding(s).", len(embeddings))
 
 
-# ── Pattern 4: Copy-paste fraud ───────────────────────────────────────────────
+# ── Copy-paste fraud ──────────────────────────────────────────────────────────
 
 def detect_copy_paste(
     nominations: list[dict],
@@ -1040,7 +1479,7 @@ def detect_copy_paste(
     return findings
 
 
-# ── Pattern 5: Hidden candidate ───────────────────────────────────────────────
+# ── Hidden candidate ──────────────────────────────────────────────────────────
 
 def detect_hidden_candidate(
     nominations: list[dict],
@@ -1273,13 +1712,21 @@ def _process_tenant(
         detected_findings.extend(detect_rings(
             nominations, users, tenant_id, run_id, ring_max_cluster, policy
         ))
+    if enabled("BipartiteDenseBlock"):
+        detected_findings.extend(detect_bipartite_dense_blocks(
+            nominations, tenant_id, run_id, policy
+        ))
+    if enabled("TemporalBurst"):
+        detected_findings.extend(detect_temporal_bursts(
+            nominations, tenant_id, run_id, policy
+        ))
     if enabled("SuperNominator"):
         detected_findings.extend(detect_super_nominators(
             nominations, tenant_id, run_id, policy
         ))
-    if enabled("Desert"):
-        detected_findings.extend(detect_deserts(
-            ever_active_ids, users, tenant_id, run_id, policy
+    if enabled("SuperBeneficiary"):
+        detected_findings.extend(detect_super_beneficiaries(
+            nominations, tenant_id, run_id, policy
         ))
     if enabled("CopyPaste"):
         detected_findings.extend(detect_copy_paste(
@@ -1288,6 +1735,10 @@ def _process_tenant(
     if enabled("HiddenCandidate"):
         detected_findings.extend(detect_hidden_candidate(
             nominations, users, tenant_id, run_id, policy=policy
+        ))
+    if enabled("Desert"):
+        detected_findings.extend(detect_deserts(
+            ever_active_ids, users, tenant_id, run_id, policy
         ))
 
     _save_findings(conn, detected_findings, findings_table, existing_hashes)

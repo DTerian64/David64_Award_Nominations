@@ -20,8 +20,8 @@ from routers.setup_router import (
 
 def _patterns():
     names = [
-        "Ring", "SuperNominator", "CopyPaste", "HiddenCandidate",
-        "Desert",
+        "Ring", "BipartiteDenseBlock", "TemporalBurst", "SuperNominator",
+        "SuperBeneficiary", "CopyPaste", "HiddenCandidate", "Desert",
     ]
     return [
         GraphPatternPolicy(

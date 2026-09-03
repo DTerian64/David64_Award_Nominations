@@ -22,7 +22,10 @@ from openpyxl.utils import get_column_letter
 
 PATTERN_LABEL = {
     "Ring":                  "Nomination Ring",
+    "BipartiteDenseBlock":   "Bipartite Dense Block",
+    "TemporalBurst":         "Temporal Burst",
     "SuperNominator":        "Super Nominator",
+    "SuperBeneficiary":      "Super Beneficiary",
     "Desert":                "Nomination Desert",
     "ApproverAffinity":      "Approver Affinity (Legacy)",
     "CopyPaste":             "Copy-Paste Fraud",
@@ -31,7 +34,10 @@ PATTERN_LABEL = {
 
 PATTERN_DESC = {
     "Ring":                  "Directed cycle of mutual nominations",
+    "BipartiteDenseBlock":   "Dense many-to-few or few-to-many nomination campaign",
+    "TemporalBurst":         "Anomalous nomination volume in a short time window",
     "SuperNominator":        "Unusually high nomination volume",
+    "SuperBeneficiary":      "Unusually frequent beneficiary with broad support",
     "Desert":                "Entire team absent from all nominations",
     "ApproverAffinity":      "Historical approver finding retained for audit",
     "CopyPaste":             "Near-identical nomination descriptions",

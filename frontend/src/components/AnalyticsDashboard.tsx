@@ -128,7 +128,10 @@ interface IntegrityFinding {
 // Human-readable labels and icons per pattern type
 const PATTERN_META: Record<string, { label: string; description: string }> = {
   Ring:                { label: 'Nomination Ring',        description: 'Directed cycle of mutual nominations' },
+  BipartiteDenseBlock: { label: 'Bipartite Dense Block', description: 'Dense many-to-few or few-to-many nomination campaign' },
+  TemporalBurst:       { label: 'Temporal Burst',         description: 'Anomalous nomination volume compressed into a short window' },
   SuperNominator:      { label: 'Super Nominator',        description: 'Unusually high nomination volume' },
+  SuperBeneficiary:    { label: 'Super Beneficiary',      description: 'Unusually frequent beneficiary with broad nominator support' },
   Desert:              { label: 'Nomination Desert',      description: 'Entire team absent from all nominations' },
   ApproverAffinity:    { label: 'Approver Affinity (legacy)', description: 'Historical finding retained for audit only' },
   CopyPaste:           { label: 'Copy-Paste Fraud',       description: 'Near-identical nomination descriptions' },

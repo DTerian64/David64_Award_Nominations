@@ -287,7 +287,8 @@ class GraphRequestReview(BaseModel):
 
 
 _GRAPH_PATTERNS = {
-    "Ring", "SuperNominator", "Desert", "CopyPaste", "HiddenCandidate",
+    "Ring", "BipartiteDenseBlock", "TemporalBurst", "SuperNominator",
+    "SuperBeneficiary", "CopyPaste", "HiddenCandidate", "Desert",
 }
 _GRAPH_ROLES = {"nominator", "beneficiary"}
 _REQUEST_REVIEW_STATUSES = {

@@ -73,7 +73,10 @@ FindingId can look up full details directly in the database.
 | PatternType           | Description                                                          |
 |-----------------------|----------------------------------------------------------------------|
 | Ring                  | Directed cycle: A → B → C → A (mutual nomination loop)              |
+| BipartiteDenseBlock   | Dense many-to-few or few-to-many nomination campaign                 |
+| TemporalBurst         | Abnormal nomination volume compressed into a short rolling window    |
 | SuperNominator        | User whose nomination count is a statistical outlier (mean + 2σ)    |
+| SuperBeneficiary      | Beneficiary with outlier volume and broad nominator support          |
 | Desert                | Entire team under one manager with zero nomination activity          |
 | ApproverAffinity      | Legacy historical finding retained for audit; no longer produced    |
 | CopyPaste             | Cluster of near-identical nomination descriptions (cosine ≥ 0.92)   |

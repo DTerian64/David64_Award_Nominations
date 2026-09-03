@@ -112,6 +112,62 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(result["unavailable_reason"], "STALE_SNAPSHOT")
         self.assertEqual(result["snapshot_age_days"], 15)
 
+    @patch("inference.graph_check.db.get_graph_component_snapshot")
+    def test_emits_nomination_scoped_start_and_completed_logs(self, lookup):
+        lookup.return_value = _snapshot({
+            1: {"findings": [_finding("Ring", 82, finding_hash="ring-1")]},
+        })
+
+        with self.assertLogs("integrity_check.graph_check", "INFO") as logs:
+            graph_check.assess_graph(DETAILS, tenant_id=7)
+
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Graph Analytics assessment starting",
+                "Graph Analytics assessment completed",
+            ],
+        )
+        for record in logs.records:
+            self.assertEqual(record.nomination_id, 10)
+            self.assertEqual(record.tenant_id, 7)
+
+        completed = logs.records[-1]
+        self.assertTrue(completed.model_available)
+        self.assertEqual(completed.fraud_score, 82)
+        self.assertEqual(completed.risk_level, "HIGH")
+        self.assertEqual(completed.winning_pattern_type, "Ring")
+        self.assertEqual(completed.snapshot_run_id, "graph-run-1")
+        self.assertEqual(completed.scoring_policy_version, 2)
+        self.assertEqual(completed.finding_count, 1)
+
+    @patch(
+        "inference.graph_check.db.get_graph_component_snapshot",
+        side_effect=RuntimeError("snapshot query failed"),
+    )
+    def test_failure_log_is_nomination_scoped_and_completion_is_unavailable(self, _lookup):
+        with self.assertLogs("integrity_check.graph_check", "INFO") as logs:
+            result = graph_check.assess_graph(DETAILS, tenant_id=7)
+
+        self.assertFalse(result["model_available"])
+        self.assertEqual(result["unavailable_reason"], "INFERENCE_FAILED")
+
+        failed = next(
+            record for record in logs.records
+            if record.getMessage() == "Graph Analytics assessment failed"
+        )
+        self.assertEqual(failed.nomination_id, 10)
+        self.assertEqual(failed.tenant_id, 7)
+        self.assertEqual(failed.unavailable_reason, "INFERENCE_FAILED")
+
+        completed = logs.records[-1]
+        self.assertEqual(
+            completed.getMessage(), "Graph Analytics assessment completed"
+        )
+        self.assertEqual(completed.nomination_id, 10)
+        self.assertFalse(completed.model_available)
+        self.assertEqual(completed.unavailable_reason, "INFERENCE_FAILED")
+
 
 if __name__ == "__main__":
     unittest.main()

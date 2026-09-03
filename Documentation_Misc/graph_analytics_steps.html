@@ -156,7 +156,7 @@
 </style>
 </head>
 <body>
-<h2 class="sr-only">Stage 1 deep-dive: modeling/graph_analytics.py loads tenant data, runs five independent graph detectors, saves evidence-rich findings, and replaces the current UserGraphFlags snapshot.</h2>
+<h2 class="sr-only">Stage 1 deep-dive: modeling/graph_analytics.py loads tenant data, runs eight independent graph detectors, saves evidence-rich findings, and replaces the current UserGraphFlags snapshot.</h2>
 
 <div class="title">Stage 1 — modeling/graph_analytics.py</div>
 
@@ -224,18 +224,30 @@
     <!-- DETECT -->
     <div class="arr-down">↓</div>
     <div class="section s-detect">
-      <div class="section-label">5 Pattern Detectors (run in series → detected_findings list)</div>
+      <div class="section-label">8 Pattern Detectors (run in importance order → detected_findings list)</div>
       <div class="det-grid">
         <div class="det d-ring">
           <div class="det-title">① Ring</div>
           <div class="det-sub">networkx simple_cycles, size 3–8. frozenset dedup. Severity by $ amount.</div>
         </div>
+        <div class="det d-aa">
+          <div class="det-title">② BipartiteDenseBlock</div>
+          <div class="det-sub">Dense many-to-few or few-to-many blocks with high neighbor overlap and exclusivity.</div>
+        </div>
+        <div class="det d-tl">
+          <div class="det-title">③ TemporalBurst</div>
+          <div class="det-sub">Short rolling window exceeds a robust historical volume baseline.</div>
+        </div>
         <div class="det d-sn">
-          <div class="det-title">② SuperNominator</div>
+          <div class="det-title">④ SuperNominator</div>
           <div class="det-sub">Out-degree &gt; mean+2σ AND &gt;3× median AND ≥5 sent.</div>
         </div>
+        <div class="det d-sn">
+          <div class="det-title">⑤ SuperBeneficiary</div>
+          <div class="det-sub">In-degree outlier supported by several distinct nominators. Monitor-only by default.</div>
+        </div>
         <div class="det d-cp">
-          <div class="det-title">③ CopyPaste</div>
+          <div class="det-title">⑥ CopyPaste</div>
           <div class="det-sub">
             Embedding cosine ≥0.92, cluster ≥3.
             <div class="embed-steps">
@@ -247,16 +259,16 @@
           </div>
         </div>
         <div class="det d-hc" style="grid-column: span 2;">
-          <div class="det-title">④ HiddenCandidate</div>
+          <div class="det-title">⑦ HiddenCandidate</div>
           <div class="det-sub">User name appears ≥5× in description text but never as BeneficiaryId. Active users only.</div>
         </div>
         <div class="det d-des">
-          <div class="det-title">⑤ Desert</div>
+          <div class="det-title">⑧ Desert</div>
           <div class="det-sub">Whole team (≥3 members) absent from both sides of all-time nominations.</div>
         </div>
       </div>
       <div class="note" style="margin-top:5px;">
-        All 5 detectors append to a single <code>detected_findings</code> list (pre-dedup). Each finding carries
+        All 8 detectors append to a single <code>detected_findings</code> list (pre-dedup). Each finding carries
         a deterministic SHA-256 fingerprint (TenantId + PatternType + sorted users + sorted nomination IDs).
       </div>
     </div>

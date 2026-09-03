@@ -126,6 +126,63 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       },
     ],
   },
+  BipartiteDenseBlock: {
+    detectionCondition: pattern => `Candidate participants share at least ${formatValue(parameter(pattern, 'minimum_shared_neighbors', 2))} neighbors with pairwise Jaccard overlap of at least ${formatValue(parameter(pattern, 'overlap_threshold', 0.6))}. The resulting core must have at least ${formatValue(parameter(pattern, 'minimum_side_size', 2))} people on each side, at least ${formatValue(parameter(pattern, 'minimum_large_side_size', 3))} on one side, ${formatValue(parameter(pattern, 'minimum_edges', 6))} distinct edges, and density of at least ${formatValue(parameter(pattern, 'minimum_density', 0.65))}.`,
+    signals: [
+      {
+        key: 'density', name: 'Density above threshold',
+        expression: pattern => {
+          const threshold = formatValue(parameter(pattern, 'minimum_density', 0.65));
+          return `clamp((actual density − ${threshold}) ÷ max(1 − ${threshold}, 0.001), 0, 1)`;
+        },
+      },
+      {
+        key: 'overlap', name: 'Neighbor overlap',
+        expression: () => 'clamp(max average pairwise Jaccard overlap, 0, 1)',
+      },
+      {
+        key: 'exclusivity', name: 'Block exclusivity',
+        expression: () => 'clamp(mean share of each participant’s edges contained in the block, 0, 1)',
+      },
+      {
+        key: 'repeat', name: 'Repeat edges',
+        expression: pattern => `clamp(((nominations ÷ distinct edges) − 1) ÷ ${formatValue(parameter(pattern, 'repeat_reference', 2))}, 0, 1)`,
+      },
+      {
+        key: 'compactness', name: 'Temporal compactness',
+        expression: pattern => `clamp(1 − ((activity span days − 1) ÷ ${formatValue(parameter(pattern, 'compactness_reference_days', 14))}), 0, 1)`,
+      },
+      {
+        key: 'exposure', name: 'Exposure',
+        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+      },
+    ],
+  },
+  TemporalBurst: {
+    detectionCondition: pattern => `A ${formatValue(parameter(pattern, 'burst_window_days', 3))}-day window contains at least T nominations, where T = max(${formatValue(parameter(pattern, 'minimum_nominations', 8))}, rolling median + ${formatValue(parameter(pattern, 'standard_deviations', 3))} × robust deviation), with at least ${formatValue(parameter(pattern, 'minimum_baseline_days', 21))} days of history. Robust deviation = max(1.4826 × median absolute deviation, square root of the rolling median).`,
+    signals: [
+      {
+        key: 'excess', name: 'Excess above threshold',
+        expression: () => 'clamp((observed nominations ÷ max(T, 1)) − 1, 0, 1)',
+      },
+      {
+        key: 'volume', name: 'Burst volume',
+        expression: pattern => `clamp(observed nominations ÷ ${formatValue(parameter(pattern, 'count_reference', 20))}, 0, 1)`,
+      },
+      {
+        key: 'participant_concentration', name: 'Participant concentration',
+        expression: () => 'clamp(largest nomination count involving one participant ÷ observed nominations, 0, 1)',
+      },
+      {
+        key: 'temporal_compactness', name: 'Temporal compactness',
+        expression: () => 'clamp(largest single-day count ÷ observed nominations, 0, 1)',
+      },
+      {
+        key: 'exposure', name: 'Exposure',
+        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+      },
+    ],
+  },
   SuperNominator: {
     detectionCondition: pattern => `Nomination count is at least T, where T = max(tenant mean + ${formatValue(parameter(pattern, 'standard_deviations', 2))} × σ, ${formatValue(parameter(pattern, 'median_multiplier', 3))} × tenant median, ${formatValue(parameter(pattern, 'minimum_count', 5))}).`,
     signals: [
@@ -136,6 +193,31 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       {
         key: 'volume', name: 'Volume',
         expression: () => 'clamp(nomination count ÷ max(2 × T, 1), 0, 1)',
+      },
+      {
+        key: 'exposure', name: 'Exposure',
+        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+      },
+    ],
+  },
+  SuperBeneficiary: {
+    detectionCondition: pattern => `Nominations received are at least T, where T = max(tenant mean + ${formatValue(parameter(pattern, 'standard_deviations', 2))} × σ, ${formatValue(parameter(pattern, 'median_multiplier', 3))} × tenant median, ${formatValue(parameter(pattern, 'minimum_count', 5))}), from at least ${formatValue(parameter(pattern, 'minimum_unique_nominators', 4))} distinct nominators.`,
+    signals: [
+      {
+        key: 'excess', name: 'Excess above threshold',
+        expression: () => 'clamp((nominations received ÷ max(T, 1)) − 1, 0, 1)',
+      },
+      {
+        key: 'breadth', name: 'Nominator breadth',
+        expression: pattern => `clamp(distinct nominators ÷ ${formatValue(parameter(pattern, 'unique_reference', 10))}, 0, 1)`,
+      },
+      {
+        key: 'repeat_concentration', name: 'Repeat concentration',
+        expression: () => 'clamp((dominant nominator share − 1 ÷ distinct nominators) ÷ max(1 − 1 ÷ distinct nominators, 0.001), 0, 1)',
+      },
+      {
+        key: 'compactness', name: 'Temporal compactness',
+        expression: pattern => `clamp(1 − ((activity span days − 1) ÷ ${formatValue(parameter(pattern, 'compactness_reference_days', 14))}), 0, 1)`,
       },
       {
         key: 'exposure', name: 'Exposure',
@@ -210,6 +292,109 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
       };
     },
   },
+  BipartiteDenseBlock: {
+    inputs: [
+      { key: 'nominators', name: 'Nominators in block', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_large_side_size', 3) },
+      { key: 'beneficiaries', name: 'Beneficiaries in block', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_side_size', 2) },
+      { key: 'distinct_edges', name: 'Distinct nomination edges', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_edges', 6) },
+      { key: 'nominations', name: 'Nominations in block', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_edges', 6) },
+      { key: 'neighbor_overlap', name: 'Average neighbor overlap (0–1)', minimum: 0, maximum: 1, step: 0.01, defaultValue: pattern => parameter(pattern, 'overlap_threshold', 0.6) },
+      { key: 'exclusivity', name: 'Block exclusivity (0–1)', minimum: 0, maximum: 1, step: 0.01, defaultValue: () => 0.75 },
+      { key: 'activity_span_days', name: 'Activity span (days)', minimum: 1, step: 1, defaultValue: () => 3 },
+      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+    ],
+    calculate: (pattern, values) => {
+      const nominators = Number(values.nominators);
+      const beneficiaries = Number(values.beneficiaries);
+      const edges = Number(values.distinct_edges);
+      const nominations = Number(values.nominations);
+      const overlap = Number(values.neighbor_overlap);
+      const exclusivity = Number(values.exclusivity);
+      const span = Number(values.activity_span_days);
+      const amount = Number(values.total_amount);
+      const density = edges / Math.max(nominators * beneficiaries, 1);
+      const densityThreshold = parameter(pattern, 'minimum_density', 0.65);
+      return {
+        density: {
+          rawEvidence: `${formatValue(edges)} of ${formatValue(nominators * beneficiaries)} possible edges; density ${formatValue(density)}`,
+          normalized: clamp(
+            (density - densityThreshold) / Math.max(1 - densityThreshold, 0.001),
+          ),
+        },
+        overlap: {
+          rawEvidence: `${formatValue(overlap)} average Jaccard overlap`,
+          normalized: clamp(overlap),
+        },
+        exclusivity: {
+          rawEvidence: `${formatValue(exclusivity)} mean internal-edge share`,
+          normalized: clamp(exclusivity),
+        },
+        repeat: {
+          rawEvidence: `${formatValue(nominations)} nominations on ${formatValue(edges)} edges`,
+          normalized: clamp(
+            ((nominations / Math.max(edges, 1)) - 1)
+            / Math.max(parameter(pattern, 'repeat_reference', 2), 1),
+          ),
+        },
+        compactness: {
+          rawEvidence: `${formatValue(span)} day(s)`,
+          normalized: clamp(
+            1 - ((span - 1) / Math.max(
+              parameter(pattern, 'compactness_reference_days', 14), 1,
+            )),
+          ),
+        },
+        exposure: {
+          rawEvidence: `$${formatValue(amount)}`,
+          normalized: clamp(amount / Math.max(parameter(pattern, 'amount_reference', 10_000), 1)),
+        },
+      };
+    },
+  },
+  TemporalBurst: {
+    inputs: [
+      { key: 'observed_nominations', name: 'Nominations in burst window', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_nominations', 8) },
+      { key: 'rolling_median', name: 'Historical rolling median', minimum: 0, step: 0.1, defaultValue: () => 3 },
+      { key: 'robust_deviation', name: 'Historical robust deviation', minimum: 0, step: 0.1, defaultValue: () => 1.7 },
+      { key: 'largest_participant_count', name: 'Most nominations involving one participant', minimum: 0, step: 1, defaultValue: () => 3 },
+      { key: 'largest_day_count', name: 'Largest single-day count', minimum: 0, step: 1, defaultValue: () => 5 },
+      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+    ],
+    calculate: (pattern, values) => {
+      const observed = Number(values.observed_nominations);
+      const expected = Number(values.rolling_median);
+      const deviation = Number(values.robust_deviation);
+      const participantPeak = Number(values.largest_participant_count);
+      const dailyPeak = Number(values.largest_day_count);
+      const amount = Number(values.total_amount);
+      const threshold = Math.max(
+        parameter(pattern, 'minimum_nominations', 8),
+        expected + parameter(pattern, 'standard_deviations', 3) * deviation,
+      );
+      return {
+        excess: {
+          rawEvidence: `${formatValue(observed)} nominations; T = ${formatValue(threshold)}`,
+          normalized: clamp((observed / Math.max(threshold, 1)) - 1),
+        },
+        volume: {
+          rawEvidence: `${formatValue(observed)} nominations`,
+          normalized: clamp(observed / Math.max(parameter(pattern, 'count_reference', 20), 1)),
+        },
+        participant_concentration: {
+          rawEvidence: `${formatValue(participantPeak)} of ${formatValue(observed)} nominations`,
+          normalized: clamp(participantPeak / Math.max(observed, 1)),
+        },
+        temporal_compactness: {
+          rawEvidence: `${formatValue(dailyPeak)} of ${formatValue(observed)} nominations on busiest day`,
+          normalized: clamp(dailyPeak / Math.max(observed, 1)),
+        },
+        exposure: {
+          rawEvidence: `$${formatValue(amount)}`,
+          normalized: clamp(amount / Math.max(parameter(pattern, 'amount_reference', 10_000), 1)),
+        },
+      };
+    },
+  },
   SuperNominator: {
     inputs: [
       { key: 'nomination_count', name: 'Nominations sent', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_count', 5) },
@@ -237,6 +422,64 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
         volume: {
           rawEvidence: `${formatValue(count)} nominations; T = ${formatValue(threshold)}`,
           normalized: clamp(count / Math.max(threshold * 2, 1)),
+        },
+        exposure: {
+          rawEvidence: `$${formatValue(amount)}`,
+          normalized: clamp(amount / Math.max(parameter(pattern, 'amount_reference', 10_000), 1)),
+        },
+      };
+    },
+  },
+  SuperBeneficiary: {
+    inputs: [
+      { key: 'nomination_count', name: 'Nominations received', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_count', 5) },
+      { key: 'tenant_mean', name: 'Tenant mean', minimum: 0, step: 0.1, defaultValue: () => 2 },
+      { key: 'tenant_standard_deviation', name: 'Tenant standard deviation (σ)', minimum: 0, step: 0.1, defaultValue: () => 1 },
+      { key: 'tenant_median', name: 'Tenant median', minimum: 0, step: 0.1, defaultValue: () => 2 },
+      { key: 'unique_nominators', name: 'Distinct nominators', minimum: 1, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_unique_nominators', 4) },
+      { key: 'dominant_nominator_count', name: 'Most nominations from one nominator', minimum: 1, step: 1, defaultValue: () => 1 },
+      { key: 'activity_span_days', name: 'Activity span (days)', minimum: 1, step: 1, defaultValue: () => 3 },
+      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+    ],
+    calculate: (pattern, values) => {
+      const count = Number(values.nomination_count);
+      const mean = Number(values.tenant_mean);
+      const deviation = Number(values.tenant_standard_deviation);
+      const median = Number(values.tenant_median);
+      const unique = Math.max(Number(values.unique_nominators), 1);
+      const dominant = Number(values.dominant_nominator_count);
+      const span = Number(values.activity_span_days);
+      const amount = Number(values.total_amount);
+      const threshold = Math.max(
+        mean + parameter(pattern, 'standard_deviations', 2) * deviation,
+        parameter(pattern, 'median_multiplier', 3) * median,
+        parameter(pattern, 'minimum_count', 5),
+      );
+      const concentrationFloor = 1 / unique;
+      const dominantShare = dominant / Math.max(count, 1);
+      return {
+        excess: {
+          rawEvidence: `${formatValue(count)} nominations; T = ${formatValue(threshold)}`,
+          normalized: clamp((count / Math.max(threshold, 1)) - 1),
+        },
+        breadth: {
+          rawEvidence: `${formatValue(unique)} distinct nominators`,
+          normalized: clamp(unique / Math.max(parameter(pattern, 'unique_reference', 10), 1)),
+        },
+        repeat_concentration: {
+          rawEvidence: `${formatValue(dominant)} of ${formatValue(count)} nominations from the dominant nominator`,
+          normalized: clamp(
+            (dominantShare - concentrationFloor)
+            / Math.max(1 - concentrationFloor, 0.001),
+          ),
+        },
+        compactness: {
+          rawEvidence: `${formatValue(span)} day(s)`,
+          normalized: clamp(
+            1 - ((span - 1) / Math.max(
+              parameter(pattern, 'compactness_reference_days', 14), 1,
+            )),
+          ),
         },
         exposure: {
           rawEvidence: `$${formatValue(amount)}`,

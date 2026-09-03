@@ -373,8 +373,9 @@ SCHEMAS = [
             "name": "graph_get_integrity_findings",
             "description": (
                 "Query GraphPatternFindings — fraud and integrity patterns from the weekly analytics job. "
-                "All filters optional. Use for questions about rings, suspicious clusters, copy-paste, "
-                "super-nominators, deserts, and hidden candidates, "
+                "All filters optional. Use for questions about rings, dense nomination blocks, "
+                "temporal bursts, super-nominators, super-beneficiaries, copy-paste, deserts, "
+                "and hidden candidates, "
                 "or historical approver-affinity audit records, "
                 "or to look up a specific finding by FindingId."
             ),
@@ -383,8 +384,9 @@ SCHEMAS = [
                 "properties": {
                     "pattern_type": {
                         "type": "string",
-                        "enum": ["Ring", "SuperNominator", "Desert", "ApproverAffinity",
-                                 "CopyPaste", "HiddenCandidate"],
+                        "enum": ["Ring", "BipartiteDenseBlock", "TemporalBurst",
+                                 "SuperNominator", "SuperBeneficiary", "CopyPaste",
+                                 "HiddenCandidate", "Desert", "ApproverAffinity"],
                         "description": "Filter to a specific pattern type."
                     },
                     "severity": {
