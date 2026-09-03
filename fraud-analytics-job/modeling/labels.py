@@ -22,8 +22,10 @@ Inference risk and score fields are deliberately absent from this mapping.
 Training behavior
 -----------------
 Eligible human labels are the only supervised ground truth. Explicitly excluded
-reviews and unreviewed rows remain NULL; the RF may use its own isolated
-cold-start bootstrap when no positive human labels exist, while the GNN skips.
+reviews and unreviewed rows remain NULL in this shared contract. RF may create
+in-memory Isolation Forest pseudo-labels until it has at least 50 human labels
+with at least five examples of each class. RF preserves human labels and never
+bootstraps explicitly excluded reviews. GNN never consumes these pseudo-labels.
 
 Scope
 -----

@@ -659,7 +659,11 @@ def save_integrity_decision_results(
     review_scope: Optional[str],
     decisive_engines: list[str],
 ) -> None:
-    """Persist the canonical four-engine decision for one nomination."""
+    """Persist a decision with the tenant resolved from its nomination owner.
+
+    TenantId is convenience data, not a replacement for authorization checks.
+    A retry cannot silently reassign an existing decision to another tenant.
+    """
     composite_score = (
         decision.get("final_score") if decision.get("decision_available") else None
     )
@@ -672,12 +676,18 @@ def save_integrity_decision_results(
         cursor = conn.cursor()
         cursor.execute("""
             MERGE dbo.IntegrityDecisionResults AS target
-            USING (SELECT ? AS NominationId, ? AS SourceMessageId) AS source
+            USING (
+                SELECT n.NominationId, u.TenantId, ? AS SourceMessageId
+                FROM dbo.Nominations n
+                JOIN dbo.Users u ON u.UserId = n.NominatorId
+                WHERE n.NominationId = ? AND u.TenantId IS NOT NULL
+            ) AS source
                 ON target.NominationId = source.NominationId
-            WHEN MATCHED AND (
+            WHEN MATCHED AND target.TenantId = source.TenantId AND (
                 target.SourceMessageId = source.SourceMessageId
                 OR target.SourceMessageId IS NULL
             ) THEN UPDATE SET
+                TenantId = source.TenantId,
                 DecisionSchemaVersion = ?, PolicyVersion = ?, SourceMessageId = ?,
                 RfResultJson = ?, GraphResultJson = ?, GnnResultJson = ?,
                 SemanticResultJson = ?, CompositeScore = ?,
@@ -685,14 +695,14 @@ def save_integrity_decision_results(
                 FinalRoute = ?, RoutingRule = ?, ReviewScope = ?,
                 ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
             WHEN NOT MATCHED THEN INSERT (
-                NominationId, DecisionSchemaVersion, PolicyVersion,
+                TenantId, NominationId, DecisionSchemaVersion, PolicyVersion,
                 SourceMessageId, RfResultJson, GraphResultJson, GnnResultJson,
                 SemanticResultJson, CompositeScore, CompositeRiskLevel,
                 DecisiveEnginesJson, FinalRoute, RoutingRule, ReviewScope,
                 ScoredBy
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (source.TenantId, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, (
-            nomination_id, message_id,
+            message_id, nomination_id,
             2, policy_version, message_id,
             engine_json["rf"], engine_json["graph"], engine_json["gnn"],
             engine_json["semantic"], composite_score, decision.get("risk_level"),
@@ -705,7 +715,8 @@ def save_integrity_decision_results(
 
         if cursor.rowcount == 0:
             raise RuntimeError(
-                "Integrity decision already exists for a different source message: "
+                "Integrity decision was not saved: nomination tenant is unresolved "
+                "or an existing decision has a different tenant/source message: "
                 f"nomination {nomination_id}"
             )
         conn.commit()

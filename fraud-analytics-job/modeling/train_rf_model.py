@@ -146,6 +146,9 @@ def _upload_artefact(local_path: Path) -> None:
 # Minimum labelled samples needed to train a meaningful model.
 # Below this threshold the tenant is skipped with a warning.
 MIN_TRAINING_SAMPLES = 50
+# Five per class keeps both classes represented in the 20% stratified holdout.
+MIN_TRAINING_CLASS_SAMPLES = 5
+RF_BOOTSTRAP_SOURCE = 'rf_bootstrap'
 
 # All generated artefacts (.pkl models, .png charts) are written here.
 OUTPUT_DIR = JOB_DIR / "Output"
@@ -550,7 +553,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     """
-    Derive pseudo-labels when no positive human disposition exists yet (cold start).
+    Derive RF-only pseudo-labels while human labels are insufficient.
 
     Isolation Forest strategy:
         Trains an IsolationForest on P2P_FEATURE_COLUMNS with no labels.
@@ -561,19 +564,19 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
         These pseudo-labels bootstrap the first Random Forest regardless of
         whether the data is synthetic or real-world.
 
-    Returns None if fewer than MIN_FRAUD_BOOTSTRAP labels are found (the
-    dataset is too clean or too small to train a meaningful model).
+    Human labels are preserved; explicit exclusions remain unlabelled. The
+    caller checks volume and class balance after combining human/pseudo labels.
+    LabelSource is changed only on this in-memory copy, never in the database.
     """
-    MIN_FRAUD_BOOTSTRAP = 5
-
     df = df.copy()
     excluded_mask = df['LabelSource'].eq(labels_mod.SOURCE_EXCLUDED)
+    df.loc[excluded_mask, 'IsFraud'] = pd.NA
     bootstrap_index = df.index[
         df['LabelSource'].eq(labels_mod.SOURCE_UNLABELLED)
     ]
     if len(bootstrap_index) == 0:
         print(f"[Tenant {tenant_id}] No unreviewed nominations are available for bootstrap.")
-        return None
+        return df
     df.loc[bootstrap_index, 'IsFraud'] = 0
 
     # RF cold-start labels are derived only from its own feature space. Graph
@@ -593,16 +596,17 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     if_preds = iso.predict(X)
     anomaly_index = bootstrap_index[if_preds == -1]
     df.loc[anomaly_index, 'IsFraud'] = 1
+    df.loc[bootstrap_index, 'LabelSource'] = RF_BOOTSTRAP_SOURCE
 
-    if_fraud_n = int(df['IsFraud'].sum())
+    if_fraud_n = len(anomaly_index)
     print(
         f"[Tenant {tenant_id}] Isolation Forest pseudo-labels: "
-        f"{if_fraud_n} anomalies ({if_fraud_n / len(df) * 100:.1f}%) "
+        f"{if_fraud_n} anomalies ({if_fraud_n / len(bootstrap_index) * 100:.1f}%) "
         f"from {len(bootstrap_index)} unreviewed nominations  (contamination=0.10)"
     )
 
     fraud_n = int(df['IsFraud'].sum())
-    eligible_count = int((~excluded_mask).sum())
+    eligible_count = int(df['IsFraud'].notna().sum())
     legit_n = eligible_count - fraud_n
 
     print(
@@ -611,16 +615,75 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
         f"{legit_n} legitimate, {int(excluded_mask.sum())} excluded"
     )
 
-    if fraud_n < MIN_FRAUD_BOOTSTRAP:
-        print(
-            f"[Tenant {tenant_id}] Only {fraud_n} fraud pseudo-label(s); "
-            f"need at least {MIN_FRAUD_BOOTSTRAP} for a meaningful model. "
-            "Skipping. The backend will return UNKNOWN/MANUAL_REVIEW until "
-            "more data accumulates."
-        )
-        return None
-
     return df
+
+
+def prepare_rf_training_data(
+    df: pd.DataFrame, tenant_id: int,
+) -> tuple[pd.DataFrame | None, dict]:
+    """Select supervised vs RF bootstrap training without changing source data."""
+    df = df.copy()
+    human = df['LabelSource'].eq(labels_mod.SOURCE_HRBP)
+    if not df.loc[human, 'IsFraud'].isin([0, 1]).all():
+        raise ValueError('Human RF training labels must be 0 or 1')
+    # Neither legacy model outputs nor explicit exclusions are training targets.
+    df.loc[~human, 'IsFraud'] = pd.NA
+    human_count = int(human.sum())
+    human_fraud = int(df.loc[human, 'IsFraud'].eq(1).sum())
+    human_legitimate = human_count - human_fraud
+    unlabelled_count = int(df['LabelSource'].eq(labels_mod.SOURCE_UNLABELLED).sum())
+    supervised = (
+        human_count >= MIN_TRAINING_SAMPLES
+        and min(human_fraud, human_legitimate) >= MIN_TRAINING_CLASS_SAMPLES
+    )
+    diagnostics = {
+        'nomination_count': len(df),
+        'human_label_count': human_count,
+        'human_fraud_count': human_fraud,
+        'human_legitimate_count': human_legitimate,
+        'unlabelled_count': unlabelled_count,
+        'excluded_count': int(df['LabelSource'].eq(labels_mod.SOURCE_EXCLUDED).sum()),
+        'training_mode': 'SUPERVISED' if supervised else (
+            'BOOTSTRAP_HYBRID' if human_count else 'BOOTSTRAP'
+        ),
+        'minimum_training_samples': MIN_TRAINING_SAMPLES,
+        'minimum_class_samples': MIN_TRAINING_CLASS_SAMPLES,
+    }
+    if not supervised and unlabelled_count and human_count + unlabelled_count >= MIN_TRAINING_SAMPLES:
+        df = bootstrap_fraud_labels(df, tenant_id)
+
+    pseudo = df['LabelSource'].eq(RF_BOOTSTRAP_SOURCE) & df['IsFraud'].notna()
+    training = df.loc[(human | pseudo) & df['IsFraud'].notna()].copy()
+    training['IsFraud'] = training['IsFraud'].astype(int)
+    diagnostics.update({
+        'pseudo_label_count': int(pseudo.sum()),
+        'pseudo_fraud_count': int(df.loc[pseudo, 'IsFraud'].eq(1).sum()),
+        'pseudo_legitimate_count': int(df.loc[pseudo, 'IsFraud'].eq(0).sum()),
+        'training_samples': len(training),
+        'training_fraud_count': int(training['IsFraud'].eq(1).sum()),
+        'training_legitimate_count': int(training['IsFraud'].eq(0).sum()),
+    })
+    print(f'[Tenant {tenant_id}] RF training labels: {diagnostics}')
+    if (
+        len(training) < MIN_TRAINING_SAMPLES
+        or min(diagnostics['training_fraud_count'], diagnostics['training_legitimate_count'])
+        < MIN_TRAINING_CLASS_SAMPLES
+    ):
+        return None, {
+            **diagnostics,
+            'skipped': True,
+            'reason_code': 'BOOTSTRAP_UNAVAILABLE',
+            'reason_detail': (
+                f'{human_count} human labels + {diagnostics["pseudo_label_count"]} RF pseudo-labels; '
+                f'{diagnostics["training_fraud_count"]} fraud / '
+                f'{diagnostics["training_legitimate_count"]} legitimate. '
+                f'Requires {MIN_TRAINING_SAMPLES} labels and at least '
+                f'{MIN_TRAINING_CLASS_SAMPLES} of each class. '
+                'More eligible nominations or human adjudications are needed; '
+                'the existing serving model is unchanged.'
+            ),
+        }
+    return training, diagnostics
 
 
 # ============================================================================
@@ -657,12 +720,16 @@ def train_model(
     df: pd.DataFrame,
     tenant_id: int,
     tenant_name: str | None = None,
-) -> tuple[dict, dict]:
+) -> tuple[dict | None, dict]:
     """
     Train a Random Forest for one tenant and persist it to
     Output/random_forest_tenant_{tenant_id}.pkl.
     """
     print(f"\n[Tenant {tenant_id}] Training model ...")
+
+    if len(df) < MIN_TRAINING_SAMPLES:
+        _, diagnostics = prepare_rf_training_data(df, tenant_id)
+        return None, diagnostics
 
     # Load embedding model once per training run (shared across all tenants
     # in the same process to avoid reloading the ~90 MB weights repeatedly).
@@ -673,35 +740,16 @@ def train_model(
 
     df, category_fraud_rate, global_fraud_rate = extract_features(df)
 
-    # If no P2P scores have been recorded yet (cold start), derive labels
-    # from behavioural patterns.  If no patterns exist either (clean new
-    # tenant), bootstrap_fraud_labels returns None — skip gracefully.
-    if df['IsFraud'].sum() == 0:
-        print(
-            f"[Tenant {tenant_id}] ⚠  No P2P fraud labels found — "
-            "bootstrapping from behavioural patterns."
-        )
-        df = bootstrap_fraud_labels(df, tenant_id)
-        if df is None:
-            return None, {'skipped': True}
-
-    df_train = df[df['IsFraud'].notna()].copy()
-    if len(df_train) < MIN_TRAINING_SAMPLES:
-        raise ValueError(
-            f"[Tenant {tenant_id}] Only {len(df_train)} labelled samples — "
-            f"need at least {MIN_TRAINING_SAMPLES} to train.  "
-            f"Run the load generator and label more data first."
-        )
-
+    df_train, label_diagnostics = prepare_rf_training_data(df, tenant_id)
+    if df_train is None:
+        return None, label_diagnostics
     n_fraud = int(df_train['IsFraud'].sum())
     n_legit = int((df_train['IsFraud'] == 0).sum())
-    if n_fraud == 0 or n_legit == 0:
-        raise ValueError(
-            f"[Tenant {tenant_id}] Training set has only one class "
-            f"(fraud={n_fraud}, legitimate={n_legit}). "
-            "A classifier requires both classes. "
-            "Run more load test traffic or check bootstrap thresholds."
-        )
+
+    label_diagnostics['evaluation_basis'] = (
+        'HUMAN_LABEL_HOLDOUT' if label_diagnostics['training_mode'] == 'SUPERVISED'
+        else 'BOOTSTRAP_LABEL_HOLDOUT_NOT_INDEPENDENT'
+    )
 
     print(
         f"[Tenant {tenant_id}]   Class balance — "
@@ -741,7 +789,7 @@ def train_model(
         y_proba_ = rf_.predict_proba(X_te_s)[:, 1]
 
         print(f"\n{'='*60}")
-        print(f"P2P MODEL EVALUATION — Tenant {tenant_id}")
+        print(f"P2P MODEL EVALUATION — Tenant {tenant_id} — {label_diagnostics['evaluation_basis']}")
         print(f"{'='*60}")
         print(classification_report(y_te, y_pred_, target_names=['Legitimate', 'Fraud']))
         print("Confusion Matrix:")
@@ -770,6 +818,7 @@ def train_model(
     model_data = {
         'model_version':         model_version,
         'feature_contract':      RF_FEATURE_CONTRACT,
+        'training_label_summary': dict(label_diagnostics),
         # P2P model — used for live submission-time fraud scoring
         'p2p_model':            p2p_rf,
         'p2p_scaler':           p2p_scaler,
@@ -796,11 +845,12 @@ def train_model(
     # Compute probability arrays from the already-loaded df so we don't need
     # a second DB round-trip and so column names are unambiguous.
     p2p_probs_viz = p2p_rf.predict_proba(
-        p2p_scaler.transform(df[P2P_FEATURE_COLUMNS].fillna(0))
+        p2p_scaler.transform(df_train[P2P_FEATURE_COLUMNS].fillna(0))
     )[:, 1]
-    create_visualizations(df, p2p_probs_viz, tenant_id, tenant_name)
+    create_visualizations(df_train, p2p_probs_viz, tenant_id, tenant_name)
 
     training_metrics = {
+        **label_diagnostics,
         'p2p_auc': p2p_auc,
         'training_samples': len(df_train), 'model_version': model_version,
     }
@@ -895,34 +945,17 @@ def main(tenants_to_process: list | None = None) -> None:
         try:
             df = load_data(tenant_id)
 
-            if len(df) < MIN_TRAINING_SAMPLES:
-                print(
-                    f"⚠  Skipping Tenant {tenant_id} — only {len(df)} samples "
-                    f"(minimum {MIN_TRAINING_SAMPLES} required)."
-                )
-                results[tenant_id] = "SKIPPED (insufficient data)"
-                _record_rf_status(
-                    tenant_id=tenant_id, attempt_status="SKIPPED",
-                    reason_code="BELOW_MINIMUM_VOLUME",
-                    reason_detail=(f"{len(df)} nominations; requires "
-                                   f"{MIN_TRAINING_SAMPLES}"),
-                    diagnostics={
-                        "nomination_count": len(df),
-                        "minimum_training_samples": MIN_TRAINING_SAMPLES,
-                    },
-                    run_id=run_id,
-                )
-                continue
-
             model_data, stats = train_model(df, tenant_id, tenant_name)
             if stats.get('skipped'):
-                print(f"⚠  Tenant {tenant_id} skipped — no fraud patterns found.")
-                results[tenant_id] = "SKIPPED (no fraud patterns — model will be trained once patterns emerge)"
+                print(f"⚠  Tenant {tenant_id} skipped — {stats['reason_detail']}")
+                results[tenant_id] = f"SKIPPED ({stats['reason_code']})"
                 _record_rf_status(
                     tenant_id=tenant_id, attempt_status="SKIPPED",
-                    reason_code="NO_FRAUD_PATTERNS",
-                    reason_detail="No bootstrap fraud patterns were available to train the RF.",
-                    diagnostics={"nomination_count": len(df)}, run_id=run_id,
+                    reason_code=stats['reason_code'],
+                    reason_detail=stats['reason_detail'],
+                    diagnostics={key: value for key, value in stats.items()
+                                 if key not in ('skipped', 'reason_code', 'reason_detail')},
+                    run_id=run_id,
                 )
                 continue
             p2p_auc_str  = f"{stats['p2p_auc']:.4f}"  if stats.get('p2p_auc')  else "n/a"
@@ -934,10 +967,7 @@ def main(tenants_to_process: list | None = None) -> None:
                 tenant_id=tenant_id, attempt_status="SUCCEEDED",
                 serving_status="AVAILABLE",
                 serving_version=model_data.get("model_version"),
-                diagnostics={
-                    "training_samples": stats["training_samples"],
-                    "p2p_auc": stats.get("p2p_auc"),
-                },
+                diagnostics=stats,
                 run_id=run_id,
             )
 

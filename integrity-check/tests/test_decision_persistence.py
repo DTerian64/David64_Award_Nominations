@@ -93,6 +93,29 @@ class DecisionPersistenceTests(unittest.TestCase):
         self.assertNotIn("FraudDecisionResults", new_sql)
         self.assertIn("message-13866", new_params)
         self.assertIn('["RF","GRAPH"]', new_params)
+        self.assertEqual(new_params[:2], ("message-13866", 13866))
+        self.assertIn("JOIN dbo.Users u ON u.UserId = n.NominatorId", new_sql)
+        self.assertIn("target.TenantId = source.TenantId", new_sql)
+        self.assertIn("TenantId = source.TenantId,", new_sql)
+        self.assertIn("TenantId, NominationId, DecisionSchemaVersion", new_sql)
+        self.assertIn("VALUES (source.TenantId,", new_sql)
+
+    def test_unresolved_tenant_or_conflicting_decision_does_not_commit(self):
+        conn = _Connection(rowcount=0)
+        with patch("utils.db._get_conn", return_value=_connection_context(conn)):
+            with self.assertRaisesRegex(RuntimeError, "tenant.*source message"):
+                db.save_integrity_decision_results(
+                    nomination_id=13866,
+                    message_id="message-13866",
+                    policy_version="max-severity-v1",
+                    decision={"decision_available": False, "risk_level": "UNKNOWN"},
+                    engine_results={name: {} for name in ("rf", "graph", "gnn", "semantic")},
+                    final_route="MANAGER_APPROVAL",
+                    routing_rule="no_available_fraud_opinion",
+                    review_scope=None,
+                    decisive_engines=[],
+                )
+        self.assertFalse(conn.committed)
 
     def test_no_available_decision_persists_null_composite_score(self):
         unavailable_document = json.dumps({
