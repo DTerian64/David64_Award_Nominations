@@ -35,9 +35,9 @@ export interface HRBPQueueItem {
   top_features:       string | null;
   feature_summary:    string | null;
   llm_explanation:    string | null;
-  decision_source:    'integrity_v2' | 'legacy';
+  decision_source:    'integrity_v2' | 'legacy' | null;
   decision_schema_version: number | null;
-  review_scope:       'FRAUD' | 'SEMANTIC' | 'FRAUD_AND_SEMANTIC' | 'LEGACY_FRAUD';
+  review_scope:       'FRAUD' | 'SEMANTIC' | 'FRAUD_AND_SEMANTIC' | 'LEGACY_FRAUD' | null;
   decisive_engines:   string[];
   engine_results:     Record<string, EngineResult | null>;
   final_route:        string | null;
@@ -190,7 +190,12 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
           Detection engine verdicts
         </p>
         <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-          Review scope: {item.review_scope.replace(/_/g, ' ')}
+          Review scope: {item.review_scope?.replace(/_/g, ' ') || (
+            item.final_route && item.final_route !== 'HRBP_REVIEW'
+              && item.status !== 'PendingHRBPReview'
+              ? 'Not applicable'
+              : 'Unavailable'
+          )}
         </span>
         {item.decisive_engines.length > 0 && (
           <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">
@@ -387,7 +392,11 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
         <div className="space-y-4">
           {queue.map(nom => {
             const decided = decisionStatus[nom.nomination_id];
-            const fraudScope = nom.review_scope !== 'SEMANTIC';
+            const fraudScope = (
+              nom.review_scope === 'FRAUD'
+              || nom.review_scope === 'FRAUD_AND_SEMANTIC'
+              || nom.review_scope === 'LEGACY_FRAUD'
+            );
             const semanticScope = (
               nom.review_scope === 'SEMANTIC'
               || nom.review_scope === 'FRAUD_AND_SEMANTIC'
@@ -553,6 +562,10 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                         : decided === 'CONFIRMED_SEMANTIC_CONCERN'
                         ? '❌ Semantic concern confirmed — nomination rejected and excluded from ML training'
                         : '❌ Integrity concern confirmed — nomination rejected'}
+                    </div>
+                  ) : !fraudScope && !semanticScope ? (
+                    <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      Review scope is unavailable. An administrator must check this nomination's integrity decision before an HRBP outcome can be recorded.
                     </div>
                   ) : (
                     <div className="space-y-3">
