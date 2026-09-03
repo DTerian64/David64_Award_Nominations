@@ -14,7 +14,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -25,6 +25,66 @@ os.environ.setdefault("AZURE_STORAGE_ACCOUNT", "teststorage")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from inference import random_forest_check
+from utils.azure_credential import credential
+
+
+class RfExplanationAuthenticationTests(unittest.TestCase):
+    def setUp(self):
+        cache = patch.object(random_forest_check, "_llm_client", None)
+        cache.start()
+        self.addCleanup(cache.stop)
+
+    def test_explanation_uses_shared_identity_without_api_key_and_reuses_client(self):
+        environment = {
+            "AZURE_OPENAI_ENDPOINT": "https://test.invalid",
+            "AZURE_OPENAI_DEPLOYMENT": "configured-deployment",
+            "AZURE_OPENAI_API_VERSION": "2024-08-01-preview",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("azure.identity.get_bearer_token_provider") as provider,
+            patch("openai.AzureOpenAI") as client_factory,
+        ):
+            completion = client_factory.return_value.chat.completions.create
+            completion.return_value.choices = [
+                MagicMock(message=MagicMock(content="  Generated RF explanation.  "))
+            ]
+            for _ in range(2):
+                result = random_forest_check._generate_explanation(
+                    [{"feature": "AmountZScore", "raw_value": 1.8, "contribution": 0.13}],
+                    52, "MEDIUM",
+                )
+                self.assertEqual(result, "Generated RF explanation.")
+            provider.assert_called_once_with(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            client_factory.assert_called_once_with(
+                azure_ad_token_provider=provider.return_value,
+                api_version=environment["AZURE_OPENAI_API_VERSION"],
+                azure_endpoint=environment["AZURE_OPENAI_ENDPOINT"],
+            )
+            self.assertEqual(completion.call_count, 2)
+            self.assertEqual(completion.call_args.kwargs["model"], "configured-deployment")
+            self.assertIn("MEDIUM", completion.call_args.kwargs["messages"][0]["content"])
+
+    def test_missing_endpoint_fails_clearly_before_constructing_client(self):
+        with patch.dict(os.environ, {}, clear=True), patch("openai.AzureOpenAI") as factory:
+            with self.assertRaisesRegex(ValueError, "AZURE_OPENAI_ENDPOINT not set"):
+                random_forest_check._generate_explanation([], 52, "MEDIUM")
+        factory.assert_not_called()
+        self.assertIsNone(random_forest_check._llm_client)
+
+    def test_failed_initialization_can_retry_without_caching_failure(self):
+        client = MagicMock()
+        with (
+            patch.dict(os.environ, {"AZURE_OPENAI_ENDPOINT": "https://test.invalid"}, clear=True),
+            patch("azure.identity.get_bearer_token_provider"),
+            patch("openai.AzureOpenAI", side_effect=[RuntimeError("client unavailable"), client]),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "client unavailable"):
+                random_forest_check._get_llm_client()
+            self.assertIsNone(random_forest_check._llm_client)
+            self.assertIs(random_forest_check._get_llm_client(), client)
 
 
 class _RandomForest:

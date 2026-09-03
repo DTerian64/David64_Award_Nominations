@@ -494,6 +494,39 @@ def _compute_shap(
 
 # ── LLM explanation ───────────────────────────────────────────────────────────
 
+_llm_client = None
+_llm_client_lock = threading.Lock()
+
+
+def _get_llm_client():
+    """Cache RF's client, using the same shared identity as the other checks."""
+    global _llm_client
+    if _llm_client is not None:
+        return _llm_client
+    with _llm_client_lock:
+        if _llm_client is not None:
+            return _llm_client
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        if not endpoint:
+            raise ValueError("AZURE_OPENAI_ENDPOINT not set — RF LLM explanation unavailable")
+
+        from azure.identity import get_bearer_token_provider
+        from openai import AzureOpenAI
+        from utils.azure_credential import credential
+
+        # Pass a provider, not a captured token, so credentials can refresh.
+        # MI_CLIENT_ID selection is owned by utils.azure_credential (ADR-0001).
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        _llm_client = AzureOpenAI(
+            azure_ad_token_provider=token_provider,
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+            azure_endpoint=endpoint,
+        )
+        return _llm_client
+
+
 _REVIEW_FALLBACK_EXPLANATION = (
     "The RF assessment identified elevated risk signals in the nomination's "
     "behavioral and relationship patterns. Please review the model signal "
@@ -511,13 +544,7 @@ def _generate_explanation(
 
     Errors are handled by assess(), which records a nomination-scoped fallback.
     """
-    from openai import AzureOpenAI
-
-    client = AzureOpenAI(
-        api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
-        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-    )
+    client = _get_llm_client()
 
     signal_lines = []
     for contribution in shap_contributions:
