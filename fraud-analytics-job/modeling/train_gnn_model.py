@@ -9,14 +9,13 @@ Per tenant:
     2. Build the per-tenant heterogeneous graph from dbo.Nominations / dbo.Users.
     3. Train the encoder + decoder end to end with a three-window temporal split.
     4. Publish per-user node embeddings to dbo.GNN_UserEmbeddings.
-    5. Score every in-window nomination into dbo.GNN_FraudScores.
-    6. Upload gnn_encoder_tenant_<N>.pt (audit) and gnn_head_tenant_<N>.pt (inference).
-    7. Evict node embeddings older than the retention window.
+    5. Upload gnn_encoder_tenant_<N>.pt (audit) and gnn_head_tenant_<N>.pt (inference).
+    6. Evict node embeddings older than the retention window.
 
 Ordering rationale
 ------------------
-Runs after train_rf_model so it sees the label view the Random Forest just
-refreshed, and so a GNN failure can never block the Random Forest retrain — the
+Runs after train_rf_model for stable operations. Both models independently read
+the same human label contract, and a GNN failure cannot block the RF retrain — the
 per-stage try/except in run_job.run_stage() provides that isolation. The cost is
 that sync_holidays and forecast_models run later in the weekly window.
 
@@ -168,45 +167,8 @@ def _get_tenants(conn) -> list[int]:
     return [r[0] for r in cur.fetchall()]
 
 
-def _gnn_routing_thresholds(conn, tenant_id: int) -> dict:
-    """
-    Return this tenant's GNN-specific score-to-risk-level cut points.
-
-    Random Forest thresholds live at integrity_config.score_routing. GNN
-    thresholds live independently at integrity_config.gnn.score_routing because
-    the two models can have different score distributions and calibration.
-    These defaults match integrity-check/inference/gnn_check.py.
-    """
-    import json
-    cur = conn.cursor()
-    cur.execute("SELECT integrity_config FROM dbo.Tenants WHERE TenantId = ?", tenant_id)
-    row = cur.fetchone()
-    routing = {}
-    if row and row[0]:
-        try:
-            config = json.loads(row[0])
-            if isinstance(config, dict):
-                gnn = config.get("gnn", {})
-                if isinstance(gnn, dict):
-                    candidate = gnn.get("score_routing", {})
-                    if isinstance(candidate, dict):
-                        routing = candidate
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            logger.warning(
-                "[Tenant %d] integrity_config unreadable — using system default "
-                "GNN routing thresholds.", tenant_id,
-            )
-    return {
-        "critical": int(routing.get("critical_threshold", 85)),
-        "high":     int(routing.get("high_threshold",     65)),
-        "medium":   int(routing.get("medium_threshold",   45)),
-        "low":      int(routing.get("low_threshold",      25)),
-    }
-
-
 # ── Persistence ───────────────────────────────────────────────────────────────
-# Temp table + single MERGE per table, mirroring score_and_save_historical():
-# three SQL round-trips regardless of row count, rather than N.
+# The weekly job publishes only the user embeddings required by live inference.
 
 def _publish_embeddings(
     conn, tenant_id: int, user_ids: list[int], z: np.ndarray,
@@ -261,58 +223,6 @@ def _publish_embeddings(
                     src.EmbeddingDim, src.ModelVersion);
     """, tenant_id)
     cur.execute("DROP TABLE #gnn_emb")
-    conn.commit()
-    return len(rows)
-
-
-def _save_scores(
-    conn, nomination_ids: list[int], probs: np.ndarray, thresholds: dict,
-    model_version: str, embedding_as_of: date,
-) -> int:
-    cur = conn.cursor()
-    cur.fast_executemany = True
-
-    scores = np.clip((probs * 100).round().astype(int), 0, 100)
-    levels = np.full(len(scores), "NONE", dtype=object)
-    levels[scores >= thresholds["low"]]      = "LOW"
-    levels[scores >= thresholds["medium"]]   = "MEDIUM"
-    levels[scores >= thresholds["high"]]     = "HIGH"
-    levels[scores >= thresholds["critical"]] = "CRITICAL"
-
-    cur.execute("""
-        CREATE TABLE #gnn_scores (
-            NominationId INT, FraudScore INT, FraudProbability FLOAT,
-            RiskLevel VARCHAR(20), ModelVersion VARCHAR(64),
-            EmbeddingAsOfDate DATE, ScoredBy NVARCHAR(256)
-        )
-    """)
-    rows = [
-        (int(nid), int(scores[i]), float(probs[i]), str(levels[i]),
-         model_version, embedding_as_of, "svc:fraud-analytics-job")
-        for i, nid in enumerate(nomination_ids)
-    ]
-    # fast_executemany stays ON here: every parameter is an int, float, date or
-    # short string, all well inside the 255-byte default bind buffer. Adding a
-    # wide column to this table would hit the same truncation as the embeddings.
-    cur.executemany(
-        "INSERT INTO #gnn_scores VALUES (?, ?, ?, ?, ?, ?, ?)", rows
-    )
-    cur.execute("""
-        MERGE dbo.GNN_FraudScores AS target
-        USING #gnn_scores AS src
-            ON  target.NominationId = src.NominationId
-            AND target.ModelVersion = src.ModelVersion
-        WHEN MATCHED THEN
-            UPDATE SET FraudScore = src.FraudScore, FraudProbability = src.FraudProbability,
-                       RiskLevel = src.RiskLevel, EmbeddingAsOfDate = src.EmbeddingAsOfDate,
-                       ScoredBy = src.ScoredBy
-        WHEN NOT MATCHED THEN
-            INSERT (NominationId, FraudScore, FraudProbability, RiskLevel,
-                    ModelVersion, EmbeddingAsOfDate, ScoredBy)
-            VALUES (src.NominationId, src.FraudScore, src.FraudProbability, src.RiskLevel,
-                    src.ModelVersion, src.EmbeddingAsOfDate, src.ScoredBy);
-    """)
-    cur.execute("DROP TABLE #gnn_scores")
     conn.commit()
     return len(rows)
 
@@ -551,36 +461,6 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     user_ids = sorted(graph["user_index"], key=lambda u: graph["user_index"][u])
     n_emb = _publish_embeddings(conn, tenant_id, user_ids, z, as_of, model_version)
 
-    # Score every in-window nomination, not just the eval split, so component
-    # comparisons and historical calibration have complete coverage.
-    # Collect ids, rows and pairs in one pass so the three stay index-aligned
-    # by construction. Rebuilding the row list from a separate filter would work
-    # today only because both preserve `nominations` order — a silent coupling
-    # that a later reorder would break without any error.
-    all_ids, all_rows, all_pairs = [], [], []
-    ui = graph["user_index"]
-    for n in nominations:
-        if not bool(n.get("IsBehaviorEligible", True)):
-            continue
-        if n["NominatorId"] not in ui or n["BeneficiaryId"] not in ui:
-            continue
-        all_ids.append(n["NominationId"])
-        all_rows.append(n)
-        all_pairs.append((ui[n["NominatorId"]], ui[n["BeneficiaryId"]]))
-
-    all_x = torch.from_numpy(G._apply(
-        G.build_nomination_features(all_rows, graph["amount_mean"], graph["amount_std"]),
-        graph["nomination_scaler"]["mean"], graph["nomination_scaler"]["std"],
-    ))
-    with torch.no_grad():
-        z_all = model.embed_users(graph["data"])
-        probs = torch.sigmoid(
-            model.score(z_all, torch.tensor(all_pairs, dtype=torch.long), all_x)
-        ).numpy()
-
-    thresholds = _gnn_routing_thresholds(conn, tenant_id)
-    n_scores = _save_scores(conn, all_ids, probs, thresholds, model_version, as_of)
-
     enc_path  = OUTPUT_DIR / f"gnn_encoder_tenant_{tenant_id}.pt"
     head_path = OUTPUT_DIR / f"gnn_head_tenant_{tenant_id}.pt"
     torch.save({"encoder_state_dict": model.encoder.state_dict(),
@@ -611,14 +491,14 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         serving_as_of=as_of, run_id=run_id,
         diagnostics={
             **base_diagnostics,
-            "embedding_count": n_emb, "score_count": n_scores,
+            "embedding_count": n_emb,
             "evicted_embedding_count": n_evicted,
             "human_label_pr_auc": metrics["eval_pr_auc"],
             "human_confirmed_eval_count": len(y_ev),
         },
     )
 
-    return (f"OK ({model_version}, {n_emb} embeddings, {n_scores} scores, "
+    return (f"OK ({model_version}, {n_emb} embeddings, "
             f"{n_evicted} evicted, human-label PR-AUC "
             f"{metrics['eval_pr_auc']:.4f}, {time.monotonic() - t0:.1f}s)")
 

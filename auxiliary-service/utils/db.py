@@ -8,7 +8,7 @@ Exposes only the queries the worker needs:
   - update_processed_event_result() — update result/error after handling
   - set_approver_notified()         — stamp ApproverNotifiedAt on Nominations
   - get_hrbp_users()                — HRBP role holders for a tenant
-  - get_hrbp_fraud_flags()          — ML inference snapshot for HRBP emails
+  - get_integrity_review_evidence() — canonical integrity decision for HRBP emails
 
 Fraud detection helpers (used by nomination_submitted handler):
   - get_nominator_history()         — past nominations sent by a user
@@ -18,10 +18,9 @@ Fraud detection helpers (used by nomination_submitted handler):
   - get_pair_nomination_count()     — how many times has A nominated B?
   - get_beneficiary_descriptions()  — past descriptions written BY the beneficiary
   - set_nomination_status()         — move nomination to Pending / PendingHRBPReview
-  - save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
-  - save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
 """
 
+import json
 import logging
 import os
 import struct
@@ -333,26 +332,57 @@ def get_support_users(tenant_id: int) -> list[dict]:
         ]
 
 
-def get_hrbp_fraud_flags(nomination_id: int) -> Optional[dict]:
-    """Return the HRBP_FraudFlags snapshot for a nomination, or None."""
+def get_integrity_review_evidence(nomination_id: int) -> Optional[dict]:
+    """Return the canonical decision evidence used in an HRBP email."""
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT FraudScore, FraudProbability, RiskLevel,
-                   WarningFlags, TopFeaturesJson, FeatureSummaryJson
-            FROM   dbo.HRBP_FraudFlags
+            SELECT CompositeScore, CompositeRiskLevel, DecisiveEnginesJson,
+                   RfResultJson, GraphResultJson, GnnResultJson,
+                   SemanticResultJson
+            FROM   dbo.IntegrityDecisionResults
             WHERE  NominationId = ?
         """, (nomination_id,))
         row = cursor.fetchone()
         if not row:
             return None
+
+        documents = []
+        for raw in row[3:7]:
+            try:
+                parsed = json.loads(raw) if raw else {}
+            except (TypeError, ValueError):
+                parsed = {}
+            documents.append(parsed if isinstance(parsed, dict) else {})
+
+        findings: list[str] = []
+        for document in documents:
+            findings.extend(
+                str(item) for item in (document.get("findings") or []) if item
+            )
+        semantic = documents[3]
+        combined_decision = semantic.get("combined_decision")
+        semantic_reason = (
+            combined_decision.get("reason")
+            if isinstance(combined_decision, dict)
+            else None
+        )
+        if semantic_reason:
+            findings.append(f"[Description] {semantic_reason}")
+        findings = list(dict.fromkeys(findings))
+
+        try:
+            decisive_engines = json.loads(row[2]) if row[2] else []
+        except (TypeError, ValueError):
+            decisive_engines = []
+        if not isinstance(decisive_engines, list):
+            decisive_engines = []
+
         return {
-            "fraud_score":       row[0],
-            "fraud_probability": row[1],
-            "risk_level":        row[2],
-            "warning_flags":     row[3] or "",
-            "top_features_json": row[4],
-            "feature_summary":   row[5],
+            "fraud_score": row[0],
+            "risk_level": row[1],
+            "decisive_engines": decisive_engines,
+            "warning_flags": ", ".join(findings),
         }
 
 
@@ -592,56 +622,6 @@ def set_nomination_status(nomination_id: int, new_status: str) -> None:
             "Nomination status updated",
             extra={"nomination_id": nomination_id, "new_status": new_status},
         )
-
-
-def save_p2p_fraud_score(
-    nomination_id: int,
-    fraud_score:   int,
-    risk_level:    str,
-    warning_flags: str,
-) -> None:
-    """Upsert the P2P fraud score for a nomination."""
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            MERGE dbo.P2P_FraudScores AS target
-            USING (SELECT ? AS NominationId) AS source
-                ON target.NominationId = source.NominationId
-            WHEN MATCHED THEN
-                UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
-            WHEN NOT MATCHED THEN
-                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
-                VALUES (?,            ?,          ?,         ?);
-        """, (
-            nomination_id,
-            fraud_score, risk_level, warning_flags,
-            nomination_id, fraud_score, risk_level, warning_flags,
-        ))
-        conn.commit()
-
-
-def save_hrbp_fraud_flags(
-    nomination_id:        int,
-    fraud_score:          int,
-    fraud_probability:    float,
-    risk_level:           str,
-    warning_flags:        str,
-    top_features_json:    Optional[str],
-    feature_summary_json: Optional[str],
-) -> None:
-    """Insert the HRBP fraud flag snapshot (used by the HRBP review queue UI)."""
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO dbo.HRBP_FraudFlags
-                (NominationId, FraudScore, FraudProbability, RiskLevel,
-                 WarningFlags, TopFeaturesJson, FeatureSummaryJson, CreatedAt)
-            VALUES (?, ?, ?, ?, ?, ?, ?, GETUTCDATE())
-        """, (
-            nomination_id, fraud_score, fraud_probability, risk_level,
-            warning_flags, top_features_json, feature_summary_json,
-        ))
-        conn.commit()
 
 
 # ===========================================================================

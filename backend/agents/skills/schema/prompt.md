@@ -69,38 +69,12 @@ WHERE  ur.Role     = 'HRBP'
 | ApprovedDate          | DATETIME2      |                                                  |
 | PayedDate             | DATETIME2      |                                                  |
 
-## dbo.P2P_FraudScores
-Peer-to-peer fraud score written at nomination submission time.
-Uses features knowable at submission time (nominator/beneficiary behaviour, amount, category).
-
-| Column       | Type           | Notes                                              |
-|--------------|----------------|----------------------------------------------------|
-| P2PScoreId   | INT IDENTITY   | Primary Key                                        |
-| NominationId | INT            | FK → Nominations.NominationId (UNIQUE)             |
-| FraudScore   | INT            | 0–100; higher = more suspicious                    |
-| RiskLevel    | NVARCHAR(20)   | Exact values: NONE, LOW, MEDIUM, HIGH, CRITICAL, UNKNOWN |
-| FraudFlags   | NVARCHAR(500)  | Comma-separated human-readable fraud signals       |
-| CreatedAt    | DATETIME       | When the score was written                         |
-
-Note: P2P_FraudScores has no TenantId column — tenant isolation is enforced by
-joining through Nominations → Users:
-`JOIN dbo.Users u ON u.UserId = n.NominatorId WHERE u.TenantId = <TenantId>`
-
-## dbo.Appr_FraudScores
-Retired historical approver-score data. The weekly analytics job no longer
-trains an Approver classifier or writes new rows. Preserve this table for audit
-and rollback until a later retention decision; do not treat it as current.
-
-| Column       | Type           | Notes                                              |
-|--------------|----------------|----------------------------------------------------|
-| ApprScoreId  | INT IDENTITY   | Primary Key                                        |
-| NominationId | INT            | FK → Nominations.NominationId (UNIQUE)             |
-| FraudScore   | INT            | 0–100; higher = more suspicious                    |
-| RiskLevel    | NVARCHAR(20)   | Exact values: NONE, LOW, MEDIUM, HIGH, CRITICAL    |
-| FraudFlags   | NVARCHAR(500)  | Comma-separated warning flags                      |
-| CreatedAt    | DATETIME       | When the score was written                         |
-
-Note: same tenant isolation pattern as P2P_FraudScores — join through Nominations → Users.
+## dbo.IntegrityDecisionResults
+Canonical nomination-time record for RF, Graph, GNN, Semantic, composite
+routing, and subsequent HRBP adjudication. Component evidence is stored in
+`RfResultJson`, `GraphResultJson`, `GnnResultJson`, and `SemanticResultJson`.
+Use the indexed scalar columns for queue, routing, risk, and training filters;
+load component JSON only for nomination detail or explanation views.
 
 ## Graph Analytics scoring
 
@@ -116,8 +90,8 @@ Note: same tenant isolation pattern as P2P_FraudScores — join through Nominati
   one policy version.
 - `dbo.GraphScoringChangeRequests` stores Data Scientist fine-tuning requests
   and the Admin review outcome.
-- `dbo.Graph_FraudScores` stores the nomination-time continuous Graph score,
-  derived risk, winning finding, policy version, and snapshot provenance.
+- Nomination-time Graph evidence and snapshot provenance are stored in
+  `dbo.IntegrityDecisionResults.GraphResultJson`.
 
 All policy and request tables have `TenantId` directly or join to a policy that
 does. Always filter by the caller's tenant.

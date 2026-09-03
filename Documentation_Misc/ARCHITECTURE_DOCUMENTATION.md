@@ -353,7 +353,8 @@ Used exclusively by the AI Analytics Agent to answer natural language questions 
 8.  Return the submitted result to the frontend
 9.  integrity-check consumes the event and runs description checks plus the
     independent Random Forest, Graph Analytics, and GNN assessments
-10. Persist component scores and the combined `FraudDecisionResults` record
+10. Persist the four engine evidence documents and combined decision in
+    `IntegrityDecisionResults`
 11. Apply rules-based routing to Reject, PendingHRBPReview, or Pending
 12. Publish the resulting downstream event for notification and approval handling
 ```

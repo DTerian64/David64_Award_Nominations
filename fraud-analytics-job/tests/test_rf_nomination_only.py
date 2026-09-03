@@ -1,4 +1,4 @@
-"""The active RF artifact and historical scorer are nomination-only."""
+"""The active RF artifact and training contract are nomination-only."""
 
 import json
 import tempfile
@@ -18,17 +18,6 @@ GRAPH_DERIVED_FEATURES = {
     "GraphClusterSize",
     "SuperNominatorFlag",
 }
-
-
-class _Scaler:
-    def transform(self, values):
-        return values
-
-
-class _Model:
-    def predict_proba(self, values):
-        fraud = np.full(len(values), 0.25)
-        return np.column_stack((1 - fraud, fraud))
 
 
 class _Cursor:
@@ -58,24 +47,6 @@ class _Connection:
 
     def close(self):
         pass
-
-
-def test_historical_rf_scoring_never_writes_approver_scores():
-    frame = pd.DataFrame([{column: 0.0 for column in train_rf_model.P2P_FEATURE_COLUMNS}])
-    frame["NominationId"] = [101]
-    model_data = {
-        "p2p_model": _Model(),
-        "p2p_scaler": _Scaler(),
-        "p2p_feature_columns": train_rf_model.P2P_FEATURE_COLUMNS,
-    }
-    connection = _Connection()
-
-    with patch.object(train_rf_model, "get_db_connection", return_value=connection):
-        train_rf_model.score_and_save_historical(frame, model_data, tenant_id=1)
-
-    sql = "\n".join(connection.cursor_instance.statements)
-    assert "P2P_FraudScores" in sql
-    assert "Appr_FraudScores" not in sql
 
 
 def test_rf_feature_contract_excludes_graph_analytics_outputs():
@@ -112,6 +83,7 @@ def test_rf_training_query_does_not_read_graph_snapshots():
         train_rf_model.load_data(tenant_id=3)
 
     query = read_sql.call_args.args[0]
+    assert "P2P_FraudScores" not in query
     assert "UserGraphFlags" not in query
     assert "ApproverPairFlags" not in query
 

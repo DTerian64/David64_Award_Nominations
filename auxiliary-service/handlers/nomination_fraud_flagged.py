@@ -1,8 +1,8 @@
 """
 Handler: nomination.fraud-flagged
 
-Triggered when a nomination is held for HRBP review because the ML model
-returned a MEDIUM, HIGH, or CRITICAL fraud risk score.
+Triggered when a nomination is held for HRBP review by the integrity decision
+engine.
 
 Responsibility
 --------------
@@ -30,7 +30,6 @@ logger = logging.getLogger("auxiliary.handlers.nomination_fraud_flagged")
 
 def handle(payload: dict) -> None:
     nomination_id = payload.get("nomination_id")
-    risk_level    = payload.get("risk_level", "UNKNOWN")
 
     if not nomination_id:
         raise ValueError(f"Missing nomination_id in payload: {payload}")
@@ -40,7 +39,12 @@ def handle(payload: dict) -> None:
         raise ValueError(f"Nomination {nomination_id} not found in DB")
 
     hrbp_users  = db.get_hrbp_users(details["tenant_id"])
-    fraud_flags = db.get_hrbp_fraud_flags(nomination_id)
+    fraud_flags = db.get_integrity_review_evidence(nomination_id)
+    if not fraud_flags:
+        raise RuntimeError(
+            f"Integrity decision for nomination {nomination_id} is not available yet"
+        )
+    risk_level = fraud_flags["risk_level"] or "UNKNOWN"
     portal_url  = db.get_tenant_portal_url(details["tenant_id"])
     lang        = db.get_tenant_lang(details["tenant_id"])
 

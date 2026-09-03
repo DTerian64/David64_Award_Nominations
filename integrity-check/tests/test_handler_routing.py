@@ -168,7 +168,7 @@ class CompleteAssessmentTests(unittest.TestCase):
             "RF assessment completed",
             "GNN assessment starting",
             "GNN assessment completed",
-            "Legacy and IntegrityDecisionResults persisted",
+            "IntegrityDecisionResults persisted",
             "Rules-based routing decision",
         ):
             self.assertIn(expected, messages)

@@ -27,15 +27,11 @@ Focused subset of queries needed by inference/handler.py and its checks:
   Graph component lookups:
     get_graph_component_snapshot()  — latest complete snapshot for independent graph scoring
 
-  Fraud score persistence:
-    save_p2p_fraud_score()          — upsert into dbo.P2P_FraudScores
-    save_graph_fraud_score()        — upsert into dbo.Graph_FraudScores
-    save_integrity_decision_results() — atomically dual-write v1 and v2 decisions
-    save_hrbp_fraud_flags()         — insert into dbo.HRBP_FraudFlags
+  Decision persistence:
+    save_integrity_decision_results() — persist the canonical four-engine decision
 
   GNN model support (called by gnn_check.py):
     get_gnn_user_embeddings()       — version-matched node embeddings for a user set
-    save_gnn_fraud_score()          — upsert into dbo.GNN_FraudScores
 """
 
 import json
@@ -650,84 +646,12 @@ def get_graph_scoring_policy(
     }
 
 
-# ── Fraud score persistence ───────────────────────────────────────────────────
-
-def save_p2p_fraud_score(
-    nomination_id: int,
-    fraud_score:   int,
-    risk_level:    str,
-    warning_flags: str,
-) -> None:
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            MERGE dbo.P2P_FraudScores AS target
-            USING (SELECT ? AS NominationId) AS source
-                ON target.NominationId = source.NominationId
-            WHEN MATCHED THEN
-                UPDATE SET FraudScore = ?, RiskLevel = ?, FraudFlags = ?
-            WHEN NOT MATCHED THEN
-                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
-                VALUES (?,            ?,          ?,         ?);
-        """, (
-            nomination_id,
-            fraud_score, risk_level, warning_flags,
-            nomination_id, fraud_score, risk_level, warning_flags,
-        ))
-        conn.commit()
-
-
-def save_graph_fraud_score(
-    nomination_id: int,
-    graph_score: int,
-    risk_level: str,
-    graph_flags: Optional[str],
-    snapshot_as_of: object,
-    winning_finding_hash: Optional[str] = None,
-    winning_pattern_type: Optional[str] = None,
-    scoring_strategy: Optional[str] = None,
-    scoring_policy_version: Optional[int] = None,
-    snapshot_run_id: Optional[str] = None,
-) -> None:
-    """Upsert the graph analytics component score for one snapshot."""
-    graph_flags = graph_flags[:1000] if graph_flags else None
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            MERGE dbo.Graph_FraudScores AS target
-            USING (SELECT ? AS NominationId, ? AS SnapshotAsOfDate) AS source
-                ON  target.NominationId = source.NominationId
-                AND target.SnapshotAsOfDate = source.SnapshotAsOfDate
-            WHEN MATCHED THEN
-                UPDATE SET GraphScore = ?, RiskLevel = ?, GraphFlags = ?,
-                           WinningFindingHash = ?, WinningPatternType = ?,
-                           ScoringStrategy = ?, ScoringPolicyVersion = ?,
-                           SnapshotRunId = ?,
-                           ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
-            WHEN NOT MATCHED THEN
-                INSERT (NominationId, GraphScore, RiskLevel, GraphFlags,
-                        SnapshotAsOfDate, WinningFindingHash, WinningPatternType,
-                        ScoringStrategy, ScoringPolicyVersion, SnapshotRunId, ScoredBy)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """, (
-            nomination_id, snapshot_as_of,
-            graph_score, risk_level, graph_flags,
-            winning_finding_hash, winning_pattern_type, scoring_strategy,
-            scoring_policy_version, snapshot_run_id, _AUDIT_ACTOR,
-            nomination_id, graph_score, risk_level, graph_flags,
-            snapshot_as_of, winning_finding_hash, winning_pattern_type,
-            scoring_strategy, scoring_policy_version, snapshot_run_id, _AUDIT_ACTOR,
-        ))
-        conn.commit()
-
+# ── Canonical decision persistence ────────────────────────────────────────────
 
 def save_integrity_decision_results(
     nomination_id: int,
     message_id: str,
     policy_version: str,
-    rf_result: dict,
-    graph_result: dict,
-    gnn_result: dict,
     decision: dict,
     engine_results: dict[str, dict],
     final_route: str,
@@ -735,8 +659,7 @@ def save_integrity_decision_results(
     review_scope: Optional[str],
     decisive_engines: list[str],
 ) -> None:
-    """Atomically persist and reconcile the legacy and four-engine decisions."""
-    decisive = ",".join(decision.get("decisive_models", [])) or None
+    """Persist the canonical four-engine decision for one nomination."""
     composite_score = (
         decision.get("final_score") if decision.get("decision_available") else None
     )
@@ -748,54 +671,13 @@ def save_integrity_decision_results(
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            MERGE dbo.FraudDecisionResults AS target
-            USING (SELECT ? AS NominationId) AS source
-                ON target.NominationId = source.NominationId
-            WHEN MATCHED THEN UPDATE SET
-                PolicyVersion = ?,
-                RfAvailable = ?, RfScore = ?, RfRiskLevel = ?,
-                RfUnavailableReasonCode = ?, RfUnavailableReasonDetail = ?,
-                GraphAvailable = ?, GraphScore = ?, GraphRiskLevel = ?,
-                GraphUnavailableReasonCode = ?, GraphUnavailableReasonDetail = ?,
-                GnnAvailable = ?, GnnScore = ?, GnnRiskLevel = ?,
-                GnnUnavailableReasonCode = ?, GnnUnavailableReasonDetail = ?,
-                FinalScore = ?, FinalRiskLevel = ?, DecisiveModels = ?,
-                ScoredBy = ?, UpdatedAt = SYSUTCDATETIME()
-            WHEN NOT MATCHED THEN INSERT (
-                NominationId, PolicyVersion,
-                RfAvailable, RfScore, RfRiskLevel,
-                RfUnavailableReasonCode, RfUnavailableReasonDetail,
-                GraphAvailable, GraphScore, GraphRiskLevel,
-                GraphUnavailableReasonCode, GraphUnavailableReasonDetail,
-                GnnAvailable, GnnScore, GnnRiskLevel,
-                GnnUnavailableReasonCode, GnnUnavailableReasonDetail,
-                FinalScore, FinalRiskLevel, DecisiveModels, ScoredBy
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """, (
-            nomination_id,
-            policy_version,
-            int(bool(rf_result.get("model_available"))), rf_result.get("fraud_score"), rf_result.get("risk_level"),
-            rf_result.get("unavailable_reason"), rf_result.get("unavailable_detail"),
-            int(bool(graph_result.get("model_available"))), graph_result.get("fraud_score"), graph_result.get("risk_level"),
-            graph_result.get("unavailable_reason"), graph_result.get("unavailable_detail"),
-            int(bool(gnn_result.get("model_available"))), gnn_result.get("fraud_score"), gnn_result.get("risk_level"),
-            gnn_result.get("unavailable_reason"), gnn_result.get("unavailable_detail"),
-            decision.get("final_score"), decision.get("risk_level"), decisive,
-            _AUDIT_ACTOR,
-            nomination_id, policy_version,
-            int(bool(rf_result.get("model_available"))), rf_result.get("fraud_score"), rf_result.get("risk_level"),
-            rf_result.get("unavailable_reason"), rf_result.get("unavailable_detail"),
-            int(bool(graph_result.get("model_available"))), graph_result.get("fraud_score"), graph_result.get("risk_level"),
-            graph_result.get("unavailable_reason"), graph_result.get("unavailable_detail"),
-            int(bool(gnn_result.get("model_available"))), gnn_result.get("fraud_score"), gnn_result.get("risk_level"),
-            gnn_result.get("unavailable_reason"), gnn_result.get("unavailable_detail"),
-            decision.get("final_score"), decision.get("risk_level"), decisive, _AUDIT_ACTOR,
-        ))
-        cursor.execute("""
             MERGE dbo.IntegrityDecisionResults AS target
-            USING (SELECT ? AS NominationId) AS source
+            USING (SELECT ? AS NominationId, ? AS SourceMessageId) AS source
                 ON target.NominationId = source.NominationId
-            WHEN MATCHED THEN UPDATE SET
+            WHEN MATCHED AND (
+                target.SourceMessageId = source.SourceMessageId
+                OR target.SourceMessageId IS NULL
+            ) THEN UPDATE SET
                 DecisionSchemaVersion = ?, PolicyVersion = ?, SourceMessageId = ?,
                 RfResultJson = ?, GraphResultJson = ?, GnnResultJson = ?,
                 SemanticResultJson = ?, CompositeScore = ?,
@@ -810,7 +692,7 @@ def save_integrity_decision_results(
                 ScoredBy
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, (
-            nomination_id,
+            nomination_id, message_id,
             2, policy_version, message_id,
             engine_json["rf"], engine_json["graph"], engine_json["gnn"],
             engine_json["semantic"], composite_score, decision.get("risk_level"),
@@ -821,86 +703,11 @@ def save_integrity_decision_results(
             decisive_json, final_route, routing_rule, review_scope, _AUDIT_ACTOR,
         ))
 
-        # Read both rows back before committing. A mismatch aborts the entire
-        # transaction rather than leaving two contradictory decision records.
-        cursor.execute("""
-            SELECT
-                legacy.RfAvailable, legacy.RfScore, legacy.RfRiskLevel,
-                legacy.GraphAvailable, legacy.GraphScore, legacy.GraphRiskLevel,
-                legacy.GnnAvailable, legacy.GnnScore, legacy.GnnRiskLevel,
-                legacy.FinalScore, legacy.FinalRiskLevel,
-                idr.RfResultJson, idr.GraphResultJson,
-                idr.GnnResultJson, idr.CompositeScore,
-                idr.CompositeRiskLevel
-            FROM dbo.FraudDecisionResults AS legacy
-            INNER JOIN dbo.IntegrityDecisionResults AS idr
-                ON idr.NominationId = legacy.NominationId
-            WHERE legacy.NominationId = ?;
-        """, (nomination_id,))
-        persisted = cursor.fetchone()
-        if persisted is None:
+        if cursor.rowcount == 0:
             raise RuntimeError(
-                f"Decision dual-write reconciliation found no row for {nomination_id}"
+                "Integrity decision already exists for a different source message: "
+                f"nomination {nomination_id}"
             )
-
-        values = list(persisted)
-        mismatches: list[str] = []
-        for offset, name in ((0, "rf"), (3, "graph"), (6, "gnn")):
-            available = bool(values[offset])
-            document = json.loads(values[11 + offset // 3])
-            if available != bool(document.get("available")):
-                mismatches.append(f"{name}.available")
-            if available:
-                if values[offset + 1] != document.get("score"):
-                    mismatches.append(f"{name}.score")
-                if values[offset + 2] != document.get("risk_level"):
-                    mismatches.append(f"{name}.risk_level")
-
-        # V1 encoded "no available decision" as score 0; V2 correctly uses
-        # NULL. Treat only that documented compatibility difference as equal.
-        if values[14] is None:
-            if values[9] not in (None, 0):
-                mismatches.append("composite_score")
-        elif values[9] != values[14]:
-            mismatches.append("composite_score")
-        if values[10] != values[15]:
-            mismatches.append("composite_risk_level")
-        if mismatches:
-            logger.error(
-                "Decision dual-write reconciliation failed",
-                extra={"nomination_id": nomination_id, "mismatches": mismatches},
-            )
-            raise RuntimeError(
-                "Decision dual-write reconciliation failed: " + ", ".join(mismatches)
-            )
-
-        logger.info(
-            "Decision dual-write reconciliation passed",
-            extra={"nomination_id": nomination_id},
-        )
-        conn.commit()
-
-
-def save_hrbp_fraud_flags(
-    nomination_id:        int,
-    fraud_score:          int,
-    fraud_probability:    float,
-    risk_level:           str,
-    warning_flags:        str,
-    shap_explanations_json: Optional[str],  # JSON list of top-5 SHAP contributions
-    feature_summary_json: Optional[str],
-) -> None:
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO dbo.HRBP_FraudFlags
-                (NominationId, FraudScore, FraudProbability, RiskLevel,
-                 WarningFlags, TopFeaturesJson, FeatureSummaryJson, CreatedAt)
-            VALUES (?, ?, ?, ?, ?, ?, ?, GETUTCDATE())
-        """, (
-            nomination_id, fraud_score, fraud_probability, risk_level,
-            warning_flags, shap_explanations_json, feature_summary_json,
-        ))
         conn.commit()
 
 
@@ -1128,54 +935,3 @@ def get_gnn_user_embeddings(
             tenant_id, model_version, sorted(missing),
         )
     return out
-
-
-def save_gnn_fraud_score(
-    nomination_id:       int,
-    fraud_score:         int,
-    fraud_probability:   float,
-    risk_level:          str,
-    warning_flags:       Optional[str],
-    model_version:       str,
-    embedding_as_of:     Optional[object],
-) -> None:
-    """
-    Upsert one row into dbo.GNN_FraudScores.
-
-    The unique key is (NominationId, ModelVersion), not NominationId alone — one
-    row per nomination per training run, preserving week-over-week score drift;
-    a single-column key would overwrite the history needed for calibration.
-
-    ScoredBy records which producer wrote the row. The weekly job backfills
-    historical scores as svc:fraud-analytics-job; this path is always the live
-    submission, so it writes the module-level _AUDIT_ACTOR.
-    """
-    with _get_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            MERGE dbo.GNN_FraudScores AS target
-            USING (SELECT ? AS NominationId, ? AS ModelVersion) AS source
-                ON  target.NominationId = source.NominationId
-                AND target.ModelVersion = source.ModelVersion
-            WHEN MATCHED THEN
-                UPDATE SET FraudScore        = ?,
-                           FraudProbability  = ?,
-                           RiskLevel         = ?,
-                           FraudFlags        = ?,
-                           EmbeddingAsOfDate = ?,
-                           ScoredBy          = ?
-            WHEN NOT MATCHED THEN
-                INSERT (NominationId, FraudScore, FraudProbability, RiskLevel,
-                        FraudFlags, ModelVersion, EmbeddingAsOfDate, ScoredBy)
-                VALUES (?,            ?,          ?,                ?,
-                        ?,          ?,            ?,                 ?);
-        """, (
-            nomination_id, model_version,
-            # MATCHED
-            fraud_score, fraud_probability, risk_level, warning_flags,
-            embedding_as_of, _AUDIT_ACTOR,
-            # NOT MATCHED
-            nomination_id, fraud_score, fraud_probability, risk_level,
-            warning_flags, model_version, embedding_as_of, _AUDIT_ACTOR,
-        ))
-        conn.commit()

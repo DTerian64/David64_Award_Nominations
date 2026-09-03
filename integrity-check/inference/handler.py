@@ -6,7 +6,7 @@ Orchestrates the full fraud assessment lifecycle for a single nomination:
   2. Load nomination details + tenant desc_check_config from DB
   3. Run description_check (Check A + Check B) and retain its evidence
   4. Run RF, graph analytics, and GNN as separate component scorers
-  5. Persist each component score and dbo.FraudDecisionResults
+  5. Persist the canonical dbo.IntegrityDecisionResults record
   6. Apply the explicit rules-based routing policy using all available evidence
   7. Re-publish nomination.created, nomination.fraud-flagged, or rejection
 
@@ -18,7 +18,6 @@ This file is pure orchestration.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -229,42 +228,6 @@ def handle(message_id: str, payload: dict) -> None:
         },
     )
 
-    # Persist every available opinion in its own component table. Every available
-    # component participates in fusion; unavailable means no opinion.
-    if rf_result["model_available"]:
-        rf_flags = result_fusion.component_flags("RF", rf_result)
-        db.save_p2p_fraud_score(
-            nomination_id=nomination_id,
-            fraud_score=rf_result["fraud_score"],
-            risk_level=rf_result["risk_level"],
-            warning_flags=", ".join(rf_flags),
-        )
-
-    if graph_result["model_available"]:
-        db.save_graph_fraud_score(
-            nomination_id=nomination_id,
-            graph_score=graph_result["fraud_score"],
-            risk_level=graph_result["risk_level"],
-            graph_flags=", ".join(graph_result["warning_flags"]) or None,
-            snapshot_as_of=graph_result["snapshot_as_of"],
-            winning_finding_hash=graph_result.get("winning_finding_hash"),
-            winning_pattern_type=graph_result.get("winning_pattern_type"),
-            scoring_strategy=graph_result.get("scoring_strategy"),
-            scoring_policy_version=graph_result.get("scoring_policy_version"),
-            snapshot_run_id=graph_result.get("snapshot_run_id"),
-        )
-
-    if gnn_result["model_available"]:
-        db.save_gnn_fraud_score(
-            nomination_id=nomination_id,
-            fraud_score=gnn_result["fraud_score"],
-            fraud_probability=gnn_result["fraud_prob"],
-            risk_level=gnn_result["risk_level"],
-            warning_flags=", ".join(gnn_result["warning_flags"]) or None,
-            model_version=gnn_result["model_version"],
-            embedding_as_of=gnn_result["embedding_as_of"],
-        )
-
     decision = result_fusion.combine(rf_result, graph_result, gnn_result)
     all_flags = pre_ml_flags + decision["warning_flags"]
     route_decision = _select_route(desc_result, decision)
@@ -280,9 +243,6 @@ def handle(message_id: str, payload: dict) -> None:
         nomination_id=nomination_id,
         message_id=message_id,
         policy_version=decision["policy_version"],
-        rf_result=rf_result,
-        graph_result=graph_result,
-        gnn_result=gnn_result,
         decision=decision,
         engine_results=engine_results,
         final_route=route_decision["route"],
@@ -291,7 +251,7 @@ def handle(message_id: str, payload: dict) -> None:
         decisive_engines=decisive_engines,
     )
     logger.info(
-        "Legacy and IntegrityDecisionResults persisted",
+        "IntegrityDecisionResults persisted",
         extra={
             "nomination_id": nomination_id,
             "decision_schema_version": decision_contract.DECISION_SCHEMA_VERSION,
@@ -329,25 +289,6 @@ def handle(message_id: str, payload: dict) -> None:
     # ── Apply final rules-based route (only after all persistence above) ──────
 
     risk_level = decision["risk_level"]
-    shap_json = (json.dumps(rf_result["shap_explanations"])
-                 if rf_result.get("shap_explanations") else None)
-    feature_summary = json.dumps({
-        "policy_version": decision["policy_version"],
-        "final_score": decision["final_score"],
-        "final_risk_level": risk_level,
-        "participating_models": decision["participating_models"],
-        "decisive_models": decision["decisive_models"],
-        "rf": engine_results["rf"],
-        "graph": engine_results["graph"],
-        "gnn": engine_results["gnn"],
-        "semantic": engine_results["semantic"],
-        "final_route": route_decision["route"],
-        "routing_rule": route_decision["routing_rule"],
-        "review_scope": route_decision["review_scope"],
-        "decisive_engines": decisive_engines,
-    }, default=str)
-    decision_probability = float(decision["decision_probability"] or 0.0)
-
     logger.info(
         "Rules-based routing decision",
         extra={
@@ -391,15 +332,6 @@ def handle(message_id: str, payload: dict) -> None:
         )
 
     elif route_decision["route"] == "HRBP_REVIEW":
-        db.save_hrbp_fraud_flags(
-            nomination_id=nomination_id,
-            fraud_score=decision["final_score"],
-            fraud_probability=decision_probability,
-            risk_level=risk_level,
-            warning_flags=", ".join(all_flags),
-            shap_explanations_json=shap_json,
-            feature_summary_json=feature_summary,
-        )
         db.set_nomination_status(nomination_id, "PendingHRBPReview")
         service_bus_publisher.publish_event(
             "nomination.fraud-flagged", nomination_id,

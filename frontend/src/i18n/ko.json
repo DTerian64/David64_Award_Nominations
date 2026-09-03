@@ -55,8 +55,7 @@
       "forecast": "예측",
       "fraud": "부정 알림",
       "diversity": "다양성 지표",
-      "integrity": "그래프 분석",
-      "gnn": "GNN 분석"
+      "integrity": "그래프 분석"
     }
   },
   "modelAnalysis": {

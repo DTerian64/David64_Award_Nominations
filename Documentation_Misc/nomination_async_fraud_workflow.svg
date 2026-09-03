@@ -30,7 +30,7 @@
 
   <!-- Lane: DB -->
   <rect x="0" y="600" width="820" height="80" fill="var(--bg-2, #e9ecef)" style="fill:rgb(233, 236, 239);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:13px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-  <text x="14" y="622" font-weight="600" font-size="12" fill="var(--text-2, #6c757d)" letter-spacing="0.5" style="fill:rgb(108, 117, 125);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:12px;font-weight:600;text-anchor:start;dominant-baseline:auto">DATABASE  —  dbo.Nominations  ·  dbo.P2P_FraudScores</text>
+  <text x="14" y="622" font-weight="600" font-size="12" fill="var(--text-2, #6c757d)" letter-spacing="0.5" style="fill:rgb(108, 117, 125);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:12px;font-weight:600;text-anchor:start;dominant-baseline:auto">DATABASE  —  dbo.Nominations  ·  dbo.IntegrityDecisionResults</text>
 
   <!-- ── FRONTEND ── -->
   <!-- User action box -->
@@ -107,8 +107,8 @@
 
   <!-- Save fraud score -->
   <rect x="230" y="460" width="160" height="36" rx="5" fill="var(--bg-2, #e9ecef)" stroke="var(--border, #adb5bd)" stroke-width="1.2" style="fill:rgb(233, 236, 239);stroke:rgb(173, 181, 189);color:rgb(0, 0, 0);stroke-width:1.2px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:13px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-  <text x="310" y="480" text-anchor="middle" fill="var(--text-1, #212529)" font-weight="500" style="fill:rgb(33, 37, 41);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:13px;font-weight:500;text-anchor:middle;dominant-baseline:auto">Save fraud score</text>
-  <text x="310" y="494" text-anchor="middle" fill="var(--text-2, #6c757d)" font-size="11" style="fill:rgb(108, 117, 125);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:11px;font-weight:400;text-anchor:middle;dominant-baseline:auto">P2P_FraudScores</text>
+  <text x="310" y="480" text-anchor="middle" fill="var(--text-1, #212529)" font-weight="500" style="fill:rgb(33, 37, 41);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:13px;font-weight:500;text-anchor:middle;dominant-baseline:auto">Save integrity decision</text>
+  <text x="310" y="494" text-anchor="middle" fill="var(--text-2, #6c757d)" font-size="11" style="fill:rgb(108, 117, 125);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:system-ui, -apple-system, sans-serif;font-size:11px;font-weight:400;text-anchor:middle;dominant-baseline:auto">IntegrityDecisionResults</text>
 
   <!-- Clean path -->
   <rect x="600" y="380" width="150" height="36" rx="5" fill="var(--success, #2d6a4f)" opacity="0.12" style="fill:rgb(45, 106, 79);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.12;font-family:system-ui, -apple-system, sans-serif;font-size:13px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>

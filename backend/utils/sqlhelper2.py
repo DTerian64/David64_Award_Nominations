@@ -1270,14 +1270,15 @@ def get_pair_nomination_history(
                     n.NominationDate,
                     n.Status,
                     nc.category_description          AS CategoryDescription,
-                    ff.RiskLevel,
+                    idr.CompositeRiskLevel,
                     nom.FirstName + ' ' + nom.LastName  AS NominatorName,
                     ben.FirstName + ' ' + ben.LastName  AS BeneficiaryName
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
                 LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
-                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr
+                       ON idr.NominationId = n.NominationId
                 WHERE nom.TenantId = :tenant_id
                   AND n.NominationId != :exclude_id
                   AND (
@@ -1331,38 +1332,6 @@ def get_overall_amount_stats(tenant_id: int) -> Tuple[float, float]:
             {"tenant_id": tenant_id},
         ).fetchone()
         return result if result else (0.0, 0.0)
-
-
-def save_p2p_fraud_score(
-    nomination_id: int,
-    fraud_score: int,
-    risk_level: str,
-    warning_flags: str,
-) -> bool:
-    """Persist the peer-to-peer fraud score at nomination submission time."""
-    with get_db_context() as session:
-        result = session.execute(
-            text("""
-                MERGE dbo.P2P_FraudScores AS target
-                USING (SELECT :nomination_id AS NominationId) AS src
-                ON target.NominationId = src.NominationId
-                WHEN MATCHED THEN
-                    UPDATE SET FraudScore = :fraud_score,
-                               RiskLevel  = :risk_level,
-                               FraudFlags = :warning_flags
-                WHEN NOT MATCHED THEN
-                    INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
-                    VALUES (:nomination_id, :fraud_score, :risk_level, :warning_flags);
-            """),
-            {
-                "nomination_id": nomination_id,
-                "fraud_score":   fraud_score,
-                "risk_level":    risk_level,
-                "warning_flags": warning_flags,
-            },
-        )
-        session.commit()
-        return result.rowcount > 0
 
 
 # ===========================================================================
@@ -1454,10 +1423,9 @@ def get_review_rate(tenant_id: int, days: int = 180) -> dict:
     """
     Historical HRBP flag/review rate for a tenant over the last N days.
 
-    A nomination enters the HRBP review queue when fraud detection records a row
-    in dbo.HRBP_FraudFlags (unique per NominationId). The review rate is that
-    flagged count divided by all nominations submitted in the window — i.e. the
-    fraction of incoming volume that lands on an HRBP's desk.
+    A nomination enters the HRBP review queue when its canonical integrity
+    decision routes it to HRBP. The review rate is that count divided by all
+    nominations submitted in the window.
 
     Returns {"totalNominations", "flaggedNominations", "reviewRate"}.
     reviewRate is 0.0 when there is no volume (callers should treat that as
@@ -1468,11 +1436,12 @@ def get_review_rate(tenant_id: int, days: int = 180) -> dict:
             text("""
                 SELECT
                     COUNT(*) AS TotalNominations,
-                    SUM(CASE WHEN f.NominationId IS NOT NULL THEN 1 ELSE 0 END)
+                    SUM(CASE WHEN idr.FinalRoute = 'HRBP_REVIEW' THEN 1 ELSE 0 END)
                         AS FlaggedNominations
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
-                LEFT JOIN dbo.HRBP_FraudFlags f ON f.NominationId = n.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr
+                       ON idr.NominationId = n.NominationId
                 WHERE n.NominationDate >= DATEADD(DAY, :neg_days, CAST(GETDATE() AS DATE))
                   AND u.TenantId = :tenant_id
             """),
@@ -1660,192 +1629,42 @@ def get_top_nominators_by_department(department: str, limit: int = 5) -> List[Tu
 
 
 def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
-    """Get recent P2P fraud alerts for a tenant."""
+    """Get recent canonical integrity alerts for a tenant."""
     with get_db_context() as session:
-        return session.execute(
+        rows = session.execute(
             text("""
                 SELECT TOP (:limit)
-                    fs.NominationId,
-                    fs.FraudScore,
-                    fs.RiskLevel,
-                    fs.FraudFlags,
+                    idr.NominationId,
+                    idr.CompositeScore,
+                    idr.CompositeRiskLevel,
+                    idr.RfResultJson,
+                    idr.GraphResultJson,
+                    idr.GnnResultJson,
+                    idr.SemanticResultJson,
                     nominator.FirstName   AS NominatorFirstName,
                     nominator.LastName    AS NominatorLastName,
                     beneficiary.FirstName AS BeneficiaryFirstName,
                     beneficiary.LastName  AS BeneficiaryLastName,
                     n.Amount,
                     n.NominationDate
-                FROM dbo.P2P_FraudScores fs
-                JOIN Nominations n     ON fs.NominationId  = n.NominationId
+                FROM dbo.IntegrityDecisionResults idr
+                JOIN Nominations n     ON idr.NominationId = n.NominationId
                 JOIN Users nominator   ON n.NominatorId    = nominator.UserId
                 JOIN Users beneficiary ON n.BeneficiaryId  = beneficiary.UserId
-                WHERE fs.RiskLevel IN ('HIGH', 'MEDIUM')
+                WHERE idr.CompositeRiskLevel IN ('HIGH', 'MEDIUM')
                   AND nominator.TenantId = :tenant_id
                 ORDER BY n.NominationDate DESC
             """),
             {"limit": limit, "tenant_id": tenant_id},
         ).fetchall()
-
-
-def get_gnn_comparison(tenant_id: int, limit: int = 25) -> dict:
-    """
-    Compare the GNN's scores against the Random Forest's, for the tenant's most
-    recent GNN model version.
-
-    This comparison is diagnostic: it shows where two independent component
-    opinions agree and, more usefully, where they do not. Both scores remain
-    eligible for routing when available.
-
-    Scoped to ONE ModelVersion deliberately. GNN_FraudScores is unique on
-    (NominationId, ModelVersion), so a tenant accumulates one row per nomination
-    per training run; comparing across versions would double-count.
-
-    Returns {} when the tenant has no GNN scores at all — a tenant below the
-    sample gate never trains, and that is a normal state, not an error.
-    """
-    with get_db_context() as session:
-        latest = session.execute(
-            text("""
-                SELECT TOP 1 g.ModelVersion, g.EmbeddingAsOfDate, g.CreatedAt
-                FROM   dbo.GNN_FraudScores g
-                JOIN   dbo.Nominations n ON n.NominationId = g.NominationId
-                JOIN   dbo.Users u       ON u.UserId       = n.NominatorId
-                WHERE  u.TenantId = :tenant_id
-                ORDER  BY g.CreatedAt DESC
-            """),
-            {"tenant_id": tenant_id},
-        ).fetchone()
-
-        if latest is None:
-            return {}
-
-        model_version, embedding_as_of, scored_at = latest
-        params = {"tenant_id": tenant_id, "mv": model_version}
-
-        # Agreement matrix: RF risk level x GNN risk level.
-        matrix = session.execute(
-            text("""
-                SELECT p.RiskLevel AS RfRisk, g.RiskLevel AS GnnRisk, COUNT(*) AS Cnt
-                FROM   dbo.GNN_FraudScores g
-                JOIN   dbo.Nominations n      ON n.NominationId = g.NominationId
-                JOIN   dbo.Users u            ON u.UserId       = n.NominatorId
-                JOIN   dbo.P2P_FraudScores p  ON p.NominationId = g.NominationId
-                WHERE  u.TenantId    = :tenant_id
-                  AND  g.ModelVersion = :mv
-                GROUP  BY p.RiskLevel, g.RiskLevel
-            """),
-            params,
-        ).fetchall()
-
-        # Nominations where the two models disagree most, by raw 0-100 score.
-        # Score rather than risk level: the levels are thresholded, so two rows a
-        # point apart can straddle a boundary and look like a bigger disagreement
-        # than they are.
-        divergent = session.execute(
-            text("""
-                SELECT TOP (:limit)
-                    g.NominationId,
-                    p.FraudScore  AS RfScore,
-                    p.RiskLevel   AS RfRisk,
-                    g.FraudScore  AS GnnScore,
-                    g.RiskLevel   AS GnnRisk,
-                    ABS(g.FraudScore - p.FraudScore) AS Delta,
-                    nom.FirstName + ' ' + nom.LastName AS NominatorName,
-                    ben.FirstName + ' ' + ben.LastName AS BeneficiaryName,
-                    n.Amount,
-                    n.NominationDate,
-                    n.Status
-                FROM   dbo.GNN_FraudScores g
-                JOIN   dbo.Nominations n      ON n.NominationId  = g.NominationId
-                JOIN   dbo.Users u            ON u.UserId        = n.NominatorId
-                JOIN   dbo.Users nom          ON nom.UserId      = n.NominatorId
-                JOIN   dbo.Users ben          ON ben.UserId      = n.BeneficiaryId
-                JOIN   dbo.P2P_FraudScores p  ON p.NominationId  = g.NominationId
-                WHERE  u.TenantId     = :tenant_id
-                  AND  g.ModelVersion = :mv
-                ORDER  BY ABS(g.FraudScore - p.FraudScore) DESC, g.NominationId
-            """),
-            {**params, "limit": limit},
-        ).fetchall()
-
-        # Human-confirmed labels present in the compared population. This is the
-        # number that decides whether the human-label evaluation can run at all,
-        # so the UI should show it even though it is not a comparison statistic.
-        confirmed = session.execute(
-            text("""
-                SELECT
-                    SUM(CASE WHEN idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
-                             THEN 1 ELSE 0 END) AS Confirmed,
-                    SUM(CASE WHEN idr.TrainingDisposition = 'FRAUD'
-                             THEN 1 ELSE 0 END) AS ConfirmedFraud
-                FROM   dbo.GNN_FraudScores g
-                JOIN   dbo.Nominations n      ON n.NominationId = g.NominationId
-                JOIN   dbo.Users u            ON u.UserId       = n.NominatorId
-                LEFT JOIN dbo.IntegrityDecisionResults idr
-                       ON idr.NominationId = g.NominationId
-                WHERE  u.TenantId     = :tenant_id
-                  AND  g.ModelVersion = :mv
-            """),
-            params,
-        ).fetchone()
-
-    cells = [{"rfRisk": r[0], "gnnRisk": r[1], "count": int(r[2])} for r in matrix]
-    total = sum(c["count"] for c in cells)
-    agreed = sum(c["count"] for c in cells if c["rfRisk"] == c["gnnRisk"])
-
-    order = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
-    gnn_higher = sum(c["count"] for c in cells
-                     if order.get(c["gnnRisk"], -1) > order.get(c["rfRisk"], -1))
-    gnn_lower = sum(c["count"] for c in cells
-                    if order.get(c["gnnRisk"], -1) < order.get(c["rfRisk"], -1))
-
-    n_confirmed = int(confirmed[0] or 0)
-    n_confirmed_fraud = int(confirmed[1] or 0)
-
-    # A precision-recall comparison needs confirmed examples of BOTH classes.
-    # It can be blocked three different ways, and the client must be able to say
-    # which — telling someone with zero confirmations that they have "only
-    # confirmed what the model flagged" is nonsense.
-    if n_confirmed == 0:
-        gate_reason = "no_confirmations"
-    elif n_confirmed_fraud == 0:
-        gate_reason = "no_confirmed_fraud"
-    elif n_confirmed == n_confirmed_fraud:
-        gate_reason = "no_confirmed_legitimate"
-    else:
-        gate_reason = None
-
-    return {
-        "modelVersion":     model_version,
-        "embeddingAsOf":    embedding_as_of.isoformat() if embedding_as_of else None,
-        "scoredAt":         scored_at.isoformat() if scored_at else None,
-        "compared":         total,
-        "agreed":           agreed,
-        "agreementRate":    round(agreed / total * 100, 1) if total else None,
-        "gnnHigher":        gnn_higher,
-        "gnnLower":         gnn_lower,
-        "confirmed":        n_confirmed,
-        "confirmedFraud":   n_confirmed_fraud,
-        "gateComputable":   gate_reason is None,
-        "gateReason":       gate_reason,
-        "matrix":           cells,
-        "divergent": [
-            {
-                "nominationId":    int(r[0]),
-                "rfScore":         int(r[1]),
-                "rfRisk":          r[2],
-                "gnnScore":        int(r[3]),
-                "gnnRisk":         r[4],
-                "delta":           int(r[5]),
-                "nominatorName":   r[6],
-                "beneficiaryName": r[7],
-                "amount":          float(r[8]) if r[8] is not None else None,
-                "nominationDate":  r[9].isoformat() if r[9] else None,
-                "status":          r[10],
-            }
-            for r in divergent
-        ],
-    }
+    alerts = []
+    for row in rows:
+        documents = [_json_object(row[index]) or {} for index in range(3, 7)]
+        alerts.append((
+            row[0], row[1], row[2], ", ".join(_decision_findings(documents)),
+            row[7], row[8], row[9], row[10], row[11], row[12],
+        ))
+    return alerts
 
 
 def get_approval_metrics(tenant_id: int) -> dict:
@@ -2474,9 +2293,9 @@ def apply_hrbp_adjudication(
             """),
             {"nomination_id": nomination_id},
         ).fetchone()
-        review_scope = current[0] if current else "LEGACY_FRAUD"
-        if current and current[1] is not None:
+        if not current or current[1] is not None:
             return {"applied": False, "reason": "already_reviewed_or_missing_decision"}
+        review_scope = current[0]
         if outcome not in _OUTCOMES_BY_REVIEW_SCOPE.get(review_scope, set()):
             raise ValueError(
                 f"Outcome {outcome} is not valid for review scope {review_scope}"
@@ -2490,31 +2309,9 @@ def apply_hrbp_adjudication(
             "reviewed_by": reviewed_by,
         }
 
-        if current:
-            integrity_result = session.execute(
-                text("""
-                    UPDATE dbo.IntegrityDecisionResults
-                    SET HumanReviewOutcome = :outcome,
-                        TrainingDisposition = :training_disposition,
-                        ReviewReason = :reason,
-                        ReviewedBy = :reviewed_by,
-                        ReviewedAt = SYSUTCDATETIME(),
-                        UpdatedAt = SYSUTCDATETIME()
-                    WHERE NominationId = :nomination_id
-                      AND HumanReviewOutcome IS NULL
-                """),
-                parameters,
-            )
-            if integrity_result.rowcount != 1:
-                session.rollback()
-                return {
-                    "applied": False,
-                    "reason": "already_reviewed_or_missing_decision",
-                }
-
-        legacy_result = session.execute(
+        integrity_result = session.execute(
             text("""
-                UPDATE dbo.FraudDecisionResults
+                UPDATE dbo.IntegrityDecisionResults
                 SET HumanReviewOutcome = :outcome,
                     TrainingDisposition = :training_disposition,
                     ReviewReason = :reason,
@@ -2526,7 +2323,7 @@ def apply_hrbp_adjudication(
             """),
             parameters,
         )
-        if legacy_result.rowcount != 1:
+        if integrity_result.rowcount != 1:
             session.rollback()
             return {"applied": False, "reason": "already_reviewed_or_missing_decision"}
 
@@ -2576,72 +2373,6 @@ def apply_hrbp_adjudication(
             "review_scope": review_scope,
         }
 
-def save_hrbp_fraud_flags(
-    nomination_id:        int,
-    fraud_score:          int,
-    fraud_probability:    float,
-    risk_level:           str,
-    warning_flags:        str,
-    top_features_json:    str | None = None,
-    feature_summary_json: str | None = None,
-) -> None:
-    """
-    Persist the P2P ML inference snapshot into dbo.HRBP_FraudFlags.
-
-    Called at nomination-submission time when the P2P score triggers HRBP
-    review, so the HRBP queue has full context without re-running inference.
-    Idempotent via MERGE.
-    """
-    with get_db_context() as session:
-        session.execute(
-            text("""
-                MERGE dbo.HRBP_FraudFlags AS target
-                USING (SELECT :nomination_id AS NominationId) AS src
-                ON target.NominationId = src.NominationId
-                WHEN NOT MATCHED THEN
-                    INSERT (NominationId, FraudScore, FraudProbability, RiskLevel,
-                            WarningFlags, TopFeaturesJson, FeatureSummaryJson)
-                    VALUES (:nomination_id, :fraud_score, :fraud_probability, :risk_level,
-                            :warning_flags, :top_features_json, :feature_summary_json);
-            """),
-            {
-                "nomination_id":        nomination_id,
-                "fraud_score":          fraud_score,
-                "fraud_probability":    fraud_probability,
-                "risk_level":           risk_level,
-                "warning_flags":        warning_flags,
-                "top_features_json":    top_features_json,
-                "feature_summary_json": feature_summary_json,
-            },
-        )
-        session.commit()
-
-
-def get_hrbp_fraud_flags(nomination_id: int) -> dict | None:
-    """Return the HRBP_FraudFlags row for a nomination, or None if not found."""
-    with get_db_context() as session:
-        row = session.execute(
-            text("""
-                SELECT FraudScore, FraudProbability, RiskLevel,
-                       WarningFlags, TopFeaturesJson, FeatureSummaryJson, CreatedAt
-                FROM dbo.HRBP_FraudFlags
-                WHERE NominationId = :nomination_id
-            """),
-            {"nomination_id": nomination_id},
-        ).fetchone()
-        if not row:
-            return None
-        return {
-            "fraud_score":          row[0],
-            "fraud_probability":    row[1],
-            "risk_level":           row[2],
-            "warning_flags":        row[3],
-            "top_features_json":    row[4],
-            "feature_summary_json": row[5],
-            "created_at":           str(row[6]),
-        }
-
-
 def set_nomination_status(nomination_id: int, status: str) -> None:
     """Update the Status column of a single nomination row."""
     with get_db_context() as session:
@@ -2656,22 +2387,6 @@ def set_nomination_status(nomination_id: int, status: str) -> None:
             {"nomination_id": nomination_id, "status": status, "audit_by": get_actor()},
         )
         session.commit()
-
-
-def _rf_llm_explanation(feature_summary_json: str | None) -> str | None:
-    """Extract the persisted RF LLM explanation from an assessment snapshot."""
-    if not feature_summary_json:
-        return None
-    try:
-        summary = json.loads(feature_summary_json)
-        rf = summary.get("rf", {})
-        explanation = (
-            rf.get("explanation", {}).get("llm_text")
-            or rf.get("llm_explanation")
-        )
-        return explanation if isinstance(explanation, str) and explanation.strip() else None
-    except (TypeError, ValueError, AttributeError):
-        return None
 
 
 def _json_object(value) -> dict | None:
@@ -2699,31 +2414,33 @@ def _json_list(value) -> list:
         return []
 
 
+def _decision_findings(engine_results: list[dict]) -> list[str]:
+    """Flatten the canonical engine evidence into human-readable findings."""
+    findings: list[str] = []
+    for engine in engine_results:
+        findings.extend(str(item) for item in (engine.get("findings") or []) if item)
+    if len(engine_results) >= 4:
+        reason = (engine_results[3].get("combined_decision") or {}).get("reason")
+        if reason:
+            findings.append(f"[Description] {reason}")
+    return list(dict.fromkeys(findings))
+
+
 def _model_evidence_from_row(r) -> dict:
     """Map the shared four-engine nomination evidence projection."""
     engine_results = {
-        "rf": _json_object(r[19]),
-        "graph": _json_object(r[20]),
-        "gnn": _json_object(r[21]),
-        "semantic": _json_object(r[22]),
+        "rf": _json_object(r[15]),
+        "graph": _json_object(r[16]),
+        "gnn": _json_object(r[17]),
+        "semantic": _json_object(r[18]),
     }
-    findings = []
-    if r[16] is not None:
-        for engine in engine_results.values():
-            if not engine:
-                continue
-            findings.extend(engine.get("findings") or [])
-            combined = engine.get("combined_decision") or {}
-            findings.extend(combined.get("checks") or [])
-    if not findings and r[13]:
-        findings = r[13].split(", ")
-
+    documents = [engine_results[name] or {} for name in ("rf", "graph", "gnn", "semantic")]
+    findings = _decision_findings(documents)
     rf_document = engine_results["rf"] or {}
-    new_explanation = (
-        rf_document.get("explanation", {}).get("llm_text")
-        if isinstance(rf_document.get("explanation"), dict)
-        else None
-    )
+    rf_explanation = rf_document.get("explanation")
+    if not isinstance(rf_explanation, dict):
+        rf_explanation = {}
+    explanation = rf_explanation.get("llm_text")
     return {
         "nomination_id": r[0],
         "status": r[1],
@@ -2736,26 +2453,26 @@ def _model_evidence_from_row(r) -> dict:
         "beneficiary_name": r[8],
         "beneficiary_email": r[9],
         "fraud_score": r[10],
-        "fraud_probability": r[11],
-        "risk_level": r[12],
+        "fraud_probability": None,
+        "risk_level": r[11],
         "warning_flags": findings,
-        "top_features": r[14],
-        "feature_summary": r[15],
-        "llm_explanation": new_explanation or _rf_llm_explanation(r[15]),
-        "decision_source": "integrity_v2" if r[16] is not None else "legacy",
-        "decision_schema_version": r[16],
-        "review_scope": r[17] or "LEGACY_FRAUD",
-        "decisive_engines": _json_list(r[18]),
+        "top_features": rf_explanation.get("top_features", []),
+        "feature_summary": None,
+        "llm_explanation": explanation,
+        "decision_source": "integrity_v2" if r[12] is not None else None,
+        "decision_schema_version": r[12],
+        "review_scope": r[13],
+        "decisive_engines": _json_list(r[14]),
         "engine_results": engine_results,
-        "final_route": r[23],
-        "routing_rule": r[24],
+        "final_route": r[19],
+        "routing_rule": r[20],
     }
 
 
 def get_hrbp_queue(tenant_id: int) -> list[dict]:
     """
     Return all nominations in PendingHRBPReview for a tenant, joined with
-    nominator / beneficiary names and the FraudFlags snapshot.
+    nominator / beneficiary names and canonical integrity evidence.
     Critical cases are listed first; each priority group is oldest first.
     """
     with get_db_context() as session:
@@ -2772,13 +2489,8 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                     nom.userEmail                        AS NominatorEmail,
                     ben.FirstName + ' ' + ben.LastName  AS BeneficiaryName,
                     ben.userEmail                        AS BeneficiaryEmail,
-                    CASE WHEN idr.DecisionSchemaVersion IS NOT NULL
-                         THEN idr.CompositeScore ELSE ff.FraudScore END,
-                    ff.FraudProbability,
-                    COALESCE(idr.CompositeRiskLevel, ff.RiskLevel),
-                    ff.WarningFlags,
-                    ff.TopFeaturesJson,
-                    ff.FeatureSummaryJson,
+                    idr.CompositeScore,
+                    idr.CompositeRiskLevel,
                     idr.DecisionSchemaVersion,
                     idr.ReviewScope,
                     idr.DecisiveEnginesJson,
@@ -2791,14 +2503,12 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId      = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId      = n.BeneficiaryId
-                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
-                LEFT JOIN dbo.IntegrityDecisionResults idr
+                JOIN dbo.IntegrityDecisionResults idr
                     ON idr.NominationId = n.NominationId
                 WHERE n.Status    = 'PendingHRBPReview'
                   AND nom.TenantId = :tenant_id
                 ORDER BY
-                    CASE WHEN COALESCE(idr.CompositeRiskLevel, ff.RiskLevel)
-                              = 'CRITICAL' THEN 0 ELSE 1 END,
+                    CASE WHEN idr.CompositeRiskLevel = 'CRITICAL' THEN 0 ELSE 1 END,
                     n.NominationDate ASC
             """),
             {"tenant_id": tenant_id},
@@ -2839,7 +2549,7 @@ def search_model_analysis_nominations(
                ben.FirstName + ' ' + ben.LastName LIKE :search OR
                ben.userEmail LIKE :search)
           AND (:status IS NULL OR n.Status = :status)
-          AND (:risk IS NULL OR COALESCE(idr.CompositeRiskLevel, ff.RiskLevel, 'UNKNOWN') = :risk)
+          AND (:risk IS NULL OR COALESCE(idr.CompositeRiskLevel, 'UNKNOWN') = :risk)
           AND (:start_date IS NULL OR n.NominationDate >= :start_date)
           AND (:end_date IS NULL OR n.NominationDate < DATEADD(DAY, 1, :end_date))
     """
@@ -2850,7 +2560,6 @@ def search_model_analysis_nominations(
                 FROM dbo.Nominations n
                 JOIN dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
             """ + where),
             params,
@@ -2861,17 +2570,14 @@ def search_model_analysis_nominations(
                        nom.FirstName + ' ' + nom.LastName,
                        ben.FirstName + ' ' + ben.LastName,
                        nc.category_description, n.Amount, n.Currency, n.Status,
-                       COALESCE(idr.CompositeRiskLevel, ff.RiskLevel),
-                       CASE WHEN idr.DecisionSchemaVersion IS NOT NULL
-                            THEN idr.CompositeScore ELSE ff.FraudScore END,
+                       COALESCE(idr.CompositeRiskLevel, 'UNKNOWN'),
+                       idr.CompositeScore,
                        idr.FinalRoute,
-                       CASE WHEN idr.NominationId IS NOT NULL OR ff.NominationId IS NOT NULL
-                            THEN 1 ELSE 0 END
+                       CASE WHEN idr.NominationId IS NOT NULL THEN 1 ELSE 0 END
                 FROM dbo.Nominations n
                 JOIN dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
                 LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
-                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
             """ + where + """
                 ORDER BY n.NominationDate DESC, n.NominationId DESC
@@ -2907,11 +2613,8 @@ def get_model_analysis_nomination(nomination_id: int, tenant_id: int) -> Optiona
                        nom.userEmail,
                        ben.FirstName + ' ' + ben.LastName,
                        ben.userEmail,
-                       CASE WHEN idr.DecisionSchemaVersion IS NOT NULL
-                            THEN idr.CompositeScore ELSE ff.FraudScore END,
-                       ff.FraudProbability,
-                       COALESCE(idr.CompositeRiskLevel, ff.RiskLevel),
-                       ff.WarningFlags, ff.TopFeaturesJson, ff.FeatureSummaryJson,
+                       idr.CompositeScore,
+                       idr.CompositeRiskLevel,
                        idr.DecisionSchemaVersion, idr.ReviewScope,
                        idr.DecisiveEnginesJson, idr.RfResultJson,
                        idr.GraphResultJson, idr.GnnResultJson,
@@ -2919,7 +2622,6 @@ def get_model_analysis_nomination(nomination_id: int, tenant_id: int) -> Optiona
                 FROM dbo.Nominations n
                 JOIN dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
                 WHERE n.NominationId = :nid AND nom.TenantId = :tid
             """),
@@ -3030,11 +2732,12 @@ def get_sla_breached_nominations(sla_hours: int) -> list[dict]:
                        n.NominationDate,
                        nom.FirstName + ' ' + nom.LastName AS NominatorName,
                        ben.FirstName + ' ' + ben.LastName AS BeneficiaryName,
-                       ff.RiskLevel
+                       COALESCE(idr.CompositeRiskLevel, 'UNKNOWN')
                 FROM   dbo.Nominations n
                 JOIN   dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN   dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr
+                       ON idr.NominationId = n.NominationId
                 WHERE  n.Status = 'PendingHRBPReview'
                   AND  n.NominationDate < DATEADD(HOUR, :neg_hours, GETUTCDATE())
                 ORDER  BY n.NominationDate ASC
@@ -3057,7 +2760,7 @@ def get_sla_breached_nominations(sla_hours: int) -> list[dict]:
 def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
     """
     Full nomination detail for the HRBP approval / rejection flow,
-    including nominator info, beneficiary info, and fraud flags.
+    including nominator, beneficiary, and canonical integrity evidence.
     """
     with get_db_context() as session:
         row = session.execute(
@@ -3075,9 +2778,12 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
                     nom.userEmail                       AS NominatorEmail,
                     ben.FirstName + ' ' + ben.LastName AS BeneficiaryName,
                     ben.userEmail                       AS BeneficiaryEmail,
-                    ff.FraudScore,
-                    ff.RiskLevel,
-                    ff.WarningFlags,
+                    idr.CompositeScore,
+                    idr.CompositeRiskLevel,
+                    idr.RfResultJson,
+                    idr.GraphResultJson,
+                    idr.GnnResultJson,
+                    idr.SemanticResultJson,
                     nom.UserId                          AS NominatorId,
                     ben.UserId                          AS BeneficiaryId,
                     idr.ReviewScope,
@@ -3085,7 +2791,6 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.HRBP_FraudFlags ff ON ff.NominationId = n.NominationId
                 LEFT JOIN dbo.IntegrityDecisionResults idr
                     ON idr.NominationId = n.NominationId
                 WHERE n.NominationId = :nomination_id
@@ -3094,6 +2799,7 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
         ).fetchone()
         if not row:
             return None
+        documents = [_json_object(row[index]) or {} for index in range(14, 18)]
         return {
             "nomination_id":     row[0],
             "tenant_id":         row[1],
@@ -3109,11 +2815,11 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
             "beneficiary_email": row[11],
             "fraud_score":       row[12],
             "risk_level":        row[13],
-            "warning_flags":     row[14],
-            "nominator_id":      row[15],
-            "beneficiary_id":    row[16],
-            "review_scope":      row[17] or "LEGACY_FRAUD",
-            "decision_source":   "integrity_v2" if row[18] is not None else "legacy",
+            "warning_flags":     ", ".join(_decision_findings(documents)),
+            "nominator_id":      row[18],
+            "beneficiary_id":    row[19],
+            "review_scope":      row[20],
+            "decision_source":   "integrity" if row[21] is not None else None,
         }
 
 

@@ -327,15 +327,10 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         n.NominationDescription,
         n.NominationDate,
         n.Status,
-        n.CategoryId,
-        p2p.FraudScore,
-        p2p.RiskLevel,
-        p2p.FraudFlags
+        n.CategoryId
 
     FROM dbo.Nominations n
     JOIN dbo.Users u ON u.UserId = n.NominatorId
-    LEFT JOIN dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
-
     WHERE n.Status NOT IN ('PendingHRBPReview')
       AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection (Description)')
       AND u.TenantId = ?
@@ -658,138 +653,6 @@ P2P_FEATURE_COLUMNS = [
 ]
 
 
-def score_and_save_historical(
-    df: pd.DataFrame,
-    model_data: dict,
-    tenant_id: int,
-) -> None:
-    """
-    Score every nomination in df with the P2P model and upsert results into
-    dbo.P2P_FraudScores. Approver fraud scoring is retired; existing rows in
-    dbo.Appr_FraudScores remain untouched as historical audit data.
-
-    Bulk-upsert strategy (temp table + single MERGE per table):
-      1. Vectorize all scoring and flag logic in numpy — no Python row loop.
-      2. Bulk-insert the full result set into a #staging temp table using
-         fast_executemany=True (one network round-trip for the whole batch).
-      3. Execute one MERGE statement per table against the staging data.
-      Total SQL round-trips: 3 (CREATE, INSERT, MERGE) regardless
-      of row count — vs. N round-trips in the old per-row approach.
-    """
-    import time
-    t_total = time.perf_counter()
-
-    n = len(df)
-    print(f"\n[Tenant {tenant_id}] Scoring {n} historical nominations ...")
-
-    # ── DB connection ─────────────────────────────────────────────────────────
-    t0 = time.perf_counter()
-    conn   = get_db_connection()
-    cursor = conn.cursor()
-    cursor.fast_executemany = True   # batch driver calls in executemany
-    print(f"[Tenant {tenant_id}]   DB connect:             {time.perf_counter() - t0:.2f}s")
-
-    # ── P2P inference ─────────────────────────────────────────────────────────
-    p2p_rf     = model_data['p2p_model']
-    p2p_scaler = model_data['p2p_scaler']
-    p2p_cols   = model_data['p2p_feature_columns']
-
-    t0 = time.perf_counter()
-    p2p_probas = p2p_rf.predict_proba(p2p_scaler.transform(df[p2p_cols].fillna(0)))
-    print(f"[Tenant {tenant_id}]   P2P predict_proba:      {time.perf_counter() - t0:.2f}s  ({n} rows)")
-    if p2p_probas.shape[1] < 2:
-        print(f"[Tenant {tenant_id}] ⚠  P2P single-class model — skipping P2P score persistence.")
-        p2p_fraud_probs = None
-    else:
-        p2p_fraud_probs = p2p_probas[:, 1]
-
-    # ── Vectorized score + flag computation (no Python row loop) ─────────────
-    # np.select for risk levels; np.where string concat for flags.
-    # np.char.rstrip strips any trailing ", " left by absent flag slots.
-    t0 = time.perf_counter()
-
-    def _risk_level_vec(scores: np.ndarray) -> np.ndarray:
-        return np.select(
-            [scores >= 80, scores >= 60, scores >= 40, scores >= 20],
-            ['CRITICAL',   'HIGH',       'MEDIUM',      'LOW'],
-            default='NONE',
-        )
-
-    nom_ids = df['NominationId'].astype(int).values
-
-    p2p_rows: list | None = None
-    if p2p_fraud_probs is not None:
-        p2p_scores = (p2p_fraud_probs * 100).astype(int)
-        p2p_levels = _risk_level_vec(p2p_scores)
-        p2p_flags = pd.Series(
-            np.where(df['PairNominationCount'].fillna(0).values > 5,
-                     'Repeated beneficiary, ', '').astype(object)
-            + np.where(df['HasReciprocalNomination'].fillna(0).values == 1,
-                       'Reciprocal nomination detected, ', '').astype(object)
-            + np.where(df['NominatorConcentrationRatio'].fillna(0).values > 5,
-                       'Limited beneficiary diversity, ', '').astype(object)
-            + np.where(df['IsHighAmount'].fillna(0).values == 1,
-                       'Unusually high amount', '').astype(object)
-        ).str.rstrip(', ')
-        p2p_rows = list(zip(
-            nom_ids.tolist(),
-            p2p_scores.tolist(),
-            p2p_levels.tolist(),
-            p2p_flags.tolist(),
-        ))
-
-    print(f"[Tenant {tenant_id}]   Vectorize scores/flags: {time.perf_counter() - t0:.2f}s")
-
-    # ── P2P bulk upsert: CREATE temp → bulk INSERT → single MERGE ─────────────
-    if p2p_rows:
-        t0 = time.perf_counter()
-        cursor.execute("""
-            CREATE TABLE #p2p_staging (
-                NominationId INT           NOT NULL,
-                FraudScore   INT           NOT NULL,
-                RiskLevel    NVARCHAR(20)  NOT NULL,
-                FraudFlags   NVARCHAR(500)     NULL
-            )
-        """)
-        cursor.executemany(
-            "INSERT INTO #p2p_staging (NominationId, FraudScore, RiskLevel, FraudFlags) "
-            "VALUES (?, ?, ?, ?)",
-            p2p_rows,
-        )
-        print(f"[Tenant {tenant_id}]   P2P temp insert:        {time.perf_counter() - t0:.2f}s  ({len(p2p_rows)} rows)")
-
-        t0 = time.perf_counter()
-        cursor.execute("""
-            MERGE dbo.P2P_FraudScores AS target
-            USING #p2p_staging AS source
-                ON target.NominationId = source.NominationId
-            WHEN MATCHED THEN
-                UPDATE SET FraudScore = source.FraudScore,
-                           RiskLevel  = source.RiskLevel,
-                           FraudFlags = source.FraudFlags
-            WHEN NOT MATCHED THEN
-                INSERT (NominationId, FraudScore, RiskLevel, FraudFlags)
-                VALUES (source.NominationId, source.FraudScore,
-                        source.RiskLevel,   source.FraudFlags);
-        """)
-        print(f"[Tenant {tenant_id}]   P2P MERGE:              {time.perf_counter() - t0:.2f}s")
-
-    # ── Commit ────────────────────────────────────────────────────────────────
-    t0 = time.perf_counter()
-    conn.commit()
-    print(f"[Tenant {tenant_id}]   commit():               {time.perf_counter() - t0:.2f}s")
-
-    cursor.close()
-    conn.close()
-
-    p2p_n = len(p2p_rows) if p2p_rows else 0
-    p2p_high = int(np.sum(p2p_fraud_probs * 100 >= 60)) if p2p_fraud_probs is not None else 0
-    print(
-        f"[Tenant {tenant_id}] ✓ P2P: {p2p_n} upserted ({p2p_high} HIGH/CRITICAL) | "
-        f"Total: {time.perf_counter() - t_total:.2f}s"
-    )
-
-
 def train_model(
     df: pd.DataFrame,
     tenant_id: int,
@@ -928,10 +791,6 @@ def train_model(
 
     print(f"\n✓ Model saved to '{pkl_filename}'")
     _upload_artefact(pkl_filename)
-
-    # Refresh historical nomination-time RF scores. Retired approver scores are
-    # intentionally left untouched for audit history.
-    score_and_save_historical(df, model_data, tenant_id)
 
     # ── Visualisations ────────────────────────────────────────────────────────
     # Compute probability arrays from the already-loaded df so we don't need

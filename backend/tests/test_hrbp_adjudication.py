@@ -124,7 +124,6 @@ class HRBPAdjudicationPersistenceTests(unittest.TestCase):
             current,
             SimpleNamespace(rowcount=1),
             SimpleNamespace(rowcount=1),
-            SimpleNamespace(rowcount=1),
         ]
 
         @contextmanager
@@ -140,17 +139,15 @@ class HRBPAdjudicationPersistenceTests(unittest.TestCase):
             )
 
         integrity_sql = str(session.execute.call_args_list[1].args[0])
-        decision_sql = str(session.execute.call_args_list[2].args[0])
-        decision_params = session.execute.call_args_list[2].args[1]
+        decision_params = session.execute.call_args_list[1].args[1]
         all_sql = "\n".join(str(call.args[0]) for call in session.execute.call_args_list)
 
         self.assertTrue(result["applied"])
         self.assertEqual(result["training_disposition"], "EXCLUDED")
         self.assertEqual(decision_params["training_disposition"], "EXCLUDED")
         self.assertIn("IntegrityDecisionResults", integrity_sql)
-        self.assertIn("FraudDecisionResults", decision_sql)
-        self.assertNotIn("RfScore", decision_sql)
-        self.assertNotIn("P2P_FraudScores", all_sql)
+        self.assertNotIn("FraudDecisionResults", all_sql)
+        self.assertNotIn("RfScore", integrity_sql)
         session.commit.assert_called_once()
 
     def test_semantic_only_review_cannot_create_a_fraud_training_label(self):
@@ -234,7 +231,7 @@ class HRBPQueueProjectionTests(unittest.TestCase):
         row = (
             13880, "PendingHRBPReview", 5000, "USD", "Description",
             "2026-08-28", "Nominator", "nom@example.com", "Beneficiary",
-            "ben@example.com", 50, 0.48, "MEDIUM", None, None, None,
+            "ben@example.com", 50, "MEDIUM",
             2, "FRAUD", '["GRAPH"]', json.dumps(rf), json.dumps(graph),
             json.dumps(gnn), json.dumps(semantic), "HRBP_REVIEW",
             "fraud_concern_hrbp",

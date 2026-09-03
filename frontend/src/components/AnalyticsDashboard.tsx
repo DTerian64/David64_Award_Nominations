@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download, LineChart, GitCompare } from 'lucide-react';
+import { AlertCircle, TrendingUp, Users, DollarSign, Clock, AlertTriangle, BarChart3, Send, ShieldAlert, ChevronDown, RefreshCw, Download, LineChart } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import { useTenantConfig } from '../contexts/TenantConfigContext';
 import { useTranslation } from 'react-i18next';
@@ -70,41 +70,14 @@ interface CategoryBreakdown {
   avgAmount: number;
 }
 
-// Risk levels in severity order — used to lay out the agreement matrix axes.
-const RISK_LEVELS = ['NONE', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as const;
-
-interface GnnMatrixCell { rfRisk: string; gnnRisk: string; count: number; }
-
-interface GnnDivergentRow {
-  nominationId: number;
-  rfScore: number;  rfRisk: string;
-  gnnScore: number; gnnRisk: string;
-  delta: number;
-  nominatorName: string;
-  beneficiaryName: string;
-  amount: number | null;
-  nominationDate: string | null;
-  status: string;
-}
-
-interface GnnComparison {
-  available: boolean;
-  reason?: string;
-  modelVersion?: string;
-  embeddingAsOf?: string | null;
-  scoredAt?: string | null;
-  compared?: number;
-  agreed?: number;
-  agreementRate?: number | null;
-  gnnHigher?: number;
-  gnnLower?: number;
-  confirmed?: number;
-  confirmedFraud?: number;
-  gateComputable?: boolean;
-  gateReason?: 'no_confirmations' | 'no_confirmed_fraud' | 'no_confirmed_legitimate' | null;
-  matrix?: GnnMatrixCell[];
-  divergent?: GnnDivergentRow[];
-}
+type AnalyticsTab =
+  | 'overview'
+  | 'spending'
+  | 'fraud'
+  | 'diversity'
+  | 'ask'
+  | 'integrity'
+  | 'forecast';
 
 interface IntegrityRun {
   runId: string;
@@ -247,14 +220,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
   const [categoryBreakdown, setCategoryBreakdown] = useState<CategoryBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState<'overview' | 'spending' | 'fraud' | 'diversity' | 'ask' | 'integrity' | 'forecast' | 'gnn'>('ask');
+  const [selectedTab, setSelectedTab] = useState<AnalyticsTab>('ask');
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
   // Annual recognition budget for the pacing projection (admin-supplied). Blank = pacing omitted.
   const [budgetInput, setBudgetInput] = useState<string>('');
   const [appliedBudget, setAppliedBudget] = useState<number | null>(null);
-  const [gnnComparison, setGnnComparison] = useState<GnnComparison | null>(null);
-  const [gnnLoading, setGnnLoading] = useState(false);
   const [integrityRuns, setIntegrityRuns] = useState<IntegrityRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [integrityFindings, setIntegrityFindings] = useState<IntegrityFinding[]>([]);
@@ -373,20 +344,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
     await fetchForecast(budget);
   };
 
-  const fetchGnnComparison = async () => {
-    setGnnLoading(true);
-    try {
-      const data = await apiFetch<GnnComparison>(
-        '/api/admin/analytics/gnn/comparison?limit=25'
-      );
-      setGnnComparison(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load GNN analytics');
-    } finally {
-      setGnnLoading(false);
-    }
-  };
-
   const fetchIntegrityRuns = async () => {
     setIntegrityLoading(true);
     setActivePatternFilters(new Set());
@@ -451,23 +408,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
   };
 
   // Handle tab selection with lazy loading
-  const handleTabChange = async (tabId: string) => {
-    setSelectedTab(tabId as any);
+  const handleTabChange = async (tabId: AnalyticsTab) => {
+    setSelectedTab(tabId);
     
     // Integrity tab has its own fetch path
     if (tabId === 'integrity') {
       if (!loadedTabs.has('integrity')) {
         await fetchIntegrityRuns();
         setLoadedTabs(prev => new Set([...prev, 'integrity']));
-      }
-      return;
-    }
-
-    // GNN tab has its own fetch path
-    if (tabId === 'gnn') {
-      if (!loadedTabs.has('gnn')) {
-        await fetchGnnComparison();
-        setLoadedTabs(prev => new Set([...prev, 'gnn']));
       }
       return;
     }
@@ -684,15 +632,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
           { id: 'forecast', label: t('analytics.tabs.forecast'), icon: LineChart },
           { id: 'fraud', label: t('analytics.tabs.fraud'), icon: AlertTriangle },
           { id: 'diversity', label: t('analytics.tabs.diversity'), icon: Users },
-          { id: 'integrity', label: t('analytics.tabs.integrity'), icon: ShieldAlert },
-          { id: 'gnn', label: t('analytics.tabs.gnn'), icon: GitCompare }
+          { id: 'integrity', label: t('analytics.tabs.integrity'), icon: ShieldAlert }
         ].map(tab => {
           const TabIcon = tab.icon;
-          const isActive = selectedTab === (tab.id as any);
+          const tabId = tab.id as AnalyticsTab;
+          const isActive = selectedTab === tabId;
           return (
             <button
               key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
+              onClick={() => handleTabChange(tabId)}
               className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors whitespace-nowrap ${
                 isActive 
                   ? 'text-blue-600 border-b-2 border-blue-600' 
@@ -1707,185 +1655,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
         </div>
       )}
 
-      {/* ── GNN Analytics Tab ──────────────────────────────────────── */}
-      {selectedTab === 'gnn' && (
-        <div className="space-y-6">
-
-          <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <ShieldAlert className="text-blue-600 shrink-0 mt-0.5" size={20} />
-            <div className="text-sm text-blue-900">
-              <p className="font-semibold">Independent model comparison</p>
-              <p className="mt-1">
-                This view compares GNN and Random Forest component opinions. When available,
-                both participate independently in the final integrity decision.
-              </p>
-            </div>
-          </div>
-
-          {gnnLoading && (
-            <div className="text-center py-12 text-gray-500">Loading GNN analytics…</div>
-          )}
-
-          {!gnnLoading && gnnComparison && !gnnComparison.available && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-sm text-gray-700">
-              <p className="font-semibold text-gray-900">No GNN scores for this tenant yet</p>
-              <p className="mt-2">{gnnComparison.reason}</p>
-            </div>
-          )}
-
-          {!gnnLoading && gnnComparison && gnnComparison.available && (
-            <>
-              {/* Provenance — which model produced these numbers */}
-              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-600 border-b border-gray-200 pb-3">
-                <span><span className="font-semibold">Model:</span> {gnnComparison.modelVersion}</span>
-                {gnnComparison.embeddingAsOf && (
-                  <span><span className="font-semibold">Embeddings as of:</span> {gnnComparison.embeddingAsOf}</span>
-                )}
-                {gnnComparison.scoredAt && (
-                  <span><span className="font-semibold">Scored:</span> {new Date(gnnComparison.scoredAt).toLocaleString()}</span>
-                )}
-              </div>
-
-              {/* Headline agreement numbers */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <MetricCard icon={BarChart3}  label="Nominations compared"
-                            value={String(gnnComparison.compared ?? 0)}
-                            change="scored by both models" />
-                <MetricCard icon={GitCompare} label="Same risk level"
-                            value={gnnComparison.agreementRate != null ? `${gnnComparison.agreementRate}%` : '—'}
-                            change={`${gnnComparison.agreed ?? 0} of ${gnnComparison.compared ?? 0}`} />
-                <MetricCard icon={TrendingUp} label="GNN scored higher"
-                            value={String(gnnComparison.gnnHigher ?? 0)}
-                            change="more suspicious than RF" warning />
-                <MetricCard icon={AlertCircle} label="GNN scored lower"
-                            value={String(gnnComparison.gnnLower ?? 0)}
-                            change="less suspicious than RF" />
-              </div>
-
-              {/* Evaluation gate status — the number that decides whether any of
-                  this can be turned into a precision/recall claim. */}
-              <div className={`rounded-lg border p-4 text-sm ${
-                gnnComparison.gateComputable
-                  ? 'bg-green-50 border-green-300 text-green-900'
-                  : 'bg-gray-50 border-gray-300 text-gray-800'
-              }`}>
-                <p className="font-semibold">
-                  Human-label evaluation: {gnnComparison.gateComputable ? 'computable' : 'not computable'}
-                </p>
-                <p className="mt-1">
-                  {gnnComparison.confirmed ?? 0} human-confirmed label
-                  {(gnnComparison.confirmed ?? 0) === 1 ? '' : 's'} in the compared population,
-                  of which {gnnComparison.confirmedFraud ?? 0} are fraud.
-                  {gnnComparison.gateReason === 'no_confirmations' && (
-                    <> Nothing in this population has been adjudicated, so every label the
-                    models are measured against is the Random Forest&rsquo;s own prior output.</>
-                  )}
-                  {gnnComparison.gateReason === 'no_confirmed_fraud' && (
-                    <> Every confirmation is <strong>legitimate</strong>. Recall cannot be
-                    measured without at least one confirmed fraud case.</>
-                  )}
-                  {gnnComparison.gateReason === 'no_confirmed_legitimate' && (
-                    <> Every confirmation is <strong>fraud</strong>. Confirming only what the
-                    model flagged says nothing about false positives, however many are
-                    confirmed &mdash; precision needs at least one confirmed-legitimate case.</>
-                  )}
-                </p>
-              </div>
-
-              {/* Agreement matrix */}
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-1">Risk level agreement</h3>
-                <p className="text-xs text-gray-500 mb-3">
-                  Rows: Random Forest. Columns: GNN.
-                  The diagonal is agreement.
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="text-sm border-collapse">
-                    <thead>
-                      <tr>
-                        <th className="p-2 text-left text-xs font-semibold text-gray-500">RF ＼ GNN</th>
-                        {RISK_LEVELS.map(g => (
-                          <th key={g} className="p-2 text-xs font-semibold text-gray-700">{g}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {RISK_LEVELS.map(rf => (
-                        <tr key={rf}>
-                          <td className="p-2 text-xs font-semibold text-gray-700">{rf}</td>
-                          {RISK_LEVELS.map(g => {
-                            const n = gnnComparison.matrix?.find(
-                              c => c.rfRisk === rf && c.gnnRisk === g
-                            )?.count ?? 0;
-                            const same = rf === g;
-                            return (
-                              <td key={g}
-                                  className={`p-2 text-center border border-gray-200 min-w-[64px] ${
-                                    n === 0 ? 'text-gray-300'
-                                      : same ? 'bg-green-50 font-semibold text-green-900'
-                                      : 'bg-amber-50 text-amber-900'
-                                  }`}>
-                                {n}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Largest disagreements */}
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-1">Largest disagreements</h3>
-                <p className="text-xs text-gray-500 mb-3">
-                  Ranked by raw score gap, not risk level — two scores a point apart can
-                  straddle a threshold and look like a bigger disagreement than they are.
-                </p>
-                {(gnnComparison.divergent?.length ?? 0) === 0 ? (
-                  <p className="text-sm text-gray-500">No overlapping scores to compare.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50 text-xs text-gray-600">
-                        <tr>
-                          <th className="p-2 text-left">Nomination</th>
-                          <th className="p-2 text-left">Nominator → Beneficiary</th>
-                          <th className="p-2 text-right">RF</th>
-                          <th className="p-2 text-right">GNN</th>
-                          <th className="p-2 text-right">Gap</th>
-                          <th className="p-2 text-left">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {gnnComparison.divergent?.map(row => (
-                          <tr key={row.nominationId} className="border-t border-gray-100">
-                            <td className="p-2 font-mono text-xs">#{row.nominationId}</td>
-                            <td className="p-2 text-xs">
-                              {row.nominatorName} → {row.beneficiaryName}
-                            </td>
-                            <td className="p-2 text-right">
-                              {row.rfScore}
-                              <span className="text-xs text-gray-500 ml-1">{row.rfRisk}</span>
-                            </td>
-                            <td className="p-2 text-right">
-                              {row.gnnScore}
-                              <span className="text-xs text-gray-500 ml-1">{row.gnnRisk}</span>
-                            </td>
-                            <td className="p-2 text-right font-semibold">{row.delta}</td>
-                            <td className="p-2 text-xs">{row.status}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
     </div>
   );
 };

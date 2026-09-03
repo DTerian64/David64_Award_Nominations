@@ -25,29 +25,22 @@ It returns:
 
 ## Fraud score query pattern
 
-Use `P2P_FraudScores` for the active Random Forest nomination score assigned at
-submission time. `Appr_FraudScores` is retired historical data: the weekly job
-no longer writes it, and it must not be presented as a current model opinion.
+Use `IntegrityDecisionResults.RfResultJson` for the Random Forest opinion captured
+at submission time. Inference output is evidence, not a human training label.
 
-Join through Nominations to enforce tenant isolation
-(neither table has a TenantId column):
+Join through Nominations to enforce tenant isolation:
 
 ```sql
 -- P2P fraud score for a specific nominator
-SELECT n.NominationId, n.Amount, fs.FraudScore, fs.RiskLevel, fs.FraudFlags
+SELECT n.NominationId, n.Amount,
+       TRY_CONVERT(INT, JSON_VALUE(idr.RfResultJson, '$.score')) AS FraudScore,
+       JSON_VALUE(idr.RfResultJson, '$.risk_level') AS RiskLevel,
+       JSON_QUERY(idr.RfResultJson, '$.findings') AS FindingsJson
 FROM   dbo.Nominations n
 JOIN   dbo.Users u_nom ON u_nom.UserId = n.NominatorId
-LEFT JOIN dbo.P2P_FraudScores fs ON fs.NominationId = n.NominationId
+LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
 WHERE  u_nom.TenantId = <TenantId>
   AND  n.NominatorId  = <UserId>
-
--- Retired historical approver score (not refreshed; audit requests only)
-SELECT n.NominationId, n.Amount, fs.FraudScore, fs.RiskLevel, fs.FraudFlags
-FROM   dbo.Nominations n
-JOIN   dbo.Users u_nom ON u_nom.UserId = n.NominatorId
-LEFT JOIN dbo.Appr_FraudScores fs ON fs.NominationId = n.NominationId
-WHERE  u_nom.TenantId = <TenantId>
-  AND  n.ApproverId   = <UserId>
 ```
 
 ## Risk levels

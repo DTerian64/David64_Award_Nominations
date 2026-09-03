@@ -16,8 +16,6 @@ GET  /api/admin/analytics/approval-metrics
 GET  /api/admin/analytics/diversity-metrics
 GET  /api/admin/analytics/category-breakdown
 
-GET  /api/admin/analytics/gnn/comparison
-
 GET  /api/admin/analytics/integrity/runs
 GET  /api/admin/analytics/integrity/findings
 GET  /api/admin/analytics/integrity/findings/{finding_id}/export
@@ -214,38 +212,6 @@ async def get_fraud_alerts(
         ]
     except Exception as e:
         logger.error(f"Error fetching fraud alerts: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/api/admin/analytics/gnn/comparison")
-async def get_gnn_comparison(
-    limit: int = Query(default=25, ge=1, le=100),
-    current_user: User = Depends(get_current_user_with_impersonation),
-    _: dict = Depends(require_analytics_access)
-):
-    """
-    Random Forest vs GNN agreement for the tenant's latest GNN model version.
-
-    This is a diagnostic comparison between two independent component opinions;
-    it does not make either model subordinate to the other.
-
-    Returns 200 with {"available": false} rather than 404 when the tenant has no
-    GNN scores. A tenant below the sample gate simply never trains, which is a
-    designed outcome and not an error worth an alarming status code.
-    """
-    tenant_id = current_user["effective_user"]["TenantId"]
-    try:
-        data = sqlhelper.get_gnn_comparison(tenant_id, limit=limit)
-        if not data:
-            return {
-                "available": False,
-                "reason": "No GNN scores for this tenant yet. The tenant may be "
-                          "below the training sample gate, or the weekly job may "
-                          "not have run since the model was enabled.",
-            }
-        return {"available": True, **data}
-    except Exception as e:
-        logger.error(f"Error fetching GNN comparison: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
