@@ -4,7 +4,7 @@ graph_analytics.py
 Stage 1 of the fraud-analytics-job pipeline.
 
 Detects eight structural, temporal, and semantic behavioural patterns in the Nominations
-graph for each tenant and upserts findings into dbo.GraphPatternFindings.
+graph for each tenant and archives complete runs in dbo.GraphPatternFindings.
 
 Pattern catalogue
 -----------------
@@ -411,54 +411,24 @@ def _finding(
     }
 
 
-def _load_existing_hashes(
-    conn: pyodbc.Connection,
-    tenant_id: int,
-    table: str,
-) -> set[str]:
-    """
-    Return the set of FindingHash values already stored for this tenant.
-    Used to filter out duplicate findings before inserting.
-    NULL hashes (rows from before migration 0008) are excluded — they will
-    be naturally re-evaluated by the detector as the window rolls forward.
-    """
-    cur = conn.cursor()
-    cur.execute(f"""
-        SELECT FindingHash
-        FROM   {table}
-        WHERE  TenantId    = ?
-          AND  FindingHash IS NOT NULL
-    """, tenant_id)
-    return {row[0] for row in cur.fetchall()}
-
-
 def _save_findings(
     conn: pyodbc.Connection,
     findings: list[dict],
     table: str,
-    existing_hashes: set[str],
 ) -> None:
     """
-    Insert findings whose FindingHash is not already in the table.
-    Skipped findings are logged so the operator can see the dedup effect.
-    The DB-level unique index on (TenantId, FindingHash) is a safety net
-    in case of race conditions or logic bugs.
+    Stage the complete run, deduplicating only within this run. The caller
+    commits it atomically with user snapshots and the completed-run status.
     """
     if not findings:
         return
 
-    # Two-pass dedup:
-    # 1. Filter against hashes already in the DB (loaded before detection ran)
-    # 2. Filter internal duplicates within this run's findings — two detectors
-    #    could theoretically produce identical content, and existing_hashes
-    #    wouldn't catch them since neither is in the DB yet.
+    # A recurring finding belongs to every snapshot in which it was detected.
     seen_this_run: set[str] = set()
     new_findings:  list[dict] = []
 
     for f in findings:
         h = f["FindingHash"]
-        if h in existing_hashes:
-            continue          # already in DB from a previous run
         if h in seen_this_run:
             continue          # duplicate within this run
         seen_this_run.add(h)
@@ -466,7 +436,7 @@ def _save_findings(
 
     skipped = len(findings) - len(new_findings)
     logger.info(
-        "  Dedup: %d candidate(s), %d new, %d skipped.",
+        "  Complete snapshot: %d candidate(s), %d unique, %d duplicates skipped.",
         len(findings), len(new_findings), skipped,
     )
     if not new_findings:
@@ -478,8 +448,8 @@ def _save_findings(
         INSERT INTO {table}
                (TenantId, PatternType, Severity,
                 AffectedUsers, NominationIds, Detail, DetectedAt, RunId, FindingHash,
-                TotalAmount, FindingScore, ScoringPolicyVersion, ScoreComponentsJson)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                TotalAmount, FindingScore, ScoringPolicyVersion, ScoreComponentsJson, SnapshotComplete)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     """
     rows = [
         (
@@ -500,8 +470,7 @@ def _save_findings(
         for f in new_findings
     ]
     cur.executemany(sql, rows)
-    conn.commit()
-    logger.info("  Saved %d new finding(s) to %s.", len(new_findings), table)
+    logger.info("  Staged %d complete-run finding(s) in %s.", len(new_findings), table)
 
 
 # ── Rings ─────────────────────────────────────────────────────────────────────
@@ -1550,35 +1519,18 @@ def _populate_graph_flag_snapshots(
 ) -> None:
     """Materialise one complete, evidence-rich Graph snapshot.
 
-    IntegrityComponentStatus is updated after this transaction and records
-    every successful run, including a clean run with zero findings.
+    IntegrityComponentStatus is published in the same transaction and identifies
+    the latest successful run, including a clean run with zero findings.
     UserGraphFlags contains only affected nominators and beneficiaries.
     """
     cur = conn.cursor()
 
-    _SEVERITY_RANK = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
     active_findings = [
         finding for finding in findings
         if finding.get("PatternType") != "ApproverAffinity"
     ]
 
-    user_flags: dict[int, dict] = defaultdict(lambda: {
-        "IsInRing":                 0,
-        "RingMaxUserCount":         0,
-        "RingMaxNominationCount":   0,
-        "IsSuperNominator":         0,
-        "IsInCopyPasteCluster":     0,
-        "CopyPasteClusterSize":     0,
-        "HighestSeverity":          None,
-        "Findings":                 [],
-        "_severity_rank":           0,
-    })
-
-    def _update_severity(flags: dict, severity: str) -> None:
-        rank = _SEVERITY_RANK.get(severity, 0)
-        if rank > flags["_severity_rank"]:
-            flags["_severity_rank"] = rank
-            flags["HighestSeverity"] = severity
+    user_flags: dict[int, list] = defaultdict(list)
 
     for f in active_findings:
         ptype    = f["PatternType"]
@@ -1587,6 +1539,7 @@ def _populate_graph_flag_snapshots(
         nom_ids  = json.loads(f.get("NominationIds") or "[]")
 
         evidence = {
+            "snapshot_run_id": run_id,
             "finding_hash": f.get("FindingHash"),
             "pattern_type": ptype,
             "severity": severity,
@@ -1605,23 +1558,7 @@ def _populate_graph_flag_snapshots(
         }
 
         for uid in users:
-            uf = user_flags[uid]
-            _update_severity(uf, severity)
-            uf["Findings"].append(evidence)
-
-            if ptype == "Ring":
-                uf["IsInRing"] = 1
-                uf["RingMaxUserCount"] = max(uf["RingMaxUserCount"], len(users))
-                uf["RingMaxNominationCount"] = max(
-                    uf["RingMaxNominationCount"], len(nom_ids)
-                )
-            elif ptype == "SuperNominator":
-                uf["IsSuperNominator"] = 1
-            elif ptype == "CopyPaste":
-                uf["IsInCopyPasteCluster"] = 1
-                uf["CopyPasteClusterSize"] = max(
-                    uf["CopyPasteClusterSize"], len(nom_ids)
-                )
+            user_flags[uid].append(evidence)
     # A same-day rerun is a full replacement, not a partial merge.
     cur.execute(
         "DELETE FROM dbo.UserGraphFlags WHERE TenantId = ? AND AsOfDate = ?",
@@ -1634,26 +1571,15 @@ def _populate_graph_flag_snapshots(
                 tenant_id,
                 uid,
                 as_of_date,
-                uf["IsInRing"],
-                uf["RingMaxUserCount"],
-                uf["RingMaxNominationCount"],
-                uf["IsSuperNominator"],
-                uf["IsInCopyPasteCluster"],
-                uf["CopyPasteClusterSize"],
-                uf["HighestSeverity"],
-                json.dumps(uf["Findings"], separators=(",", ":")),
+                json.dumps(uf, separators=(",", ":"), allow_nan=False),
             )
             for uid, uf in user_flags.items()
         ]
 
         cur.executemany("""
             INSERT INTO dbo.UserGraphFlags
-                (TenantId, UserId, AsOfDate,
-                 IsInRing, RingMaxUserCount, RingMaxNominationCount,
-                 IsSuperNominator,
-                 IsInCopyPasteCluster, CopyPasteClusterSize,
-                 HighestSeverity, FindingsJson)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (TenantId, UserId, AsOfDate, FindingsJson)
+            VALUES (?, ?, ?, ?)
         """, rows_ugf)
 
         logger.info(
@@ -1701,9 +1627,6 @@ def _process_tenant(
             "snapshot after non-nomination detectors run."
         )
 
-    existing_hashes = _load_existing_hashes(conn, tenant_id, findings_table)
-    logger.info("  Existing hashes in table: %d", len(existing_hashes))
-
     detected_findings: list[dict] = []
 
     def enabled(pattern_type: str) -> bool:
@@ -1742,7 +1665,13 @@ def _process_tenant(
             ever_active_ids, users, tenant_id, run_id, policy
         ))
 
-    _save_findings(conn, detected_findings, findings_table, existing_hashes)
+    detected_findings = list({f["FindingHash"]: f for f in detected_findings}.values())
+    # Same lock order as inference: serving marker before user snapshot rows.
+    conn.cursor().execute("""
+        SELECT TenantId FROM dbo.IntegrityComponentStatus WITH (UPDLOCK, HOLDLOCK)
+        WHERE TenantId=? AND Component='GRAPH'
+    """, (tenant_id,)).fetchall()
+    _save_findings(conn, detected_findings, findings_table)
     logger.info("  Tenant %d total findings: %d", tenant_id, len(detected_findings))
 
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -1755,6 +1684,7 @@ def _process_tenant(
         serving_version=f"graph-policy-v{policy['version']}",
         serving_as_of=as_of_date,
         diagnostics={
+            "snapshot_schema_version": 1,
             "nomination_count": len(nominations), "user_count": len(users),
             "finding_count": len(detected_findings), "window_days": window_days,
             "scoring_policy_version": policy["version"],

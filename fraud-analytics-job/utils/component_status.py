@@ -70,10 +70,12 @@ def upsert_component_status(
             LastAttemptStatus = ?,
             ReasonCode = ?,
             ReasonDetail = ?,
-            DiagnosticsJson = ?,
+            DiagnosticsJson = CASE WHEN target.Component='GRAPH' AND ? <> 'SUCCEEDED'
+                THEN target.DiagnosticsJson ELSE ? END,
             LastAttemptAt = ?,
             LastSuccessfulAt = COALESCE(?, target.LastSuccessfulAt),
-            RunId = ?,
+            RunId = CASE WHEN target.Component='GRAPH' AND ? <> 'SUCCEEDED'
+                THEN target.RunId ELSE ? END,
             UpdatedAt = SYSUTCDATETIME(),
             UpdatedBy = ?
         WHEN NOT MATCHED THEN INSERT (
@@ -86,8 +88,8 @@ def upsert_component_status(
     """, (
         tenant_id, component,
         serving_status, serving_version, serving_as_of,
-        attempt_status, reason_code, reason_detail, diagnostics_json,
-        attempt_time, last_success, run_id, _ACTOR,
+        attempt_status, reason_code, reason_detail, attempt_status, diagnostics_json,
+        attempt_time, last_success, attempt_status, run_id, _ACTOR,
         tenant_id, component, serving_status, serving_version, serving_as_of,
         attempt_status, reason_code, reason_detail, diagnostics_json,
         attempt_time, last_success, run_id, _ACTOR, _ACTOR,

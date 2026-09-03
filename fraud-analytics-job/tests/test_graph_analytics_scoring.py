@@ -51,7 +51,7 @@ POLICY = {
         },
         "SuperBeneficiary": {
             "base_score": 20, "minimum_score": 0, "maximum_score": 100,
-            "enabled_for_routing": False,
+            "enabled_for_routing": True,
             "applicable_roles": ["beneficiary"],
             "parameters": {
                 "minimum_count": 5, "minimum_unique_nominators": 4,
@@ -170,7 +170,7 @@ def test_super_beneficiary_requires_broad_support_and_scores_continuously():
 
     assert len(findings) == 1
     assert json.loads(findings[0]["AffectedUsers"]) == [99]
-    assert not findings[0]["EnabledForRouting"]
+    assert findings[0]["EnabledForRouting"]
     components = json.loads(findings[0]["ScoreComponentsJson"])
     assert components["signals"]["breadth"] == 1.0
     assert components["signals"]["compactness"] > 0.8
@@ -260,8 +260,23 @@ def test_snapshot_carries_score_and_ignores_legacy_approver_finding():
     assert len(connection.cursor_value.batches) == 1
     statement, rows = connection.cursor_value.batches[0]
     assert "FindingsJson" in statement
+    assert "IsInRing" not in statement
+    assert len(rows[0]) == 4
     assert len(rows) == 3
     evidence = json.loads(rows[0][-1])[0]
     assert evidence["finding_score"] == ring["FindingScore"]
     assert evidence["scoring_policy_version"] == 3
+    assert evidence["snapshot_run_id"] == 'run-1'
     assert all(row[1] not in {4, 5} for row in rows)
+
+
+def test_full_runs_keep_recurring_findings_and_deduplicate_within_each_run():
+    connection = _Connection()
+    for run_id in ('run-1', 'run-2'):
+        finding = graph._finding(7, run_id, 'Ring', 'High', [1, 2, 3], [11, 12, 13],
+                                 'Same recurring ring', policy=POLICY, signals={'exposure': 0.6})
+        graph._save_findings(connection, [finding, finding], 'dbo.GraphPatternFindings')
+    assert len(connection.cursor_value.batches) == 2
+    assert all(len(rows) == 1 for _, rows in connection.cursor_value.batches)
+    assert 'SnapshotComplete' in connection.cursor_value.batches[0][0]
+    assert not connection.committed  # Published with UserGraphFlags and status, not early.

@@ -1782,20 +1782,60 @@ def get_integrity_runs(tenant_id: int) -> list[dict]:
         rows = session.execute(text("""
             SELECT   RunId,
                      MIN(DetectedAt)  AS RunDate,
-                     COUNT(*)         AS TotalFindings
+                     COUNT(*)         AS TotalFindings,
+                     MIN(CAST(SnapshotComplete AS INT)) AS SnapshotComplete,
+                     MIN(ScoringPolicyVersion) AS PolicyVersion
             FROM     dbo.GraphPatternFindings
             WHERE    TenantId = :tid
             GROUP BY RunId
             ORDER BY MIN(DetectedAt) DESC
         """), {"tid": tenant_id}).fetchall()
-        return [
+        runs = [
             {
                 "runId":         row[0],
                 "runDate":       row[1].isoformat() if row[1] else None,
                 "totalFindings": row[2],
+                "snapshotComplete": bool(row[3]),
+                "policyVersion": row[4],
+                "currentSnapshot": False,
             }
             for row in rows
         ]
+        # Unlike historical finding rows, the serving marker also represents
+        # a successful run with zero findings. Failed refreshes retain it.
+        marker = session.execute(text("""
+            SELECT RunId, ServingAsOf, DiagnosticsJson, ServingStatus
+            FROM dbo.IntegrityComponentStatus WHERE TenantId=:tid AND Component='GRAPH'
+        """), {"tid": tenant_id}).fetchone()
+        if marker and marker[0] and marker[1] and marker[3] == 'AVAILABLE':
+            metadata = json.loads(marker[2] or '{}')
+            if metadata.get('snapshot_schema_version') == 1:
+                run_id = str(marker[0])
+                current = next((run for run in runs if str(run['runId']) == run_id), None)
+                if current is None and metadata.get('finding_count') == 0:
+                    current = {
+                        'runId': run_id, 'runDate': marker[1].isoformat(),
+                        'totalFindings': 0, 'snapshotComplete': True,
+                        'policyVersion': metadata.get('scoring_policy_version'),
+                    }
+                    runs.insert(0, current)
+                if current is not None:
+                    current['currentSnapshot'] = True
+        patterns = session.execute(text("""
+            SELECT p.PolicyVersion, x.PatternType, x.DisplayOrder, x.Enabled, x.EnabledForRouting
+            FROM dbo.GraphScoringPolicies p
+            JOIN dbo.GraphScoringPatternParameters x ON x.PolicyId=p.PolicyId
+            WHERE p.TenantId=:tid ORDER BY p.PolicyVersion, x.DisplayOrder
+        """), {"tid": tenant_id}).fetchall()
+        for run in runs:
+            run['detectors'] = [
+                {'patternType': row[1], 'displayOrder': row[2], 'enabled': bool(row[3]),
+                 'scoring': bool(row[4])}
+                for row in patterns if row[0] == run['policyVersion']
+            ]
+        # The current complete snapshot takes precedence over legacy insert-only runs.
+        runs.sort(key=lambda run: (bool(run.get('currentSnapshot')), run['runDate'] or ''), reverse=True)
+        return runs
 
 
 def get_integrity_findings(tenant_id: int, run_id: str) -> list[dict]:

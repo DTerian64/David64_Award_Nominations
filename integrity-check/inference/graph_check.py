@@ -73,17 +73,19 @@ def assess_graph(
     try:
         result = _assess_graph_inner(details, tenant_id, component_status)
     except Exception as exc:
+        reason = "INVALID_SNAPSHOT" if isinstance(exc, db.InvalidGraphSnapshot) else "INFERENCE_FAILED"
         logger.error(
             "Graph Analytics assessment failed",
             extra={
                 "nomination_id": nomination_id,
                 "tenant_id": tenant_id,
-                "unavailable_reason": "INFERENCE_FAILED",
+                "unavailable_reason": reason,
                 "error": str(exc),
             },
             exc_info=True,
         )
-        result = _unavailable("INFERENCE_FAILED", component_status)
+        result = _unavailable(reason, component_status)
+        result['unavailable_detail'] = str(exc)
 
     logger.info(
         "Graph Analytics assessment completed",
@@ -98,6 +100,9 @@ def assess_graph(
             "risk_level": result.get("risk_level"),
             "flagged": result.get("flagged", False),
             "warning_flags": result.get("warning_flags") or [],
+            "winning_finding": result.get("winning_finding"),
+            "detector_summary": result.get("detector_summary") or [],
+            "pattern_findings": result.get("pattern_findings") or [],
             "snapshot_as_of": result.get("snapshot_as_of"),
             "snapshot_run_id": result.get("snapshot_run_id"),
             "snapshot_age_days": result.get("snapshot_age_days"),
@@ -229,6 +234,16 @@ def _assess_graph_inner(
         f"{_risk_level(item['finding_score'], policy['thresholds'])})"
         for item in candidates
     ]
+    groups: dict[str, dict] = {}
+    for item in findings:
+        group = groups.setdefault(item['pattern_type'], {
+            'pattern_type': item['pattern_type'], 'count': 0, 'scoring_count': 0,
+            'highest_score': 0.0,
+        })
+        group['count'] += 1
+        group['scoring_count'] += int(item['routing_relevant'])
+        group['highest_score'] = max(group['highest_score'], item['finding_score'])
+    summaries = sorted(groups.values(), key=lambda group: (-group['highest_score'], group['pattern_type']))
     result = {
         "model_available": True,
         "fraud_score": graph_score,
@@ -243,6 +258,8 @@ def _assess_graph_inner(
         "snapshot_age_days": snapshot_age_days,
         "affected_user_ids": list(dict.fromkeys(affected)),
         "pattern_findings": findings,
+        "winning_finding": winner,
+        "detector_summary": summaries,
         "winning_finding_hash": winner.get("finding_hash") if winner else None,
         "winning_pattern_type": winner.get("pattern_type") if winner else None,
         "scoring_strategy": policy["scoring_strategy"],

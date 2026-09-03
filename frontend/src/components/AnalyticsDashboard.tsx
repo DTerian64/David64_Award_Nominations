@@ -83,6 +83,10 @@ interface IntegrityRun {
   runId: string;
   runDate: string;
   totalFindings: number;
+  snapshotComplete: boolean;
+  currentSnapshot: boolean;
+  policyVersion: number | null;
+  detectors?: { patternType: string; displayOrder: number; enabled: boolean; scoring: boolean }[];
 }
 
 interface IntegrityFinding {
@@ -1379,7 +1383,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <h3 className="text-lg font-semibold text-gray-900">Graph Pattern Findings</h3>
-              <p className="text-sm text-gray-500">Behavioural fraud patterns detected by the weekly analytics job</p>
+              <p className="text-sm text-gray-500">Complete Graph snapshots and clearly marked historical partial results</p>
             </div>
             {integrityRuns.length > 0 && (
               <div className="relative">
@@ -1391,8 +1395,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
                   {integrityRuns.map(run => (
                     <option key={run.runId} value={run.runId}>
                       {new Date(run.runDate).toLocaleDateString('en-US', {
-                        month: 'short', day: 'numeric', year: 'numeric'
-                      })} — {run.totalFindings} finding{run.totalFindings !== 1 ? 's' : ''}
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                      })} — {run.totalFindings} findings{run.currentSnapshot ? ' · Current' : ''}{run.snapshotComplete ? '' : ' · Legacy partial'}
                     </option>
                   ))}
                 </select>
@@ -1421,6 +1425,19 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
 
           {!integrityLoading && integrityRuns.length > 0 && (
             <>
+              {(() => {
+                const run = integrityRuns.find(item => item.runId === selectedRunId);
+                return run ? (
+                  <div className={`rounded-lg border p-3 text-sm ${run.snapshotComplete ? 'border-blue-200 bg-blue-50' : 'border-amber-200 bg-amber-50'}`}>
+                    <p>{run.snapshotComplete ? 'Complete snapshot' : 'Legacy partial run'} · Policy {run.policyVersion ?? 'not recorded'}</p>
+                    <p className="mt-1 text-xs break-all">Run: {run.runId}</p>
+                    <p className="mt-1 text-xs">{run.currentSnapshot
+                      ? 'Published snapshot used by integrity-check, subject to its freshness policy.'
+                      : run.snapshotComplete ? 'Historical complete snapshot; not the current serving snapshot.'
+                        : 'Only findings first saved in this run are shown. Missing detector results do not prove a zero-finding assessment.'}</p>
+                  </div>
+                ) : null;
+              })()}
               {/* Severity filter tiles */}
               {(() => {
                 const counts: Record<string, number> = { Critical: 0, High: 0, Medium: 0, Low: 0 };
@@ -1481,10 +1498,19 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
               {(() => {
                 const byType: Record<string, number> = {};
                 integrityFindings.forEach(f => { byType[f.patternType] = (byType[f.patternType] ?? 0) + 1; });
+                const run = integrityRuns.find(item => item.runId === selectedRunId);
+                const catalogue = run?.detectors ?? [];
+                const types = [...new Set([
+                  ...(catalogue.length ? catalogue.map(item => item.patternType)
+                    : Object.keys(PATTERN_META).filter(type => type !== 'ApproverAffinity')),
+                  ...Object.keys(byType),
+                ])];
                 const hasFilters = activePatternFilters.size > 0;
-                return Object.keys(byType).length > 0 ? (
+                return types.length > 0 ? (
                   <div className="flex flex-wrap gap-2 items-center">
-                    {Object.entries(byType).map(([type, count]) => {
+                    {types.map(type => {
+                      const count = byType[type] ?? 0;
+                      const detector = catalogue.find(item => item.patternType === type);
                       const active = activePatternFilters.has(type);
                       return (
                         <button
@@ -1506,6 +1532,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
                           }`}
                         >
                           {PATTERN_META[type]?.label ?? type}
+                          <span className="ml-1 text-xs">· {detector
+                            ? !detector.enabled ? 'Disabled' : detector.scoring ? 'Scoring' : 'Analytics-only'
+                            : 'Policy not recorded'}</span>
                           <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
                             active ? 'bg-gray-500 text-white' : 'bg-gray-300 text-gray-700'
                           }`}>{count}</span>

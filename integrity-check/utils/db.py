@@ -35,6 +35,7 @@ Focused subset of queries needed by inference/handler.py and its checks:
 """
 
 import json
+import math
 import logging
 import os
 import struct
@@ -528,6 +529,38 @@ def get_nominator_descriptions(
 
 # ── Graph component lookups ──────────────────────────────────────────────────
 
+class InvalidGraphSnapshot(ValueError):
+    """A published Graph snapshot has missing or inconsistent evidence."""
+
+
+def _parse_graph_findings(raw, policy_version, run_id):
+    try:
+        findings = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise InvalidGraphSnapshot("Missing or malformed FindingsJson") from exc
+    if not isinstance(findings, list) or not findings:
+        raise InvalidGraphSnapshot("An affected-user snapshot must contain a non-empty findings array")
+    for finding in findings:
+        if not isinstance(finding, dict):
+            raise InvalidGraphSnapshot("Finding evidence must be an object")
+        score = finding.get("finding_score")
+        roles = finding.get("applicable_roles")
+        if (
+            not isinstance(score, (int, float)) or isinstance(score, bool)
+            or not math.isfinite(score) or not 0 <= score <= 100
+            or not isinstance(finding.get("enabled_for_routing"), bool)
+            or not isinstance(roles, list) or not roles
+            or any(role not in ("nominator", "beneficiary") for role in roles)
+            or not isinstance(finding.get("finding_hash"), str) or not finding["finding_hash"]
+            or not isinstance(finding.get("pattern_type"), str) or not finding["pattern_type"]
+            or not isinstance(finding.get("nomination_ids"), list)
+            or not isinstance(finding.get("score_components"), dict)
+            or finding.get("scoring_policy_version") != policy_version
+            or str(finding.get("snapshot_run_id")) != str(run_id)
+        ):
+            raise InvalidGraphSnapshot("Incomplete, invalid, or mismatched Graph finding evidence")
+    return findings
+
 def get_graph_component_snapshot(
     tenant_id: int,
     user_ids: list[int],
@@ -553,52 +586,46 @@ def get_graph_component_snapshot(
     serving_as_of = status.get("serving_as_of")
     if not serving_as_of:
         return None
-    as_of = serving_as_of.date() if hasattr(serving_as_of, "date") else serving_as_of
-    diagnostics = status.get("diagnostics")
-    if not isinstance(diagnostics, dict):
-        try:
-            diagnostics = json.loads(status.get("diagnostics_json") or "{}")
-        except (TypeError, ValueError):
-            diagnostics = {}
-
     with _get_conn() as conn:
         cursor = conn.cursor()
+        # Keep the completed-run marker and user rows consistent across same-day
+        # replacements. The read transaction holds this lock until connection close.
+        cursor.execute("""
+            SELECT ServingStatus, ServingAsOf, RunId, DiagnosticsJson
+            FROM dbo.IntegrityComponentStatus WITH (HOLDLOCK)
+            WHERE TenantId=? AND Component='GRAPH'
+        """, (tenant_id,))
+        marker = cursor.fetchone()
+        if not marker or marker[0] != 'AVAILABLE' or not marker[1]:
+            return None
+        as_of = marker[1].date() if hasattr(marker[1], 'date') else marker[1]
+        run_id = str(marker[2]) if marker[2] else None
+        try:
+            diagnostics = json.loads(marker[3])
+        except (TypeError, ValueError) as exc:
+            raise InvalidGraphSnapshot("Missing Graph snapshot metadata") from exc
+        if not isinstance(diagnostics, dict) or diagnostics.get('snapshot_schema_version') != 1:
+            raise InvalidGraphSnapshot("Graph snapshot refresh required")
+        if not run_id or not isinstance(diagnostics.get('scoring_policy_version'), int):
+            raise InvalidGraphSnapshot("Graph snapshot run/policy is missing")
         users: dict[int, dict] = {}
         if unique_ids:
             placeholders = ", ".join("?" for _ in unique_ids)
             cursor.execute(f"""
-                SELECT UserId,
-                       IsInRing, IsSuperNominator,
-                       IsInCopyPasteCluster, CopyPasteClusterSize,
-                       HighestSeverity, FindingsJson
+                SELECT UserId, FindingsJson
                 FROM dbo.UserGraphFlags
                 WHERE TenantId = ?
                   AND AsOfDate = ?
                   AND UserId IN ({placeholders})
             """, [tenant_id, as_of, *unique_ids])
             for found in cursor.fetchall():
-                try:
-                    findings = json.loads(found[6]) if found[6] else []
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "Invalid FindingsJson for tenant %d user %s snapshot %s",
-                        tenant_id, found[0], as_of,
-                    )
-                    findings = []
-                if not isinstance(findings, list):
-                    findings = []
                 users[int(found[0])] = {
-                    "is_in_ring": bool(found[1]),
-                    "is_super_nominator": bool(found[2]),
-                    "is_in_copy_paste_cluster": bool(found[3]),
-                    "copy_paste_cluster_size": int(found[4] or 0),
-                    "highest_severity": found[5],
-                    "findings": findings,
+                    "findings": _parse_graph_findings(found[1], diagnostics['scoring_policy_version'], run_id),
                 }
 
     return {
         "snapshot_as_of": as_of,
-        "snapshot_run_id": status.get("run_id"),
+        "snapshot_run_id": run_id,
         "snapshot_finding_count": int(diagnostics.get("finding_count", 0)),
         "scoring_policy_version": diagnostics.get("scoring_policy_version"),
         "users": users,

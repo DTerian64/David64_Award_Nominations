@@ -44,6 +44,15 @@ class _Connection:
 
 
 class ComponentStatusTests(unittest.TestCase):
+    def test_graph_failure_preserves_completed_snapshot_metadata(self):
+        conn = _Connection()
+        upsert_component_status(conn, tenant_id=7, component='GRAPH', attempt_status='FAILED',
+                                reason_code='ANALYTICS_FAILED', run_id='failed-run')
+        sql = conn.cursor_value.sql
+        self.assertIn("THEN target.DiagnosticsJson ELSE ? END", sql)
+        self.assertIn("THEN target.RunId ELSE ? END", sql)
+        self.assertEqual(sql.count('?'), len(conn.cursor_value.params))
+
     def test_structured_skip_is_upserted_and_committed(self):
         conn = _Connection()
 

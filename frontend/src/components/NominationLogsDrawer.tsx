@@ -67,6 +67,56 @@ function formatDetailValue(value: unknown): string {
   return String(value);
 }
 
+/** Group evidence for readability without dropping findings or changing scores. */
+function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
+  const findings = Array.isArray(extras.pattern_findings)
+    ? extras.pattern_findings.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    : [];
+  const groups = new Map<string, { score: number; items: Record<string, unknown>[] }>();
+  const add = (type: string, item: Record<string, unknown>, score: number) => {
+    const group = groups.get(type) ?? { score: 0, items: [] };
+    group.score = Math.max(group.score, score);
+    group.items.push(item);
+    groups.set(type, group);
+  };
+  findings.forEach(item => add(String(item.pattern_type), item, Number(item.finding_score) || 0));
+  // Old logs only contain warning strings; retain access to those as well.
+  if (!findings.length && Array.isArray(extras.warning_flags)) {
+    extras.warning_flags.forEach(raw => {
+      const warning = String(raw);
+      const match = warning.match(/:\s*(\w+)\s*\(([\d.]+),/);
+      add(match?.[1] ?? 'Other', { warning }, Number(match?.[2]) || 0);
+    });
+  }
+  const winner = extras.winning_finding && typeof extras.winning_finding === 'object'
+    ? extras.winning_finding as Record<string, unknown> : null;
+  return (
+    <div className="mt-3 space-y-2">
+      {extras.winning_pattern_type != null && (
+        <div className="rounded border border-teal-200 bg-teal-50 p-2">
+          <p className="font-semibold">Winning finding: {String(extras.winning_pattern_type)} · {String(extras.fraud_score)} / 100</p>
+          <p className="mt-1 text-gray-600">Highest relevant finding—not a sum of the findings below.</p>
+          {winner?.detail != null && <p className="mt-1">{String(winner.detail)}</p>}
+        </div>
+      )}
+      {[...groups.entries()].sort((a, b) => b[1].score - a[1].score).map(([type, group]) => (
+        <details key={type} className="rounded border border-gray-200 p-2">
+          <summary className="cursor-pointer font-medium">{type} · {group.items.length} findings · Highest {group.score.toFixed(2)}</summary>
+          <div className="mt-2 max-h-80 space-y-1 overflow-y-auto">
+            {group.items.map((item, index) => (
+              <details key={String(item.finding_hash ?? index)} className="rounded bg-gray-50 p-2">
+                <summary className="cursor-pointer">{item.warning != null ? String(item.warning)
+                  : `${item.finding_score} · ${Array.isArray(item.affected_roles) ? item.affected_roles.join('/') : ''} · ${item.routing_relevant ? 'Scoring' : 'Not scoring this nomination'}`}</summary>
+                <pre className="mt-1 whitespace-pre-wrap break-words text-[11px]">{formatDetailValue(item)}</pre>
+              </details>
+            ))}
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 // Shorten service container name for display: "award-api-primary-sandbox" → "backend"
 function shortService(service: string): string {
   if (service.includes('award-api'))         return 'backend';
@@ -238,9 +288,11 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                     const text = log.message.replace(/^App_Log:\s*/, '');
                     const extras = parseDetails(log.details);
                     const shapContributions = parseShapContributions(extras.top_features);
+                    const isGraph = text === 'Graph Analytics assessment completed';
                     const extraEntries = Object.entries(extras).filter(
                       ([k]) => !SKIP_EXTRAS.has(k)
                         && (k !== 'top_features' || shapContributions.length === 0)
+                        && (!isGraph || !['warning_flags', 'winning_finding', 'detector_summary', 'pattern_findings'].includes(k))
                     );
                     return (
                       <div key={i} className="border border-gray-100 rounded-lg p-3 text-xs">
@@ -262,6 +314,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                         <p className="text-gray-800 leading-relaxed break-words">
                           {text}
                         </p>
+                        {isGraph && <GraphEvidence extras={extras} />}
                         {/* Structured extras — fraud score, risk level, etc. */}
                         {extraEntries.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mt-2">
