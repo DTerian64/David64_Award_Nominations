@@ -99,7 +99,7 @@ interface DetectionEngineStatus {
   updated_by: string | null;
 }
 
-const ENGINE_NAMES: Record<string, { name: string; description: string }> = {
+const ENGINE_NAMES: Record<string, { name: string; description: string; population?: string }> = {
   RF: {
     name: 'Random Forest',
     description: 'Independent behavioural and semantic fraud model',
@@ -107,12 +107,26 @@ const ENGINE_NAMES: Record<string, { name: string; description: string }> = {
   GRAPH: {
     name: 'Graph Analytics',
     description: 'Independent graph-pattern detection engine',
+    population: 'P2P behavior: Pending, Approved, and Paid nominations.',
   },
   GNN: {
     name: 'Graph Neural Network',
     description: 'Independent graph neural-network fraud model',
+    population: 'P2P behavior: Pending, Approved, and Paid nominations. HRBP-confirmed outcomes are retained only as supervised labels.',
   },
 };
+
+const DIAGNOSTIC_PRIORITY = ['window_days', 'nomination_count'];
+
+const orderedDiagnostics = (diagnostics: Record<string, unknown>) =>
+  Object.entries(diagnostics || {}).sort(([left], [right]) => {
+    const leftRank = DIAGNOSTIC_PRIORITY.indexOf(left);
+    const rightRank = DIAGNOSTIC_PRIORITY.indexOf(right);
+    if (leftRank === -1 && rightRank === -1) return 0;
+    if (leftRank === -1) return 1;
+    if (rightRank === -1) return -1;
+    return leftRank - rightRank;
+  });
 
 const statusClass = (status: string): string => {
   switch (status.toUpperCase()) {
@@ -229,7 +243,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
               name: row.component,
               description: 'Integrity detection engine',
             };
-            const diagnostics = Object.entries(row.diagnostics || {});
+            const diagnostics = orderedDiagnostics(row.diagnostics || {});
             const inspectable: InspectableModel | null = row.component === 'RF'
               ? 'rf'
               : row.component === 'GNN' ? 'gnn' : null;
@@ -240,6 +254,9 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                     <div>
                       <h3 className="font-semibold text-gray-800">{metadata.name}</h3>
                       <p className="text-xs text-gray-500 mt-0.5">{metadata.description}</p>
+                      {metadata.population && (
+                        <p className="text-xs text-gray-600 mt-2">{metadata.population}</p>
+                      )}
                       {inspectable && (
                         <button
                           type="button"

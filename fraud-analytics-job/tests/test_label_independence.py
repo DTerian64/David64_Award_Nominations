@@ -58,9 +58,28 @@ class HumanConfirmedLabelTests(unittest.TestCase):
         result = labels.load_labels(object(), tenant_id=3)
 
         query = read_sql.call_args.args[0]
-        self.assertIn("dbo.FraudDecisionResults", query)
-        self.assertIn("fdr.TrainingDisposition = 'EXCLUDED'", query)
+        self.assertIn("dbo.IntegrityDecisionResults", query)
+        self.assertIn("idr.TrainingDisposition = 'EXCLUDED'", query)
+        self.assertNotIn("dbo.FraudDecisionResults", query)
+        self.assertNotIn("dbo.P2P_FraudScores", query)
         self.assertTrue(result.loc[0, "IsFraud"] is pd.NA)
+
+    @patch.object(labels.pd, "read_sql")
+    def test_unreviewed_inference_result_is_not_a_training_label(self, read_sql):
+        read_sql.return_value = pd.DataFrame([{
+            "NominationId": 10,
+            "RiskLevel": "CRITICAL",
+            "ConfirmedBy": None,
+            "ConfirmedAt": None,
+            "TrainingDisposition": None,
+            "IsFraud": None,
+            "LabelSource": labels.SOURCE_UNLABELLED,
+        }])
+
+        result = labels.load_labels(object(), tenant_id=3)
+
+        self.assertTrue(result.loc[0, "IsFraud"] is pd.NA)
+        self.assertEqual(result.loc[0, "LabelSource"], labels.SOURCE_UNLABELLED)
 
     def test_rf_feature_frame_receives_same_shared_labels(self):
         features = pd.DataFrame([

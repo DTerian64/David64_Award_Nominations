@@ -184,7 +184,7 @@
           <div class="step-title">Evict Stale Embeddings</div>
           <div class="step-sub">
             DELETE from <code>NomGraph_NominationEmbedding</code> where nomination is outside the detection window
-            (default 180 days) or no longer Approved/Paid. Keeps the cache table bounded.
+            (default 180 days) or outside the Pending/Approved/Paid population. Keeps the cache table bounded.
           </div>
         </div>
       </div>
@@ -200,7 +200,7 @@
         <div class="step-num">3</div>
         <div class="step-body">
           <div class="step-title">Load nominations</div>
-          <div class="step-sub">Status IN ('Approved','Paid'), within rolling window. Only committed spend.</div>
+          <div class="step-sub">Status IN ('Pending','Approved','Paid'), within rolling window. Pending amounts are potential exposure.</div>
         </div>
       </div>
       <div class="step-row">
@@ -325,7 +325,7 @@
         <span class="db-pill db-sql">dbo.Nominations</span>
         <span class="db-pill db-sql">dbo.Tenants</span>
       </div>
-      <div class="note">Filtered to Approved/Paid within window_days (default 180).</div>
+      <div class="note">Filtered to Pending/Approved/Paid within window_days (default 180).</div>
     </div>
 
     <div class="section s-db">

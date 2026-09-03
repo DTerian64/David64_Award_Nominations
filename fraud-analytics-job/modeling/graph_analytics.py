@@ -248,11 +248,12 @@ def _load_nominations(
     window_days: int,
 ) -> list[dict]:
     """
-    Return Approved/Paid nominations for a tenant within the rolling detection window.
+    Return in-scope P2P nominations within the rolling detection window.
 
-    Only Status IN ('Approved', 'Paid') are loaded — these represent real
-    financial exposure.  Pending/Rejected nominations are excluded so rings,
-    super-nominators, and copy-paste clusters reflect committed spend.
+    Pending, Approved, and Paid represent nomination behavior that has passed
+    the integrity submission stage. Rejected rows are excluded from detector
+    topology; HRBP-confirmed rejected outcomes remain available separately as
+    supervised model labels.
 
     window_days controls how far back to look. All active detectors share
     this tenant-policy value.
@@ -268,7 +269,7 @@ def _load_nominations(
         JOIN   dbo.Users u ON u.UserId = n.NominatorId
         WHERE  u.TenantId = ?
           AND  n.NominationDate >= DATEADD(DAY, -?, GETDATE())
-          AND  n.Status IN ('Approved', 'Paid')
+          AND  n.Status IN ('Pending', 'Approved', 'Paid')
     """, tenant_id, window_days)
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -539,7 +540,7 @@ def detect_rings(
       capped internally at 8 to prevent DFS explosion on dense graphs).
       Set via RING_MAX_CLUSTER_SIZE env var.
 
-    Severity — financial exposure (all nominations are already Approved/Paid):
+    Severity — nominated amount across the in-scope P2P population:
       TotalAmount ≥ 10 000 → Critical
       TotalAmount ≥  5 000 → High
       TotalAmount ≥  1 000 → Medium
@@ -593,8 +594,8 @@ def detect_rings(
                     nom_ids.append(nom_id)
                     total_amount += amount
 
-            # Severity based on financial exposure
-            # (all loaded nominations are Approved/Paid — amount is committed spend)
+            # Severity uses total nominated amount as an exposure proxy. Pending
+            # amounts are potential rather than committed exposure.
             if total_amount >= 10_000:
                 severity = "Critical"
             elif total_amount >= 5_000:
@@ -612,7 +613,7 @@ def detect_rings(
                 f"Members: {' → '.join(member_names)} → {member_names[0]}. "
                 f"Each member nominates the next in a closed cycle, consistent with "
                 f"coordinated reciprocal recognition. "
-                f"(Total approved/paid: ${total_amount:,})",
+                f"(Total nominated amount: ${total_amount:,})",
                 total_amount=total_amount,
                 policy=policy,
                 signals={
@@ -677,7 +678,7 @@ def detect_super_nominators(
                 [user_id], nom_ids,
                 f"User {user_id} sent {cnt} nominations "
                 f"(tenant mean={mean:.1f}, threshold={threshold:.1f}, "
-                f"total approved/paid: ${total_amount:,})",
+                f"total nominated amount: ${total_amount:,})",
                 total_amount=total_amount,
                 policy=policy,
                 signals={
@@ -774,7 +775,7 @@ def detect_super_beneficiaries(
             f"{unique_nominators} distinct nominators "
             f"(tenant mean={mean:.1f}, threshold={threshold:.1f}, "
             f"activity span={span_days:.0f} day(s), "
-            f"total approved/paid: USD {total_amount:,.0f})",
+            f"total nominated amount: USD {total_amount:,.0f})",
             total_amount=total_amount,
             policy=policy,
             signals={
@@ -900,7 +901,7 @@ def detect_temporal_bursts(
             f"{end.isoformat()} (expected rolling count={expected:.1f}, "
             f"threshold={threshold:.1f}, {len(set(nominators))} nominators, "
             f"{len(set(beneficiaries))} beneficiaries, "
-            f"total approved/paid: USD {total_amount:,.0f})",
+            f"total nominated amount: USD {total_amount:,.0f})",
             total_amount=total_amount,
             policy=policy,
             signals={
@@ -1101,7 +1102,7 @@ def detect_bipartite_dense_blocks(
             f"{len(right_group)} beneficiaries, {len(internal_edges)} distinct "
             f"edges, density={density:.3f}, overlap={overlap:.3f}, "
             f"activity span={span_days} day(s), "
-            f"total approved/paid: USD {total_amount:,.0f}",
+            f"total nominated amount: USD {total_amount:,.0f}",
             total_amount=total_amount,
             policy=policy,
             signals={
@@ -1182,11 +1183,11 @@ def detect_deserts(
 def _evict_stale_embeddings(conn: pyodbc.Connection, window_days: int) -> None:
     """
     Delete cached embeddings for nominations no longer within the active
-    detection window (or no longer Approved/Paid).
+    detection window or in-scope P2P population.
 
     Called once per job run — before per-tenant processing — to keep the
     NomGraph_NominationEmbedding table bounded to roughly
-    DETECTION_WINDOW_DAYS × approval_rate rows.
+    DETECTION_WINDOW_DAYS × eligible nomination rate rows.
     """
     cur = conn.cursor()
     cur.execute("""
@@ -1197,7 +1198,7 @@ def _evict_stale_embeddings(conn: pyodbc.Connection, window_days: int) -> None:
             FROM   dbo.Nominations n
             WHERE  n.NominationId   = e.NominationId
               AND  n.NominationDate >= DATEADD(DAY, -?, GETDATE())
-              AND  n.Status         IN ('Approved', 'Paid')
+              AND  n.Status         IN ('Pending', 'Approved', 'Paid')
         )
     """, window_days)
     deleted = cur.rowcount
@@ -1289,7 +1290,7 @@ def detect_copy_paste(
 
     Embedding cache
     ---------------
-    Approved/Paid nomination text is immutable, so embeddings computed on a
+    In-scope nomination text is immutable, so embeddings computed on a
     previous run are valid forever.  On each run the detector:
 
       1. Queries NomGraph_NominationEmbedding for all eligible NominationIds.
@@ -1454,7 +1455,7 @@ def detect_copy_paste(
             sorted(user_ids), sorted(nom_ids),
             f"Cluster of {len(members)} nominations with avg cosine "
             f"similarity {avg_sim:.3f} (threshold {similarity_threshold}, "
-            f"total approved/paid: ${total_amount:,})",
+            f"total nominated amount: ${total_amount:,})",
             total_amount=total_amount,
             policy=policy,
             signals={
@@ -1696,7 +1697,7 @@ def _process_tenant(
     )
     if not nominations:
         logger.info(
-            "  No approved/paid nominations in window — recording a complete "
+            "  No Pending/Approved/Paid nominations in window — recording a complete "
             "snapshot after non-nomination detectors run."
         )
 

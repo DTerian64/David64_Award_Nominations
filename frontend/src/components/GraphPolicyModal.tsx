@@ -114,7 +114,7 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
     signals: [
       {
         key: 'exposure', name: 'Exposure',
-        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+        expression: pattern => `clamp(total nominated amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
       },
       {
         key: 'repeat', name: 'Repeat activity',
@@ -154,7 +154,7 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       },
       {
         key: 'exposure', name: 'Exposure',
-        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+        expression: pattern => `clamp(total nominated amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
       },
     ],
   },
@@ -179,7 +179,7 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       },
       {
         key: 'exposure', name: 'Exposure',
-        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+        expression: pattern => `clamp(total nominated amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
       },
     ],
   },
@@ -196,7 +196,7 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       },
       {
         key: 'exposure', name: 'Exposure',
-        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+        expression: pattern => `clamp(total nominated amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
       },
     ],
   },
@@ -221,7 +221,7 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       },
       {
         key: 'exposure', name: 'Exposure',
-        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+        expression: pattern => `clamp(total nominated amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
       },
     ],
   },
@@ -250,7 +250,7 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       },
       {
         key: 'exposure', name: 'Exposure',
-        expression: pattern => `clamp(total approved/paid amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
+        expression: pattern => `clamp(total nominated amount ÷ ${formatValue(parameter(pattern, 'amount_reference', 10_000))}, 0, 1)`,
       },
     ],
   },
@@ -268,7 +268,7 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
 const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
   Ring: {
     inputs: [
-      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+      { key: 'total_amount', name: 'Total nominated amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
       { key: 'people_in_cycle', name: 'People in cycle', minimum: 3, maximum: 8, step: 1, defaultValue: () => 3 },
       { key: 'nominations_in_cycle', name: 'Nominations in cycle', minimum: 3, step: 1, defaultValue: () => 3 },
     ],
@@ -301,7 +301,7 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
       { key: 'neighbor_overlap', name: 'Average neighbor overlap (0–1)', minimum: 0, maximum: 1, step: 0.01, defaultValue: pattern => parameter(pattern, 'overlap_threshold', 0.6) },
       { key: 'exclusivity', name: 'Block exclusivity (0–1)', minimum: 0, maximum: 1, step: 0.01, defaultValue: () => 0.75 },
       { key: 'activity_span_days', name: 'Activity span (days)', minimum: 1, step: 1, defaultValue: () => 3 },
-      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+      { key: 'total_amount', name: 'Total nominated amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
     ],
     calculate: (pattern, values) => {
       const nominators = Number(values.nominators);
@@ -358,7 +358,7 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
       { key: 'robust_deviation', name: 'Historical robust deviation', minimum: 0, step: 0.1, defaultValue: () => 1.7 },
       { key: 'largest_participant_count', name: 'Most nominations involving one participant', minimum: 0, step: 1, defaultValue: () => 3 },
       { key: 'largest_day_count', name: 'Largest single-day count', minimum: 0, step: 1, defaultValue: () => 5 },
-      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+      { key: 'total_amount', name: 'Total nominated amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
     ],
     calculate: (pattern, values) => {
       const observed = Number(values.observed_nominations);
@@ -401,7 +401,7 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
       { key: 'tenant_mean', name: 'Tenant mean', minimum: 0, step: 0.1, defaultValue: () => 2 },
       { key: 'tenant_standard_deviation', name: 'Tenant standard deviation (σ)', minimum: 0, step: 0.1, defaultValue: () => 1 },
       { key: 'tenant_median', name: 'Tenant median', minimum: 0, step: 0.1, defaultValue: () => 2 },
-      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+      { key: 'total_amount', name: 'Total nominated amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
     ],
     calculate: (pattern, values) => {
       const count = Number(values.nomination_count);
@@ -439,7 +439,7 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
       { key: 'unique_nominators', name: 'Distinct nominators', minimum: 1, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_unique_nominators', 4) },
       { key: 'dominant_nominator_count', name: 'Most nominations from one nominator', minimum: 1, step: 1, defaultValue: () => 1 },
       { key: 'activity_span_days', name: 'Activity span (days)', minimum: 1, step: 1, defaultValue: () => 3 },
-      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+      { key: 'total_amount', name: 'Total nominated amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
     ],
     calculate: (pattern, values) => {
       const count = Number(values.nomination_count);
@@ -506,7 +506,7 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
     inputs: [
       { key: 'average_similarity', name: 'Average cosine similarity', minimum: 0, maximum: 1, step: 0.01, defaultValue: pattern => parameter(pattern, 'similarity_threshold', 0.92) },
       { key: 'cluster_size', name: 'Nominations in cluster', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_cluster_size', 3) },
-      { key: 'total_amount', name: 'Total approved/paid amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
+      { key: 'total_amount', name: 'Total nominated amount ($)', minimum: 0, step: 100, defaultValue: () => 0 },
     ],
     calculate: (pattern, values) => {
       const similarity = Number(values.average_similarity);

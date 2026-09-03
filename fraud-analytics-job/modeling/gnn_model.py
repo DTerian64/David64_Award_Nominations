@@ -10,8 +10,8 @@ The model is trained as one network and deployed as two pieces:
               is persisted to dbo.GNN_UserEmbeddings; the encoder itself goes to
               blob for audit and retraining and is never downloaded by inference.
 
-    decoder   MLP over [z_nominator | z_beneficiary | z_approver | x_nomination].
-              ~15k parameters. This is the only artifact integrity-check reads,
+    decoder   MLP over [z_nominator | z_beneficiary | x_nomination].
+              ~11k parameters. This is the only artifact integrity-check reads,
               which is what keeps PyTorch Geometric out of the inference image.
 
 GraphSAGE rather than GCN because SAGE is inductive: the encoder generalises to
@@ -35,17 +35,9 @@ logger = logging.getLogger(__name__)
 _RELATIONS = [
     ("user", "nominates", "nomination"),
     ("nomination", "benefits", "user"),
-    ("user", "approves", "nomination"),
     ("nomination", "rev_nominates", "user"),
     ("user", "rev_benefits", "nomination"),
-    ("nomination", "rev_approves", "user"),
 ]
-
-# Approver slot when a nomination has no approver, or the approver has no
-# embedding at inference time. Matches gnn_check.py's cold-start behaviour:
-# a missing approver is tolerated with a zero vector, a missing nominator or
-# beneficiary suppresses the score entirely.
-_NO_APPROVER = -1
 
 
 class HeteroEncoder(nn.Module):
@@ -74,7 +66,7 @@ class HeteroEncoder(nn.Module):
 
 class EdgeDecoder(nn.Module):
     """
-    Scores one nomination from three user embeddings plus its own features.
+    Scores one nomination from the P2P user embeddings plus its own features.
 
     Deployed standalone to integrity-check. Keep this class free of any
     torch_geometric import — the inference image has torch but not PyG.
@@ -82,7 +74,7 @@ class EdgeDecoder(nn.Module):
 
     def __init__(self, emb_dim: int, n_nom_features: int, hidden: tuple[int, int] = (64, 32)):
         super().__init__()
-        in_dim = 3 * emb_dim + n_nom_features
+        in_dim = 2 * emb_dim + n_nom_features
         h1, h2 = hidden
         self.net = nn.Sequential(
             nn.Linear(in_dim, h1), nn.ReLU(), nn.Dropout(0.2),
@@ -92,14 +84,14 @@ class EdgeDecoder(nn.Module):
         self.emb_dim = emb_dim
         self.n_nom_features = n_nom_features
 
-    def forward(self, z_nom, z_ben, z_appr, x_nom):
-        return self.net(torch.cat([z_nom, z_ben, z_appr, x_nom], dim=-1)).squeeze(-1)
+    def forward(self, z_nom, z_ben, x_nom):
+        return self.net(torch.cat([z_nom, z_ben, x_nom], dim=-1)).squeeze(-1)
 
 
 class GNNFraudModel(nn.Module):
     """Encoder + decoder, trained end to end."""
 
-    def __init__(self, hidden_dim: int = 64, emb_dim: int = 64, n_nom_features: int = 7):
+    def __init__(self, hidden_dim: int = 64, emb_dim: int = 64, n_nom_features: int = 6):
         super().__init__()
         self.encoder = HeteroEncoder(hidden_dim=hidden_dim, out_dim=emb_dim)
         self.decoder = EdgeDecoder(emb_dim=emb_dim, n_nom_features=n_nom_features)
@@ -108,18 +100,14 @@ class GNNFraudModel(nn.Module):
     def embed_users(self, data) -> torch.Tensor:
         return self.encoder(data.x_dict, data.edge_index_dict)["user"]
 
-    def score(self, z_users: torch.Tensor, triples: torch.Tensor, x_nom: torch.Tensor):
-        nom_i, ben_i, appr_i = triples[:, 0], triples[:, 1], triples[:, 2]
+    def score(self, z_users: torch.Tensor, pairs: torch.Tensor, x_nom: torch.Tensor):
+        nom_i, ben_i = pairs[:, 0], pairs[:, 1]
         z_nom = z_users[nom_i]
         z_ben = z_users[ben_i]
-        has_appr = appr_i != _NO_APPROVER
-        z_appr = torch.zeros_like(z_nom)
-        if has_appr.any():
-            z_appr[has_appr] = z_users[appr_i[has_appr]]
-        return self.decoder(z_nom, z_ben, z_appr, x_nom)
+        return self.decoder(z_nom, z_ben, x_nom)
 
-    def forward(self, data, triples, x_nom):
-        return self.score(self.embed_users(data), triples, x_nom)
+    def forward(self, data, pairs, x_nom):
+        return self.score(self.embed_users(data), pairs, x_nom)
 
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
@@ -201,14 +189,14 @@ def train_gnn(
     for epoch in range(1, epochs + 1):
         model.train()
         opt.zero_grad()
-        logits = model(data, tr["triples"], tr["x"])
+        logits = model(data, tr["pairs"], tr["x"])
         loss = loss_fn(logits, y_tr)
         loss.backward()
         opt.step()
 
         model.eval()
         with torch.no_grad():
-            ev_logits = model(data, ev["triples"], ev["x"]).numpy()
+            ev_logits = model(data, ev["pairs"], ev["x"]).numpy()
         ev_pr = pr_auc(y_eval, ev_logits)
         history.append({"epoch": epoch, "loss": loss.item(), "eval_pr_auc": ev_pr})
 
@@ -233,8 +221,8 @@ def train_gnn(
     model.eval()
     with torch.no_grad():
         z = model.embed_users(data)
-        tr_logits = model.score(z, tr["triples"], tr["x"]).numpy()
-        ev_logits = model.score(z, ev["triples"], ev["x"]).numpy()
+        tr_logits = model.score(z, tr["pairs"], tr["x"]).numpy()
+        ev_logits = model.score(z, ev["pairs"], ev["x"]).numpy()
 
     base_rate = float(np.mean(y_eval)) if len(y_eval) else float("nan")
     metrics = {

@@ -23,7 +23,49 @@ from modeling import gnn_graph as G
 from tests.synthetic import make_tenant, make_two_tenants
 
 
+class _RecordingCursor:
+    def __init__(self):
+        self.calls = []
+        self.description = []
+
+    def execute(self, sql, *params):
+        self.calls.append((sql, params))
+        if "FROM   dbo.Nominations" in sql:
+            self.description = [
+                (name,) for name in (
+                    "NominationId", "NominatorId", "BeneficiaryId", "Status",
+                    "Amount", "CreatedAt", "IsBehaviorEligible",
+                )
+            ]
+        else:
+            self.description = [(name,) for name in ("UserId", "TenantId", "ManagerId")]
+        return self
+
+    def fetchall(self):
+        return []
+
+
+class _RecordingConnection:
+    def __init__(self):
+        self.recording_cursor = _RecordingCursor()
+
+    def cursor(self):
+        return self.recording_cursor
+
+
 # ── Tenant isolation ──────────────────────────────────────────────────────────
+
+def test_loader_uses_p2p_behavior_statuses_and_canonical_label_targets():
+    connection = _RecordingConnection()
+
+    G.fetch_tenant_rows(connection, tenant_id=3, window_days=180)
+
+    sql, params = connection.recording_cursor.calls[0]
+    assert "n.Status IN ('Pending', 'Approved', 'Paid')" in sql
+    assert "dbo.IntegrityDecisionResults" in sql
+    assert "idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')" in sql
+    assert "ApproverId" not in sql
+    assert params == (3, 180)
 
 def test_single_tenant_fixture_passes_isolation_check():
     users, noms, _ = make_tenant(1)
@@ -87,6 +129,26 @@ def test_windows_are_disjoint_and_cover_everything():
     assert ids[0] | ids[1] | ids[2] == {n["NominationId"] for n in noms}
 
 
+def test_rejected_hrbp_label_is_target_only_not_message_passing_behavior():
+    users, noms, _ = make_tenant(1)
+    t_graph = date(2025, 10, 1)
+    t_cut = date(2026, 1, 1)
+    old_rejected = dict(noms[0], IsBehaviorEligible=False)
+    old_rejected["CreatedAt"] = date(2025, 7, 1)
+    recent_rejected = dict(noms[-1], IsBehaviorEligible=False)
+    recent_rejected["CreatedAt"] = date(2026, 2, 1)
+
+    graph_rows, train_rows, eval_rows = G.split_targets(
+        [old_rejected, recent_rejected], t_graph, t_cut
+    )
+
+    assert graph_rows == []
+    assert train_rows == []
+    assert [row["NominationId"] for row in eval_rows] == [
+        recent_rejected["NominationId"]
+    ]
+
+
 def test_user_features_ignore_post_graph_activity():
     """
     User features must be computed from the message-passing window only.
@@ -137,13 +199,13 @@ def test_no_userGraphFlags_column_leaks_into_user_features():
     assert not (set(G.NOMINATION_FEATURE_COLUMNS) & forbidden)
 
 
-def test_missing_approver_is_encoded_as_sentinel():
+def test_approver_behavior_is_not_encoded():
     users, noms, _ = make_tenant(1)
-    for n in noms:
-        n["ApproverId"] = None
     g = G.build_hetero_data(users, noms)
-    assert g["data"]["user", "approves", "nomination"].edge_index.shape[1] == 0
-    assert (g["train"]["triples"][:, 2] == -1).all()
+    assert not any(relation[1] == "approves" for relation in G.EDGE_TYPES)
+    assert "NominationsApproved" not in G.USER_FEATURE_COLUMNS
+    assert "HasApprover" not in G.NOMINATION_FEATURE_COLUMNS
+    assert g["train"]["pairs"].shape[1] == 2
 
 
 # ── Embedding serialisation (round-trip into VARBINARY and back) ──────────────

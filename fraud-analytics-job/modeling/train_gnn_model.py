@@ -347,6 +347,8 @@ def _write_head(model, graph: dict, model_version: str, metrics: dict, path: Pat
         "decoder_hidden":             [64, 32],
         "emb_dim":                    int(model.emb_dim),
         "model_version":              model_version,
+        "participant_roles":          ["nominator", "beneficiary"],
+        "behavior_statuses":          ["Pending", "Approved", "Paid"],
         "nomination_feature_columns": list(G.NOMINATION_FEATURE_COLUMNS),
         "nomination_scaler_mean":     [float(v) for v in graph["nomination_scaler"]["mean"]],
         "nomination_scaler_std":      [float(v) for v in graph["nomination_scaler"]["std"]],
@@ -402,8 +404,8 @@ def _write_gnn_manifest(
             "decoder": {
                 "type": "Multilayer Perceptron",
                 "role": "live_inference",
-                "input_dimension": 3 * emb_dim + nomination_feature_count,
-                "layers": [3 * emb_dim + nomination_feature_count, 64, 32, 1],
+                "input_dimension": 2 * emb_dim + nomination_feature_count,
+                "layers": [2 * emb_dim + nomination_feature_count, 64, 32, 1],
                 "dropout": 0.2,
                 **state_dict_summary(model.decoder.net.state_dict()),
             },
@@ -411,6 +413,8 @@ def _write_gnn_manifest(
         "features": {
             "user": list(G.USER_FEATURE_COLUMNS),
             "nomination": list(G.NOMINATION_FEATURE_COLUMNS),
+            "participant_roles": ["nominator", "beneficiary"],
+            "behavior_statuses": ["Pending", "Approved", "Paid"],
         },
         "training": {key: value for key, value in metrics.items() if key != "history"},
         "artifacts": [
@@ -429,20 +433,28 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     run_id = run_id or str(uuid.uuid4())
 
     users, nominations = G.fetch_tenant_rows(conn, tenant_id, GNN_WINDOW_DAYS)
-    if len(nominations) < MIN_NOMINATIONS or len(users) < MIN_USERS:
-        detail = (f"{len(nominations)} nominations / {len(users)} users; "
+    behavior_nominations = [
+        row for row in nominations
+        if bool(row.get("IsBehaviorEligible", True))
+    ]
+    base_diagnostics = {
+        "window_days": GNN_WINDOW_DAYS,
+        "nomination_count": len(behavior_nominations),
+        "user_count": len(users),
+    }
+    if len(behavior_nominations) < MIN_NOMINATIONS or len(users) < MIN_USERS:
+        detail = (f"{len(behavior_nominations)} nominations / {len(users)} users; "
                   f"requires {MIN_NOMINATIONS} / {MIN_USERS}")
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="BELOW_MINIMUM_VOLUME", reason_detail=detail,
             diagnostics={
-                "nomination_count": len(nominations), "user_count": len(users),
+                **base_diagnostics,
                 "minimum_nominations": MIN_NOMINATIONS, "minimum_users": MIN_USERS,
-                "window_days": GNN_WINDOW_DAYS,
             },
             run_id=run_id,
         )
-        return (f"SKIPPED (below gate: {len(nominations)} nominations / {len(users)} users, "
+        return (f"SKIPPED (below gate: {len(behavior_nominations)} nominations / {len(users)} users, "
                 f"need {MIN_NOMINATIONS}/{MIN_USERS})")
 
     label_df = labels_mod.load_labels(conn, tenant_id, window_days=GNN_WINDOW_DAYS)
@@ -459,7 +471,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="NO_HUMAN_CONFIRMED_LABELS",
             reason_detail="No human-confirmed HRBP outcomes are available for GNN training.",
-            diagnostics={"human_confirmed_count": 0, "window_days": GNN_WINDOW_DAYS},
+            diagnostics={**base_diagnostics, "human_confirmed_count": 0},
             run_id=run_id,
         )
         return "SKIPPED (no human-confirmed nominations)"
@@ -476,7 +488,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     for split, keep in (("train", keep_tr), ("eval", keep_ev)):
         graph[split]["nom_ids"] = [graph[split]["nom_ids"][i] for i in keep]
         graph[split]["x"]       = graph[split]["x"][keep]
-        graph[split]["triples"] = graph[split]["triples"][keep]
+        graph[split]["pairs"] = graph[split]["pairs"][keep]
 
     train_pos = int(y_tr.sum())
     eval_pos = int(y_ev.sum())
@@ -489,6 +501,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="INSUFFICIENT_FRAUD_LABELS", reason_detail=detail,
             diagnostics={
+                **base_diagnostics,
                 "train_positive_count": train_pos, "eval_positive_count": eval_pos,
                 "minimum_positives_per_split": MIN_POSITIVES,
                 "train_negative_count": train_neg, "eval_negative_count": eval_neg,
@@ -504,6 +517,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="MISSING_LABEL_CLASS", reason_detail=detail,
             diagnostics={
+                **base_diagnostics,
                 "train_positive_count": train_pos, "train_negative_count": train_neg,
                 "eval_positive_count": eval_pos, "eval_negative_count": eval_neg,
             },
@@ -539,19 +553,20 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
 
     # Score every in-window nomination, not just the eval split, so component
     # comparisons and historical calibration have complete coverage.
-    # Collect ids, rows and triples in one pass so the three stay index-aligned
+    # Collect ids, rows and pairs in one pass so the three stay index-aligned
     # by construction. Rebuilding the row list from a separate filter would work
     # today only because both preserve `nominations` order — a silent coupling
     # that a later reorder would break without any error.
-    all_ids, all_rows, all_triples = [], [], []
+    all_ids, all_rows, all_pairs = [], [], []
     ui = graph["user_index"]
     for n in nominations:
+        if not bool(n.get("IsBehaviorEligible", True)):
+            continue
         if n["NominatorId"] not in ui or n["BeneficiaryId"] not in ui:
             continue
         all_ids.append(n["NominationId"])
         all_rows.append(n)
-        all_triples.append((ui[n["NominatorId"]], ui[n["BeneficiaryId"]],
-                            ui.get(n["ApproverId"], -1) if n.get("ApproverId") is not None else -1))
+        all_pairs.append((ui[n["NominatorId"]], ui[n["BeneficiaryId"]]))
 
     all_x = torch.from_numpy(G._apply(
         G.build_nomination_features(all_rows, graph["amount_mean"], graph["amount_std"]),
@@ -560,7 +575,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     with torch.no_grad():
         z_all = model.embed_users(graph["data"])
         probs = torch.sigmoid(
-            model.score(z_all, torch.tensor(all_triples, dtype=torch.long), all_x)
+            model.score(z_all, torch.tensor(all_pairs, dtype=torch.long), all_x)
         ).numpy()
 
     thresholds = _gnn_routing_thresholds(conn, tenant_id)
@@ -595,6 +610,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         serving_status="AVAILABLE", serving_version=model_version,
         serving_as_of=as_of, run_id=run_id,
         diagnostics={
+            **base_diagnostics,
             "embedding_count": n_emb, "score_count": n_scores,
             "evicted_embedding_count": n_evicted,
             "human_label_pr_auc": metrics["eval_pr_auc"],

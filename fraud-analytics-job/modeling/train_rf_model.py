@@ -306,8 +306,8 @@ def load_data(tenant_id: int) -> pd.DataFrame:
         (description quality gate, not a fraud signal; would corrupt IsFraud labels)
       • HRBP FRAUD / LEGITIMATE dispositions — authoritative shared human labels.
       • HRBP EXCLUDED dispositions — retained for audit but omitted from training.
-      • Unreviewed rows retain the RF cold-start/model-label behavior until enough
-        human outcomes exist to replace that bootstrap path deliberately.
+      • Unreviewed rows may participate only in the RF's independent cold-start
+        bootstrap; prior model predictions are never supervised ground truth.
       • All other statuses (Pending, Approved, Paid, Submitted) — included
 
     Tenant isolation is achieved by joining through Users, which carries
@@ -555,7 +555,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     """
-    Derive pseudo-labels when no confirmed P2P_FraudScores exist yet (cold start).
+    Derive pseudo-labels when no positive human disposition exists yet (cold start).
 
     Isolation Forest strategy:
         Trains an IsolationForest on P2P_FEATURE_COLUMNS with no labels.
@@ -572,17 +572,19 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
     MIN_FRAUD_BOOTSTRAP = 5
 
     df = df.copy()
-    excluded_mask = df['IsFraud'].isna()
-    eligible_index = df.index[~excluded_mask]
-    if len(eligible_index) == 0:
-        print(f"[Tenant {tenant_id}] Every nomination is excluded from training.")
+    excluded_mask = df['LabelSource'].eq(labels_mod.SOURCE_EXCLUDED)
+    bootstrap_index = df.index[
+        df['LabelSource'].eq(labels_mod.SOURCE_UNLABELLED)
+    ]
+    if len(bootstrap_index) == 0:
+        print(f"[Tenant {tenant_id}] No unreviewed nominations are available for bootstrap.")
         return None
-    df.loc[eligible_index, 'IsFraud'] = 0
+    df.loc[bootstrap_index, 'IsFraud'] = 0
 
     # RF cold-start labels are derived only from its own feature space. Graph
     # findings are deliberately excluded so cross-engine agreement remains
     # meaningful after the synthetic-data reset.
-    X = df.loc[eligible_index, P2P_FEATURE_COLUMNS].fillna(0)
+    X = df.loc[bootstrap_index, P2P_FEATURE_COLUMNS].fillna(0)
 
     iso = IsolationForest(
         n_estimators=200,
@@ -594,22 +596,23 @@ def bootstrap_fraud_labels(df: pd.DataFrame, tenant_id: int) -> pd.DataFrame:
 
     # predict() returns -1 (anomaly) or +1 (inlier)
     if_preds = iso.predict(X)
-    anomaly_index = eligible_index[if_preds == -1]
+    anomaly_index = bootstrap_index[if_preds == -1]
     df.loc[anomaly_index, 'IsFraud'] = 1
 
     if_fraud_n = int(df['IsFraud'].sum())
     print(
         f"[Tenant {tenant_id}] Isolation Forest pseudo-labels: "
         f"{if_fraud_n} anomalies ({if_fraud_n / len(df) * 100:.1f}%) "
-        f"from {len(eligible_index)} eligible nominations  (contamination=0.10)"
+        f"from {len(bootstrap_index)} unreviewed nominations  (contamination=0.10)"
     )
 
     fraud_n = int(df['IsFraud'].sum())
-    legit_n = len(eligible_index) - fraud_n
+    eligible_count = int((~excluded_mask).sum())
+    legit_n = eligible_count - fraud_n
 
     print(
         f"[Tenant {tenant_id}] Bootstrap total: "
-        f"{fraud_n} fraud ({fraud_n / len(eligible_index) * 100:.1f}%), "
+        f"{fraud_n} fraud ({fraud_n / eligible_count * 100:.1f}%), "
         f"{legit_n} legitimate, {int(excluded_mask.sum())} excluded"
     )
 

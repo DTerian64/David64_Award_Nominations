@@ -3,46 +3,27 @@ labels.py — one definition of "fraud" for every model
 ======================================================
 
 Both the Random Forest and the GNN need a training label. Human outcomes live
-in dbo.FraudDecisionResults so neither model owns the ground truth. Component
+in dbo.IntegrityDecisionResults so neither model owns the ground truth. Component
 scores remain immutable evidence that can be compared with the HRBP outcome.
 
-    IsFraud = CASE WHEN p2p.RiskLevel IN ('HIGH','CRITICAL') THEN 1 ELSE 0 END
+    FRAUD      -> IsFraud = 1
+    LEGITIMATE -> IsFraud = 0
+    EXCLUDED   -> IsFraud = NULL
+    NULL       -> IsFraud = NULL
 
-That single expression flattens four materially different things into one column:
-
-    a human HRBP decision   FraudDecisionResults.TrainingDisposition is
-                            FRAUD, LEGITIMATE, or explicitly EXCLUDED
-    a model prediction      written by inference/random_forest_check.assess() at submission, and
-                            rewritten for every historical row each week by
-                            score_and_save_historical()
-    a cold-start guess      bootstrap_fraud_labels(): IsolationForest at
-                            contamination=0.10, plus HIGH/CRITICAL graph findings
-    nothing at all          LEFT JOIN with no P2P row -> ELSE 0 -> silently
-                            labelled LEGITIMATE
-
-The last one is a real defect: a nomination that never went through the ML
-pipeline is not clean, it is unlabelled, and both models are currently being
-taught that unexamined nominations are fine.
-
-This module makes those distinguishable and enforces the human disposition.
+Inference risk and score fields are deliberately absent from this mapping.
 
     LabelSource   'hrbp'        eligible human ground truth
                   'excluded'    reviewed by HRBP, deliberately not a label
-                  'model'       a P2P score row exists; the label is the Random
-                                Forest's own prior output
-                  'unlabelled'  no P2P score row; IsFraud is 0 by convention,
-                                NOT by evidence
+                  'model'       deprecated compatibility value; never emitted
+                                by the canonical loader
+                  'unlabelled'  no human disposition; IsFraud is NULL
 
 Training behavior
 -----------------
-Unreviewed RF rows retain the existing model/bootstrap convention. Eligible
-human labels override it, and explicitly excluded reviews become NULL.
-
-The one intentional exception: an eligible human disposition wins over the
-RiskLevel CASE, while EXCLUDED becomes NULL and is omitted from training.
-
-Legacy P2P confirmations remain readable during rollout, but new HRBP decisions
-never overwrite the RF score.
+Eligible human labels are the only supervised ground truth. Explicitly excluded
+reviews and unreviewed rows remain NULL; the RF may use its own isolated
+cold-start bootstrap when no positive human labels exist, while the GNN skips.
 
 Scope
 -----
@@ -65,8 +46,8 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# LabelSource values, in precedence order: a human decision beats a model
-# prediction, which beats no evidence at all.
+# SOURCE_MODEL remains only so parity/audit callers can classify legacy frames;
+# load_labels() never emits it.
 SOURCE_HRBP       = "hrbp"
 SOURCE_EXCLUDED   = "excluded"
 SOURCE_MODEL      = "model"
@@ -98,7 +79,7 @@ def load_labels(
     Columns
     -------
     NominationId  int
-    IsFraud       nullable int — 0/1 for labels, NULL when explicitly excluded
+    IsFraud       nullable int — 0/1 for human labels, NULL otherwise
     LabelSource   str   'hrbp' | 'excluded' | 'model' | 'unlabelled'
     RiskLevel     str   the model's own risk level, preserved even where a
                         human has overridden the label
@@ -109,8 +90,8 @@ def load_labels(
     window_days=None loads the tenant's full history, matching load_data(), which
     has no date filter. The GNN passes a window; the Random Forest does not.
 
-    Revision 0046 adds the model-neutral FraudDecisionResults adjudication
-    fields. Legacy P2P confirmations are a read-only compatibility fallback.
+    IntegrityDecisionResults is the authoritative, model-neutral adjudication
+    contract. Inference scores are retained for audit but never become labels.
     """
     window_clause = (
         "AND n.NominationDate >= DATEADD(DAY, -?, GETDATE())"
@@ -120,34 +101,26 @@ def load_labels(
     query = f"""
         SELECT
             n.NominationId,
-            p2p.RiskLevel,
-            COALESCE(fdr.ReviewedBy, p2p.ConfirmedBy) AS ConfirmedBy,
-            COALESCE(fdr.ReviewedAt, p2p.ConfirmedAt) AS ConfirmedAt,
-            fdr.TrainingDisposition,
+            idr.CompositeRiskLevel AS RiskLevel,
+            idr.ReviewedBy AS ConfirmedBy,
+            idr.ReviewedAt AS ConfirmedAt,
+            idr.TrainingDisposition,
             CASE
-                WHEN fdr.TrainingDisposition = 'FRAUD' THEN 1
-                WHEN fdr.TrainingDisposition = 'LEGITIMATE' THEN 0
-                WHEN fdr.TrainingDisposition = 'EXCLUDED' THEN NULL
-                -- Read-only compatibility for pre-0046 confirmations.
-                WHEN p2p.ConfirmedBy IS NOT NULL AND p2p.IsFraud IS NOT NULL
-                    THEN p2p.IsFraud
-                WHEN p2p.RiskLevel IN ('HIGH', 'CRITICAL') THEN 1
-                ELSE 0
+                WHEN idr.TrainingDisposition = 'FRAUD' THEN 1
+                WHEN idr.TrainingDisposition = 'LEGITIMATE' THEN 0
+                ELSE NULL
             END AS IsFraud,
             CASE
-                WHEN fdr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
+                WHEN idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
                     THEN '{SOURCE_HRBP}'
-                WHEN fdr.TrainingDisposition = 'EXCLUDED'
+                WHEN idr.TrainingDisposition = 'EXCLUDED'
                     THEN '{SOURCE_EXCLUDED}'
-                WHEN p2p.ConfirmedBy IS NOT NULL THEN '{SOURCE_HRBP}'
-                WHEN p2p.NominationId IS NOT NULL THEN '{SOURCE_MODEL}'
                 ELSE '{SOURCE_UNLABELLED}'
             END AS LabelSource
         FROM       dbo.Nominations n
         JOIN       dbo.Users u   ON u.UserId       = n.NominatorId
-        LEFT JOIN  dbo.P2P_FraudScores p2p ON p2p.NominationId = n.NominationId
-        LEFT JOIN  dbo.FraudDecisionResults fdr
-               ON fdr.NominationId = n.NominationId
+        LEFT JOIN  dbo.IntegrityDecisionResults idr
+               ON idr.NominationId = n.NominationId
         WHERE {_INCLUSION_SQL}
           AND u.TenantId = ?
           {window_clause}

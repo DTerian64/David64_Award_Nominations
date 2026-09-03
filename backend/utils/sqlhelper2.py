@@ -1774,15 +1774,15 @@ def get_gnn_comparison(tenant_id: int, limit: int = 25) -> dict:
         confirmed = session.execute(
             text("""
                 SELECT
-                    SUM(CASE WHEN fdr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
+                    SUM(CASE WHEN idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
                              THEN 1 ELSE 0 END) AS Confirmed,
-                    SUM(CASE WHEN fdr.TrainingDisposition = 'FRAUD'
+                    SUM(CASE WHEN idr.TrainingDisposition = 'FRAUD'
                              THEN 1 ELSE 0 END) AS ConfirmedFraud
                 FROM   dbo.GNN_FraudScores g
                 JOIN   dbo.Nominations n      ON n.NominationId = g.NominationId
                 JOIN   dbo.Users u            ON u.UserId       = n.NominatorId
-                LEFT JOIN dbo.FraudDecisionResults fdr
-                       ON fdr.NominationId = g.NominationId
+                LEFT JOIN dbo.IntegrityDecisionResults idr
+                       ON idr.NominationId = g.NominationId
                 WHERE  u.TenantId     = :tenant_id
                   AND  g.ModelVersion = :mv
             """),

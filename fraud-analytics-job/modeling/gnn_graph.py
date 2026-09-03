@@ -69,7 +69,6 @@ logger = logging.getLogger(__name__)
 USER_FEATURE_COLUMNS = [
     "NominationsMade",
     "NominationsReceived",
-    "NominationsApproved",
     "AvgAmountGiven",
     "StdAmountGiven",
     "AvgAmountReceived",
@@ -86,13 +85,11 @@ NOMINATION_FEATURE_COLUMNS = [
     "Month",
     "IsWeekend",
     "IsHighAmount",
-    "HasApprover",
 ]
 
 EDGE_TYPES = [
     ("user", "nominates", "nomination"),
     ("nomination", "benefits", "user"),
-    ("user", "approves", "nomination"),
 ]
 
 
@@ -106,24 +103,31 @@ def fetch_tenant_rows(conn, tenant_id: int, window_days: int) -> tuple[list[dict
     nomination is attributed to the NOMINATOR's tenant, because dbo.Nominations
     carries no TenantId of its own.
 
-    That scoping is not airtight — a nomination whose beneficiary or approver
+    That scoping is not airtight — a nomination whose beneficiary
     belongs to a different tenant would drag a foreign user into the graph.
     assert_single_tenant() below exists to catch exactly that; it is called by
     build_hetero_data() on every run rather than left as a test-only check.
 
-    Unlike the graph detector we do NOT restrict to Status IN ('Approved','Paid').
-    The detectors care about committed spend; the GNN needs the rejected and
-    pending population too, because rejections carry the fraud label.
+    The operational topology contains Pending, Approved, and Paid nominations.
+    HRBP-confirmed rejected outcomes are loaded only as supervised targets and
+    are marked ineligible for message-passing behavior.
     """
     cur = conn.cursor()
     cur.execute("""
-        SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.ApproverId,
+        SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
                n.Status, n.Amount, n.NominationDate AS CreatedAt,
-               n.ApprovedDate, n.PayedDate
+               CASE WHEN n.Status IN ('Pending', 'Approved', 'Paid')
+                    THEN 1 ELSE 0 END AS IsBehaviorEligible
         FROM   dbo.Nominations n
         JOIN   dbo.Users u ON u.UserId = n.NominatorId
+        LEFT JOIN dbo.IntegrityDecisionResults idr
+               ON idr.NominationId = n.NominationId
         WHERE  u.TenantId = ?
           AND  n.NominationDate >= DATEADD(DAY, -?, GETDATE())
+          AND (
+              n.Status IN ('Pending', 'Approved', 'Paid')
+              OR idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
+          )
     """, tenant_id, window_days)
     cols = [c[0] for c in cur.description]
     nominations = [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -165,7 +169,7 @@ def assert_single_tenant(users: Sequence[dict], nominations: Sequence[dict]) -> 
     roster = {u["UserId"] for u in users}
     foreign: set[int] = set()
     for n in nominations:
-        for key in ("NominatorId", "BeneficiaryId", "ApproverId"):
+        for key in ("NominatorId", "BeneficiaryId"):
             uid = n.get(key)
             if uid is not None and uid not in roster:
                 foreign.add(uid)
@@ -203,7 +207,8 @@ def split_targets(
     for n in nominations:
         d = _as_date(n["CreatedAt"])
         if d < t_graph:
-            graph_rows.append(n)
+            if bool(n.get("IsBehaviorEligible", True)):
+                graph_rows.append(n)
         elif d < t_cut:
             train_rows.append(n)
         else:
@@ -235,7 +240,6 @@ def build_user_features(
     """
     made         = defaultdict(int)
     received     = defaultdict(int)
-    approved     = defaultdict(int)
     given_amts   = defaultdict(list)
     recv_amts    = defaultdict(list)
     beneficiaries = defaultdict(set)
@@ -254,8 +258,6 @@ def build_user_features(
         nominators[b].add(a)
         pair_counts[a][b] += 1
         directed_pairs.add((a, b))
-        if n.get("ApproverId") is not None:
-            approved[n["ApproverId"]] += 1
 
     rows = np.zeros((len(user_ids), len(USER_FEATURE_COLUMNS)), dtype=np.float32)
     for i, uid in enumerate(user_ids):
@@ -266,7 +268,6 @@ def build_user_features(
         rows[i] = (
             total_made,
             received[uid],
-            approved[uid],
             float(np.mean(g)) if g else 0.0,
             float(np.std(g)) if len(g) > 1 else 0.0,
             float(np.mean(r)) if r else 0.0,
@@ -295,7 +296,6 @@ def build_nomination_features(
             d.month,
             1.0 if d.weekday() >= 5 else 0.0,
             1.0 if amt > hi else 0.0,
-            1.0 if n.get("ApproverId") is not None else 0.0,
         )
     return out
 
@@ -316,7 +316,7 @@ def build_hetero_data(
     Returns a dict:
         data          HeteroData — users + pre-t_graph nominations only
         user_index    {UserId: row index in data['user'].x}
-        train         {'nom_ids', 'x', 'triples'}   triples = (nom_idx, ben_idx, appr_idx)
+        train         {'nom_ids', 'x', 'pairs'}   pairs = (nominator_idx, beneficiary_idx)
         eval          same shape as train
         t_graph, t_cut
         amount_mean, amount_std
@@ -328,7 +328,13 @@ def build_hetero_data(
     assert_single_tenant(users, nominations)
 
     if t_graph is None or t_cut is None:
-        t_graph, t_cut = temporal_thresholds(nominations, graph_quantile, cut_quantile)
+        behavior_rows = [
+            row for row in nominations
+            if bool(row.get("IsBehaviorEligible", True))
+        ]
+        t_graph, t_cut = temporal_thresholds(
+            behavior_rows, graph_quantile, cut_quantile
+        )
 
     graph_rows, train_rows, eval_rows = split_targets(nominations, t_graph, t_cut)
     logger.info(
@@ -368,44 +374,37 @@ def build_hetero_data(
 
     nominates_src, nominates_dst = [], []
     benefits_src,  benefits_dst  = [], []
-    approves_src,  approves_dst  = [], []
     for n in graph_rows:
         ni = nom_index[n["NominationId"]]
         nominates_src.append(user_index[n["NominatorId"]])
         nominates_dst.append(ni)
         benefits_src.append(ni)
         benefits_dst.append(user_index[n["BeneficiaryId"]])
-        if n.get("ApproverId") is not None:
-            approves_src.append(user_index[n["ApproverId"]])
-            approves_dst.append(ni)
 
     def _ei(src, dst):
         return torch.tensor([src, dst], dtype=torch.long) if src else torch.zeros((2, 0), dtype=torch.long)
 
     data["user", "nominates", "nomination"].edge_index   = _ei(nominates_src, nominates_dst)
     data["nomination", "benefits", "user"].edge_index    = _ei(benefits_src, benefits_dst)
-    data["user", "approves", "nomination"].edge_index    = _ei(approves_src, approves_dst)
 
     # Reverse relations so message passing is bidirectional. Without these,
     # a user node receives nothing from the nominations it participates in.
     data["nomination", "rev_nominates", "user"].edge_index = _ei(nominates_dst, nominates_src)
     data["user", "rev_benefits", "nomination"].edge_index  = _ei(benefits_dst, benefits_src)
-    data["nomination", "rev_approves", "user"].edge_index  = _ei(approves_dst, approves_src)
 
     def _targets(rows: Sequence[dict]) -> dict:
-        triples = []
+        pairs = []
         for n in rows:
-            triples.append((
+            pairs.append((
                 user_index[n["NominatorId"]],
                 user_index[n["BeneficiaryId"]],
-                user_index.get(n["ApproverId"], -1) if n.get("ApproverId") is not None else -1,
             ))
         raw = build_nomination_features(rows, amount_mean, amount_std)
         return {
             "nom_ids": [n["NominationId"] for n in rows],
             "x": torch.from_numpy(_apply(raw, nom_mean, nom_std)),
-            "triples": torch.tensor(triples, dtype=torch.long) if triples
-                       else torch.zeros((0, 3), dtype=torch.long),
+            "pairs": torch.tensor(pairs, dtype=torch.long) if pairs
+                     else torch.zeros((0, 2), dtype=torch.long),
         }
 
     return {

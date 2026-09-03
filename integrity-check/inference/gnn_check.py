@@ -7,7 +7,7 @@ Structural twin of random_forest_check.py, for the third fraud model.
 What runs here is only the DECODER. The weekly fraud-analytics-job trains a
 heterogeneous GraphSAGE encoder, publishes per-user node embeddings to
 dbo.GNN_UserEmbeddings, and uploads the decoder as gnn_head_tenant_<N>.pt.
-Inference is three keyed embedding lookups plus a ~15k-parameter MLP forward
+Inference is two keyed embedding lookups plus a small MLP forward
 pass — no graph traversal, no PyTorch Geometric, no new dependency in this
 image (torch is already here via sentence-transformers).
 
@@ -72,11 +72,6 @@ _STORAGE_KEY     = os.getenv("AZURE_STORAGE_KEY")   # local dev only
 # staleness is recorded on the row. The weekly cadence means ~7 days is normal;
 # 14 means a run was missed.
 _STALE_EMBEDDING_DAYS = int(os.getenv("GNN_STALE_EMBEDDING_DAYS", "14"))
-
-# Sentinel matching gnn_model._NO_APPROVER — an absent approver contributes a
-# zero vector rather than suppressing the score.
-_ZERO_APPROVER = True
-
 
 # ── Per-tenant decoder cache ──────────────────────────────────────────────────
 # Streamed from blob on first assess_gnn() call per tenant and held for the
@@ -170,6 +165,7 @@ def _stream_head_from_blob(tenant_id: int) -> dict | None:
         "decoder_state_dict", "model_version", "emb_dim",
         "nomination_scaler_mean", "nomination_scaler_std",
         "nomination_feature_columns", "amount_mean", "amount_std",
+        "participant_roles", "behavior_statuses",
     } - set(head)
     if missing:
         logger.error(
@@ -178,7 +174,26 @@ def _stream_head_from_blob(tenant_id: int) -> dict | None:
         )
         return None
 
-    head["_module"] = _build_decoder(head)
+    if head["participant_roles"] != ["nominator", "beneficiary"]:
+        logger.error(
+            "GNN decoder for tenant %d has unsupported participant contract %s",
+            tenant_id, head["participant_roles"],
+        )
+        return None
+    if head["behavior_statuses"] != ["Pending", "Approved", "Paid"]:
+        logger.error(
+            "GNN decoder for tenant %d has unsupported behavior population %s",
+            tenant_id, head["behavior_statuses"],
+        )
+        return None
+    try:
+        head["_module"] = _build_decoder(head)
+    except Exception as exc:
+        logger.error(
+            "GNN decoder for tenant %d does not match the P2P architecture: %s",
+            tenant_id, exc, exc_info=True,
+        )
+        return None
     return head
 
 
@@ -199,7 +214,7 @@ def _build_decoder(head: dict):
     h1, h2 = head.get("decoder_hidden", (64, 32))
 
     module = nn.Sequential(
-        nn.Linear(3 * emb_dim + n_nom, h1), nn.ReLU(), nn.Dropout(0.2),
+        nn.Linear(2 * emb_dim + n_nom, h1), nn.ReLU(), nn.Dropout(0.2),
         nn.Linear(h1, h2),                  nn.ReLU(),
         nn.Linear(h2, 1),
     )
@@ -249,7 +264,6 @@ def _nomination_features(details: dict, head: dict) -> np.ndarray:
         "Month":         float(when.month),
         "IsWeekend":     1.0 if when.weekday() >= 5 else 0.0,
         "IsHighAmount":  1.0 if amount > a_mean + 2.0 * a_std else 0.0,
-        "HasApprover":   1.0 if details.get("approver_id") is not None else 0.0,
     }
 
     cols = head["nomination_feature_columns"]
@@ -355,11 +369,8 @@ def _assess_gnn_inner(
     model_version = head["model_version"]
     nominator_id   = details["nominator_id"]
     beneficiary_id = details["beneficiary_id"]
-    approver_id    = details.get("approver_id")
 
     wanted = [nominator_id, beneficiary_id]
-    if approver_id is not None:
-        wanted.append(approver_id)
 
     # Version-matched lookup — see the module docstring. Selecting the newest
     # snapshot for THIS decoder version is what makes a decoder-only rollback
@@ -425,21 +436,9 @@ def _assess_gnn_inner(
     z_nom = _vec(nominator_id)
     z_ben = _vec(beneficiary_id)
 
-    # A missing approver is far less informative than a missing counterparty, so
-    # it is tolerated with a zero vector and a flag — matching how the model was
-    # trained (gnn_model._NO_APPROVER).
-    if approver_id is not None and approver_id in embeddings:
-        z_appr = _vec(approver_id)
-    else:
-        z_appr = np.zeros(emb_dim, dtype=np.float32)
-        if approver_id is not None:
-            flags.append("[GNN] approver cold-start")
-
     # Staleness is measured from the OLDEST contributing snapshot — the score is
     # only as fresh as its least fresh input.
     as_of_dates = [embeddings[u][1] for u in (nominator_id, beneficiary_id)]
-    if approver_id is not None and approver_id in embeddings:
-        as_of_dates.append(embeddings[approver_id][1])
     embedding_as_of = min(d for d in as_of_dates if d is not None)
 
     if embedding_as_of < date.today() - timedelta(days=_STALE_EMBEDDING_DAYS):
@@ -465,7 +464,6 @@ def _assess_gnn_inner(
     z = np.concatenate([
         z_nom.reshape(1, -1),
         z_ben.reshape(1, -1),
-        z_appr.reshape(1, -1),
         _nomination_features(details, head),
     ], axis=1)
 

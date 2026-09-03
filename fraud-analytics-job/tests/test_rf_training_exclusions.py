@@ -26,7 +26,7 @@ class _IsolationForest:
 
 
 class RFTrainingExclusionTests(unittest.TestCase):
-    def test_explicitly_excluded_row_survives_bootstrap_as_unlabelled(self):
+    def test_explicitly_excluded_row_survives_bootstrap_without_a_label(self):
         rows = []
         for nomination_id in range(1, 12):
             row = {
@@ -34,6 +34,11 @@ class RFTrainingExclusionTests(unittest.TestCase):
             }
             row["NominationId"] = nomination_id
             row["IsFraud"] = pd.NA if nomination_id == 11 else 0
+            row["LabelSource"] = (
+                train_rf_model.labels_mod.SOURCE_EXCLUDED
+                if nomination_id == 11
+                else train_rf_model.labels_mod.SOURCE_UNLABELLED
+            )
             rows.append(row)
 
         with patch.object(

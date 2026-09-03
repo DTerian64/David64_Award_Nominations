@@ -92,6 +92,29 @@ class _Connection:
         self.committed = True
 
 
+class _LoadCursor:
+    def __init__(self):
+        self.sql = None
+        self.params = None
+        self.description = []
+
+    def execute(self, sql, *params):
+        self.sql = sql
+        self.params = params
+        return self
+
+    def fetchall(self):
+        return []
+
+
+class _LoadConnection:
+    def __init__(self):
+        self.cursor_value = _LoadCursor()
+
+    def cursor(self):
+        return self.cursor_value
+
+
 def _nomination(
     nomination_id, nominator, beneficiary, amount=1000, description="",
     created_at=None,
@@ -101,6 +124,15 @@ def _nomination(
         "BeneficiaryId": beneficiary, "Amount": amount,
         "Description": description, "CreatedAt": created_at,
     }
+
+
+def test_graph_loader_uses_pending_approved_and_paid_population():
+    connection = _LoadConnection()
+
+    graph._load_nominations(connection, tenant_id=3, window_days=365)
+
+    assert "n.Status IN ('Pending', 'Approved', 'Paid')" in connection.cursor_value.sql
+    assert connection.cursor_value.params == (3, 365)
 
 
 def test_ring_score_increases_with_financial_exposure():

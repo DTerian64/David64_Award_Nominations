@@ -167,6 +167,7 @@ def test_rf_cold_start_does_not_read_graph_findings():
             for position, column in enumerate(train_rf_model.P2P_FEATURE_COLUMNS)
         }
         row["IsFraud"] = 0
+        row["LabelSource"] = train_rf_model.labels_mod.SOURCE_UNLABELLED
         rows.append(row)
 
     with patch.object(
