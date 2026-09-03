@@ -8,6 +8,8 @@ Usage (PowerShell):
 
 import unittest
 import tempfile
+import json
+import pickle
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -76,6 +78,101 @@ def _label_frame(fraud=8, legitimate=40, unlabelled=100, excluded=3):
     return pd.DataFrame(rows, columns=[
         *train_rf_model.P2P_FEATURE_COLUMNS, 'NominationId', 'IsFraud', 'LabelSource',
     ])
+
+
+def _raw_unlabelled_frame(count=100):
+    """Exercise the real feature pipeline with the SQL loader's nullable dtype."""
+    return pd.DataFrame({
+        'NominationId': range(1, count + 1),
+        'NominatorId': [i % 10 for i in range(count)],
+        'BeneficiaryId': [10 + i % 7 for i in range(count)],
+        'Amount': [25.0 + i % 9 * 10 for i in range(count)],
+        'NominationDate': pd.date_range('2026-01-01', periods=count),
+        'NominationDescription': ['Helpful work'] * count,
+        'CategoryId': pd.Series([1, 2, None, 3] * ((count + 3) // 4))[:count],
+        'IsFraud': pd.Series([pd.NA] * count, dtype='Int64'),
+        'LabelSource': ['unlabelled'] * count,
+        'DescriptionCosineSim': [0.5] * count,
+        'DescriptionEmbDistance': [0.25] * count,
+    })
+
+
+class RFHistoricalRateTests(unittest.TestCase):
+    def test_missing_historical_rates_are_numeric_for_training_and_inference(self):
+        for dtype in ('Int64', 'float64'):
+            with self.subTest(dtype=dtype):
+                source = _raw_unlabelled_frame()
+                source['IsFraud'] = source['IsFraud'].astype(dtype)
+                features, categories, global_rate = train_rf_model.extract_features(source)
+                self.assertEqual(global_rate, 0.0)
+                self.assertEqual(categories, {1.0: 0.0, 2.0: 0.0, 3.0: 0.0})
+                self.assertTrue(features['CategoryFraudRate'].eq(0.0).all())
+                json.dumps({'categories': categories, 'global_rate': global_rate}, allow_nan=False)
+
+    def test_observed_rates_preserved_and_unreviewed_categories_use_zero(self):
+        source = _raw_unlabelled_frame(8)
+        source.loc[[0, 1, 4], 'IsFraud'] = [1, 0, 0]
+        source.loc[[0, 1, 4], 'LabelSource'] = 'hrbp'
+        features, categories, global_rate = train_rf_model.extract_features(source)
+        self.assertAlmostEqual(global_rate, 1 / 3)
+        self.assertEqual(categories, {1.0: 0.5, 2.0: 0.0, 3.0: 0.0})
+        for _, row in features.iterrows():
+            inference_rate = (
+                categories.get(row['CategoryId'], global_rate)
+                if pd.notna(row['CategoryId']) else 0.0
+            )
+            self.assertEqual(row['CategoryFraudRate'], inference_rate)
+
+    def test_all_null_categories_and_labels_have_valid_global_fallback(self):
+        source = _raw_unlabelled_frame()
+        source['CategoryId'] = None
+        features, categories, global_rate = train_rf_model.extract_features(source)
+        self.assertEqual(categories, {})
+        self.assertEqual(global_rate, 0.0)
+        self.assertTrue(features['CategoryFraudRate'].eq(0.0).all())
+
+    def test_zero_human_labels_train_and_write_model_chart_and_manifest(self):
+        # Do not mock extract_features or artifact serialization: the old test
+        # replaced the missing historical mean with 0.0 and hid this failure.
+        source = _raw_unlabelled_frame()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(train_rf_model, 'OUTPUT_DIR', root),
+                patch.object(train_rf_model, 'get_tenant_embed_model', return_value='test'),
+                patch.object(train_rf_model, 'SentenceTransformer'),
+                patch.object(train_rf_model, 'add_semantic_features', side_effect=lambda df, _: df),
+                patch.object(train_rf_model, 'IsolationForest', return_value=_IsolationForest()),
+                patch.object(train_rf_model, '_upload_artefact') as upload,
+            ):
+                model, stats = train_rf_model.train_model(source, 2, 'Test Tenant')
+            self.assertEqual(stats['training_mode'], 'BOOTSTRAP')
+            self.assertEqual(stats['human_label_count'], 0)
+            self.assertEqual(stats['pseudo_label_count'], 100)
+            self.assertEqual(model['global_fraud_rate'], 0.0)
+            with (root / 'random_forest_tenant_2.pkl').open('rb') as artifact:
+                saved = pickle.load(artifact)  # Trusted artifact created by this test.
+            self.assertEqual(saved['global_fraud_rate'], 0.0)
+            self.assertEqual(saved['category_fraud_rate'], model['category_fraud_rate'])
+            manifest = json.loads((root / 'random_forest_tenant_2.manifest.json').read_text())
+            json.dumps(manifest, allow_nan=False)
+            self.assertTrue((root / 'random_forest_tenant_2.png').is_file())
+            self.assertEqual(upload.call_count, 3)
+
+    def test_tenant_failure_logs_underlying_exception_and_records_status(self):
+        with (
+            patch.object(train_rf_model, 'get_db_connection'),
+            patch.object(train_rf_model, 'get_tenants', return_value=[(2, 'Test Tenant')]),
+            patch.object(train_rf_model, 'load_data', side_effect=TypeError('missing historical rate')),
+            patch.object(train_rf_model, '_record_rf_status') as status,
+            self.assertLogs(train_rf_model.logger, level='ERROR') as logs,
+        ):
+            with self.assertRaisesRegex(RuntimeError, r'tenant\(s\): \[2\]'):
+                train_rf_model.main([2])
+        self.assertIn('Tenant 2 RF training failed: missing historical rate', logs.output[0])
+        self.assertIsNotNone(logs.records[0].exc_info)
+        self.assertEqual(status.call_args.kwargs['reason_detail'], 'missing historical rate')
+        self.assertEqual(status.call_args.kwargs['attempt_status'], 'FAILED')
 
 
 class RFTrainingTransitionTests(unittest.TestCase):

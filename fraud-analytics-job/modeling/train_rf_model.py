@@ -24,6 +24,7 @@ container restart required.
 """
 
 import os
+import logging
 import re
 import uuid
 import pandas as pd
@@ -55,6 +56,8 @@ except ImportError:  # pragma: no cover - standalone ``python modeling/...`` pat
         write_manifest,
     )
 from utils.component_status import upsert_component_status
+
+logger = logging.getLogger(__name__)
 
 # Default sentence-transformer model for English tenants.
 # Per-tenant overrides are read from dbo.Tenants.desc_check_config at
@@ -438,7 +441,7 @@ def add_semantic_features(df: pd.DataFrame, embed_model: SentenceTransformer) ->
 # FEATURE ENGINEERING
 # ============================================================================
 
-def extract_features(df: pd.DataFrame) -> pd.DataFrame:
+def extract_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict, float]:
     """
     Build all features used by the Random Forest.
 
@@ -530,11 +533,18 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     # adding or removing a category never changes the feature space, and
     # unknown categories at inference time get a neutral fallback (global mean).
     # Nominations with no category (NULL) get 0.0 — a distinct neutral signal.
+    # With no human labels, the mean is pd.NA (nullable Int64), not a number.
+    # Use the existing 0.0 feature fallback for missing historical evidence,
+    # including stored category rates, so training and inference agree. This
+    # is a numeric fallback, not an observed fraud rate or a pseudo-label rate.
     if 'CategoryId' in df.columns and 'IsFraud' in df.columns:
-        global_fraud_rate = df['IsFraud'].mean()
+        observed_rate = df['IsFraud'].mean()
+        global_fraud_rate = 0.0 if pd.isna(observed_rate) else float(observed_rate)
         category_fraud_rate = (
             df.groupby('CategoryId')['IsFraud']
               .mean()
+              .fillna(0.0)
+              .astype(float)
               .to_dict()
         )
         df['CategoryFraudRate'] = df['CategoryId'].map(category_fraud_rate).fillna(0.0)
@@ -760,7 +770,7 @@ def train_model(
     if category_fraud_rate:
         print(f"[Tenant {tenant_id}]   Category target encoding: {category_fraud_rate}")
     else:
-        print(f"[Tenant {tenant_id}]   No nomination categories — CategoryFraudRate=0.0 for all rows.")
+        print(f"[Tenant {tenant_id}]   No category-specific rates — CategoryFraudRate=0.0 for all rows.")
 
     y = df_train['IsFraud']
 
@@ -972,9 +982,7 @@ def main(tenants_to_process: list | None = None) -> None:
             )
 
         except Exception as exc:
-            import traceback
-            print(f"❌  Tenant {tenant_id} failed: {exc}")
-            print(traceback.format_exc())
+            logger.exception("Tenant %s RF training failed: %s", tenant_id, exc)
             results[tenant_id] = f"FAILED — {exc}"
             failed.append(tenant_id)
             try:
@@ -984,7 +992,7 @@ def main(tenants_to_process: list | None = None) -> None:
                     run_id=run_id,
                 )
             except Exception:
-                print(f"❌  Tenant {tenant_id} RF failure status could not be persisted")
+                logger.exception("Tenant %s RF failure status could not be persisted", tenant_id)
 
     print("\n" + "=" * 60)
     print("TRAINING SUMMARY")
