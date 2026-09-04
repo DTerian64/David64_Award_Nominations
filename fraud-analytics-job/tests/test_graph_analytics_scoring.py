@@ -270,7 +270,7 @@ def test_snapshot_carries_score_and_ignores_legacy_approver_finding():
     assert all(row[1] not in {4, 5} for row in rows)
 
 
-def test_full_runs_keep_recurring_findings_and_deduplicate_within_each_run():
+def test_repeated_runs_match_existing_hash_without_run_or_policy_in_identity():
     connection = _Connection()
     for run_id in ('run-1', 'run-2'):
         finding = graph._finding(7, run_id, 'Ring', 'High', [1, 2, 3], [11, 12, 13],
@@ -278,5 +278,47 @@ def test_full_runs_keep_recurring_findings_and_deduplicate_within_each_run():
         graph._save_findings(connection, [finding, finding], 'dbo.GraphPatternFindings')
     assert len(connection.cursor_value.batches) == 2
     assert all(len(rows) == 1 for _, rows in connection.cursor_value.batches)
-    assert 'SnapshotComplete' in connection.cursor_value.batches[0][0]
+    statement = connection.cursor_value.batches[0][0]
+    match_clause = statement.split('ON target.')[1].split('WHEN MATCHED')[0]
+    assert 'FindingHash=src.FindingHash' in match_clause
+    assert 'RunId' not in match_clause and 'ScoringPolicyVersion' not in match_clause
+    assert 'WHEN MATCHED THEN UPDATE' in statement
+    assert 'WHEN NOT MATCHED THEN INSERT' in statement
+    first = connection.cursor_value.batches[0][1][0]
+    second = connection.cursor_value.batches[1][1][0]
+    assert first[8] == second[8]  # Same hash across runs: matched UPDATE, never INSERT.
+    assert first[7] != second[7]
     assert not connection.committed  # Published with UserGraphFlags and status, not early.
+
+
+def test_evidence_identity_ignores_policy_but_latest_assessment_is_rescored():
+    from copy import deepcopy
+    new_policy = deepcopy(POLICY)
+    new_policy['version'] += 1
+    new_policy['patterns']['Ring']['base_score'] += 10
+    old = graph._finding(7, 'old', 'Ring', 'High', [1, 2, 3], [11, 12, 13],
+                         'Ring', policy=POLICY, signals={'exposure': 0.6})
+    new = graph._finding(7, 'new', 'Ring', 'High', [3, 2, 1], [13, 12, 11],
+                         'Ring', policy=new_policy, signals={'exposure': 0.6})
+    assert old['FindingHash'] == new['FindingHash']
+    assert old['FindingScore'] != new['FindingScore']
+    assert old['ScoringPolicyVersion'] != new['ScoringPolicyVersion']
+    connection = _Connection()
+    graph._save_findings(connection, [new], 'dbo.GraphPatternFindings')
+    statement, rows = connection.cursor_value.batches[0]
+    assert 'FindingScore=src.FindingScore' in statement
+    assert rows[0][10] == new['FindingScore']
+    graph._populate_graph_flag_snapshots(connection, 7, [new], '2026-09-04', 'new')
+    evidence = json.loads(connection.cursor_value.batches[1][1][0][-1])[0]
+    assert evidence['finding_score'] == new['FindingScore']
+    assert evidence['scoring_policy_version'] == new_policy['version']
+
+
+def test_hash_changes_only_with_evidence_or_tenant_or_detector():
+    fingerprint = graph._fingerprint
+    original = fingerprint(1, 'Ring', [1, 2, 3], [10, 20, 30])
+    assert original == fingerprint(1, 'Ring', [3, 1, 2, 2], [30, 20, 10])
+    assert original != fingerprint(2, 'Ring', [1, 2, 3], [10, 20, 30])
+    assert original != fingerprint(1, 'CopyPaste', [1, 2, 3], [10, 20, 30])
+    assert original != fingerprint(1, 'Ring', [1, 2, 4], [10, 20, 30])
+    assert original != fingerprint(1, 'Ring', [1, 2, 3], [10, 20, 30, 40])

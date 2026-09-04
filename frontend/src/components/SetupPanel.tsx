@@ -326,7 +326,16 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                     <dl className="grid grid-cols-2 gap-2">
                       {diagnostics.map(([key, value]) => (
                         <div key={key} className="rounded bg-gray-50 px-2.5 py-2 text-xs">
-                          <dt className="text-gray-400">{diagnosticLabel(key)}</dt>
+                          <dt
+                            className="text-gray-400"
+                            title={row.component === 'GRAPH' && key === 'finding_count'
+                              ? 'Distinct findings detected in the last successful Graph Analytics run, including previously known findings.'
+                              : undefined}
+                          >
+                            {row.component === 'GRAPH' && key === 'finding_count'
+                              ? 'Last Successful Run Finding Count'
+                              : diagnosticLabel(key)}
+                          </dt>
                           <dd className="mt-0.5 font-medium text-gray-700 break-words">{diagnosticValue(value)}</dd>
                         </div>
                       ))}

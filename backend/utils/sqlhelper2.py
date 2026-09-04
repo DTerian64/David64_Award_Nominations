@@ -1774,9 +1774,8 @@ def get_diversity_metrics(tenant_id: int) -> dict:
 
 def get_integrity_runs(tenant_id: int) -> list[dict]:
     """
-    Return the list of distinct weekly job runs for a tenant,
-    ordered most-recent first.  Each entry is the first DetectedAt
-    timestamp for that RunId, used as the run label in the UI.
+    Group findings by their latest assessment. Only the current serving group
+    is a complete snapshot; older groups shrink as evidence is reassessed.
     """
     with get_db_context() as session:
         rows = session.execute(text("""
@@ -1795,7 +1794,7 @@ def get_integrity_runs(tenant_id: int) -> list[dict]:
                 "runId":         row[0],
                 "runDate":       row[1].isoformat() if row[1] else None,
                 "totalFindings": row[2],
-                "snapshotComplete": bool(row[3]),
+                "snapshotComplete": False,
                 "policyVersion": row[4],
                 "currentSnapshot": False,
             }
@@ -1808,8 +1807,11 @@ def get_integrity_runs(tenant_id: int) -> list[dict]:
             FROM dbo.IntegrityComponentStatus WHERE TenantId=:tid AND Component='GRAPH'
         """), {"tid": tenant_id}).fetchone()
         if marker and marker[0] and marker[1] and marker[3] == 'AVAILABLE':
-            metadata = json.loads(marker[2] or '{}')
-            if metadata.get('snapshot_schema_version') == 1:
+            try:
+                metadata = json.loads(marker[2] or '{}')
+            except (TypeError, ValueError):
+                metadata = {}
+            if isinstance(metadata, dict) and metadata.get('snapshot_schema_version') == 2:
                 run_id = str(marker[0])
                 current = next((run for run in runs if str(run['runId']) == run_id), None)
                 if current is None and metadata.get('finding_count') == 0:
@@ -1819,8 +1821,9 @@ def get_integrity_runs(tenant_id: int) -> list[dict]:
                         'policyVersion': metadata.get('scoring_policy_version'),
                     }
                     runs.insert(0, current)
-                if current is not None:
+                if current is not None and current['totalFindings'] == metadata.get('finding_count'):
                     current['currentSnapshot'] = True
+                    current['snapshotComplete'] = True
         patterns = session.execute(text("""
             SELECT p.PolicyVersion, x.PatternType, x.DisplayOrder, x.Enabled, x.EnabledForRouting
             FROM dbo.GraphScoringPolicies p

@@ -604,7 +604,7 @@ def get_graph_component_snapshot(
             diagnostics = json.loads(marker[3])
         except (TypeError, ValueError) as exc:
             raise InvalidGraphSnapshot("Missing Graph snapshot metadata") from exc
-        if not isinstance(diagnostics, dict) or diagnostics.get('snapshot_schema_version') != 1:
+        if not isinstance(diagnostics, dict) or diagnostics.get('snapshot_schema_version') != 2:
             raise InvalidGraphSnapshot("Graph snapshot refresh required")
         if not run_id or not isinstance(diagnostics.get('scoring_policy_version'), int):
             raise InvalidGraphSnapshot("Graph snapshot run/policy is missing")

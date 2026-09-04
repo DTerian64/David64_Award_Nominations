@@ -1383,7 +1383,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <h3 className="text-lg font-semibold text-gray-900">Graph Pattern Findings</h3>
-              <p className="text-sm text-gray-500">Complete Graph snapshots and clearly marked historical partial results</p>
+              <p className="text-sm text-gray-500">Unique findings: current assessment and findings last assessed in older runs</p>
             </div>
             {integrityRuns.length > 0 && (
               <div className="relative">
@@ -1396,7 +1396,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
                     <option key={run.runId} value={run.runId}>
                       {new Date(run.runDate).toLocaleDateString('en-US', {
                         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                      })} — {run.totalFindings} findings{run.currentSnapshot ? ' · Current' : ''}{run.snapshotComplete ? '' : ' · Legacy partial'}
+                      })} — {run.totalFindings} findings{run.currentSnapshot ? ' · Current' : ' · Older assessments'}
                     </option>
                   ))}
                 </select>
@@ -1429,12 +1429,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ onOpenNo
                 const run = integrityRuns.find(item => item.runId === selectedRunId);
                 return run ? (
                   <div className={`rounded-lg border p-3 text-sm ${run.snapshotComplete ? 'border-blue-200 bg-blue-50' : 'border-amber-200 bg-amber-50'}`}>
-                    <p>{run.snapshotComplete ? 'Complete snapshot' : 'Legacy partial run'} · Policy {run.policyVersion ?? 'not recorded'}</p>
+                    <p>{run.snapshotComplete ? 'Current complete snapshot' : 'Older assessments — not a complete run'} · Policy {run.policyVersion ?? 'not recorded'}</p>
                     <p className="mt-1 text-xs break-all">Run: {run.runId}</p>
                     <p className="mt-1 text-xs">{run.currentSnapshot
                       ? 'Published snapshot used by integrity-check, subject to its freshness policy.'
-                      : run.snapshotComplete ? 'Historical complete snapshot; not the current serving snapshot.'
-                        : 'Only findings first saved in this run are shown. Missing detector results do not prove a zero-finding assessment.'}</p>
+                      : 'Findings last assessed in this run. Reassessed findings move to the latest run without creating duplicates. These counts are not historical run totals.'}</p>
                   </div>
                 ) : null;
               })()}

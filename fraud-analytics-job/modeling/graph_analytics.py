@@ -4,7 +4,7 @@ graph_analytics.py
 Stage 1 of the fraud-analytics-job pipeline.
 
 Detects eight structural, temporal, and semantic behavioural patterns in the Nominations
-graph for each tenant and archives complete runs in dbo.GraphPatternFindings.
+graph for each tenant and refreshes unique evidence in dbo.GraphPatternFindings.
 
 Pattern catalogue
 -----------------
@@ -342,21 +342,21 @@ def _fingerprint(
     pattern_type: str,
     affected_users: list[int],   # must already be sorted
     nomination_ids: list[int],   # must already be sorted
-    policy_version: int | None = None,
 ) -> str:
     """
     Deterministic SHA-256 fingerprint (64 hex chars) of a finding's content.
 
-    Inputs must be pre-sorted so the hash is stable regardless of detection
-    order.  The fingerprint is stored in FindingHash and used to prevent
+    Inputs are sorted here so the hash is stable regardless of detection
+    order. Scoring policy is deliberately not part of finding identity.
+    The fingerprint is stored in FindingHash and used to prevent
     duplicate inserts across runs.
 
     Same content → same hash → not re-inserted (idempotent).
     Evolved content (e.g. new nominations added to a ring) → new hash → inserted.
     """
     key = (
-        f"{tenant_id}|{pattern_type}|{json.dumps(affected_users)}|"
-        f"{json.dumps(nomination_ids)}|policy:{policy_version or 'legacy'}"
+        f"{tenant_id}|{pattern_type}|{json.dumps(sorted(set(affected_users)))}|"
+        f"{json.dumps(sorted(set(nomination_ids)))}"
     )
     return hashlib.sha256(key.encode()).hexdigest()
 
@@ -398,7 +398,7 @@ def _finding(
         "DetectedAt":    datetime.now(timezone.utc),
         "RunId":         run_id,
         "FindingHash":   _fingerprint(
-            tenant_id, pattern_type, affected_users, nomination_ids, policy_version
+            tenant_id, pattern_type, affected_users, nomination_ids
         ),
         "TotalAmount":   total_amount,
         "FindingScore":  score,
@@ -417,13 +417,15 @@ def _save_findings(
     table: str,
 ) -> None:
     """
-    Stage the complete run, deduplicating only within this run. The caller
+    Refresh existing evidence by hash; insert only previously unseen evidence.
+    RunId and DetectedAt identify the latest assessment, not an immutable archive.
+    The caller
     commits it atomically with user snapshots and the completed-run status.
     """
     if not findings:
         return
 
-    # A recurring finding belongs to every snapshot in which it was detected.
+    # Reassess recurring findings without adding another stored copy.
     seen_this_run: set[str] = set()
     new_findings:  list[dict] = []
 
@@ -445,11 +447,26 @@ def _save_findings(
 
     cur = conn.cursor()
     sql = f"""
-        INSERT INTO {table}
-               (TenantId, PatternType, Severity,
-                AffectedUsers, NominationIds, Detail, DetectedAt, RunId, FindingHash,
-                TotalAmount, FindingScore, ScoringPolicyVersion, ScoreComponentsJson, SnapshotComplete)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        MERGE {table} WITH (HOLDLOCK) AS target
+        USING (SELECT ? AS TenantId, ? AS PatternType, ? AS Severity,
+                      ? AS AffectedUsers, ? AS NominationIds, ? AS Detail,
+                      ? AS DetectedAt, ? AS RunId, ? AS FindingHash,
+                      ? AS TotalAmount, ? AS FindingScore, ? AS ScoringPolicyVersion,
+                      ? AS ScoreComponentsJson) AS src
+        ON target.TenantId=src.TenantId AND target.FindingHash=src.FindingHash
+        WHEN MATCHED THEN UPDATE SET
+            Severity=src.Severity, Detail=src.Detail, DetectedAt=src.DetectedAt,
+            RunId=src.RunId, TotalAmount=src.TotalAmount, FindingScore=src.FindingScore,
+            ScoringPolicyVersion=src.ScoringPolicyVersion,
+            ScoreComponentsJson=src.ScoreComponentsJson, SnapshotComplete=0
+        WHEN NOT MATCHED THEN INSERT
+            (TenantId, PatternType, Severity, AffectedUsers, NominationIds, Detail,
+             DetectedAt, RunId, FindingHash, TotalAmount, FindingScore,
+             ScoringPolicyVersion, ScoreComponentsJson, SnapshotComplete)
+        VALUES (src.TenantId, src.PatternType, src.Severity, src.AffectedUsers,
+                src.NominationIds, src.Detail, src.DetectedAt, src.RunId, src.FindingHash,
+                src.TotalAmount, src.FindingScore, src.ScoringPolicyVersion,
+                src.ScoreComponentsJson, 0);
     """
     rows = [
         (
@@ -470,7 +487,7 @@ def _save_findings(
         for f in new_findings
     ]
     cur.executemany(sql, rows)
-    logger.info("  Staged %d complete-run finding(s) in %s.", len(new_findings), table)
+    logger.info("  Refreshed %d unique finding(s) in %s; existing hashes are updated, not inserted.", len(new_findings), table)
 
 
 # ── Rings ─────────────────────────────────────────────────────────────────────
@@ -496,8 +513,8 @@ def detect_rings(
            [A,B,C], [B,C,A], [C,A,B], [A,C,B] → frozenset({A,B,C})
          Each unique user group is reported exactly once regardless of
          how many directed paths exist through it.
-      3. Skip any frozenset already seen in a larger-size pass — prevents
-         the same users appearing in both a 4-node and a 3-node finding.
+      3. Retain distinct overlapping groups, including a 3-node ring contained
+         in a 4-node ring. Only identical user sets are deduplicated.
 
     Why not SCC?
       strongly_connected_components() on a dense graph (291 users, 11 K
@@ -1684,7 +1701,7 @@ def _process_tenant(
         serving_version=f"graph-policy-v{policy['version']}",
         serving_as_of=as_of_date,
         diagnostics={
-            "snapshot_schema_version": 1,
+            "snapshot_schema_version": 2,
             "nomination_count": len(nominations), "user_count": len(users),
             "finding_count": len(detected_findings), "window_days": window_days,
             "scoring_policy_version": policy["version"],

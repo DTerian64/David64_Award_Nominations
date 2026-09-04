@@ -1,5 +1,9 @@
 # Graph snapshot cleanup (migration 0055)
 
+**Superseded for finding storage and rollout by [migration 0056](graph_evidence_identity_rollout.md).**
+Do not use the per-run archive design below for new deployments. Findings now
+have policy-independent hashes and are refreshed in place across runs.
+
 ## Scope
 
 - Publish a new version of each active Graph scoring policy with Super Beneficiary enabled for scoring. Preserve its beneficiary role, formula, parameters, and thresholds. Update editable drafts to match.

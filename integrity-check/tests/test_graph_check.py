@@ -205,7 +205,7 @@ class GraphSnapshotReaderTests(unittest.TestCase):
     def _read(self, evidence):
         cursor = MagicMock()
         cursor.fetchone.return_value = ('AVAILABLE', date.today(), 'run-1', json.dumps({
-            'snapshot_schema_version': 1, 'scoring_policy_version': 2, 'finding_count': 3,
+            'snapshot_schema_version': 2, 'scoring_policy_version': 2, 'finding_count': 3,
         }))
         cursor.fetchall.return_value = [] if evidence == 'MISSING_ROW' else [(1, evidence)]
         context = MagicMock()
