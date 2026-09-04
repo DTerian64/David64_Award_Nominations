@@ -40,6 +40,10 @@ module "schema_migration_job" {
   sql_server_fqdn   = "${var.sql_server_name}.database.windows.net"
   sql_database_name = var.sql_database_name
 
+  # Approved one-time synthetic reset for migration 0056; remove after success.
+  # AWARD_DATABASE_NAME itself is supplied permanently by the shared module.
+  graph_findings_reset_approved = true
+
   tags       = local.tags
   depends_on = [module.container_apps, module.sql_access]
 }

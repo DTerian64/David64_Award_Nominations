@@ -25,6 +25,12 @@ variable "acr_admin_password" {
 variable "sql_server_fqdn" { type = string }
 variable "sql_database_name" { type = string }
 
+variable "graph_findings_reset_approved" {
+  description = "One-time approval for migration 0056 to clear synthetic Graph data. Disabled by default; remove the environment override after the reset succeeds."
+  type        = bool
+  default     = false
+}
+
 variable "cpu" {
   type    = number
   default = 0.5
@@ -59,6 +65,6 @@ variable "workload_profile_name" {
     azurerm_container_app_environment: azurerm#31840 makes that plan never
     converge (min/max counts round-trip as 0).
   EOT
-  type    = string
-  default = "Consumption"
+  type        = string
+  default     = "Consumption"
 }

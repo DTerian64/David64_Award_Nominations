@@ -42,8 +42,10 @@ def _preflight():
         SELECT (SELECT COUNT_BIG(*) FROM dbo.GraphPatternFindings)
              + (SELECT COUNT_BIG(*) FROM dbo.UserGraphFlags)
     """)).scalar_one()
-    if existing and os.getenv('GRAPH_FINDINGS_RESET_DATABASE') != database:
-        raise RuntimeError('0056: set GRAPH_FINDINGS_RESET_DATABASE to the exact target database name after pausing workers and backing up synthetic Graph data')
+    if existing and os.getenv('AWARD_DATABASE_NAME') != database:
+        raise RuntimeError('0056: AWARD_DATABASE_NAME must match the exact target database name')
+    if existing and os.getenv('GRAPH_FINDINGS_RESET_APPROVED', '').lower() != 'true':
+        raise RuntimeError('0056: set GRAPH_FINDINGS_RESET_APPROVED=true only after pausing workers and backing up synthetic Graph data; AWARD_DATABASE_NAME is not reset approval')
 
 
 def upgrade():

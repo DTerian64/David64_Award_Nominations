@@ -21,14 +21,15 @@ def _connection(monkeypatch, *, dependencies=(), outside=0, existing=100):
 
 def test_reset_requires_exact_database_confirmation(monkeypatch):
     _connection(monkeypatch)
-    monkeypatch.setenv('GRAPH_FINDINGS_RESET_DATABASE', 'WrongDatabase')
+    monkeypatch.setenv('AWARD_DATABASE_NAME', 'WrongDatabase')
     with pytest.raises(RuntimeError, match='exact target database'):
         migration._preflight()
 
 
 def test_confirmed_scope_is_allowed(monkeypatch):
     _connection(monkeypatch)
-    monkeypatch.setenv('GRAPH_FINDINGS_RESET_DATABASE', 'Sandbox')
+    monkeypatch.setenv('AWARD_DATABASE_NAME', 'Sandbox')
+    monkeypatch.setenv('GRAPH_FINDINGS_RESET_APPROVED', 'true')
     migration._preflight()
 
 
@@ -46,8 +47,18 @@ def test_other_tenants_block_reset(monkeypatch):
 
 def test_empty_install_needs_no_destructive_confirmation(monkeypatch):
     _connection(monkeypatch, existing=0)
-    monkeypatch.delenv('GRAPH_FINDINGS_RESET_DATABASE', raising=False)
+    monkeypatch.delenv('AWARD_DATABASE_NAME', raising=False)
+    monkeypatch.delenv('GRAPH_FINDINGS_RESET_APPROVED', raising=False)
     migration._preflight()
+
+
+@pytest.mark.parametrize('approval', ['', 'false', '0', '1'])
+def test_reusable_database_name_does_not_authorize_reset(monkeypatch, approval):
+    _connection(monkeypatch)
+    monkeypatch.setenv('AWARD_DATABASE_NAME', 'Sandbox')
+    monkeypatch.setenv('GRAPH_FINDINGS_RESET_APPROVED', approval)
+    with pytest.raises(RuntimeError, match='not reset approval'):
+        migration._preflight()
 
 
 def test_reset_ddl_preserves_tables_and_nomination_history(monkeypatch):

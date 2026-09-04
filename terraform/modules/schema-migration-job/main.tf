@@ -68,6 +68,20 @@ resource "azurerm_container_app_job" "schema_migration" {
         name  = "SQL_DATABASE"
         value = var.sql_database_name
       }
+      # Reusable application database identity, derived per environment.
+      # Keep SQL_DATABASE for existing connection consumers.
+      env {
+        name  = "AWARD_DATABASE_NAME"
+        value = var.sql_database_name
+      }
+      # Database identity alone must never authorize a destructive reset.
+      dynamic "env" {
+        for_each = var.graph_findings_reset_approved ? [true] : []
+        content {
+          name  = "GRAPH_FINDINGS_RESET_APPROVED"
+          value = "true"
+        }
+      }
       env {
         name  = "ENVIRONMENT"
         value = var.environment
