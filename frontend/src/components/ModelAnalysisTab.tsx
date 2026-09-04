@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Activity, BrainCircuit, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
-  CircleHelp, ExternalLink, FileSearch, RefreshCw, Search, Settings, ShieldAlert, X,
+  CircleHelp, ExternalLink, FileSearch, RefreshCw, Search, Settings, ShieldAlert, Users, X,
 } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import {
@@ -9,6 +9,7 @@ import {
   type HRBPQueueItem, type PairHistory,
 } from './HRBPReviewTab';
 import { DetectionEnginesPanel, FraudPanel } from './SetupPanel';
+import { UserAnalysisTab } from './UserAnalysisTab';
 
 interface SearchItem {
   nomination_id: number;
@@ -151,7 +152,7 @@ const ReadOnlyEvidence: React.FC<{
         )}
 
         <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
-          Read-only model evidence. No nomination workflow actions are available in this view.
+          Read-only integrity evidence. No nomination workflow actions are available in this view.
         </div>
       </div>
     </div>
@@ -161,7 +162,7 @@ const ReadOnlyEvidence: React.FC<{
 export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, onOpenNominationLogs }) => {
   const { isAdmin, isImpersonating, getEffectiveUser } = useImpersonation();
   const impersonatedUPN = isImpersonating ? getEffectiveUser() : undefined;
-  const [subTab, setSubTab] = useState<'independent' | 'modelSetup' | 'elce'>('independent');
+  const [subTab, setSubTab] = useState<'nominations' | 'users' | 'modelSetup' | 'elce'>('nominations');
   const [modelSetupTab, setModelSetupTab] = useState<'fraud' | 'engines'>('fraud');
   const [query, setQuery] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
@@ -255,11 +256,18 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-1 border-b border-gray-200 pb-3">
         <button
-          onClick={() => setSubTab('independent')}
-          style={subTab === 'independent' ? { backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' } : {}}
-          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${subTab === 'independent' ? '' : 'text-gray-600 hover:bg-gray-100'}`}
+          onClick={() => setSubTab('nominations')}
+          style={subTab === 'nominations' ? { backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' } : {}}
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${subTab === 'nominations' ? '' : 'text-gray-600 hover:bg-gray-100'}`}
         >
-          <BrainCircuit className="h-4 w-4" /> Independent Models
+          <FileSearch className="h-4 w-4" /> Nomination Analysis
+        </button>
+        <button
+          onClick={() => setSubTab('users')}
+          style={subTab === 'users' ? { backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' } : {}}
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${subTab === 'users' ? '' : 'text-gray-600 hover:bg-gray-100'}`}
+        >
+          <Users className="h-4 w-4" /> User Analysis
         </button>
         <button
           onClick={() => setSubTab('modelSetup')}
@@ -280,7 +288,16 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
         <span id="elce-description" className="sr-only">Even Lineage Counterfactual Explanation</span>
       </div>
 
-      {subTab === 'elce' ? (
+      {error && <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {subTab === 'users' ? (
+        <UserAnalysisTab
+          key={impersonatedUPN || 'actual-user'}
+          apiFetch={apiFetch}
+          impersonatedUPN={impersonatedUPN}
+          onOpenAnalysis={openDetail}
+          onOpenLogs={onOpenNominationLogs}
+        />
+      ) : subTab === 'elce' ? (
         <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50/40 px-6 py-16 text-center">
           <BrainCircuit className="mx-auto mb-3 h-12 w-12 text-indigo-300" />
           <h3 className="text-lg font-semibold text-gray-800">ELCE workspace prepared</h3>
@@ -352,7 +369,7 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
               </select>
             </label>
             <label className="space-y-1">
-              <span className="block text-xs font-medium text-gray-600">Model risk</span>
+              <span className="block text-xs font-medium text-gray-600">Composite risk</span>
               <select value={risk} onChange={event => setRisk(event.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 {RISKS.map(value => <option key={value} value={value}>{value || 'All risk levels'}</option>)}
               </select>
@@ -369,7 +386,6 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
             </div>
           </form>
 
-          {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {loading && <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-400"><RefreshCw className="h-4 w-4 animate-spin" /> Searching…</div>}
 
           {!loading && !hasSearched && (
@@ -392,7 +408,7 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
                     <th className="px-3 py-2">Nomination</th><th className="px-3 py-2">Date</th>
                     <th className="px-3 py-2">Nominator → Beneficiary</th><th className="px-3 py-2">Category</th>
                     <th className="px-3 py-2 text-right">Amount</th><th className="px-3 py-2">Status</th>
-                    <th className="px-3 py-2">Model risk</th><th className="px-3 py-2">Action</th>
+                    <th className="px-3 py-2">Composite risk</th><th className="px-3 py-2">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -438,10 +454,10 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><div className="rounded-lg bg-white px-6 py-4 shadow-xl"><RefreshCw className="mr-2 inline h-4 w-4 animate-spin" />Loading model evidence…</div></div>
       )}
       {detail && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 sm:p-8" role="dialog" aria-modal="true" aria-label={`Model analysis for nomination ${detail.nomination_id}`}>
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 sm:p-8" role="dialog" aria-modal="true" aria-label={`Nomination analysis for nomination ${detail.nomination_id}`}>
           <div className="mx-auto max-w-7xl rounded-xl bg-white shadow-2xl">
             <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-xl border-b border-gray-200 bg-white px-5 py-3">
-              <div><h3 className="font-semibold text-gray-900">Nomination model analysis</h3><p className="text-xs text-gray-500">Read-only HRBP evidence view</p></div>
+              <div><h3 className="font-semibold text-gray-900">Nomination Analysis</h3><p className="text-xs text-gray-500">Read-only integrity evidence view</p></div>
               <button onClick={() => { setDetail(null); setDetailHistory(null); }} className="rounded p-2 text-gray-500 hover:bg-gray-100" title="Close"><X className="h-5 w-5" /></button>
             </div>
             <div className="p-4 sm:p-6"><ReadOnlyEvidence item={detail} pairHistory={detailHistory} formatCurrency={formatCurrency} /></div>

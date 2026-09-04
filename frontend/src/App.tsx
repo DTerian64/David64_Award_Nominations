@@ -676,7 +676,7 @@ const AwardNominationApp: React.FC = () => {
                 }`}
               >
                 <BrainCircuit className="w-5 h-5 inline-block mr-2" />
-                {t('nav.modelAnalysis', { defaultValue: 'Model Analysis' })}
+                {t('nav.modelAnalysis', { defaultValue: 'Integrity Analysis' })}
               </button>
             )}
             {/* Payroll tab — visible only to PayrollBP role */}
@@ -1212,6 +1212,7 @@ const AwardNominationApp: React.FC = () => {
           {activeTab === 'modelAnalysis' && canAccessModelAnalysis && (
             <div className="bg-white rounded-lg shadow-md p-4 sm:p-8">
               <ModelAnalysisTab
+                key={getEffectiveUser()}
                 apiFetch={apiFetch}
                 formatCurrency={formatCurrency}
                 onOpenNominationLogs={setLogsNominationId}

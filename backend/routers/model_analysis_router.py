@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 import utils.sqlhelper2 as sqlhelper
-from utils import model_artifacts
+from utils import model_artifacts, user_analysis
 from auth import is_admin, require_analytics_access
 
 
@@ -22,6 +22,12 @@ NominationStatus = Literal[
 ]
 RiskLevel = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE", "UNKNOWN"]
 ModelComponent = Literal["rf", "gnn"]
+UserRole = Literal["either", "nominator", "nominee"]
+IntegrityEngine = Literal["rf", "graph", "gnn", "semantic"]
+ReviewOutcome = Literal[
+    "CONFIRMED_CONCERN", "CONFIRMED_SEMANTIC_CONCERN", "CLEARED_NO_CONCERN",
+    "CLEARED_UNSUBSTANTIATED", "NOT_REVIEWED",
+]
 _GRAPH_PATTERNS = {
     "Ring", "BipartiteDenseBlock", "TemporalBurst", "SuperNominator",
     "SuperBeneficiary", "CopyPaste", "HiddenCandidate", "Desert",
@@ -147,6 +153,43 @@ async def get_rf_model_visualization(
         media_type="image/png",
         headers={"Cache-Control": "private, max-age=300"},
     )
+
+
+@router.get("/users")
+async def search_analysis_users(
+    q: str = Query(min_length=1, max_length=200),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    user_context: dict = Depends(require_analytics_access),
+):
+    return user_analysis.search_users(
+        user_context["effective_user"]["TenantId"], q, page, page_size,
+    )
+
+
+@router.get("/users/{user_id}/nominations")
+async def get_user_integrity_analysis(
+    user_id: int,
+    role: UserRole = "either",
+    engine: Optional[IntegrityEngine] = None,
+    risk: Optional[RiskLevel] = None,
+    outcome: Optional[ReviewOutcome] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    user_context: dict = Depends(require_analytics_access),
+):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="Start date must be on or before end date")
+    result = user_analysis.get_user_analysis(
+        tenant_id=user_context["effective_user"]["TenantId"], user_id=user_id,
+        role=role, engine=engine, risk=risk, outcome=outcome,
+        start_date=start_date, end_date=end_date, page=page, page_size=page_size,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return result
 
 
 @router.get("/nominations")

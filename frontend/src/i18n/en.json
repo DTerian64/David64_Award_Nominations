@@ -8,7 +8,7 @@
     "history": "My Nominations",
     "approvals": "My Approvals",
     "analytics": "Analytics",
-    "modelAnalysis": "Model Analysis",
+    "modelAnalysis": "Integrity Analysis",
     "hrbp": "HRBP Review",
     "payroll": "Payroll"
   },
@@ -59,7 +59,7 @@
     }
   },
   "modelAnalysis": {
-    "heading": "Model Analysis"
+    "heading": "Integrity Analysis"
   },
   "status": {
     "Submitted": "Submitted",

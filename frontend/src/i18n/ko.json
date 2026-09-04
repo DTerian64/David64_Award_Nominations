@@ -8,7 +8,7 @@
     "history": "내 추천 내역",
     "approvals": "내 승인",
     "analytics": "분석",
-    "modelAnalysis": "모델 분석",
+    "modelAnalysis": "무결성 분석",
     "hrbp": "HRBP 검토",
     "payroll": "급여"
   },
@@ -59,7 +59,7 @@
     }
   },
   "modelAnalysis": {
-    "heading": "모델 분석"
+    "heading": "무결성 분석"
   },
   "status": {
     "Submitted": "제출됨",
