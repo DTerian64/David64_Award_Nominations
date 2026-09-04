@@ -116,7 +116,11 @@ const ENGINE_NAMES: Record<string, { name: string; description: string; populati
   },
 };
 
-const DIAGNOSTIC_PRIORITY = ['window_days', 'nomination_count'];
+const DIAGNOSTIC_PRIORITY = [
+  'window_days', 'nomination_count',
+  'train_positive_count', 'train_negative_count',
+  'eval_positive_count', 'eval_negative_count',
+];
 
 const orderedDiagnostics = (diagnostics: Record<string, unknown>) =>
   Object.entries(diagnostics || {}).sort(([left], [right]) => {
