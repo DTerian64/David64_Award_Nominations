@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from auth import require_analytics_access
 from routers.model_analysis_router import router
-from utils import user_analysis
+from utils import sqlhelper2, user_analysis
 
 
 @pytest.fixture
@@ -138,7 +138,8 @@ def test_unknown_user_stops_before_nomination_query():
 
 
 def test_analysis_summary_and_pagination_share_exact_filter_cte():
-    summary = {'total': 40, 'engine_concerns': 2, 'confirmed_issues': 0,
+    summary = {'total': 40, 'nominations_made': 12, 'nominations_received': 28,
+               'engine_concerns': 2, 'confirmed_issues': 0,
                'cleared_concerns': 1, 'unsubstantiated': 1,
                'not_for_training': 1, 'missing_evidence': 5}
     row = {'nomination_id': 55}
@@ -150,6 +151,8 @@ def test_analysis_summary_and_pagination_share_exact_filter_cte():
     with database(session):
         result = user_analysis.get_user_analysis(7, 42, engine='rf', role='either', page=2)
     assert result['total'] == 40 and len(result['items']) == 1
+    assert result['summary']['nominations_made'] == 12
+    assert result['summary']['nominations_received'] == 28
     assert result['items'][0]['engines']['rf']['concern'] is True
     assert result['items'][0]['engines']['gnn']['available'] is False
     summary_sql, params = session.calls[1]
@@ -165,6 +168,8 @@ def test_analysis_summary_and_pagination_share_exact_filter_cte():
     assert "review_outcome IN ('CONFIRMED_CONCERN', 'CONFIRMED_SEMANTIC_CONCERN')" in summary_sql
     assert "training_disposition = 'EXCLUDED'" in summary_sql
     assert "status = 'Rejected'" not in summary_sql
+    assert "user_role IN ('nominator', 'both')" in summary_sql
+    assert "user_role IN ('nominee', 'both')" in summary_sql
 
 
 def test_concern_expression_requires_availability_and_preserves_low_score_findings():
@@ -181,3 +186,39 @@ def test_concern_expression_requires_availability_and_preserves_low_score_findin
 def test_helper_rejects_untrusted_sql_column_selection():
     with pytest.raises(ValueError):
         user_analysis.get_user_analysis(7, 42, engine='rf_concern;--')
+
+
+def test_historical_graph_findings_are_compacted_to_winner_and_count():
+    original = {
+        'available': True,
+        'findings': [
+            '[Graph] nominator: Ring (88.20, HIGH)',
+            '[Graph] nominator: Ring (84.29, HIGH)',
+            '[Graph] beneficiary: CopyPaste (73.00, MEDIUM)',
+        ],
+        'winning_pattern_type': 'Ring',
+    }
+    result = sqlhelper2.compact_graph_result(original)
+    assert result['findings'] == ['[Graph] nominator: Ring (88.20, HIGH)']
+    assert result['winning_pattern_type'] == 'Ring'
+    assert result['winning_pattern_count'] == 2
+    assert len(original['findings']) == 3  # Raw persisted evidence is untouched.
+
+
+def test_structured_graph_evidence_counts_only_relevant_winning_findings():
+    result = sqlhelper2.compact_graph_result({
+        'available': True,
+        'findings': [],
+        'winning_finding_hash': 'winner',
+        'pattern_findings': [
+            {'finding_hash': 'winner', 'pattern_type': 'Ring', 'finding_score': 88.2,
+             'affected_roles': ['nominator'], 'routing_relevant': True},
+            {'finding_hash': 'ring-2', 'pattern_type': 'Ring', 'finding_score': 85,
+             'routing_relevant': True},
+            {'finding_hash': 'ring-3', 'pattern_type': 'Ring', 'finding_score': 99,
+             'routing_relevant': False},
+        ],
+    })
+    assert result['winning_pattern_type'] == 'Ring'
+    assert result['winning_pattern_count'] == 2
+    assert result['findings'] == ['[Graph] nominator: Ring (88.20)']

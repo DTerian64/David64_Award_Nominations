@@ -9,7 +9,7 @@ import json
 
 from sqlalchemy import text
 
-from utils.sqlhelper2 import get_db_context
+from utils.sqlhelper2 import compact_graph_result, get_db_context
 
 
 def search_users(tenant_id, query, page=1, page_size=25):
@@ -120,6 +120,8 @@ def get_user_analysis(tenant_id, user_id, role='either', engine=None,
             return None
         summary = dict(session.execute(text(cte + """
             SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN user_role IN ('nominator', 'both') THEN 1 ELSE 0 END), 0) AS nominations_made,
+                COALESCE(SUM(CASE WHEN user_role IN ('nominee', 'both') THEN 1 ELSE 0 END), 0) AS nominations_received,
                 COALESCE(SUM(CASE WHEN rf_concern + graph_concern + gnn_concern + semantic_concern > 0 THEN 1 ELSE 0 END), 0) AS engine_concerns,
                 COALESCE(SUM(CASE WHEN review_outcome IN ('CONFIRMED_CONCERN', 'CONFIRMED_SEMANTIC_CONCERN') THEN 1 ELSE 0 END), 0) AS confirmed_issues,
                 COALESCE(SUM(CASE WHEN review_outcome = 'CLEARED_NO_CONCERN' THEN 1 ELSE 0 END), 0) AS cleared_concerns,
@@ -142,9 +144,13 @@ def get_user_analysis(tenant_id, user_id, role='either', engine=None,
             document = json.loads(item.pop(key) or '{}')
             if not isinstance(document, dict):
                 document = {}
+            if key == 'graph':
+                document = compact_graph_result(document) or {}
             engines[key] = {field: document.get(field) for field in (
                 'available', 'status', 'risk_level', 'score', 'findings',
                 'unavailable_reason', 'combined_decision',
+                'winning_pattern_type', 'winning_pattern_count',
+                'explanation',
             )}
             findings = document.get('findings')
             engines[key]['findings'] = [

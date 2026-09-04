@@ -40,10 +40,11 @@ test('initial user search is explicit and read-only', () => {
 
 test('summary distinguishes explicit exclusion, missing evidence and cleared outcomes', () => {
   const html = render(UserAnalysisSummary, { summary: {
-    total: 10, engine_concerns: 5, confirmed_issues: 2, cleared_concerns: 1,
+    total: 10, nominations_made: 4, nominations_received: 6,
+    engine_concerns: 5, confirmed_issues: 2, cleared_concerns: 1,
     unsubstantiated: 1, not_for_training: 2, missing_evidence: 3,
   } });
-  for (const label of ['Human-confirmed issues', 'Cleared — no concern', 'Cleared — unsubstantiated', 'Not for training', 'No inference recorded']) {
+  for (const label of ['Nominations made', 'Nominations received', 'Human-confirmed issues', 'Cleared — no concern', 'Cleared — unsubstantiated', 'Not for training', 'No inference recorded']) {
     assert.ok(html.includes(label));
   }
   assert.match(html, /Categories overlap/);
@@ -53,16 +54,22 @@ test('summary distinguishes explicit exclusion, missing evidence and cleared out
 
 test('all four engines show findings, semantic review and unavailable states', () => {
   const html = render(UserNominationEvidence, { item: { engines: {
-    rf: { available: true, score: 7, risk_level: 'NONE', concern: true, findings: ['Reciprocal nominations'] },
-    graph: { available: true, score: 50, risk_level: 'MEDIUM', concern: true, findings: ['Graph outlier'] },
+    rf: { available: true, score: 7, risk_level: 'NONE', concern: true,
+      findings: ['Reciprocal nominations'], explanation: { llm_text: 'SHAP factors explain the RF score.' } },
+    graph: { available: true, score: 88.2, risk_level: 'HIGH', concern: true,
+      winning_pattern_type: 'Ring', winning_pattern_count: 417,
+      findings: ['[Graph] nominator: Ring (88.20, HIGH)'] },
     gnn: { available: false, score: 0, risk_level: 'NONE', concern: false, unavailable_reason: 'BELOW_MINIMUM_VOLUME' },
     semantic: { available: true, concern: true, combined_decision: { action: 'flag', checks: ['Category concern'], reason: 'Needs human review' } },
   } } });
-  for (const label of ['RF', 'Graph Analytics', 'GNN', 'Semantic', 'Reciprocal nominations', 'Graph outlier', 'Category concern', 'Needs human review', 'BELOW_MINIMUM_VOLUME']) {
+  for (const label of ['RF', 'Graph Analytics', 'GNN', 'Semantic', 'Reciprocal nominations', 'Winning pattern', 'Ring', '417 relevant findings', 'LLM explanation', 'SHAP factors explain the RF score.', 'Semantic finding', 'Category concern', 'Needs human review', 'BELOW_MINIMUM_VOLUME']) {
     assert.ok(html.includes(label));
   }
   assert.doesNotMatch(html, /NONE · Score 0/);
   assert.doesNotMatch(html, /\[object Object\]/);
+  assert.equal((html.match(/nominator: Ring/g) || []).length, 0);
+  assert.equal((html.match(/LLM explanation/g) || []).length, 1);
+  assert.equal((html.match(/Semantic finding/g) || []).length, 1);
 });
 
 test('missing inference is not presented as a clean engine assessment', () => {

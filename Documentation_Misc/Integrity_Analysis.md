@@ -17,8 +17,9 @@ read-only engine evidence, explanations, pair history, and logs.
 3. Inspect the summary and four-engine evidence for each nomination. Click the
    nomination number to open Nomination Analysis or **View logs** for its log drawer.
 
-User search and nomination results are paginated. Summary counts cover the entire
-filtered nomination population, not just the current page. Both participants and
+User search and nomination results are paginated. Separate **Nominations made**
+and **Nominations received** summary cards distinguish the user's two roles.
+Summary counts cover the entire filtered nomination population, not just the current page. Both participants and
 the decision record must belong to the effective tenant. Changing impersonation
 resets the workspace's local results.
 
@@ -42,6 +43,19 @@ Summary categories intentionally overlap:
 Signals describe nominations involving a user, not proof of wrongdoing by that
 user. Rejected nomination status alone never becomes a confirmed issue or a
 training label. These screens do not modify workflow or training data.
+
+Graph Analytics uses the highest relevant finding as its score. The inference
+verdict therefore displays only that winning pattern and the number of relevant
+findings of the same type; scores are not summed. Full structured pattern evidence
+remains in the persisted Graph result and nomination audit data. Historical
+results containing repeated display strings are compacted when read, so no data
+migration is required.
+
+Canonical four-engine records keep explanations with their source engine: the RF
+card contains RF findings and its SHAP-based **LLM explanation**, the Semantic card
+contains the semantic finding description, and the Graph card contains the winning
+pattern. The former shared findings strip and standalone LLM panel are shown only
+for legacy records that do not have engine-specific evidence.
 
 ## Integrity Setup
 

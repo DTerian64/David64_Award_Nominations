@@ -18,7 +18,7 @@ const compiled = ts.transpileModule(isolated, {
 const GraphEvidence = new Function('React', `${compiled}\nreturn GraphEvidence;`)(React);
 const render = extras => renderToStaticMarkup(React.createElement(GraphEvidence, { extras }));
 
-test('winner precedes expandable detector groups, preserving all findings', () => {
+test('only the winning pattern and its relevant count are shown', () => {
   const findings = Array.from({ length: 10 }, (_, i) => ({
     finding_hash: `ring-${i}`, pattern_type: 'Ring', finding_score: 80,
     affected_roles: ['nominator'], routing_relevant: true, detail: `ring evidence ${i}`,
@@ -26,22 +26,21 @@ test('winner precedes expandable detector groups, preserving all findings', () =
   findings.push({ finding_hash: 'winner', pattern_type: 'CopyPaste', finding_score: 91,
     detail: 'Winning evidence', affected_roles: ['beneficiary'], routing_relevant: false });
   const html = render({ pattern_findings: findings, winning_pattern_type: 'Ring',
-    fraud_score: 80, winning_finding: findings[0] });
-  assert.ok(html.indexOf('Winning finding: Ring') < html.indexOf('<details'));
-  assert.match(html, /Ring · 10 findings · Highest 80.00/);
-  assert.match(html, /CopyPaste · 1 findings · Highest 91.00/);
-  assert.match(html, /Not scoring this nomination/);
-  assert.equal((html.match(/<details/g) ?? []).length, 13);
-  for (let i = 0; i < 10; i++) assert.ok(html.includes(`ring evidence ${i}`));
+    winning_pattern_count: 10, fraud_score: 80, winning_finding: findings[0] });
+  assert.match(html, /Winning pattern: Ring · 80 \/ 100/);
+  assert.match(html, /10 relevant findings/);
+  assert.match(html, /ring evidence 0/);
+  assert.doesNotMatch(html, /CopyPaste|Not scoring|ring evidence 1|<details/);
 });
 
-test('legacy warning-only logs remain readable and grouped', () => {
+test('legacy warning-only logs derive one winner and count its pattern', () => {
   const html = render({ warning_flags: ['nominator: Ring (80, HIGH)', 'beneficiary: Ring (75, HIGH)'] });
-  assert.match(html, /Ring · 2 findings/);
+  assert.match(html, /Winning pattern: Ring · 80 \/ 100/);
+  assert.match(html, /2 relevant findings/);
   assert.match(html, /nominator: Ring/);
-  assert.doesNotMatch(html, /Winning finding/);
+  assert.doesNotMatch(html, /beneficiary: Ring/);
 });
 
 test('clean or unavailable logs do not invent findings', () => {
-  assert.doesNotMatch(render({ pattern_findings: [], warning_flags: [] }), /<details|Winning finding/);
+  assert.doesNotMatch(render({ pattern_findings: [], warning_flags: [] }), /Winning pattern/);
 });

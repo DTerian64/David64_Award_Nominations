@@ -54,6 +54,9 @@ export interface EngineResult {
   model_probability?: number | null;
   risk_level?: string;
   findings?: string[];
+  winning_pattern_type?: string | null;
+  winning_pattern_count?: number;
+  explanation?: { llm_text?: string | null };
   combined_decision?: {
     action?: string;
     checks?: string[];
@@ -207,11 +210,17 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
         {entries.map(([label, engine]) => {
           if (!engine) return null;
           const isSemantic = label === 'Semantic';
+          const isGraph = label === 'Graph Analytics';
+          const isRf = label === 'RF';
           const action = engine.combined_decision?.action;
           const findings = [
             ...(engine.findings || []),
             ...(engine.combined_decision?.checks || []),
           ];
+          const rfLlmExplanation = isRf
+            ? engine.explanation?.llm_text || item.llm_explanation
+            : null;
+          const graphFinding = isGraph ? engine.findings?.[0] : null;
           return (
             <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
@@ -245,13 +254,37 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
                   LLM category fit {engine.llm.response.category_fit_score}
                 </p>
               )}
-              {findings.length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs text-orange-700">
-                  {findings.map((finding, index) => <li key={index}>• {finding}</li>)}
-                </ul>
+              {isGraph && (engine.winning_pattern_type || graphFinding) && (
+                <div className="mt-2 rounded border border-teal-200 bg-teal-50 p-2 text-xs text-teal-800">
+                  <span className="inline-flex rounded-full border border-teal-300 bg-white px-2 py-0.5 font-semibold">{engine.winning_pattern_type ? 'Winning pattern' : 'Winning finding'}</span>
+                  <p className="mt-1 font-medium">{engine.winning_pattern_type || graphFinding}
+                    {engine.winning_pattern_type && engine.winning_pattern_count !== undefined
+                      ? ` · ${engine.winning_pattern_count} relevant finding${engine.winning_pattern_count === 1 ? '' : 's'}`
+                      : ''}
+                  </p>
+                </div>
               )}
-              {engine.combined_decision?.reason && (
-                <p className="mt-2 text-xs text-slate-600">{engine.combined_decision.reason}</p>
+              {!isGraph && !isSemantic && findings.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {findings.map((finding, index) => <span key={index} className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs text-orange-800">{finding}</span>)}
+                </div>
+              )}
+              {isSemantic && findings.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {findings.map((finding, index) => <span key={index} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-800">{finding.replace(/_/g, ' ')}</span>)}
+                </div>
+              )}
+              {isSemantic && engine.combined_decision?.reason && (
+                <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-slate-700">
+                  <span className="inline-flex rounded-full border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-800">Semantic finding</span>
+                  <p className="mt-1">{engine.combined_decision.reason}</p>
+                </div>
+              )}
+              {rfLlmExplanation && (
+                <div className="mt-2 rounded border border-indigo-200 bg-indigo-50 p-2 text-xs text-slate-700">
+                  <span className="inline-flex rounded-full border border-indigo-300 bg-white px-2 py-0.5 font-semibold text-indigo-700">LLM explanation</span>
+                  <p className="mt-1 leading-relaxed">{rfLlmExplanation}</p>
+                </div>
               )}
             </div>
           );
@@ -450,25 +483,13 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                   <EngineVerdicts item={nom} />
 
                   {/* Warning flags */}
-                  {nom.warning_flags.length > 0 && (
+                  {nom.decision_source === 'legacy' && nom.warning_flags.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-3">
                       {nom.warning_flags.map((flag, i) => (
                         <span key={i} className="inline-block bg-orange-100 text-orange-800 text-xs px-2 py-0.5 rounded-full border border-orange-200">
                           ⚠ {flag}
                         </span>
                       ))}
-                    </div>
-                  )}
-
-                  {/* LLM explanation of the RF assessment */}
-                  {nom.llm_explanation && (
-                    <div className="mb-3 rounded-lg border border-indigo-200 bg-indigo-50 p-4">
-                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-indigo-700">
-                        LLM explanation
-                      </p>
-                      <p className="text-sm leading-relaxed text-slate-700">
-                        {nom.llm_explanation}
-                      </p>
                     </div>
                   )}
 

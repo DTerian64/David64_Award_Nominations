@@ -27,6 +27,7 @@ from typing import List, Optional, Tuple
 from urllib.parse import quote_plus
 
 import logging
+import re
 
 from sqlalchemy import (
     create_engine, text,
@@ -1660,6 +1661,7 @@ def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
     alerts = []
     for row in rows:
         documents = [_json_object(row[index]) or {} for index in range(3, 7)]
+        documents[1] = compact_graph_result(documents[1]) or {}
         alerts.append((
             row[0], row[1], row[2], ", ".join(_decision_findings(documents)),
             row[7], row[8], row[9], row[10], row[11], row[12],
@@ -2457,6 +2459,115 @@ def _json_list(value) -> list:
         return []
 
 
+_GRAPH_FINDING_RE = re.compile(
+    r":\s*(?P<pattern>[^()]+?)\s*\((?P<score>\d+(?:\.\d+)?),\s*[^)]+\)\s*$"
+)
+
+
+def compact_graph_result(document: dict | None) -> dict | None:
+    """Expose one winning Graph finding and its pattern count.
+
+    Historical records can contain hundreds of display strings even though the
+    score was always the maximum relevant finding. Raw pattern_findings remain
+    intact; only the human-facing findings array is compacted.
+    """
+    if not isinstance(document, dict):
+        return document
+    result = dict(document)
+    raw_findings = [
+        str(item) for item in (result.get("findings") or []) if item
+    ]
+    pattern_findings = [
+        item for item in (result.get("pattern_findings") or [])
+        if isinstance(item, dict)
+    ]
+    winner = result.get("winning_finding")
+    winner = winner if isinstance(winner, dict) else None
+    winner_hash = result.get("winning_finding_hash")
+    if winner is None and winner_hash is not None:
+        winner = next(
+            (item for item in pattern_findings
+             if item.get("finding_hash") == winner_hash),
+            None,
+        )
+    candidates = [
+        item for item in pattern_findings if item.get("routing_relevant") is not False
+    ]
+    if winner is None and candidates:
+        winner = max(
+            candidates,
+            key=lambda item: float(item.get("finding_score") or 0),
+        )
+
+    parsed_findings = []
+    for index, finding in enumerate(raw_findings):
+        match = _GRAPH_FINDING_RE.search(finding)
+        if match:
+            parsed_findings.append({
+                "text": finding,
+                "pattern_type": match.group("pattern").strip(),
+                "finding_score": float(match.group("score")),
+                "index": index,
+            })
+    winner_type = result.get("winning_pattern_type")
+    if not winner_type and winner:
+        winner_type = winner.get("pattern_type")
+    if not winner_type and parsed_findings:
+        winner_type = max(
+            parsed_findings,
+            key=lambda item: (item["finding_score"], -item["index"]),
+        )["pattern_type"]
+
+    winner_text = None
+    if parsed_findings:
+        matching = [
+            item for item in parsed_findings
+            if not winner_type or item["pattern_type"] == winner_type
+        ]
+        if matching:
+            winner_text = max(
+                matching,
+                key=lambda item: (item["finding_score"], -item["index"]),
+            )["text"]
+    if winner_text is None and winner:
+        roles = "/".join(str(value) for value in winner.get("affected_roles") or [])
+        role_prefix = f"{roles}: " if roles else ""
+        winner_score = float(winner.get("finding_score") or 0)
+        winner_text = f"[Graph] {role_prefix}{winner_type} ({winner_score:.2f})"
+    if winner_text is None and raw_findings:
+        # Oldest compatibility records did not preserve structured winner data;
+        # their findings were written in descending score order.
+        winner_text = raw_findings[0]
+
+    winner_count = result.get("winning_pattern_count")
+    if not isinstance(winner_count, int) or winner_count < 0:
+        summaries = [
+            item for item in (result.get("detector_summary") or [])
+            if isinstance(item, dict)
+        ]
+        summary = next(
+            (item for item in summaries if item.get("pattern_type") == winner_type),
+            None,
+        )
+        if summary:
+            winner_count = int(summary.get("scoring_count") or summary.get("count") or 0)
+        elif pattern_findings:
+            winner_count = sum(
+                1 for item in candidates if item.get("pattern_type") == winner_type
+            )
+        else:
+            winner_count = sum(
+                1 for item in parsed_findings if item["pattern_type"] == winner_type
+            )
+
+    result["findings"] = [winner_text] if winner_text else []
+    result["winning_pattern_type"] = winner_type
+    result["winning_pattern_count"] = winner_count or 0
+    if winner is not None:
+        result["winning_finding"] = winner
+    return result
+
+
 def _decision_findings(engine_results: list[dict]) -> list[str]:
     """Flatten the canonical engine evidence into human-readable findings."""
     findings: list[str] = []
@@ -2473,7 +2584,7 @@ def _model_evidence_from_row(r) -> dict:
     """Map the shared four-engine nomination evidence projection."""
     engine_results = {
         "rf": _json_object(r[15]),
-        "graph": _json_object(r[16]),
+        "graph": compact_graph_result(_json_object(r[16])),
         "gnn": _json_object(r[17]),
         "semantic": _json_object(r[18]),
     }
@@ -2843,6 +2954,7 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
         if not row:
             return None
         documents = [_json_object(row[index]) or {} for index in range(14, 18)]
+        documents[1] = compact_graph_result(documents[1]) or {}
         return {
             "nomination_id":     row[0],
             "tenant_id":         row[1],

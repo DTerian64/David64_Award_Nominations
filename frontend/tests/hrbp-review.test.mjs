@@ -73,3 +73,55 @@ test('known scopes remain readable', () => {
     assert.ok(renderEvidence({ review_scope: scope }).includes(`Review scope: ${scope.replaceAll('_', ' ')}`));
   }
 });
+
+test('Graph verdict shows its winning pattern count and one finding', () => {
+  const html = renderEvidence({ engine_results: {
+    rf: null,
+    graph: {
+      available: true, score: 88.2, risk_level: 'HIGH',
+      winning_pattern_type: 'Ring', winning_pattern_count: 417,
+      findings: ['[Graph] nominator: Ring (88.20, HIGH)'],
+    },
+    gnn: null,
+    semantic: null,
+  } });
+  assert.match(html, /Winning pattern/);
+  assert.match(html, /Ring · 417 relevant findings/);
+  assert.equal((html.match(/nominator: Ring/g) || []).length, 0);
+});
+
+test('RF narrative and Semantic description belong to their engine cards', () => {
+  const semanticReason = 'Description needs stronger category evidence.';
+  const rfExplanation = 'SHAP factors explain the RF score.';
+  const html = renderEvidence({
+    llm_explanation: rfExplanation,
+    warning_flags: [`[Description] ${semanticReason}`],
+    engine_results: {
+      rf: { available: true, score: 61, risk_level: 'MEDIUM', findings: [],
+        explanation: { llm_text: rfExplanation } },
+      graph: null,
+      gnn: null,
+      semantic: { available: true, combined_decision: {
+        action: 'flag', checks: ['category_alignment'], reason: semanticReason,
+      } },
+    },
+  });
+  assert.equal((html.match(/LLM explanation/g) || []).length, 1);
+  assert.equal((html.match(/SHAP factors explain/g) || []).length, 1);
+  assert.equal((html.match(/Semantic finding/g) || []).length, 1);
+  assert.equal((html.match(/Description needs stronger/g) || []).length, 1);
+  assert.match(html, /category alignment/);
+});
+
+test('older Graph evidence without a pattern type retains one winning finding', () => {
+  const html = renderEvidence({ engine_results: {
+    rf: null,
+    graph: { available: true, score: 50, risk_level: 'MEDIUM',
+      findings: ['[Graph] Beneficiary is an outlier', '[Graph] Older duplicate'] },
+    gnn: null,
+    semantic: null,
+  } });
+  assert.match(html, /Winning finding/);
+  assert.equal((html.match(/Beneficiary is an outlier/g) || []).length, 1);
+  assert.doesNotMatch(html, /Older duplicate/);
+});

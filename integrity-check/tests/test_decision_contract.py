@@ -65,6 +65,10 @@ def test_each_engine_preserves_its_own_kind_of_evidence():
             "fraud_prob": None,
             "risk_level": "HIGH",
             "warning_flags": ["Nominator is a super-nominator outlier"],
+            "winning_finding": {"finding_hash": "graph-1", "pattern_type": "Ring"},
+            "detector_summary": [{"pattern_type": "Ring", "scoring_count": 9}],
+            "winning_pattern_type": "Ring",
+            "winning_pattern_count": 9,
         },
         {
             "model_available": True,
@@ -84,6 +88,9 @@ def test_each_engine_preserves_its_own_kind_of_evidence():
     assert payloads["graph"]["findings"] == [
         "Nominator is a super-nominator outlier"
     ]
+    assert payloads["graph"]["winning_pattern_type"] == "Ring"
+    assert payloads["graph"]["winning_pattern_count"] == 9
+    assert payloads["graph"]["detector_summary"][0]["scoring_count"] == 9
     assert payloads["gnn"]["model_probability"] == 0.618
     assert payloads["semantic"]["llm"]["response"]["category_fit_score"] == 0.35
     json.dumps(payloads)

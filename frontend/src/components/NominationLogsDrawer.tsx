@@ -67,7 +67,7 @@ function formatDetailValue(value: unknown): string {
   return String(value);
 }
 
-/** Group evidence for readability without dropping findings or changing scores. */
+/** Show the one finding that determines Graph score, with its pattern count. */
 function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
   const findings = Array.isArray(extras.pattern_findings)
     ? extras.pattern_findings.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
@@ -79,8 +79,9 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
     group.items.push(item);
     groups.set(type, group);
   };
-  findings.forEach(item => add(String(item.pattern_type), item, Number(item.finding_score) || 0));
-  // Old logs only contain warning strings; retain access to those as well.
+  findings.filter(item => item.routing_relevant !== false)
+    .forEach(item => add(String(item.pattern_type), item, Number(item.finding_score) || 0));
+  // Old logs contain warning strings only. Derive their winner and count.
   if (!findings.length && Array.isArray(extras.warning_flags)) {
     extras.warning_flags.forEach(raw => {
       const warning = String(raw);
@@ -90,29 +91,25 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
   }
   const winner = extras.winning_finding && typeof extras.winning_finding === 'object'
     ? extras.winning_finding as Record<string, unknown> : null;
+  const orderedGroups = [...groups.entries()].sort((a, b) => b[1].score - a[1].score);
+  const winningType = extras.winning_pattern_type != null
+    ? String(extras.winning_pattern_type)
+    : orderedGroups[0]?.[0];
+  const winningGroup = winningType ? groups.get(winningType) : undefined;
+  const explicitCount = Number(extras.winning_pattern_count);
+  const count = Number.isFinite(explicitCount) && explicitCount >= 0
+    ? explicitCount : winningGroup?.items.length ?? 0;
+  const score = extras.fraud_score != null ? Number(extras.fraud_score) : winningGroup?.score;
+  const fallbackWinner = winningGroup?.items[0];
+  const winningDetail = winner?.detail != null ? String(winner.detail)
+    : fallbackWinner?.warning != null ? String(fallbackWinner.warning)
+    : fallbackWinner?.detail != null ? String(fallbackWinner.detail) : null;
+  if (!winningType) return null;
   return (
-    <div className="mt-3 space-y-2">
-      {extras.winning_pattern_type != null && (
-        <div className="rounded border border-teal-200 bg-teal-50 p-2">
-          <p className="font-semibold">Winning finding: {String(extras.winning_pattern_type)} · {String(extras.fraud_score)} / 100</p>
-          <p className="mt-1 text-gray-600">Highest relevant finding—not a sum of the findings below.</p>
-          {winner?.detail != null && <p className="mt-1">{String(winner.detail)}</p>}
-        </div>
-      )}
-      {[...groups.entries()].sort((a, b) => b[1].score - a[1].score).map(([type, group]) => (
-        <details key={type} className="rounded border border-gray-200 p-2">
-          <summary className="cursor-pointer font-medium">{type} · {group.items.length} findings · Highest {group.score.toFixed(2)}</summary>
-          <div className="mt-2 max-h-80 space-y-1 overflow-y-auto">
-            {group.items.map((item, index) => (
-              <details key={String(item.finding_hash ?? index)} className="rounded bg-gray-50 p-2">
-                <summary className="cursor-pointer">{item.warning != null ? String(item.warning)
-                  : `${item.finding_score} · ${Array.isArray(item.affected_roles) ? item.affected_roles.join('/') : ''} · ${item.routing_relevant ? 'Scoring' : 'Not scoring this nomination'}`}</summary>
-                <pre className="mt-1 whitespace-pre-wrap break-words text-[11px]">{formatDetailValue(item)}</pre>
-              </details>
-            ))}
-          </div>
-        </details>
-      ))}
+    <div className="mt-3 rounded border border-teal-200 bg-teal-50 p-2">
+      <p className="font-semibold">Winning pattern: {winningType}{score !== undefined ? ` · ${score} / 100` : ''}</p>
+      <p className="mt-1 text-gray-600">{count} relevant finding{count === 1 ? '' : 's'} · Score is the highest relevant finding, not their sum.</p>
+      {winningDetail && <p className="mt-1">{winningDetail}</p>}
     </div>
   );
 }
@@ -292,7 +289,10 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                     const extraEntries = Object.entries(extras).filter(
                       ([k]) => !SKIP_EXTRAS.has(k)
                         && (k !== 'top_features' || shapContributions.length === 0)
-                        && (!isGraph || !['warning_flags', 'winning_finding', 'detector_summary', 'pattern_findings'].includes(k))
+                        && (!isGraph || ![
+                          'warning_flags', 'winning_finding', 'winning_pattern_type',
+                          'winning_pattern_count', 'detector_summary', 'pattern_findings',
+                        ].includes(k))
                     );
                     return (
                       <div key={i} className="border border-gray-100 rounded-lg p-3 text-xs">

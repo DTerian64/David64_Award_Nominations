@@ -86,20 +86,13 @@ const ReadOnlyEvidence: React.FC<{
 
         <EngineVerdicts item={item} />
 
-        {item.warning_flags.length > 0 && (
+        {item.decision_source === 'legacy' && item.warning_flags.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {item.warning_flags.map((flag, index) => (
               <span key={index} className="rounded-full border border-orange-200 bg-orange-100 px-2 py-0.5 text-xs text-orange-800">
                 ⚠ {flag}
               </span>
             ))}
-          </div>
-        )}
-
-        {item.llm_explanation && (
-          <div className="mb-3 rounded-lg border border-indigo-200 bg-indigo-50 p-4">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-indigo-700">LLM explanation</p>
-            <p className="text-sm leading-relaxed text-slate-700">{item.llm_explanation}</p>
           </div>
         )}
 

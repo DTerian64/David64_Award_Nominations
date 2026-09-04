@@ -43,8 +43,11 @@ def _unavailable(
         "snapshot_run_id": snapshot_run_id,
         "affected_user_ids": [],
         "pattern_findings": [],
+        "winning_finding": None,
+        "detector_summary": [],
         "winning_finding_hash": None,
         "winning_pattern_type": None,
+        "winning_pattern_count": 0,
         "scoring_strategy": None,
         "scoring_policy_version": None,
     }
@@ -110,6 +113,7 @@ def assess_graph(
             "scoring_policy_version": result.get("scoring_policy_version"),
             "winning_finding_hash": result.get("winning_finding_hash"),
             "winning_pattern_type": result.get("winning_pattern_type"),
+            "winning_pattern_count": result.get("winning_pattern_count", 0),
             "finding_count": len(result.get("pattern_findings") or []),
         },
     )
@@ -228,11 +232,13 @@ def _assess_graph_inner(
     for item in candidates:
         affected.extend(item["affected_user_ids"])
 
-    flags = [
-        f"[Graph] {'/'.join(item['affected_roles'])}: "
-        f"{item['pattern_type']} ({item['finding_score']:.2f}, "
-        f"{_risk_level(item['finding_score'], policy['thresholds'])})"
-        for item in candidates
+    # The score is derived from one winning finding. Keep the display-oriented
+    # flags consistent with that decision; the full evidence remains available
+    # in pattern_findings and detector_summary for audit and research.
+    flags = [] if winner is None else [
+        f"[Graph] {'/'.join(winner['affected_roles'])}: "
+        f"{winner['pattern_type']} ({winner['finding_score']:.2f}, "
+        f"{_risk_level(winner['finding_score'], policy['thresholds'])})"
     ]
     groups: dict[str, dict] = {}
     for item in findings:
@@ -244,6 +250,11 @@ def _assess_graph_inner(
         group['scoring_count'] += int(item['routing_relevant'])
         group['highest_score'] = max(group['highest_score'], item['finding_score'])
     summaries = sorted(groups.values(), key=lambda group: (-group['highest_score'], group['pattern_type']))
+    winning_pattern_count = next(
+        (group['scoring_count'] for group in summaries
+         if winner and group['pattern_type'] == winner['pattern_type']),
+        0,
+    )
     result = {
         "model_available": True,
         "fraud_score": graph_score,
@@ -262,6 +273,7 @@ def _assess_graph_inner(
         "detector_summary": summaries,
         "winning_finding_hash": winner.get("finding_hash") if winner else None,
         "winning_pattern_type": winner.get("pattern_type") if winner else None,
+        "winning_pattern_count": winning_pattern_count,
         "scoring_strategy": policy["scoring_strategy"],
         "scoring_policy_version": policy["policy_version"],
         "score_thresholds": policy["thresholds"],

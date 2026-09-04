@@ -73,6 +73,20 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(len(result['pattern_findings']), 11)
         self.assertEqual(result['winning_finding']['finding_hash'], 'winner')
         self.assertEqual(result['detector_summary'][1]['count'], 10)
+        self.assertEqual(result['winning_pattern_count'], 1)
+        self.assertEqual(result['warning_flags'], ['[Graph] nominator: CopyPaste (91.00, CRITICAL)'])
+
+    def test_repeated_winning_pattern_is_counted_but_only_winner_is_displayed(self):
+        findings = [
+            _finding('Ring', score, finding_hash=f'ring-{score}')
+            for score in (88.2, 84.29, 60.01)
+        ]
+        with patch.object(db, 'get_graph_component_snapshot', return_value=_snapshot({1: {'findings': findings}})):
+            result = graph_check.assess_graph(DETAILS, 7)
+        self.assertEqual(result['winning_pattern_type'], 'Ring')
+        self.assertEqual(result['winning_pattern_count'], 3)
+        self.assertEqual(result['warning_flags'], ['[Graph] nominator: Ring (88.20, HIGH)'])
+        self.assertEqual(len(result['pattern_findings']), 3)
 
     def setUp(self):
         patcher = patch(
