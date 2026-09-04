@@ -80,8 +80,8 @@ export const SetupPanel: React.FC = () => {
   );
 };
 
-// ── Decision Engines ────────────────────────────────────────────────────────
-// Operational state only. Routing thresholds remain under Fraud / Integrity.
+// ── Engine Status ───────────────────────────────────────────────────────────
+// Operational state only. Routing thresholds remain under Scoring & Routing.
 
 interface DetectionEngineStatus {
   component: string;
@@ -189,7 +189,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
       const body = await res.json();
       setRows(body.rows || []);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to load detection engine status');
+      setError(e instanceof Error ? e.message : 'Failed to load engine status');
     } finally {
       setLoading(false);
     }
@@ -201,9 +201,9 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-gray-800">Decision Engines</h2>
+          <h2 className="text-lg font-semibold text-gray-800">Engine Status</h2>
           <p className="text-sm text-gray-500 mt-1">
-            Read-only operational status for the independent fraud-detection engines.
+            Read-only operational status for the integrity detection engines.
             Inspect deployed models and the active Graph Analytics scoring policy.
           </p>
         </div>
@@ -215,7 +215,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
             onClick={load}
             disabled={loading}
             className="p-2 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-            title="Refresh decision engine status"
+            title="Refresh engine status"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>

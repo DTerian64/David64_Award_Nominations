@@ -274,7 +274,7 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
           style={subTab === 'modelSetup' ? { backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' } : {}}
           className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${subTab === 'modelSetup' ? '' : 'text-gray-600 hover:bg-gray-100'}`}
         >
-          <Settings className="h-4 w-4" /> Model Setup
+          <Settings className="h-4 w-4" /> Integrity Setup
         </button>
         <button
           onClick={() => setSubTab('elce')}
@@ -310,13 +310,13 @@ export const ModelAnalysisTab: React.FC<Props> = ({ apiFetch, formatCurrency, on
               onClick={() => setModelSetupTab('fraud')}
               className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${modelSetupTab === 'fraud' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:bg-white/70'}`}
             >
-              <ShieldAlert className="h-4 w-4" /> Fraud / Integrity
+              <ShieldAlert className="h-4 w-4" /> Scoring &amp; Routing
             </button>
             <button
               onClick={() => setModelSetupTab('engines')}
               className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium ${modelSetupTab === 'engines' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:bg-white/70'}`}
             >
-              <Activity className="h-4 w-4" /> Decision Engines
+              <Activity className="h-4 w-4" /> Engine Status
             </button>
           </div>
 

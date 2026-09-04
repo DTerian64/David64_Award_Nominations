@@ -43,6 +43,17 @@ Signals describe nominations involving a user, not proof of wrongdoing by that
 user. Rejected nomination status alone never becomes a confirmed issue or a
 training label. These screens do not modify workflow or training data.
 
+## Integrity Setup
+
+Formerly **Model Setup**, with two sections:
+
+- **Scoring & Routing** (formerly **Fraud / Integrity**): engine thresholds,
+  routing configuration, and semantic pre-check settings.
+- **Engine Status** (formerly **Decision Engines**): read-only operational
+  status, model inspection, and the active Graph Analytics scoring policy.
+
+These are naming changes only; settings, access controls, and APIs are unchanged.
+
 ## Deployment and verification
 
 Deploy backend and frontend together. No new tables, migrations, backfill, or
