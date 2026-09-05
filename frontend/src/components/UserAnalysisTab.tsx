@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Search, Users } from 'lucide-react';
-import { RiskBadge, type EngineResult } from './HRBPReviewTab';
+import { GraphScoreContribution, RiskBadge, type EngineResult } from './HRBPReviewTab';
 
 interface User { user_id: number; name: string; email: string }
 interface UserSearch { items: User[]; total: number; page: number; page_size: number }
@@ -64,14 +64,13 @@ export const UserNominationEvidence: React.FC<{ item: UserNomination }> = ({ ite
       const engine = item.engines[key];
       const findings = [...(engine?.findings || []), ...(engine?.combined_decision?.checks || [])];
       const rfLlmExplanation = key === 'rf' ? engine?.explanation?.llm_text : null;
-      const graphFinding = key === 'graph' ? engine?.findings?.[0] : null;
       return <div key={key} className="rounded border border-slate-200 p-3 text-xs">
         <p className="mb-1 font-semibold text-slate-800">{label}</p>
         {!engine?.available ? <p className="text-slate-500">Unavailable / not recorded{engine?.unavailable_reason ? `: ${engine.unavailable_reason}` : ''}</p> : <>
           <p className={engine.concern ? 'text-orange-700' : 'text-slate-600'}>
             {key === 'semantic' ? engine.combined_decision?.action || engine.status || 'Unknown' : `${engine.risk_level || 'UNKNOWN'} · Score ${engine.score ?? '—'}`}
           </p>
-          {key === 'graph' && (engine.winning_pattern_type || graphFinding) && <div className="mt-2 rounded border border-teal-200 bg-teal-50 p-2 text-teal-800"><span className="inline-flex rounded-full border border-teal-300 bg-white px-2 py-0.5 font-semibold">{engine.winning_pattern_type ? 'Winning pattern' : 'Winning finding'}</span><p className="mt-1 font-medium">{engine.winning_pattern_type || graphFinding}{engine.winning_pattern_type && engine.winning_pattern_count !== undefined ? ` · ${engine.winning_pattern_count} relevant finding${engine.winning_pattern_count === 1 ? '' : 's'}` : ''}</p></div>}
+          {key === 'graph' && <GraphScoreContribution engine={engine} />}
           {key !== 'graph' && key !== 'semantic' && findings.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{findings.map((finding, index) => <span key={index} className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-orange-800">{finding}</span>)}</div>}
           {key === 'semantic' && findings.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{findings.map((finding, index) => <span key={index} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">{finding.replace(/_/g, ' ')}</span>)}</div>}
           {key === 'semantic' && engine.combined_decision?.reason && <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-slate-700"><span className="inline-flex rounded-full border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-800">Semantic finding</span><p className="mt-1">{engine.combined_decision.reason}</p></div>}

@@ -74,19 +74,27 @@ test('known scopes remain readable', () => {
   }
 });
 
-test('Graph verdict shows its winning pattern count and one finding', () => {
+test('Graph verdict shows its biggest contributor and maximum finding_score', () => {
   const html = renderEvidence({ engine_results: {
     rf: null,
     graph: {
       available: true, score: 88.2, risk_level: 'HIGH',
       winning_pattern_type: 'Ring', winning_pattern_count: 417,
+      winning_finding: { pattern_type: 'Ring', finding_score: 88.2,
+        derived_severity: 'HIGH', detail: 'Three-person reciprocal nomination cycle.',
+        affected_roles: ['nominator'], affected_user_ids: [12, 15, 19], nomination_ids: [201, 202, 203] },
       findings: ['[Graph] nominator: Ring (88.20, HIGH)'],
     },
     gnn: null,
     semantic: null,
   } });
-  assert.match(html, /Winning pattern/);
-  assert.match(html, /Ring · 417 relevant findings/);
+  assert.match(html, /Biggest contributor to score is/);
+  assert.match(html, /Ring pattern: 417/);
+  assert.match(html, /Nomination Ring/);
+  assert.match(html, /Score 88.20/);
+  assert.match(html, /Three-person reciprocal nomination cycle/);
+  assert.match(html, /Affected users:<\/span> #12, #15, #19/);
+  assert.match(html, /Nominations:<\/span> #201, #202, #203/);
   assert.equal((html.match(/nominator: Ring/g) || []).length, 0);
 });
 
@@ -113,7 +121,7 @@ test('RF narrative and Semantic description belong to their engine cards', () =>
   assert.match(html, /category alignment/);
 });
 
-test('older Graph evidence without a pattern type retains one winning finding', () => {
+test('older Graph evidence without a pattern type retains one maximum finding', () => {
   const html = renderEvidence({ engine_results: {
     rf: null,
     graph: { available: true, score: 50, risk_level: 'MEDIUM',
@@ -121,7 +129,7 @@ test('older Graph evidence without a pattern type retains one winning finding', 
     gnn: null,
     semantic: null,
   } });
-  assert.match(html, /Winning finding/);
+  assert.match(html, /Biggest contributor to score/);
   assert.equal((html.match(/Beneficiary is an outlier/g) || []).length, 1);
   assert.doesNotMatch(html, /Older duplicate/);
 });

@@ -45,8 +45,9 @@ user. Rejected nomination status alone never becomes a confirmed issue or a
 training label. These screens do not modify workflow or training data.
 
 Graph Analytics uses the highest relevant finding as its score. The inference
-verdict therefore displays only that winning pattern and the number of relevant
-findings of the same type; scores are not summed. Full structured pattern evidence
+verdict identifies the biggest-contributing pattern and its count, then presents
+the finding of that type with the maximum `finding_score`, using the same evidence
+fields as Graph Pattern Findings. Scores are not summed. Full structured pattern evidence
 remains in the persisted Graph result and nomination audit data. Historical
 results containing repeated display strings are compacted when read, so no data
 migration is required.

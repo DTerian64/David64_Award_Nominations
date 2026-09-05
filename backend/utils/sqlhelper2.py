@@ -2465,7 +2465,7 @@ _GRAPH_FINDING_RE = re.compile(
 
 
 def compact_graph_result(document: dict | None) -> dict | None:
-    """Expose one winning Graph finding and its pattern count.
+    """Expose the maximum Graph finding and its pattern-type count.
 
     Historical records can contain hundreds of display strings even though the
     score was always the maximum relevant finding. Raw pattern_findings remain

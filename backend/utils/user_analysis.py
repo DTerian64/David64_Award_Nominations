@@ -150,7 +150,7 @@ def get_user_analysis(tenant_id, user_id, role='either', engine=None,
                 'available', 'status', 'risk_level', 'score', 'findings',
                 'unavailable_reason', 'combined_decision',
                 'winning_pattern_type', 'winning_pattern_count',
-                'explanation',
+                'winning_finding', 'explanation',
             )}
             findings = document.get('findings')
             engines[key]['findings'] = [

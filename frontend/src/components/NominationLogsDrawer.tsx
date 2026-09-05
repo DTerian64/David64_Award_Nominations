@@ -107,8 +107,8 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
   if (!winningType) return null;
   return (
     <div className="mt-3 rounded border border-teal-200 bg-teal-50 p-2">
-      <p className="font-semibold">Winning pattern: {winningType}{score !== undefined ? ` · ${score} / 100` : ''}</p>
-      <p className="mt-1 text-gray-600">{count} relevant finding{count === 1 ? '' : 's'} · Score is the highest relevant finding, not their sum.</p>
+      <p className="font-semibold">Biggest contributor to score is {winningType} pattern: {count}</p>
+      <p className="mt-1 text-gray-600">Maximum finding_score: {score !== undefined ? `${score} / 100` : 'not recorded'} · Scores are not summed.</p>
       {winningDetail && <p className="mt-1">{winningDetail}</p>}
     </div>
   );

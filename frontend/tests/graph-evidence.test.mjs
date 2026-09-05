@@ -18,7 +18,7 @@ const compiled = ts.transpileModule(isolated, {
 const GraphEvidence = new Function('React', `${compiled}\nreturn GraphEvidence;`)(React);
 const render = extras => renderToStaticMarkup(React.createElement(GraphEvidence, { extras }));
 
-test('only the winning pattern and its relevant count are shown', () => {
+test('only the biggest-contributing pattern and its maximum finding are shown', () => {
   const findings = Array.from({ length: 10 }, (_, i) => ({
     finding_hash: `ring-${i}`, pattern_type: 'Ring', finding_score: 80,
     affected_roles: ['nominator'], routing_relevant: true, detail: `ring evidence ${i}`,
@@ -27,20 +27,20 @@ test('only the winning pattern and its relevant count are shown', () => {
     detail: 'Winning evidence', affected_roles: ['beneficiary'], routing_relevant: false });
   const html = render({ pattern_findings: findings, winning_pattern_type: 'Ring',
     winning_pattern_count: 10, fraud_score: 80, winning_finding: findings[0] });
-  assert.match(html, /Winning pattern: Ring · 80 \/ 100/);
-  assert.match(html, /10 relevant findings/);
+  assert.match(html, /Biggest contributor to score is Ring pattern: 10/);
+  assert.match(html, /Maximum finding_score: 80 \/ 100/);
   assert.match(html, /ring evidence 0/);
   assert.doesNotMatch(html, /CopyPaste|Not scoring|ring evidence 1|<details/);
 });
 
 test('legacy warning-only logs derive one winner and count its pattern', () => {
   const html = render({ warning_flags: ['nominator: Ring (80, HIGH)', 'beneficiary: Ring (75, HIGH)'] });
-  assert.match(html, /Winning pattern: Ring · 80 \/ 100/);
-  assert.match(html, /2 relevant findings/);
+  assert.match(html, /Biggest contributor to score is Ring pattern: 2/);
+  assert.match(html, /Maximum finding_score: 80 \/ 100/);
   assert.match(html, /nominator: Ring/);
   assert.doesNotMatch(html, /beneficiary: Ring/);
 });
 
 test('clean or unavailable logs do not invent findings', () => {
-  assert.doesNotMatch(render({ pattern_findings: [], warning_flags: [] }), /Winning pattern/);
+  assert.doesNotMatch(render({ pattern_findings: [], warning_flags: [] }), /Biggest contributor/);
 });

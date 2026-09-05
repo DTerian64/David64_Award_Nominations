@@ -56,6 +56,15 @@ export interface EngineResult {
   findings?: string[];
   winning_pattern_type?: string | null;
   winning_pattern_count?: number;
+  winning_finding?: {
+    pattern_type?: string;
+    finding_score?: number;
+    derived_severity?: string;
+    detail?: string | null;
+    affected_roles?: string[];
+    affected_user_ids?: number[];
+    nomination_ids?: number[];
+  } | null;
   explanation?: { llm_text?: string | null };
   combined_decision?: {
     action?: string;
@@ -84,6 +93,47 @@ export interface PairHistory {
   pair_count:       number;
   history:          PairHistoryItem[];
 }
+
+const GRAPH_PATTERN_LABELS: Record<string, string> = {
+  Ring: 'Nomination Ring',
+  BipartiteDenseBlock: 'Bipartite Dense Block',
+  TemporalBurst: 'Temporal Burst',
+  SuperNominator: 'Super Nominator',
+  SuperBeneficiary: 'Super Beneficiary',
+  CopyPaste: 'Copy-Paste Fraud',
+  HiddenCandidate: 'Hidden Candidate',
+  Desert: 'Nomination Desert',
+};
+
+/** Compact Graph attribution matching the Graph Pattern Findings vocabulary. */
+export const GraphScoreContribution: React.FC<{ engine: EngineResult }> = ({ engine }) => {
+  const patternType = engine.winning_pattern_type || engine.winning_finding?.pattern_type;
+  const count = engine.winning_pattern_count;
+  const finding = engine.winning_finding;
+  const fallback = engine.findings?.[0];
+  if (!patternType && !fallback) return null;
+  const patternLabel = patternType ? GRAPH_PATTERN_LABELS[patternType] || `${patternType} pattern` : null;
+  return (
+    <div className="mt-2 space-y-2 text-xs">
+      <p className="inline-flex flex-wrap rounded-full border border-teal-300 bg-teal-50 px-2 py-1 text-teal-800">
+        {patternType ? <>Biggest contributor to score is <strong className="ml-1">{patternType} pattern{count !== undefined ? `: ${count}` : ''}</strong></> : <>Biggest contributor to score: <strong className="ml-1">{fallback}</strong></>}
+      </p>
+      {finding && (
+        <div className="rounded border border-orange-200 bg-orange-50 p-2 text-slate-700">
+          <div className="flex flex-wrap items-center gap-2">
+            {finding.derived_severity && <span className="rounded-full bg-orange-200 px-2 py-0.5 font-semibold text-orange-800">{finding.derived_severity}</span>}
+            <strong className="text-slate-900">{patternLabel}</strong>
+            {finding.finding_score !== undefined && <span className="rounded bg-indigo-50 px-2 py-0.5 font-semibold text-indigo-700">Score {finding.finding_score.toFixed(2)}</span>}
+          </div>
+          {finding.detail && <p className="mt-2">{finding.detail}</p>}
+          {finding.affected_roles && finding.affected_roles.length > 0 && <p className="mt-2"><span className="font-semibold">Affected roles:</span> {finding.affected_roles.join(', ')}</p>}
+          {finding.affected_user_ids && finding.affected_user_ids.length > 0 && <p className="mt-1"><span className="font-semibold">Affected users:</span> {finding.affected_user_ids.map(id => `#${id}`).join(', ')}</p>}
+          {finding.nomination_ids && finding.nomination_ids.length > 0 && <p className="mt-1"><span className="font-semibold">Nominations:</span> {finding.nomination_ids.map(id => `#${id}`).join(', ')}</p>}
+        </div>
+      )}
+    </div>
+  );
+};
 
 type HRBPOutcome =
   | 'CLEARED_NO_CONCERN'
@@ -220,7 +270,6 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
           const rfLlmExplanation = isRf
             ? engine.explanation?.llm_text || item.llm_explanation
             : null;
-          const graphFinding = isGraph ? engine.findings?.[0] : null;
           return (
             <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
@@ -254,16 +303,7 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
                   LLM category fit {engine.llm.response.category_fit_score}
                 </p>
               )}
-              {isGraph && (engine.winning_pattern_type || graphFinding) && (
-                <div className="mt-2 rounded border border-teal-200 bg-teal-50 p-2 text-xs text-teal-800">
-                  <span className="inline-flex rounded-full border border-teal-300 bg-white px-2 py-0.5 font-semibold">{engine.winning_pattern_type ? 'Winning pattern' : 'Winning finding'}</span>
-                  <p className="mt-1 font-medium">{engine.winning_pattern_type || graphFinding}
-                    {engine.winning_pattern_type && engine.winning_pattern_count !== undefined
-                      ? ` · ${engine.winning_pattern_count} relevant finding${engine.winning_pattern_count === 1 ? '' : 's'}`
-                      : ''}
-                  </p>
-                </div>
-              )}
+              {isGraph && <GraphScoreContribution engine={engine} />}
               {!isGraph && !isSemantic && findings.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {findings.map((finding, index) => <span key={index} className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs text-orange-800">{finding}</span>)}
