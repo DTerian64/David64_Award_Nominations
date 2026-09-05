@@ -24,11 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # ── Python dependencies ───────────────────────────────────────────────────────
-COPY requirements.txt .
+COPY integrity-check/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+COPY integrity-engine-core /tmp/integrity-engine-core
+RUN pip install --no-cache-dir /tmp/integrity-engine-core
 
 # ── Application code ──────────────────────────────────────────────────────────
-COPY . .
+COPY integrity-check/ .
 
 # No EXPOSE — pure Service Bus worker, no HTTP server.
 # KEDA wakes the container when messages arrive on fraud-processor subscription.

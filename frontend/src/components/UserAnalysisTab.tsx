@@ -26,7 +26,7 @@ interface Props {
   onOpenAnalysis: (id: number) => void;
   onOpenLogs: (id: number) => void;
 }
-const ENGINES: Record<string, string> = { rf: 'RF', graph: 'Graph Analytics', gnn: 'GNN', semantic: 'Semantic' };
+const ENGINES: Record<string, string> = { rf: 'Random Forest', graph: 'Graph Analytics', gnn: 'GNN', semantic: 'Semantic' };
 const OUTCOMES: Record<string, string> = {
   CONFIRMED_CONCERN: 'Integrity concern confirmed',
   CONFIRMED_SEMANTIC_CONCERN: 'Semantic concern confirmed',

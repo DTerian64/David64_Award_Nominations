@@ -122,8 +122,16 @@ const DIAGNOSTIC_PRIORITY = [
   'eval_positive_count', 'eval_negative_count',
 ];
 
+const HIDDEN_DIAGNOSTICS = new Set([
+  'inference_snapshot_blob',
+  'inference_snapshot_sha256',
+  'inference_snapshot_schema_version',
+  'inference_snapshot_size_bytes',
+  'inference_snapshot_generated_at',
+]);
+
 const orderedDiagnostics = (diagnostics: Record<string, unknown>) =>
-  Object.entries(diagnostics || {}).sort(([left], [right]) => {
+  Object.entries(diagnostics || {}).filter(([key]) => !HIDDEN_DIAGNOSTICS.has(key)).sort(([left], [right]) => {
     const leftRank = DIAGNOSTIC_PRIORITY.indexOf(left);
     const rightRank = DIAGNOSTIC_PRIORITY.indexOf(right);
     if (leftRank === -1 && rightRank === -1) return 0;

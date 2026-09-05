@@ -67,11 +67,27 @@ function formatDetailValue(value: unknown): string {
   return String(value);
 }
 
-/** Show the one finding that determines Graph score, with its pattern count. */
+const GRAPH_PATTERN_LABELS: Record<string, string> = {
+  Ring: 'Nomination Ring',
+  BipartiteDenseBlock: 'Bipartite Dense Block',
+  TemporalBurst: 'Temporal Burst',
+  SuperNominator: 'Super Nominator',
+  SuperBeneficiary: 'Super Beneficiary',
+  CopyPaste: 'Copy-Paste Fraud',
+  HiddenCandidate: 'Hidden Candidate',
+  Desert: 'Nomination Desert',
+};
+
+/** Show the one finding that determines Graph score and participant history context. */
 function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
-  const findings = Array.isArray(extras.pattern_findings)
-    ? extras.pattern_findings.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+  const asFindings = (value: unknown) => Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
     : [];
+  const findings = asFindings(extras.pattern_findings);
+  // New candidate-aware logs preserve candidate_findings separately. Keep this
+  // fallback so the drawer remains useful when a compacted log omits the union.
+  const candidateFindings = asFindings(extras.candidate_findings);
+  const allFindings = findings.length ? findings : candidateFindings;
   const groups = new Map<string, { score: number; items: Record<string, unknown>[] }>();
   const add = (type: string, item: Record<string, unknown>, score: number) => {
     const group = groups.get(type) ?? { score: 0, items: [] };
@@ -79,10 +95,10 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
     group.items.push(item);
     groups.set(type, group);
   };
-  findings.filter(item => item.routing_relevant !== false)
+  allFindings.filter(item => item.routing_relevant !== false)
     .forEach(item => add(String(item.pattern_type), item, Number(item.finding_score) || 0));
   // Old logs contain warning strings only. Derive their winner and count.
-  if (!findings.length && Array.isArray(extras.warning_flags)) {
+  if (!allFindings.length && Array.isArray(extras.warning_flags)) {
     extras.warning_flags.forEach(raw => {
       const warning = String(raw);
       const match = warning.match(/:\s*(\w+)\s*\(([\d.]+),/);
@@ -101,15 +117,33 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
     ? explicitCount : winningGroup?.items.length ?? 0;
   const score = extras.fraud_score != null ? Number(extras.fraud_score) : winningGroup?.score;
   const fallbackWinner = winningGroup?.items[0];
+  const candidateAware = winner?.evidence_scope === 'CURRENT_NOMINATION'
+    || String(winner?.evaluation_mode || '') === 'CANDIDATE_EDGE';
   const winningDetail = winner?.detail != null ? String(winner.detail)
     : fallbackWinner?.warning != null ? String(fallbackWinner.warning)
     : fallbackWinner?.detail != null ? String(fallbackWinner.detail) : null;
-  if (!winningType) return null;
+  const historyCount = (key: string) => asFindings(extras[key])
+    .filter(item => item.pattern_type === 'Ring').length;
+  const nominatorHistoryCount = historyCount('nominator_history');
+  const beneficiaryHistoryCount = historyCount('beneficiary_history');
+  const sharedHistoryCount = historyCount('shared_history');
+  if (!winningType && nominatorHistoryCount + beneficiaryHistoryCount + sharedHistoryCount === 0) return null;
+  const patternLabel = winningType ? GRAPH_PATTERN_LABELS[winningType] || `${winningType} pattern` : null;
   return (
-    <div className="mt-3 rounded border border-teal-200 bg-teal-50 p-2">
-      <p className="font-semibold">Biggest contributor to score is {winningType} pattern: {count}</p>
-      <p className="mt-1 text-gray-600">Maximum finding_score: {score !== undefined ? `${score} / 100` : 'not recorded'} · Scores are not summed.</p>
-      {winningDetail && <p className="mt-1">{winningDetail}</p>}
+    <div className="mt-3 space-y-2">
+      {winningType && <div className="rounded border border-teal-200 bg-teal-50 p-2">
+        <p className="font-semibold">Biggest score contributor</p>
+        <p>{patternLabel}{!candidateAware ? ` · ${count} relevant finding${count === 1 ? '' : 's'}` : ''}</p>
+        <p className="mt-1 text-gray-600">Maximum finding_score: {score !== undefined ? `${score} / 100` : 'not recorded'} · Scores are not summed.</p>
+        {winningDetail && <p className="mt-1">{winningDetail}</p>}
+      </div>}
+      {(nominatorHistoryCount + beneficiaryHistoryCount + sharedHistoryCount) > 0 && <div className="rounded border border-gray-200 bg-gray-50 p-2 text-gray-700">
+        <p className="font-semibold text-gray-900">Participant graph history</p>
+        <p className="text-gray-500">Context only — not included in the Ring score.</p>
+        <p className="mt-1">Nominator: {nominatorHistoryCount} historical ring finding{nominatorHistoryCount === 1 ? '' : 's'}</p>
+        <p>Beneficiary: {beneficiaryHistoryCount} historical ring finding{beneficiaryHistoryCount === 1 ? '' : 's'}</p>
+        {sharedHistoryCount > 0 && <p>Both participants: {sharedHistoryCount} shared historical ring finding{sharedHistoryCount === 1 ? '' : 's'}</p>}
+      </div>}
     </div>
   );
 }
@@ -292,6 +326,11 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                         && (!isGraph || ![
                           'warning_flags', 'winning_finding', 'winning_pattern_type',
                           'winning_pattern_count', 'detector_summary', 'pattern_findings',
+                          'candidate_findings', 'nominator_history', 'beneficiary_history',
+                          'shared_history', 'candidate_evaluation_version',
+                          'candidate_evaluation_ms', 'inference_snapshot_blob',
+                          'inference_snapshot_sha256', 'inference_snapshot_schema_version',
+                          'inference_snapshot_generated_at',
                         ].includes(k))
                     );
                     return (

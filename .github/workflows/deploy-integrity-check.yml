@@ -8,6 +8,7 @@ on:
       - dev      # → development   (rg_award_nomination_dev)
     paths:
       - 'integrity-check/**'
+      - 'integrity-engine-core/**'
   workflow_dispatch:
 
 # Single image name across all environments — the tag (latest/sandbox/dev)
@@ -45,9 +46,8 @@ jobs:
     # ------------------------------------------------------------------
     - name: Build Docker image
       run: |
-        cd integrity-check
         SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
-        docker build -t ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} .
+        docker build -f integrity-check/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} .
         docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
           ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
         docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \

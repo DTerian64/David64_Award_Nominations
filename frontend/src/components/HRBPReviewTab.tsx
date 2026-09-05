@@ -64,7 +64,14 @@ export interface EngineResult {
     affected_roles?: string[];
     affected_user_ids?: number[];
     nomination_ids?: number[];
+    path_user_ids?: number[];
+    evidence_scope?: string;
+    evaluation_mode?: string;
   } | null;
+  candidate_findings?: Array<NonNullable<EngineResult['winning_finding']>>;
+  nominator_history?: Array<NonNullable<EngineResult['winning_finding']>>;
+  beneficiary_history?: Array<NonNullable<EngineResult['winning_finding']>>;
+  shared_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   explanation?: { llm_text?: string | null };
   combined_decision?: {
     action?: string;
@@ -111,13 +118,19 @@ export const GraphScoreContribution: React.FC<{ engine: EngineResult }> = ({ eng
   const count = engine.winning_pattern_count;
   const finding = engine.winning_finding;
   const fallback = engine.findings?.[0];
-  if (!patternType && !fallback) return null;
+  const nominatorRingCount = (engine.nominator_history || []).filter(item => item.pattern_type === 'Ring').length;
+  const beneficiaryRingCount = (engine.beneficiary_history || []).filter(item => item.pattern_type === 'Ring').length;
+  const sharedRingCount = (engine.shared_history || []).filter(item => item.pattern_type === 'Ring').length;
+  const hasRingHistory = nominatorRingCount + beneficiaryRingCount + sharedRingCount > 0;
+  if (!patternType && !fallback && !hasRingHistory) return null;
   const patternLabel = patternType ? GRAPH_PATTERN_LABELS[patternType] || `${patternType} pattern` : null;
+  const candidateAware = finding?.evidence_scope === 'CURRENT_NOMINATION';
   return (
     <div className="mt-2 space-y-2 text-xs">
-      <p className="inline-flex flex-wrap rounded-full border border-teal-300 bg-teal-50 px-2 py-1 text-teal-800">
-        {patternType ? <>Biggest contributor to score is <strong className="ml-1">{patternType} pattern{count !== undefined ? `: ${count}` : ''}</strong></> : <>Biggest contributor to score: <strong className="ml-1">{fallback}</strong></>}
-      </p>
+      {(patternType || fallback) && <div className="text-teal-800">
+        <p className="font-semibold">Biggest score contributor</p>
+        <p>{patternType ? <><strong>{patternLabel}</strong>{!candidateAware && count !== undefined ? ` · ${count} relevant finding${count === 1 ? '' : 's'}` : ''}</> : <strong>{fallback}</strong>}</p>
+      </div>}
       {finding && (
         <div className="rounded border border-orange-200 bg-orange-50 p-2 text-slate-700">
           <div className="flex flex-wrap items-center gap-2">
@@ -129,6 +142,17 @@ export const GraphScoreContribution: React.FC<{ engine: EngineResult }> = ({ eng
           {finding.affected_roles && finding.affected_roles.length > 0 && <p className="mt-2"><span className="font-semibold">Affected roles:</span> {finding.affected_roles.join(', ')}</p>}
           {finding.affected_user_ids && finding.affected_user_ids.length > 0 && <p className="mt-1"><span className="font-semibold">Affected users:</span> {finding.affected_user_ids.map(id => `#${id}`).join(', ')}</p>}
           {finding.nomination_ids && finding.nomination_ids.length > 0 && <p className="mt-1"><span className="font-semibold">Nominations:</span> {finding.nomination_ids.map(id => `#${id}`).join(', ')}</p>}
+        </div>
+      )}
+      {hasRingHistory && (
+        <div className="rounded border border-slate-200 bg-slate-50 p-2 text-slate-700">
+          <p className="font-semibold text-slate-900">Participant graph history</p>
+          <p className="text-slate-500">Context only — not included in the Ring score.</p>
+          <div className="mt-1 space-y-0.5">
+            <p>Nominator: {nominatorRingCount} historical ring finding{nominatorRingCount === 1 ? '' : 's'}</p>
+            <p>Beneficiary: {beneficiaryRingCount} historical ring finding{beneficiaryRingCount === 1 ? '' : 's'}</p>
+            {sharedRingCount > 0 && <p>Both participants: {sharedRingCount} shared historical ring finding{sharedRingCount === 1 ? '' : 's'}</p>}
+          </div>
         </div>
       )}
     </div>
@@ -230,7 +254,7 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
   }
 
   const entries = [
-    ['RF', item.engine_results.rf],
+    ['Random Forest', item.engine_results.rf],
     ['Graph Analytics', item.engine_results.graph],
     ['GNN', item.engine_results.gnn],
     ['Semantic', item.engine_results.semantic],
@@ -261,7 +285,7 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
           if (!engine) return null;
           const isSemantic = label === 'Semantic';
           const isGraph = label === 'Graph Analytics';
-          const isRf = label === 'RF';
+          const isRf = label === 'Random Forest';
           const action = engine.combined_decision?.action;
           const findings = [
             ...(engine.findings || []),

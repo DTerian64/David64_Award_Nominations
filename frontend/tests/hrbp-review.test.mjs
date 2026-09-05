@@ -82,20 +82,40 @@ test('Graph verdict shows its biggest contributor and maximum finding_score', ()
       winning_pattern_type: 'Ring', winning_pattern_count: 417,
       winning_finding: { pattern_type: 'Ring', finding_score: 88.2,
         derived_severity: 'HIGH', detail: 'Three-person reciprocal nomination cycle.',
-        affected_roles: ['nominator'], affected_user_ids: [12, 15, 19], nomination_ids: [201, 202, 203] },
+        evidence_scope: 'CURRENT_NOMINATION', evaluation_mode: 'CANDIDATE_EDGE',
+        affected_roles: ['nominator', 'beneficiary'], affected_user_ids: [12, 15, 19], nomination_ids: [201, 202, 203] },
       findings: ['[Graph] nominator: Ring (88.20, HIGH)'],
     },
     gnn: null,
     semantic: null,
   } });
-  assert.match(html, /Biggest contributor to score is/);
-  assert.match(html, /Ring pattern: 417/);
+  assert.match(html, /Biggest score contributor/);
   assert.match(html, /Nomination Ring/);
+  assert.doesNotMatch(html, /417 relevant/);
   assert.match(html, /Score 88.20/);
   assert.match(html, /Three-person reciprocal nomination cycle/);
   assert.match(html, /Affected users:<\/span> #12, #15, #19/);
   assert.match(html, /Nominations:<\/span> #201, #202, #203/);
   assert.equal((html.match(/nominator: Ring/g) || []).length, 0);
+});
+
+test('Graph participant Ring history is displayed but explicitly excluded from scoring', () => {
+  const html = renderEvidence({ engine_results: {
+    rf: null,
+    graph: {
+      available: true, score: 0, risk_level: 'NONE', findings: [],
+      nominator_history: [{ pattern_type: 'Ring' }],
+      beneficiary_history: [{ pattern_type: 'Ring' }, { pattern_type: 'Ring' }],
+      shared_history: [{ pattern_type: 'Ring' }],
+    },
+    gnn: null,
+    semantic: null,
+  } });
+  assert.match(html, /Participant graph history/);
+  assert.match(html, /Context only.*not included in the Ring score/);
+  assert.match(html, /Nominator: 1 historical ring finding/);
+  assert.match(html, /Beneficiary: 2 historical ring findings/);
+  assert.match(html, /Both participants: 1 shared historical ring finding/);
 });
 
 test('RF narrative and Semantic description belong to their engine cards', () => {
@@ -129,7 +149,7 @@ test('older Graph evidence without a pattern type retains one maximum finding', 
     gnn: null,
     semantic: null,
   } });
-  assert.match(html, /Biggest contributor to score/);
+  assert.match(html, /Biggest score contributor/);
   assert.equal((html.match(/Beneficiary is an outlier/g) || []).length, 1);
   assert.doesNotMatch(html, /Older duplicate/);
 });

@@ -8,6 +8,7 @@ on:
       - dev      # → development   (rg_award_nomination_dev)
     paths:
       - 'fraud-analytics-job/**'
+      - 'integrity-engine-core/**'
   workflow_dispatch:      # Always triggerable manually from the Actions tab
 
 env:
@@ -36,9 +37,8 @@ jobs:
 
     # ------------------------------------------------------------------
     # Build & push
-    # Build context is analytics/fraud-analytics-job/ — fully self-contained.
-    # The run_job.py entrypoint plus modeling/ and utils/ packages live in that
-    # directory alongside the Dockerfile and requirements.txt.
+    # Build context is the repository root so the job and integrity worker use
+    # the exact same integrity-engine-core package.
     # Tagging convention mirrors all other images:
     #   Prod:    latest  + latest-<sha>
     #   Sandbox: sandbox + sandbox-<sha>
@@ -47,8 +47,8 @@ jobs:
     - name: Build Docker image
       run: |
         SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
-        cd fraud-analytics-job
         docker build \
+          -f fraud-analytics-job/Dockerfile \
           -t ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
           -t ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
           -t ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG} \

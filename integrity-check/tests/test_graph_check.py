@@ -1,8 +1,10 @@
 import os
+import gzip
+import hashlib
 import json
 import sys
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -11,9 +13,14 @@ os.environ.setdefault("SQL_DATABASE", "test")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from inference import graph_check
+from integrity_engine import GraphInferenceSnapshot, RingEvaluation
 from utils import db
 
-DETAILS = {"nomination_id": 10, "nominator_id": 1, "beneficiary_id": 2, "approver_id": 3}
+DETAILS = {
+    "nomination_id": 10, "nominator_id": 1, "beneficiary_id": 2,
+    "approver_id": 3, "amount": 1000,
+    "nomination_date": datetime(2026, 9, 4, tzinfo=timezone.utc),
+}
 POLICY = {
     "policy_id": 8, "policy_version": 2, "status": "ACTIVE",
     "scoring_strategy": "MAX_RELEVANT_FINDING",
@@ -43,6 +50,34 @@ def _finding(pattern, score, *, roles=None, routing=True, finding_hash="finding-
     }
 
 
+def _inference_snapshot():
+    return GraphInferenceSnapshot(
+        tenant_id=7, run_id="graph-run-1", policy_version=2,
+        generated_at=DETAILS["nomination_date"], window_days=365,
+        scoring_policy={
+            "thresholds": POLICY["thresholds"],
+            "patterns": {"Ring": {
+                "enabled": True, "enabled_for_routing": True,
+                "base_score": 35, "minimum_score": 0, "maximum_score": 100,
+                "parameters": {},
+            }},
+        },
+        nominations=(),
+    )
+
+
+def _candidate_ring(score=82):
+    return RingEvaluation(
+        detector="Ring", evaluation_mode="CANDIDATE_EDGE",
+        evidence_scope="CURRENT_NOMINATION", score=score, severity="HIGH",
+        score_components={"finding_score": score},
+        affected_user_ids=(1, 2, 4), supporting_nomination_ids=(7, 8, 10),
+        total_amount=3000, candidate_nomination_id=10,
+        path_user_ids=(2, 4, 1, 2), paths_considered=1, states_visited=4,
+        states_generated=4,
+    )
+
+
 class GraphCheckTests(unittest.TestCase):
     def test_all_eight_detectors_remain_visible_but_only_six_can_win(self):
         patterns = ['Ring', 'BipartiteDenseBlock', 'TemporalBurst', 'SuperNominator',
@@ -54,7 +89,8 @@ class GraphCheckTests(unittest.TestCase):
                     2: {'findings': [_finding(pattern, 83.5, routing=routing)]}
                 })):
                     result = graph_check.assess_graph(DETAILS, 7)
-                self.assertEqual(result['fraud_score'], 83.5 if routing else 0)
+                expected = 83.5 if routing and pattern != 'Ring' else 0
+                self.assertEqual(result['fraud_score'], expected)
                 self.assertEqual(result['detector_summary'][0]['count'], 1)
                 self.assertEqual(len(result['pattern_findings']), 1)
 
@@ -76,17 +112,22 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(result['winning_pattern_count'], 1)
         self.assertEqual(result['warning_flags'], ['[Graph] nominator: CopyPaste (91.00, CRITICAL)'])
 
-    def test_repeated_winning_pattern_is_counted_but_only_winner_is_displayed(self):
+    def test_historical_rings_are_context_only(self):
         findings = [
             _finding('Ring', score, finding_hash=f'ring-{score}')
             for score in (88.2, 84.29, 60.01)
         ]
         with patch.object(db, 'get_graph_component_snapshot', return_value=_snapshot({1: {'findings': findings}})):
             result = graph_check.assess_graph(DETAILS, 7)
-        self.assertEqual(result['winning_pattern_type'], 'Ring')
-        self.assertEqual(result['winning_pattern_count'], 3)
-        self.assertEqual(result['warning_flags'], ['[Graph] nominator: Ring (88.20, HIGH)'])
+        self.assertIsNone(result['winning_pattern_type'])
+        self.assertEqual(result['winning_pattern_count'], 0)
+        self.assertEqual(result['warning_flags'], [])
         self.assertEqual(len(result['pattern_findings']), 3)
+        self.assertTrue(all(
+            item['evidence_scope'] == 'NOMINATOR_HISTORY'
+            and not item['routing_relevant']
+            for item in result['pattern_findings']
+        ))
 
     def setUp(self):
         patcher = patch(
@@ -94,6 +135,12 @@ class GraphCheckTests(unittest.TestCase):
         )
         self.addCleanup(patcher.stop)
         self.policy_lookup = patcher.start()
+        snapshot_patcher = patch(
+            "inference.graph_check._load_inference_snapshot",
+            return_value=_inference_snapshot(),
+        )
+        self.addCleanup(snapshot_patcher.stop)
+        self.snapshot_loader = snapshot_patcher.start()
 
     @patch("inference.graph_check.db.get_graph_component_snapshot")
     def test_only_nominator_and_beneficiary_participate(self, lookup):
@@ -103,10 +150,25 @@ class GraphCheckTests(unittest.TestCase):
         })
         result = graph_check.assess_graph(DETAILS, tenant_id=7)
         self.assertEqual(lookup.call_args.args[1], [1, 2])
-        self.assertEqual(result["risk_level"], "HIGH")
-        self.assertEqual(result["fraud_score"], 82)
-        self.assertEqual(result["affected_user_ids"], [1])
+        self.assertEqual(result["risk_level"], "NONE")
+        self.assertEqual(result["fraud_score"], 0)
+        self.assertEqual(result["affected_user_ids"], [])
         self.assertNotIn("approver", " ".join(result["warning_flags"]).lower())
+
+    @patch("inference.graph_check.evaluate_ring_candidate", return_value=_candidate_ring())
+    @patch("inference.graph_check.db.get_graph_component_snapshot")
+    def test_candidate_ring_can_score_and_preserves_lineage(self, lookup, _evaluate):
+        lookup.return_value = _snapshot({
+            1: {"findings": [_finding("Ring", 99, finding_hash="historical")]},
+        })
+        result = graph_check.assess_graph(DETAILS, tenant_id=7)
+        self.assertEqual(result["fraud_score"], 82)
+        self.assertEqual(result["winning_finding"]["evidence_scope"], "CURRENT_NOMINATION")
+        self.assertEqual(result["winning_finding"]["path_user_ids"], [2, 4, 1, 2])
+        self.assertFalse(next(
+            item for item in result["pattern_findings"]
+            if item["finding_hash"] == "historical"
+        )["routing_relevant"])
 
     @patch("inference.graph_check.db.get_graph_component_snapshot", return_value=None)
     def test_missing_snapshot_is_no_opinion_not_clean(self, _lookup):
@@ -142,12 +204,13 @@ class GraphCheckTests(unittest.TestCase):
             ]},
         })
         result = graph_check.assess_graph(DETAILS, tenant_id=7)
-        self.assertEqual(result["fraud_score"], 81.75)
-        self.assertEqual(result["risk_level"], "HIGH")
-        self.assertEqual(result["winning_finding_hash"], "ring")
+        self.assertEqual(result["fraud_score"], 64.25)
+        self.assertEqual(result["risk_level"], "MEDIUM")
+        self.assertEqual(result["winning_finding_hash"], "super")
         by_hash = {item["finding_hash"]: item for item in result["pattern_findings"]}
         self.assertFalse(by_hash["wrong-role"]["routing_relevant"])
         self.assertFalse(by_hash["analytics"]["routing_relevant"])
+        self.assertFalse(by_hash["ring"]["routing_relevant"])
 
     @patch("inference.graph_check.db.get_graph_component_snapshot")
     def test_stale_snapshot_is_unavailable_by_policy(self, lookup):
@@ -160,9 +223,7 @@ class GraphCheckTests(unittest.TestCase):
 
     @patch("inference.graph_check.db.get_graph_component_snapshot")
     def test_emits_nomination_scoped_start_and_completed_logs(self, lookup):
-        lookup.return_value = _snapshot({
-            1: {"findings": [_finding("Ring", 82, finding_hash="ring-1")]},
-        })
+        lookup.return_value = _snapshot()
 
         with self.assertLogs("integrity_check.graph_check", "INFO") as logs:
             graph_check.assess_graph(DETAILS, tenant_id=7)
@@ -180,12 +241,12 @@ class GraphCheckTests(unittest.TestCase):
 
         completed = logs.records[-1]
         self.assertTrue(completed.model_available)
-        self.assertEqual(completed.fraud_score, 82)
-        self.assertEqual(completed.risk_level, "HIGH")
-        self.assertEqual(completed.winning_pattern_type, "Ring")
+        self.assertEqual(completed.fraud_score, 0)
+        self.assertEqual(completed.risk_level, "NONE")
+        self.assertIsNone(completed.winning_pattern_type)
         self.assertEqual(completed.snapshot_run_id, "graph-run-1")
         self.assertEqual(completed.scoring_policy_version, 2)
-        self.assertEqual(completed.finding_count, 1)
+        self.assertEqual(completed.finding_count, 0)
 
     @patch(
         "inference.graph_check.db.get_graph_component_snapshot",
@@ -252,6 +313,44 @@ class GraphSnapshotReaderTests(unittest.TestCase):
                          {'applicable_roles': ['approver']}):
             with self.subTest(override=override), self.assertRaises(db.InvalidGraphSnapshot):
                 self._read(json.dumps([{**finding, **override}]))
+
+
+class GraphInferenceArtifactTests(unittest.TestCase):
+    def setUp(self):
+        os.environ["AZURE_STORAGE_ACCOUNT"] = "teststorage"
+        graph_check._snapshot_cache.clear()
+
+    def _artifact(self):
+        raw = json.dumps(_inference_snapshot().to_dict()).encode("utf-8")
+        compressed = gzip.compress(raw, mtime=0)
+        metadata = {
+            "snapshot_run_id": "graph-run-1",
+            "scoring_policy_version": 2,
+            "inference_snapshot_blob": "graph/tenant-7/graph-run-1/inference-snapshot.json.gz",
+            "inference_snapshot_sha256": hashlib.sha256(compressed).hexdigest(),
+            "inference_snapshot_size_bytes": len(compressed),
+        }
+        return compressed, metadata
+
+    @patch("azure.storage.blob.BlobServiceClient")
+    def test_verified_artifact_is_cached_by_run_and_checksum(self, blob_service):
+        compressed, metadata = self._artifact()
+        blob_service.return_value.get_blob_client.return_value.download_blob.return_value.readall.return_value = compressed
+
+        first = graph_check._load_inference_snapshot(7, metadata)
+        second = graph_check._load_inference_snapshot(7, metadata)
+
+        self.assertIs(first, second)
+        self.assertEqual(first.run_id, "graph-run-1")
+        self.assertEqual(blob_service.return_value.get_blob_client.call_count, 1)
+
+    @patch("azure.storage.blob.BlobServiceClient")
+    def test_checksum_mismatch_is_invalid_snapshot(self, blob_service):
+        compressed, metadata = self._artifact()
+        metadata["inference_snapshot_sha256"] = "0" * 64
+        blob_service.return_value.get_blob_client.return_value.download_blob.return_value.readall.return_value = compressed
+        with self.assertRaisesRegex(db.InvalidGraphSnapshot, "checksum mismatch"):
+            graph_check._load_inference_snapshot(7, metadata)
 
 
 if __name__ == "__main__":

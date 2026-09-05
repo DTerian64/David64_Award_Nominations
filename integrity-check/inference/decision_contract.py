@@ -7,6 +7,7 @@ from typing import Any
 
 
 ENGINE_SCHEMA_VERSION = 1
+GRAPH_ENGINE_SCHEMA_VERSION = 2
 DECISION_SCHEMA_VERSION = 2
 
 _PROVENANCE_FIELDS = (
@@ -70,6 +71,7 @@ def rf_result(result: dict) -> dict:
 
 def graph_result(result: dict) -> dict:
     payload = _common("GRAPH", result)
+    payload["schema_version"] = GRAPH_ENGINE_SCHEMA_VERSION
     # A graph score is a rules-based severity mapping, never a probability.
     payload["model_probability"] = None
     payload.update({
@@ -80,6 +82,10 @@ def graph_result(result: dict) -> dict:
         "snapshot_age_days": result.get("snapshot_age_days"),
         "affected_user_ids": list(result.get("affected_user_ids") or []),
         "pattern_findings": list(result.get("pattern_findings") or []),
+        "candidate_findings": list(result.get("candidate_findings") or []),
+        "nominator_history": list(result.get("nominator_history") or []),
+        "beneficiary_history": list(result.get("beneficiary_history") or []),
+        "shared_history": list(result.get("shared_history") or []),
         "winning_finding": result.get("winning_finding"),
         "detector_summary": list(result.get("detector_summary") or []),
         "winning_finding_hash": result.get("winning_finding_hash"),
@@ -89,6 +95,16 @@ def graph_result(result: dict) -> dict:
         "scoring_policy_version": result.get("scoring_policy_version"),
         "score_thresholds": result.get("score_thresholds"),
         "score_derivation": result.get("score_derivation"),
+        "candidate_evaluation_version": result.get("candidate_evaluation_version"),
+        "candidate_evaluation_ms": result.get("candidate_evaluation_ms"),
+        "inference_snapshot_blob": result.get("inference_snapshot_blob"),
+        "inference_snapshot_sha256": result.get("inference_snapshot_sha256"),
+        "inference_snapshot_schema_version": result.get(
+            "inference_snapshot_schema_version"
+        ),
+        "inference_snapshot_generated_at": result.get(
+            "inference_snapshot_generated_at"
+        ),
     })
     return payload
 

@@ -24,10 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # ── Python dependencies ───────────────────────────────────────────────────────
-# Build context: analytics/fraud-analytics-job/
-# Everything the job needs is in this directory — no cross-repo paths.
-COPY requirements.txt .
+# Build context is the repository root so both runtime services install the
+# same integrity-engine-core source.
+COPY fraud-analytics-job/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+COPY integrity-engine-core /tmp/integrity-engine-core
+RUN pip install --no-cache-dir /tmp/integrity-engine-core
 
 # ── Pre-download sentence-transformers model at build time ────────────────────
 # all-MiniLM-L6-v2 (~90 MB) is baked into the image so the container never
@@ -40,7 +42,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 # ── Application code ──────────────────────────────────────────────────────────
-COPY . .
+COPY fraud-analytics-job/ .
 
 # No EXPOSE — Container Apps Jobs have no HTTP server.
 # The job runs to completion and exits; Container Apps reports success/failure

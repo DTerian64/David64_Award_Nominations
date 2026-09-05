@@ -60,12 +60,13 @@ test('all four engines show findings, semantic review and unavailable states', (
       winning_pattern_type: 'Ring', winning_pattern_count: 417,
       winning_finding: { pattern_type: 'Ring', finding_score: 88.2,
         derived_severity: 'HIGH', detail: 'Three-person reciprocal nomination cycle.',
+        evidence_scope: 'CURRENT_NOMINATION', evaluation_mode: 'CANDIDATE_EDGE',
         affected_user_ids: [12, 15, 19], nomination_ids: [201, 202, 203] },
       findings: ['[Graph] nominator: Ring (88.20, HIGH)'] },
     gnn: { available: false, score: 0, risk_level: 'NONE', concern: false, unavailable_reason: 'BELOW_MINIMUM_VOLUME' },
     semantic: { available: true, concern: true, combined_decision: { action: 'flag', checks: ['Category concern'], reason: 'Needs human review' } },
   } } });
-  for (const label of ['RF', 'Graph Analytics', 'GNN', 'Semantic', 'Reciprocal nominations', 'Biggest contributor to score is', 'Ring pattern: 417', 'Nomination Ring', 'Score 88.20', 'Three-person reciprocal nomination cycle.', 'LLM explanation', 'SHAP factors explain the RF score.', 'Semantic finding', 'Category concern', 'Needs human review', 'BELOW_MINIMUM_VOLUME']) {
+  for (const label of ['Random Forest', 'Graph Analytics', 'GNN', 'Semantic', 'Reciprocal nominations', 'Biggest score contributor', 'Nomination Ring', 'Score 88.20', 'Three-person reciprocal nomination cycle.', 'LLM explanation', 'SHAP factors explain the RF score.', 'Semantic finding', 'Category concern', 'Needs human review', 'BELOW_MINIMUM_VOLUME']) {
     assert.ok(html.includes(label));
   }
   assert.doesNotMatch(html, /NONE · Score 0/);

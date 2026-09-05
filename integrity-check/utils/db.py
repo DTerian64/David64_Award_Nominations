@@ -323,7 +323,8 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
                 approver.userEmail        AS ApproverEmail,
                 nc.category_description   AS CategoryDescription,
                 nominator.TenantId        AS TenantId,
-                n.CategoryId
+                n.CategoryId,
+                n.NominationDate
             FROM  dbo.Nominations n
             INNER JOIN dbo.Users nominator   ON n.NominatorId   = nominator.UserId
             INNER JOIN dbo.Users beneficiary ON n.BeneficiaryId = beneficiary.UserId
@@ -354,6 +355,7 @@ def get_nomination_details(nomination_id: int) -> Optional[dict]:
         "category_description": row[14],
         "tenant_id":            int(row[15]),
         "category_id":          row[16],
+        "nomination_date":      row[17],
     }
 
 
@@ -628,6 +630,17 @@ def get_graph_component_snapshot(
         "snapshot_run_id": run_id,
         "snapshot_finding_count": int(diagnostics.get("finding_count", 0)),
         "scoring_policy_version": diagnostics.get("scoring_policy_version"),
+        "inference_snapshot_blob": diagnostics.get("inference_snapshot_blob"),
+        "inference_snapshot_sha256": diagnostics.get("inference_snapshot_sha256"),
+        "inference_snapshot_schema_version": diagnostics.get(
+            "inference_snapshot_schema_version"
+        ),
+        "inference_snapshot_size_bytes": diagnostics.get(
+            "inference_snapshot_size_bytes"
+        ),
+        "inference_snapshot_generated_at": diagnostics.get(
+            "inference_snapshot_generated_at"
+        ),
         "users": users,
     }
 

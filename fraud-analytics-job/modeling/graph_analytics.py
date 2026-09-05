@@ -30,6 +30,7 @@ Environment variables (all injected by the Container Apps Job)
 from __future__ import annotations
 
 import gc
+import gzip
 import hashlib
 import json
 import logging
@@ -46,6 +47,10 @@ import pyodbc
 from pathlib import Path
 from dotenv import load_dotenv
 
+from integrity_engine import GraphInferenceSnapshot, SnapshotNomination
+from integrity_engine.scoring import continuous_score as shared_continuous_score
+from integrity_engine.scoring import risk_level as shared_risk_level
+
 from utils.component_status import upsert_component_status
 
 # Same .env loading as train_rf_model.py / forecast_models.py so this stage
@@ -60,15 +65,7 @@ _SEVERITY_SCORE = {"Low": 25.0, "Medium": 50.0, "High": 75.0, "Critical": 100.0}
 
 
 def _risk_level(score: float, thresholds: dict[str, float]) -> str:
-    if score >= thresholds["critical"]:
-        return "Critical"
-    if score >= thresholds["high"]:
-        return "High"
-    if score >= thresholds["medium"]:
-        return "Medium"
-    if score >= thresholds["low"]:
-        return "Low"
-    return "None"
+    return shared_risk_level(score, thresholds).title()
 
 
 def _pattern_config(policy: dict | None, pattern_type: str) -> dict:
@@ -86,24 +83,15 @@ def _continuous_score(
     pattern = _pattern_config(policy, pattern_type)
     parameters = pattern.get("parameters") or {}
     base = float(pattern.get("base_score", 0))
-    contributions: dict[str, float] = {}
-    for name, raw_value in signals.items():
-        value = max(0.0, min(1.0, float(raw_value)))
-        weight = float(parameters.get(f"{name}_weight", 0))
-        contributions[name] = round(value * weight, 4)
-    minimum = float(pattern.get("minimum_score", 0))
-    maximum = float(pattern.get("maximum_score", 100))
-    score = round(max(minimum, min(maximum, base + sum(contributions.values()))), 2)
+    score, score_components = shared_continuous_score(
+        base_score=base,
+        minimum_score=float(pattern.get("minimum_score", 0)),
+        maximum_score=float(pattern.get("maximum_score", 100)),
+        parameters=parameters,
+        signals=signals,
+    )
     severity = _risk_level(score, policy["thresholds"])
-    return score, severity, {
-        "base_score": base,
-        "signals": {key: round(max(0.0, min(1.0, float(value))), 4)
-                    for key, value in signals.items()},
-        "weights": {key: float(parameters.get(f"{key}_weight", 0))
-                    for key in signals},
-        "contributions": contributions,
-        "finding_score": score,
-    }
+    return score, severity, score_components
 
 
 def _load_active_graph_policy(
@@ -197,6 +185,97 @@ from utils.db_conn import connect  # noqa: E402 - .env must load before credenti
 def _get_connection() -> pyodbc.Connection:
     """Connect to Azure SQL via Managed Identity (see utils.db_conn.connect)."""
     return connect()
+
+
+def _publish_graph_inference_snapshot(
+    *,
+    tenant_id: int,
+    run_id: str,
+    window_days: int,
+    policy: dict,
+    nominations: list[dict],
+) -> dict[str, Any]:
+    """Upload one immutable, checksummed snapshot for candidate evaluation.
+
+    The blob is written before the SQL serving marker is committed. A failed
+    upload therefore cannot advertise an incomplete snapshot; a later SQL
+    failure may leave an unreferenced blob, which is safe to prune.
+    """
+    account = os.getenv("AZURE_STORAGE_ACCOUNT")
+    container = os.getenv("MODEL_CONTAINER", "ml-models")
+    if not account:
+        raise RuntimeError(
+            "AZURE_STORAGE_ACCOUNT is required to publish the Graph inference snapshot"
+        )
+
+    generated_at = datetime.now(timezone.utc)
+    snapshot = GraphInferenceSnapshot(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        policy_version=int(policy["version"]),
+        generated_at=generated_at,
+        window_days=window_days,
+        scoring_policy=policy,
+        nominations=tuple(
+            SnapshotNomination(
+                nomination_id=int(item["NominationId"]),
+                nominator_id=int(item["NominatorId"]),
+                beneficiary_id=int(item["BeneficiaryId"]),
+                amount=float(item.get("Amount") or 0.0),
+                status=str(item["Status"]),
+                created_at=item["CreatedAt"],
+            )
+            for item in nominations
+        ),
+    )
+    serialized = json.dumps(
+        snapshot.to_dict(), separators=(",", ":"), sort_keys=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    compressed = gzip.compress(serialized, compresslevel=6, mtime=0)
+    digest = hashlib.sha256(compressed).hexdigest()
+    blob_name = f"graph/tenant-{tenant_id}/{run_id}/inference-snapshot.json.gz"
+
+    from azure.storage.blob import BlobServiceClient, ContentSettings
+    storage_key = os.getenv("AZURE_STORAGE_KEY")
+    if storage_key:
+        client = BlobServiceClient(
+            account_url=f"https://{account}.blob.core.windows.net",
+            credential=storage_key,
+        )
+    else:
+        from azure.identity import DefaultAzureCredential
+        client = BlobServiceClient(
+            account_url=f"https://{account}.blob.core.windows.net",
+            credential=DefaultAzureCredential(
+                managed_identity_client_id=os.getenv("MI_CLIENT_ID")
+            ),
+        )
+    blob = client.get_blob_client(container=container, blob=blob_name)
+    blob.upload_blob(
+        compressed,
+        overwrite=False,
+        content_settings=ContentSettings(
+            content_type="application/json", content_encoding="gzip"
+        ),
+        metadata={
+            "tenant_id": str(tenant_id),
+            "run_id": run_id,
+            "schema_version": str(snapshot.schema_version),
+            "sha256": digest,
+        },
+    )
+    logger.info(
+        "  Graph inference snapshot published: %s (%d bytes, sha256=%s)",
+        blob_name, len(compressed), digest[:12],
+    )
+    return {
+        "blob_name": blob_name,
+        "sha256": digest,
+        "schema_version": snapshot.schema_version,
+        "size_bytes": len(compressed),
+        "generated_at": generated_at.isoformat(),
+    }
 
 
 # ── Graph sync ────────────────────────────────────────────────────────────────
@@ -1683,6 +1762,13 @@ def _process_tenant(
         ))
 
     detected_findings = list({f["FindingHash"]: f for f in detected_findings}.values())
+    snapshot_artifact = _publish_graph_inference_snapshot(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        window_days=window_days,
+        policy=policy,
+        nominations=nominations,
+    )
     # Same lock order as inference: serving marker before user snapshot rows.
     conn.cursor().execute("""
         SELECT TenantId FROM dbo.IntegrityComponentStatus WITH (UPDLOCK, HOLDLOCK)
@@ -1707,6 +1793,12 @@ def _process_tenant(
             "scoring_policy_version": policy["version"],
             "scoring_strategy": policy["strategy"],
             "snapshot_max_age_days": policy["snapshot_max_age_days"],
+            "inference_snapshot_blob": snapshot_artifact["blob_name"],
+            "inference_snapshot_sha256": snapshot_artifact["sha256"],
+            "inference_snapshot_schema_version": snapshot_artifact["schema_version"],
+            "inference_snapshot_size_bytes": snapshot_artifact["size_bytes"],
+            "inference_snapshot_generated_at": snapshot_artifact["generated_at"],
+            "candidate_evaluation_ready": True,
         },
         run_id=run_id,
     )
