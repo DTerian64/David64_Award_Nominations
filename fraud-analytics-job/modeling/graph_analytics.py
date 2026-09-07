@@ -48,8 +48,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from integrity_engine import GraphInferenceSnapshot, SnapshotNomination
-from integrity_engine.scoring import continuous_score as shared_continuous_score
-from integrity_engine.scoring import risk_level as shared_risk_level
+from integrity_engine.graph.finding_scoring import (
+    calculate_graph_finding_score,
+    derive_graph_finding_severity,
+)
 
 from utils.component_status import upsert_component_status
 
@@ -64,8 +66,11 @@ logger = logging.getLogger(__name__)
 _SEVERITY_SCORE = {"Low": 25.0, "Medium": 50.0, "High": 75.0, "Critical": 100.0}
 
 
-def _risk_level(score: float, thresholds: dict[str, float]) -> str:
-    return shared_risk_level(score, thresholds).title()
+def _derive_graph_finding_severity(
+    finding_score: float,
+    thresholds: dict[str, float],
+) -> str:
+    return derive_graph_finding_severity(finding_score, thresholds).title()
 
 
 def _pattern_config(policy: dict | None, pattern_type: str) -> dict:
@@ -74,7 +79,7 @@ def _pattern_config(policy: dict | None, pattern_type: str) -> dict:
     return (policy.get("patterns") or {}).get(pattern_type, {})
 
 
-def _continuous_score(
+def _score_graph_detector_finding(
     policy: dict,
     pattern_type: str,
     signals: dict[str, float],
@@ -83,14 +88,14 @@ def _continuous_score(
     pattern = _pattern_config(policy, pattern_type)
     parameters = pattern.get("parameters") or {}
     base = float(pattern.get("base_score", 0))
-    score, score_components = shared_continuous_score(
+    score, score_components = calculate_graph_finding_score(
         base_score=base,
         minimum_score=float(pattern.get("minimum_score", 0)),
         maximum_score=float(pattern.get("maximum_score", 100)),
         parameters=parameters,
         signals=signals,
     )
-    severity = _risk_level(score, policy["thresholds"])
+    severity = _derive_graph_finding_severity(score, policy["thresholds"])
     return score, severity, score_components
 
 
@@ -263,6 +268,8 @@ def _publish_graph_inference_snapshot(
     blob.upload_blob(
         compressed,
         overwrite=False,
+        # Keep the correct HTTP representation metadata. integrity-check asks
+        # the SDK for the raw stored bytes before validating this gzip checksum.
         content_settings=ContentSettings(
             content_type="application/json", content_encoding="gzip"
         ),
@@ -462,7 +469,7 @@ def _finding(
     signals: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     if policy:
-        score, severity, score_components = _continuous_score(
+        score, severity, score_components = _score_graph_detector_finding(
             policy, pattern_type, signals or {}
         )
         policy_version = int(policy["version"])

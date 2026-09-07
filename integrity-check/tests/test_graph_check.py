@@ -155,7 +155,10 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(result["affected_user_ids"], [])
         self.assertNotIn("approver", " ".join(result["warning_flags"]).lower())
 
-    @patch("inference.graph_check.evaluate_ring_candidate", return_value=_candidate_ring())
+    @patch(
+        "inference.graph_check.evaluate_candidate_edge_for_ring",
+        return_value=_candidate_ring(),
+    )
     @patch("inference.graph_check.db.get_graph_component_snapshot")
     def test_candidate_ring_can_score_and_preserves_lineage(self, lookup, _evaluate):
         lookup.return_value = _snapshot({
@@ -192,7 +195,7 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(result["unavailable_reason"], "LEGACY_SNAPSHOT")
 
     @patch("inference.graph_check.db.get_graph_component_snapshot")
-    def test_maximum_relevant_continuous_score_wins(self, lookup):
+    def test_maximum_relevant_graph_finding_score_wins(self, lookup):
         lookup.return_value = _snapshot({
             1: {"findings": [
                 _finding("SuperNominator", 64.25, roles=["nominator"], finding_hash="super"),
@@ -337,7 +340,8 @@ class GraphInferenceArtifactTests(unittest.TestCase):
     @patch("azure.storage.blob.BlobServiceClient")
     def test_verified_artifact_is_cached_by_run_and_checksum(self, blob_service):
         compressed, metadata = self._artifact()
-        blob_service.return_value.get_blob_client.return_value.download_blob.return_value.readall.return_value = compressed
+        download = blob_service.return_value.get_blob_client.return_value.download_blob
+        download.return_value.readall.return_value = compressed
 
         first = graph_check._load_inference_snapshot(7, metadata)
         second = graph_check._load_inference_snapshot(7, metadata)
@@ -345,6 +349,7 @@ class GraphInferenceArtifactTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertEqual(first.run_id, "graph-run-1")
         self.assertEqual(blob_service.return_value.get_blob_client.call_count, 1)
+        download.assert_called_once_with(decompress=False)
 
     @patch("azure.storage.blob.BlobServiceClient")
     def test_checksum_mismatch_is_invalid_snapshot(self, blob_service):

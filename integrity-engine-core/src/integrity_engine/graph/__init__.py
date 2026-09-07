@@ -1,16 +1,16 @@
-"""Deterministic integrity scoring shared by production and ELCE."""
+"""Graph Analytics contracts, candidate evaluation, and finding scoring."""
 
-__version__ = "0.2.0"
-
-from .graph import (
+from .candidate_edge_evaluation import (
     CandidateNomination,
     EvaluationLimitExceeded,
     GraphInferenceSnapshot,
     RingEvaluation,
     SnapshotNomination,
+    evaluate_candidate_edge_for_ring,
+)
+from .finding_scoring import (
     calculate_graph_finding_score,
     derive_graph_finding_severity,
-    evaluate_candidate_edge_for_ring,
 )
 
 __all__ = [
@@ -22,5 +22,4 @@ __all__ = [
     "calculate_graph_finding_score",
     "derive_graph_finding_severity",
     "evaluate_candidate_edge_for_ring",
-    "__version__",
 ]

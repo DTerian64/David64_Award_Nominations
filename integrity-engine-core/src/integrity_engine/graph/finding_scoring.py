@@ -1,24 +1,27 @@
-"""Shared, side-effect-free continuous scoring primitives."""
+"""Deterministic scoring for one Graph Analytics detector finding."""
 
 from __future__ import annotations
 
 from typing import Mapping
 
 
-def risk_level(score: float, thresholds: Mapping[str, float]) -> str:
-    """Convert a numeric 0-100 score to the configured severity."""
-    if score >= float(thresholds["critical"]):
+def derive_graph_finding_severity(
+    finding_score: float,
+    thresholds: Mapping[str, float],
+) -> str:
+    """Convert a Graph finding's numeric 0-100 score to its severity."""
+    if finding_score >= float(thresholds["critical"]):
         return "CRITICAL"
-    if score >= float(thresholds["high"]):
+    if finding_score >= float(thresholds["high"]):
         return "HIGH"
-    if score >= float(thresholds["medium"]):
+    if finding_score >= float(thresholds["medium"]):
         return "MEDIUM"
-    if score >= float(thresholds["low"]):
+    if finding_score >= float(thresholds["low"]):
         return "LOW"
     return "NONE"
 
 
-def continuous_score(
+def calculate_graph_finding_score(
     *,
     base_score: float,
     minimum_score: float,
@@ -26,7 +29,7 @@ def continuous_score(
     parameters: Mapping[str, float],
     signals: Mapping[str, float],
 ) -> tuple[float, dict]:
-    """Score normalized signals and retain the full deterministic derivation."""
+    """Calculate one detector finding's score and deterministic derivation."""
     normalized = {
         name: max(0.0, min(1.0, float(raw_value)))
         for name, raw_value in signals.items()
@@ -53,4 +56,3 @@ def continuous_score(
         "contributions": contributions,
         "finding_score": score,
     }
-

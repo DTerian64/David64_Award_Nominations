@@ -17,7 +17,7 @@ from integrity_engine import (
     EvaluationLimitExceeded,
     GraphInferenceSnapshot,
     __version__ as integrity_engine_version,
-    evaluate_ring_candidate,
+    evaluate_candidate_edge_for_ring,
 )
 
 from . import component_availability
@@ -84,9 +84,14 @@ def _load_inference_snapshot(tenant_id: int, metadata: dict) -> GraphInferenceSn
             f"https://{account}.blob.core.windows.net", credential=credential
         )
     try:
+        # The producer intentionally publishes a .json.gz blob with
+        # Content-Encoding: gzip and hashes the stored compressed bytes. Azure
+        # otherwise expands that encoding during transport, which would make
+        # the downloaded bytes differ from the checksum and size recorded in
+        # the serving metadata.
         compressed = client.get_blob_client(
             container=container, blob=blob_name
-        ).download_blob().readall()
+        ).download_blob(decompress=False).readall()
     except Exception as exc:
         raise db.InvalidGraphSnapshot(
             f"Graph candidate-evaluation artifact could not be loaded: {blob_name}"
@@ -120,14 +125,17 @@ def _load_inference_snapshot(tenant_id: int, metadata: dict) -> GraphInferenceSn
     return snapshot
 
 
-def _risk_level(score: float, thresholds: dict[str, float]) -> str:
-    if score >= thresholds["critical"]:
+def _derive_graph_nomination_severity(
+    graph_nomination_score: float,
+    thresholds: dict[str, float],
+) -> str:
+    if graph_nomination_score >= thresholds["critical"]:
         return "CRITICAL"
-    if score >= thresholds["high"]:
+    if graph_nomination_score >= thresholds["high"]:
         return "HIGH"
-    if score >= thresholds["medium"]:
+    if graph_nomination_score >= thresholds["medium"]:
         return "MEDIUM"
-    if score >= thresholds["low"]:
+    if graph_nomination_score >= thresholds["low"]:
         return "LOW"
     return "NONE"
 
@@ -291,7 +299,7 @@ def _assess_graph_inner(
 
     inference_snapshot = _load_inference_snapshot(tenant_id, snapshot)
     candidate_started = time.perf_counter()
-    ring_evaluation = evaluate_ring_candidate(
+    ring_evaluation = evaluate_candidate_edge_for_ring(
         inference_snapshot,
         CandidateNomination.from_dict(details),
         max_states=max(1, int(os.getenv("GRAPH_RING_MAX_STATES", "100000"))),
@@ -412,7 +420,9 @@ def _assess_graph_inner(
     )
     winner = candidates[0] if candidates else None
     graph_score = round(float(winner["finding_score"]), 2) if winner else 0.0
-    risk = _risk_level(graph_score, policy["thresholds"])
+    risk = _derive_graph_nomination_severity(
+        graph_score, policy["thresholds"]
+    )
     affected = []
     for item in candidates:
         affected.extend(item["affected_user_ids"])
@@ -423,7 +433,7 @@ def _assess_graph_inner(
     flags = [] if winner is None else [
         f"[Graph] {'/'.join(winner['affected_roles'])}: "
         f"{winner['pattern_type']} ({winner['finding_score']:.2f}, "
-        f"{_risk_level(winner['finding_score'], policy['thresholds'])})"
+        f"{_derive_graph_nomination_severity(winner['finding_score'], policy['thresholds'])})"
     ]
     groups: dict[str, dict] = {}
     for item in findings:

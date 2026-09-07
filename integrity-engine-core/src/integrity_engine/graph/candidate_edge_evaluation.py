@@ -1,4 +1,4 @@
-"""Versioned Graph snapshot contract and candidate-aware detector evaluation."""
+"""Versioned Graph snapshot contract and candidate-edge detector evaluation."""
 
 from __future__ import annotations
 
@@ -6,9 +6,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 import heapq
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
-from .scoring import continuous_score, risk_level
+from .finding_scoring import (
+    calculate_graph_finding_score,
+    derive_graph_finding_severity,
+)
 
 
 GRAPH_SNAPSHOT_SCHEMA_VERSION = 1
@@ -179,7 +182,7 @@ def _ring_config(policy: Mapping[str, Any]) -> Mapping[str, Any]:
     return config
 
 
-def evaluate_ring_candidate(
+def evaluate_candidate_edge_for_ring(
     snapshot: GraphInferenceSnapshot,
     candidate: CandidateNomination,
     *,
@@ -231,13 +234,17 @@ def evaluate_ring_candidate(
     parameters = ring.get("parameters") or {}
     amount_reference = max(float(parameters.get("amount_reference", 10_000)), 1.0)
 
-    def score_for(path_size: int, total_amount: float, nomination_count: int):
+    def score_ring_path_finding(
+        path_size: int,
+        total_amount: float,
+        nomination_count: int,
+    ):
         signals = {
             "exposure": min(total_amount / amount_reference, 1.0),
             "repeat": min(nomination_count / max(path_size * 3, 1), 1.0),
             "compactness": max(0.0, 1.0 - ((path_size - 3) / 5.0)),
         }
-        return continuous_score(
+        return calculate_graph_finding_score(
             base_score=float(ring.get("base_score", 0.0)),
             minimum_score=float(ring.get("minimum_score", 0.0)),
             maximum_score=float(ring.get("maximum_score", 100.0)),
@@ -252,7 +259,9 @@ def evaluate_ring_candidate(
         shortest_size = max(3, len(path) + 1)
         possible_amount = amount + remaining * maximum_edge_amount
         possible_count = count + remaining * maximum_edge_count
-        return score_for(shortest_size, possible_amount, possible_count)[0]
+        return score_ring_path_finding(
+            shortest_size, possible_amount, possible_count
+        )[0]
 
     initial_path = (start,)
     initial_amount = candidate.amount
@@ -288,14 +297,16 @@ def evaluate_ring_candidate(
             )
             total_amount = accumulated_amount
             size = len(path)
-            score, components = score_for(size, total_amount, accumulated_count)
+            score, components = score_ring_path_finding(
+                size, total_amount, accumulated_count
+            )
             thresholds = snapshot.scoring_policy["thresholds"]
             evaluation = RingEvaluation(
                 detector="Ring",
                 evaluation_mode="CANDIDATE_EDGE",
                 evidence_scope="CURRENT_NOMINATION",
                 score=score,
-                severity=risk_level(score, thresholds),
+                severity=derive_graph_finding_severity(score, thresholds),
                 score_components=components,
                 affected_user_ids=tuple(sorted(path)),
                 supporting_nomination_ids=tuple(nomination_ids),
