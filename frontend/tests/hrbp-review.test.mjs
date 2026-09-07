@@ -75,7 +75,7 @@ test('known scopes remain readable', () => {
 });
 
 test('Graph verdict shows its biggest contributor and maximum finding_score', () => {
-  const html = renderEvidence({ engine_results: {
+  const html = renderEvidence({ nominator_id: 242, beneficiary_id: 198, engine_results: {
     rf: null,
     graph: {
       available: true, score: 88.2, risk_level: 'HIGH',
@@ -94,6 +94,7 @@ test('Graph verdict shows its biggest contributor and maximum finding_score', ()
   assert.doesNotMatch(html, /417 relevant/);
   assert.match(html, /Score 88.20/);
   assert.match(html, /Three-person reciprocal nomination cycle/);
+  assert.match(html, /Affected roles:<\/span> nominator #242, beneficiary #198/);
   assert.match(html, /Affected users:<\/span> #12, #15, #19/);
   assert.match(html, /Nominations:<\/span> #201, #202, #203/);
   assert.equal((html.match(/nominator: Ring/g) || []).length, 0);

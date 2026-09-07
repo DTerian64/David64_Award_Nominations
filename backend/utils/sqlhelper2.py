@@ -2620,6 +2620,8 @@ def _model_evidence_from_row(r) -> dict:
         "engine_results": engine_results,
         "final_route": r[19],
         "routing_rule": r[20],
+        "nominator_id": r[21] if len(r) > 21 else None,
+        "beneficiary_id": r[22] if len(r) > 22 else None,
     }
 
 
@@ -2653,7 +2655,9 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                     idr.GnnResultJson,
                     idr.SemanticResultJson,
                     idr.FinalRoute,
-                    idr.RoutingRule
+                    idr.RoutingRule,
+                    n.NominatorId,
+                    n.BeneficiaryId
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId      = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId      = n.BeneficiaryId
@@ -2772,7 +2776,8 @@ def get_model_analysis_nomination(nomination_id: int, tenant_id: int) -> Optiona
                        idr.DecisionSchemaVersion, idr.ReviewScope,
                        idr.DecisiveEnginesJson, idr.RfResultJson,
                        idr.GraphResultJson, idr.GnnResultJson,
-                       idr.SemanticResultJson, idr.FinalRoute, idr.RoutingRule
+                       idr.SemanticResultJson, idr.FinalRoute, idr.RoutingRule,
+                       n.NominatorId, n.BeneficiaryId
                 FROM dbo.Nominations n
                 JOIN dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId

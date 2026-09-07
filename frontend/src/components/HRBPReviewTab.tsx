@@ -26,8 +26,10 @@ export interface HRBPQueueItem {
   nomination_date:    string;
   nominator_name:     string;
   nominator_email:    string;
+  nominator_id?:      number;
   beneficiary_name:   string;
   beneficiary_email:  string;
+  beneficiary_id?:    number;
   fraud_score:        number | null;
   fraud_probability:  number | null;
   risk_level:         string | null;
@@ -62,6 +64,7 @@ export interface EngineResult {
     derived_severity?: string;
     detail?: string | null;
     affected_roles?: string[];
+    affected_role_user_ids?: Record<string, number>;
     affected_user_ids?: number[];
     nomination_ids?: number[];
     path_user_ids?: number[];
@@ -123,7 +126,11 @@ const GRAPH_PATTERN_LABELS: Record<string, string> = {
 };
 
 /** Compact Graph attribution matching the Graph Pattern Findings vocabulary. */
-export const GraphScoreContribution: React.FC<{ engine: EngineResult }> = ({ engine }) => {
+export const GraphScoreContribution: React.FC<{
+  engine: EngineResult;
+  nominatorId?: number;
+  beneficiaryId?: number;
+}> = ({ engine, nominatorId, beneficiaryId }) => {
   const patternType = engine.winning_pattern_type || engine.winning_finding?.pattern_type;
   const count = engine.winning_pattern_count;
   const finding = engine.winning_finding;
@@ -140,6 +147,16 @@ export const GraphScoreContribution: React.FC<{ engine: EngineResult }> = ({ eng
     || finding?.search_complete === false;
   const remainingUpperBound = candidateEvaluation?.remaining_score_upper_bound
     ?? finding?.remaining_score_upper_bound;
+  const affectedRoleLabels = (finding?.affected_roles || []).map(role => {
+    const persistedId = finding?.affected_role_user_ids?.[role];
+    const fallbackId = role === 'nominator'
+      ? nominatorId
+      : role === 'beneficiary'
+        ? beneficiaryId
+        : undefined;
+    const userId = persistedId ?? fallbackId;
+    return userId === undefined ? role : `${role} #${userId}`;
+  });
   return (
     <div className="mt-2 space-y-2 text-xs">
       {(patternType || fallback) && <div className="text-teal-800">
@@ -160,7 +177,7 @@ export const GraphScoreContribution: React.FC<{ engine: EngineResult }> = ({ eng
               {remainingUpperBound != null ? `; unexplored paths could score up to ${remainingUpperBound}.` : '.'}
             </p>
           )}
-          {finding.affected_roles && finding.affected_roles.length > 0 && <p className="mt-2"><span className="font-semibold">Affected roles:</span> {finding.affected_roles.join(', ')}</p>}
+          {affectedRoleLabels.length > 0 && <p className="mt-2"><span className="font-semibold">Affected roles:</span> {affectedRoleLabels.join(', ')}</p>}
           {finding.affected_user_ids && finding.affected_user_ids.length > 0 && <p className="mt-1"><span className="font-semibold">Affected users:</span> {finding.affected_user_ids.map(id => `#${id}`).join(', ')}</p>}
           {finding.nomination_ids && finding.nomination_ids.length > 0 && <p className="mt-1"><span className="font-semibold">Nominations:</span> {finding.nomination_ids.map(id => `#${id}`).join(', ')}</p>}
         </div>
@@ -348,7 +365,13 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
                   LLM category fit {engine.llm.response.category_fit_score}
                 </p>
               )}
-              {isGraph && <GraphScoreContribution engine={engine} />}
+              {isGraph && (
+                <GraphScoreContribution
+                  engine={engine}
+                  nominatorId={item.nominator_id}
+                  beneficiaryId={item.beneficiary_id}
+                />
+              )}
               {!isGraph && !isSemantic && findings.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {findings.map((finding, index) => <span key={index} className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs text-orange-800">{finding}</span>)}

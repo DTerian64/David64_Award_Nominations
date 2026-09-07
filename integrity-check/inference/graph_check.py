@@ -395,6 +395,10 @@ def _assess_graph_inner(
             "enabled_for_routing": bool(ring_policy.get("enabled_for_routing", True)),
             "applicable_roles": ["nominator", "beneficiary"],
             "affected_roles": ["nominator", "beneficiary"],
+            "affected_role_user_ids": {
+                "nominator": int(details["nominator_id"]),
+                "beneficiary": int(details["beneficiary_id"]),
+            },
             "affected_user_ids": list(ring_evaluation.affected_user_ids),
             "evaluation_mode": ring_evaluation.evaluation_mode,
             "evidence_scope": ring_evaluation.evidence_scope,

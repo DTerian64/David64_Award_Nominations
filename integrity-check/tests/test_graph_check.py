@@ -176,6 +176,10 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(result["fraud_score"], 82)
         self.assertEqual(result["winning_finding"]["evidence_scope"], "CURRENT_NOMINATION")
         self.assertEqual(result["winning_finding"]["path_user_ids"], [2, 4, 1, 2])
+        self.assertEqual(
+            result["winning_finding"]["affected_role_user_ids"],
+            {"nominator": 1, "beneficiary": 2},
+        )
         self.assertFalse(next(
             item for item in result["pattern_findings"]
             if item["finding_hash"] == "historical"
