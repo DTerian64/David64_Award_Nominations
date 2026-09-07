@@ -14,6 +14,11 @@ interface PatternPolicy {
   minimum_score: number;
   maximum_score: number;
   parameters: Record<string, number>;
+  candidate_evaluation?: {
+    max_states: number;
+    max_ring_size: number;
+    limit_strategy: 'BEST_EVIDENCE';
+  };
 }
 
 interface GraphPolicy {
@@ -885,6 +890,56 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
                             <label key={role} className="flex items-center gap-2"><input type="checkbox" checked={pattern.applicable_roles.includes(role)} disabled={!draft} onChange={event => updatePattern(index, { applicable_roles: event.target.checked ? [...pattern.applicable_roles, role] : pattern.applicable_roles.filter(value => value !== role) })} />{label(role)}</label>
                           ))}
                         </div>
+                        {pattern.pattern_type === 'Ring' && (
+                          <div className="rounded-md border border-amber-200 bg-amber-50/50 p-3">
+                            <div className="text-xs font-semibold text-gray-800">Candidate evaluation</div>
+                            <p className="mt-1 text-[11px] text-gray-500">
+                              These controls bound the search for concrete Rings closed by the current nomination. They do not change the finding-score formula.
+                            </p>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                              <NumberInput
+                                labelText="Maximum search states"
+                                value={Number(pattern.candidate_evaluation?.max_states ?? 100000)}
+                                disabled={!draft}
+                                min={1}
+                                step={1}
+                                onChange={value => updatePattern(index, {
+                                  candidate_evaluation: {
+                                    max_states: value,
+                                    max_ring_size: Number(pattern.candidate_evaluation?.max_ring_size ?? 8),
+                                    limit_strategy: 'BEST_EVIDENCE',
+                                  },
+                                })}
+                              />
+                              <NumberInput
+                                labelText="Maximum Ring size"
+                                value={Number(pattern.candidate_evaluation?.max_ring_size ?? 8)}
+                                disabled={!draft}
+                                min={3}
+                                max={8}
+                                step={1}
+                                onChange={value => updatePattern(index, {
+                                  candidate_evaluation: {
+                                    max_states: Number(pattern.candidate_evaluation?.max_states ?? 100000),
+                                    max_ring_size: value,
+                                    limit_strategy: 'BEST_EVIDENCE',
+                                  },
+                                })}
+                              />
+                              <label className="block text-xs text-gray-500">
+                                Limit strategy
+                                <select
+                                  value={String(pattern.candidate_evaluation?.limit_strategy ?? 'BEST_EVIDENCE')}
+                                  disabled={!draft}
+                                  onChange={() => undefined}
+                                  className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-800 disabled:bg-gray-50 disabled:text-gray-500"
+                                >
+                                  <option value="BEST_EVIDENCE">Best concrete evidence</option>
+                                </select>
+                              </label>
+                            </div>
+                          </div>
+                        )}
                         <div className="grid gap-3 sm:grid-cols-3">
                           <NumberInput labelText="Base score" value={pattern.base_score} disabled={!draft} max={100} step={0.01} onChange={value => updatePattern(index, { base_score: value })} />
                           <NumberInput labelText="Minimum score" value={pattern.minimum_score} disabled={!draft} max={100} step={0.01} onChange={value => updatePattern(index, { minimum_score: value })} />

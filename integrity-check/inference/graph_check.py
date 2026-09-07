@@ -243,6 +243,7 @@ def assess_graph(
             "winning_pattern_count": result.get("winning_pattern_count", 0),
             "finding_count": len(result.get("pattern_findings") or []),
             "candidate_evaluation_ms": result.get("candidate_evaluation_ms"),
+            "candidate_evaluation": result.get("candidate_evaluation"),
         },
     )
     return result
@@ -298,11 +299,14 @@ def _assess_graph_inner(
         return result
 
     inference_snapshot = _load_inference_snapshot(tenant_id, snapshot)
+    ring_policy = (inference_snapshot.scoring_policy.get("patterns") or {}).get(
+        "Ring", {}
+    )
+    candidate_policy = ring_policy.get("candidate_evaluation") or {}
     candidate_started = time.perf_counter()
     ring_evaluation = evaluate_candidate_edge_for_ring(
         inference_snapshot,
         CandidateNomination.from_dict(details),
-        max_states=max(1, int(os.getenv("GRAPH_RING_MAX_STATES", "100000"))),
     )
     candidate_evaluation_ms = round(
         (time.perf_counter() - candidate_started) * 1000.0, 3
@@ -371,9 +375,6 @@ def _assess_graph_inner(
 
     candidate_findings: list[dict] = []
     if ring_evaluation is not None:
-        ring_policy = (inference_snapshot.scoring_policy.get("patterns") or {}).get(
-            "Ring", {}
-        )
         ring_data = ring_evaluation.to_dict()
         candidate_hash = hashlib.sha256(
             (
@@ -406,6 +407,20 @@ def _assess_graph_inner(
             "paths_considered": ring_evaluation.paths_considered,
             "states_visited": ring_evaluation.states_visited,
             "states_generated": ring_evaluation.states_generated,
+            "search_status": ring_evaluation.search_status,
+            "search_complete": ring_evaluation.search_complete,
+            "score_semantics": ring_evaluation.score_semantics,
+            "configured_max_states": ring_evaluation.configured_max_states,
+            "configured_max_ring_size": (
+                ring_evaluation.configured_max_ring_size
+            ),
+            "limit_strategy": ring_evaluation.limit_strategy,
+            "pruned_unreachable": ring_evaluation.pruned_unreachable,
+            "pruned_by_bound": ring_evaluation.pruned_by_bound,
+            "pruned_by_dominance": ring_evaluation.pruned_by_dominance,
+            "remaining_score_upper_bound": (
+                ring_evaluation.remaining_score_upper_bound
+            ),
             "detector_evaluation": ring_data,
         })
 
@@ -488,6 +503,24 @@ def _assess_graph_inner(
         "score_derivation": "maximum_relevant_finding",
         "candidate_evaluation_version": f"integrity-engine-core/{integrity_engine_version}",
         "candidate_evaluation_ms": candidate_evaluation_ms,
+        "candidate_evaluation": (
+            ring_evaluation.to_dict() if ring_evaluation is not None else {
+                "detector": "Ring",
+                "search_status": "COMPLETE",
+                "search_complete": True,
+                "score_semantics": "EXACT",
+                "finding_present": False,
+                "configured_max_states": int(
+                    candidate_policy.get("max_states", 100_000)
+                ),
+                "configured_max_ring_size": int(
+                    candidate_policy.get("max_ring_size", 8)
+                ),
+                "limit_strategy": str(
+                    candidate_policy.get("limit_strategy", "BEST_EVIDENCE")
+                ),
+            }
+        ),
         "inference_snapshot_blob": snapshot.get("inference_snapshot_blob"),
         "inference_snapshot_sha256": snapshot.get("inference_snapshot_sha256"),
         "inference_snapshot_schema_version": snapshot.get(

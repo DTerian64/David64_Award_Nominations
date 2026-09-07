@@ -119,6 +119,14 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
   const fallbackWinner = winningGroup?.items[0];
   const candidateAware = winner?.evidence_scope === 'CURRENT_NOMINATION'
     || String(winner?.evaluation_mode || '') === 'CANDIDATE_EDGE';
+  const candidateEvaluation = extras.candidate_evaluation
+    && typeof extras.candidate_evaluation === 'object'
+    ? extras.candidate_evaluation as Record<string, unknown>
+    : null;
+  const bounded = candidateEvaluation?.search_complete === false
+    || winner?.search_complete === false;
+  const remainingUpperBound = candidateEvaluation?.remaining_score_upper_bound
+    ?? winner?.remaining_score_upper_bound;
   const winningDetail = winner?.detail != null ? String(winner.detail)
     : fallbackWinner?.warning != null ? String(fallbackWinner.warning)
     : fallbackWinner?.detail != null ? String(fallbackWinner.detail) : null;
@@ -136,6 +144,10 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
         <p>{patternLabel}{!candidateAware ? ` · ${count} relevant finding${count === 1 ? '' : 's'}` : ''}</p>
         <p className="mt-1 text-gray-600">Maximum finding_score: {score !== undefined ? `${score} / 100` : 'not recorded'} · Scores are not summed.</p>
         {winningDetail && <p className="mt-1">{winningDetail}</p>}
+        {bounded && <p className="mt-2 rounded bg-amber-100 px-2 py-1 font-medium text-amber-900">
+          Bounded candidate search: this is the strongest concrete Ring found, so its score is a lower bound
+          {remainingUpperBound != null ? `; unexplored paths could score up to ${String(remainingUpperBound)}.` : '.'}
+        </p>}
       </div>}
       {(nominatorHistoryCount + beneficiaryHistoryCount + sharedHistoryCount) > 0 && <div className="rounded border border-gray-200 bg-gray-50 p-2 text-gray-700">
         <p className="font-semibold text-gray-900">Participant graph history</p>
@@ -328,7 +340,8 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                           'winning_pattern_count', 'detector_summary', 'pattern_findings',
                           'candidate_findings', 'nominator_history', 'beneficiary_history',
                           'shared_history', 'candidate_evaluation_version',
-                          'candidate_evaluation_ms', 'inference_snapshot_blob',
+                          'candidate_evaluation_ms', 'candidate_evaluation',
+                          'inference_snapshot_blob',
                           'inference_snapshot_sha256', 'inference_snapshot_schema_version',
                           'inference_snapshot_generated_at',
                         ].includes(k))

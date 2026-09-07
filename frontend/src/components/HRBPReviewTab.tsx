@@ -67,6 +67,16 @@ export interface EngineResult {
     path_user_ids?: number[];
     evidence_scope?: string;
     evaluation_mode?: string;
+    search_status?: string;
+    search_complete?: boolean;
+    score_semantics?: string;
+    remaining_score_upper_bound?: number | null;
+  } | null;
+  candidate_evaluation?: {
+    search_status?: string;
+    search_complete?: boolean;
+    score_semantics?: string;
+    remaining_score_upper_bound?: number | null;
   } | null;
   candidate_findings?: Array<NonNullable<EngineResult['winning_finding']>>;
   nominator_history?: Array<NonNullable<EngineResult['winning_finding']>>;
@@ -125,6 +135,11 @@ export const GraphScoreContribution: React.FC<{ engine: EngineResult }> = ({ eng
   if (!patternType && !fallback && !hasRingHistory) return null;
   const patternLabel = patternType ? GRAPH_PATTERN_LABELS[patternType] || `${patternType} pattern` : null;
   const candidateAware = finding?.evidence_scope === 'CURRENT_NOMINATION';
+  const candidateEvaluation = engine.candidate_evaluation;
+  const bounded = candidateEvaluation?.search_complete === false
+    || finding?.search_complete === false;
+  const remainingUpperBound = candidateEvaluation?.remaining_score_upper_bound
+    ?? finding?.remaining_score_upper_bound;
   return (
     <div className="mt-2 space-y-2 text-xs">
       {(patternType || fallback) && <div className="text-teal-800">
@@ -139,6 +154,12 @@ export const GraphScoreContribution: React.FC<{ engine: EngineResult }> = ({ eng
             {finding.finding_score !== undefined && <span className="rounded bg-indigo-50 px-2 py-0.5 font-semibold text-indigo-700">Score {finding.finding_score.toFixed(2)}</span>}
           </div>
           {finding.detail && <p className="mt-2">{finding.detail}</p>}
+          {bounded && (
+            <p className="mt-2 rounded bg-amber-100 px-2 py-1 font-medium text-amber-900">
+              Bounded candidate search: this is the strongest concrete Ring found, so its score is a lower bound
+              {remainingUpperBound != null ? `; unexplored paths could score up to ${remainingUpperBound}.` : '.'}
+            </p>
+          )}
           {finding.affected_roles && finding.affected_roles.length > 0 && <p className="mt-2"><span className="font-semibold">Affected roles:</span> {finding.affected_roles.join(', ')}</p>}
           {finding.affected_user_ids && finding.affected_user_ids.length > 0 && <p className="mt-1"><span className="font-semibold">Affected users:</span> {finding.affected_user_ids.map(id => `#${id}`).join(', ')}</p>}
           {finding.nomination_ids && finding.nomination_ids.length > 0 && <p className="mt-1"><span className="font-semibold">Nominations:</span> {finding.nomination_ids.map(id => `#${id}`).join(', ')}</p>}

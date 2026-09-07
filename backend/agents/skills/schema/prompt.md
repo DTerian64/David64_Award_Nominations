@@ -87,7 +87,8 @@ load component JSON only for nomination detail or explanation views.
   `MAX_RELEVANT_FINDING`.
 - `dbo.GraphScoringPatternParameters` stores detector enablement, routing
   participation, participant roles, base scores, weights, and parameters for
-  one policy version.
+  one policy version. `CandidateEvaluationJson` separately stores bounded
+  nomination-time search controls; it currently applies to the Ring detector.
 - `dbo.GraphScoringChangeRequests` stores Data Scientist fine-tuning requests
   and the Admin review outcome.
 - Nomination-time Graph evidence and snapshot provenance are stored in

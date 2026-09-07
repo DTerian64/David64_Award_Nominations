@@ -66,7 +66,7 @@ def _inference_snapshot():
     )
 
 
-def _candidate_ring(score=82):
+def _candidate_ring(score=82, *, complete=True):
     return RingEvaluation(
         detector="Ring", evaluation_mode="CANDIDATE_EDGE",
         evidence_scope="CURRENT_NOMINATION", score=score, severity="HIGH",
@@ -75,6 +75,14 @@ def _candidate_ring(score=82):
         total_amount=3000, candidate_nomination_id=10,
         path_user_ids=(2, 4, 1, 2), paths_considered=1, states_visited=4,
         states_generated=4,
+        search_status="COMPLETE" if complete else "BOUNDED",
+        search_complete=complete,
+        score_semantics="EXACT" if complete else "LOWER_BOUND",
+        configured_max_states=100_000,
+        pruned_unreachable=12,
+        pruned_by_bound=3,
+        pruned_by_dominance=1,
+        remaining_score_upper_bound=None if complete else 96.5,
     )
 
 
@@ -172,6 +180,30 @@ class GraphCheckTests(unittest.TestCase):
             item for item in result["pattern_findings"]
             if item["finding_hash"] == "historical"
         )["routing_relevant"])
+        self.assertTrue(result["candidate_evaluation"]["search_complete"])
+        self.assertEqual(
+            result["winning_finding"]["score_semantics"], "EXACT"
+        )
+
+    @patch(
+        "inference.graph_check.evaluate_candidate_edge_for_ring",
+        return_value=_candidate_ring(82, complete=False),
+    )
+    @patch("inference.graph_check.db.get_graph_component_snapshot")
+    def test_bounded_ring_remains_available_with_explicit_semantics(
+        self, lookup, _evaluate
+    ):
+        lookup.return_value = _snapshot()
+        result = graph_check.assess_graph(DETAILS, tenant_id=7)
+        self.assertTrue(result["model_available"])
+        self.assertEqual(result["fraud_score"], 82)
+        self.assertEqual(result["candidate_evaluation"]["search_status"], "BOUNDED")
+        self.assertEqual(
+            result["winning_finding"]["score_semantics"], "LOWER_BOUND"
+        )
+        self.assertEqual(
+            result["winning_finding"]["remaining_score_upper_bound"], 96.5
+        )
 
     @patch("inference.graph_check.db.get_graph_component_snapshot", return_value=None)
     def test_missing_snapshot_is_no_opinion_not_clean(self, _lookup):

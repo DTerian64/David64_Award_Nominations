@@ -3542,7 +3542,7 @@ def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
             pattern_rows = session.execute(text(f"""
                 SELECT PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                        ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
-                       ParametersJson
+                       ParametersJson, CandidateEvaluationJson
                 FROM dbo.GraphScoringPatternParameters
                 WHERE PolicyId IN ({placeholders})
                 ORDER BY PolicyId, DisplayOrder
@@ -3570,6 +3570,7 @@ def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
             "minimum_score": float(row[7]),
             "maximum_score": float(row[8]),
             "parameters": _json_value(row[9], {}),
+            "candidate_evaluation": _json_value(row[10], {}),
         })
 
     policies = [{
@@ -3700,11 +3701,11 @@ def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
             INSERT INTO dbo.GraphScoringPatternParameters (
                 PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                 ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
-                ParametersJson, CreatedBy, UpdatedBy
+                ParametersJson, CandidateEvaluationJson, CreatedBy, UpdatedBy
             )
             SELECT :draft_id, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                    ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
-                   ParametersJson, :actor, :actor
+                   ParametersJson, CandidateEvaluationJson, :actor, :actor
             FROM dbo.GraphScoringPatternParameters WHERE PolicyId=:active_id
         """), {"draft_id": draft_id, "active_id": active[0], "actor": actor})
         session.commit()
@@ -3746,10 +3747,11 @@ def update_graph_scoring_policy_draft(
                 INSERT INTO dbo.GraphScoringPatternParameters (
                     PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                     ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
-                    ParametersJson, CreatedBy, UpdatedBy
+                    ParametersJson, CandidateEvaluationJson, CreatedBy, UpdatedBy
                 ) VALUES (
                     :policy_id, :pattern, :display_order, :enabled, :routing, :roles,
-                    :base, :minimum, :maximum, :parameters, :actor, :actor
+                    :base, :minimum, :maximum, :parameters, :candidate_evaluation,
+                    :actor, :actor
                 )
             """), {
                 "policy_id": draft_id, "pattern": pattern["pattern_type"],
@@ -3760,6 +3762,9 @@ def update_graph_scoring_policy_draft(
                 "base": pattern["base_score"], "minimum": pattern["minimum_score"],
                 "maximum": pattern["maximum_score"],
                 "parameters": json.dumps(pattern["parameters"], separators=(",", ":")),
+                "candidate_evaluation": json.dumps(
+                    pattern.get("candidate_evaluation") or {}, separators=(",", ":")
+                ),
                 "actor": actor,
             })
         session.commit()

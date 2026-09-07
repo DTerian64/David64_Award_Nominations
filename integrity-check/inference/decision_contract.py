@@ -97,6 +97,7 @@ def graph_result(result: dict) -> dict:
         "score_derivation": result.get("score_derivation"),
         "candidate_evaluation_version": result.get("candidate_evaluation_version"),
         "candidate_evaluation_ms": result.get("candidate_evaluation_ms"),
+        "candidate_evaluation": result.get("candidate_evaluation"),
         "inference_snapshot_blob": result.get("inference_snapshot_blob"),
         "inference_snapshot_sha256": result.get("inference_snapshot_sha256"),
         "inference_snapshot_schema_version": result.get(

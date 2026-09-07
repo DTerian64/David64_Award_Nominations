@@ -34,6 +34,14 @@ def _patterns():
             minimum_score=0,
             maximum_score=100,
             parameters={"evidence_weight": 50},
+            candidate_evaluation=(
+                {
+                    "max_states": 100_000,
+                    "max_ring_size": 8,
+                    "limit_strategy": "BEST_EVIDENCE",
+                }
+                if name == "Ring" else {}
+            ),
         )
         for display_order, name in enumerate(names, start=1)
     ]
@@ -63,6 +71,34 @@ class GraphPolicyValidationTests(unittest.TestCase):
     def test_display_order_must_be_unique_and_contiguous(self):
         patterns = _patterns()
         patterns[1].display_order = 1
+        with self.assertRaises(HTTPException) as raised:
+            _validate_graph_policy(GraphPolicyDraft(
+                thresholds=GraphThresholds(low=25, medium=50, high=75, critical=90),
+                detection_window_days=365,
+                snapshot_max_age_days=14,
+                patterns=patterns,
+            ))
+        self.assertEqual(raised.exception.status_code, 422)
+
+    def test_ring_candidate_evaluation_has_bounded_valid_values(self):
+        patterns = _patterns()
+        patterns[0].candidate_evaluation["max_ring_size"] = 9
+        with self.assertRaises(HTTPException) as raised:
+            _validate_graph_policy(GraphPolicyDraft(
+                thresholds=GraphThresholds(low=25, medium=50, high=75, critical=90),
+                detection_window_days=365,
+                snapshot_max_age_days=14,
+                patterns=patterns,
+            ))
+        self.assertEqual(raised.exception.status_code, 422)
+
+    def test_candidate_evaluation_is_ring_only(self):
+        patterns = _patterns()
+        patterns[1].candidate_evaluation = {
+            "max_states": 100,
+            "max_ring_size": 8,
+            "limit_strategy": "BEST_EVIDENCE",
+        }
         with self.assertRaises(HTTPException) as raised:
             _validate_graph_policy(GraphPolicyDraft(
                 thresholds=GraphThresholds(low=25, medium=50, high=75, critical=90),

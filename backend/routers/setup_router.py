@@ -17,7 +17,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import utils.sqlhelper2 as sqlhelper
 from auth import get_current_user, is_admin
@@ -272,6 +272,7 @@ class GraphPatternPolicy(BaseModel):
     minimum_score: float
     maximum_score: float
     parameters: dict[str, float]
+    candidate_evaluation: dict[str, object] = Field(default_factory=dict)
 
 
 class GraphPolicyDraft(BaseModel):
@@ -339,6 +340,43 @@ def _validate_graph_policy(payload: GraphPolicyDraft) -> None:
             raise HTTPException(
                 status_code=422,
                 detail=f"{item.pattern_type} parameters must be non-negative numbers",
+            )
+        candidate_evaluation = item.candidate_evaluation or {}
+        if item.pattern_type != "Ring":
+            if candidate_evaluation:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"{item.pattern_type} does not support candidate-evaluation settings"
+                    ),
+                )
+            continue
+        required = {"max_states", "max_ring_size", "limit_strategy"}
+        if set(candidate_evaluation) != required:
+            raise HTTPException(
+                status_code=422,
+                detail="Ring candidate evaluation requires max_states, max_ring_size, and limit_strategy",
+            )
+        max_states = candidate_evaluation["max_states"]
+        max_ring_size = candidate_evaluation["max_ring_size"]
+        if isinstance(max_states, bool) or not isinstance(max_states, int) or max_states <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Ring maximum search states must be a positive whole number",
+            )
+        if (
+            isinstance(max_ring_size, bool)
+            or not isinstance(max_ring_size, int)
+            or not 3 <= max_ring_size <= 8
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Ring maximum size must be a whole number between 3 and 8",
+            )
+        if candidate_evaluation["limit_strategy"] != "BEST_EVIDENCE":
+            raise HTTPException(
+                status_code=422,
+                detail="Ring limit strategy must be BEST_EVIDENCE",
             )
 
 

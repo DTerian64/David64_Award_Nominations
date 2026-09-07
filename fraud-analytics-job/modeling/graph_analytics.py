@@ -133,7 +133,8 @@ def _load_active_graph_policy(
     }
     cur.execute("""
         SELECT PatternType, Enabled, EnabledForRouting, ApplicableRolesJson,
-               BaseScore, MinimumScore, MaximumScore, ParametersJson
+               BaseScore, MinimumScore, MaximumScore, ParametersJson,
+               CandidateEvaluationJson
         FROM dbo.GraphScoringPatternParameters
         WHERE PolicyId = ?
     """, policy["policy_id"])
@@ -141,6 +142,7 @@ def _load_active_graph_policy(
         try:
             roles = json.loads(item[3]) if item[3] else []
             parameters = json.loads(item[7]) if item[7] else {}
+            candidate_evaluation = json.loads(item[8]) if item[8] else {}
         except (json.JSONDecodeError, TypeError) as exc:
             raise RuntimeError(
                 f"Invalid Graph policy JSON for tenant {tenant_id}, pattern {item[0]}"
@@ -153,6 +155,7 @@ def _load_active_graph_policy(
             "minimum_score": float(item[5]),
             "maximum_score": float(item[6]),
             "parameters": parameters,
+            "candidate_evaluation": candidate_evaluation,
         }
     return policy
 

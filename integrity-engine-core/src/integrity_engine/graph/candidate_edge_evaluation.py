@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 import heapq
@@ -154,6 +154,16 @@ class RingEvaluation:
     paths_considered: int
     states_visited: int
     states_generated: int
+    search_status: str = "COMPLETE"
+    search_complete: bool = True
+    score_semantics: str = "EXACT"
+    configured_max_states: int = 100_000
+    configured_max_ring_size: int = 8
+    limit_strategy: str = "BEST_EVIDENCE"
+    pruned_unreachable: int = 0
+    pruned_by_bound: int = 0
+    pruned_by_dominance: int = 0
+    remaining_score_upper_bound: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -171,6 +181,16 @@ class RingEvaluation:
             "paths_considered": self.paths_considered,
             "states_visited": self.states_visited,
             "states_generated": self.states_generated,
+            "search_status": self.search_status,
+            "search_complete": self.search_complete,
+            "score_semantics": self.score_semantics,
+            "configured_max_states": self.configured_max_states,
+            "configured_max_ring_size": self.configured_max_ring_size,
+            "limit_strategy": self.limit_strategy,
+            "pruned_unreachable": self.pruned_unreachable,
+            "pruned_by_bound": self.pruned_by_bound,
+            "pruned_by_dominance": self.pruned_by_dominance,
+            "remaining_score_upper_bound": self.remaining_score_upper_bound,
         }
 
 
@@ -186,8 +206,9 @@ def evaluate_candidate_edge_for_ring(
     snapshot: GraphInferenceSnapshot,
     candidate: CandidateNomination,
     *,
-    max_states: int = 100_000,
-    max_ring_size: int = 8,
+    max_states: int | None = None,
+    max_ring_size: int | None = None,
+    require_complete: bool = False,
 ) -> RingEvaluation | None:
     """Return the best ring completed by the candidate edge.
 
@@ -201,9 +222,30 @@ def evaluate_candidate_edge_for_ring(
     ring = _ring_config(snapshot.scoring_policy)
     if not bool(ring.get("enabled", True)):
         return None
+    candidate_policy = ring.get("candidate_evaluation") or {}
+    configured_max_states = int(
+        max_states
+        if max_states is not None
+        else candidate_policy.get("max_states", 100_000)
+    )
+    configured_max_ring_size = int(
+        max_ring_size
+        if max_ring_size is not None
+        else candidate_policy.get("max_ring_size", 8)
+    )
+    limit_strategy = str(
+        candidate_policy.get("limit_strategy", "BEST_EVIDENCE")
+    ).upper()
+    if configured_max_states <= 0:
+        raise ValueError("Ring candidate max_states must be positive")
+    if not 3 <= configured_max_ring_size <= 8:
+        raise ValueError("Ring candidate max_ring_size must be between 3 and 8")
+    if limit_strategy != "BEST_EVIDENCE":
+        raise ValueError(f"Unsupported Ring limit strategy: {limit_strategy}")
 
     edge_items: dict[tuple[int, int], list[SnapshotNomination]] = defaultdict(list)
     adjacency: dict[int, set[int]] = defaultdict(set)
+    reverse_adjacency: dict[int, set[int]] = defaultdict(set)
     for item in snapshot.nominations:
         if (
             item.nomination_id == candidate.nomination_id
@@ -214,22 +256,23 @@ def evaluate_candidate_edge_for_ring(
         key = (item.nominator_id, item.beneficiary_id)
         edge_items[key].append(item)
         adjacency[item.nominator_id].add(item.beneficiary_id)
+        reverse_adjacency[item.beneficiary_id].add(item.nominator_id)
 
     edge_amount = {
         key: sum(item.amount for item in items)
         for key, items in edge_items.items()
     }
     edge_nomination_count = {key: len(items) for key, items in edge_items.items()}
-    maximum_edge_amount = max(edge_amount.values(), default=0.0)
-    maximum_edge_count = max(edge_nomination_count.values(), default=0)
-
     start = candidate.beneficiary_id
     target = candidate.nominator_id
-    max_historical_edges = max(2, min(max_ring_size - 1, 7))
+    max_historical_edges = configured_max_ring_size - 1
     best: tuple[tuple, RingEvaluation] | None = None
     states_visited = 0
     states_generated = 1
     paths_considered = 0
+    pruned_unreachable = 0
+    pruned_by_bound = 0
+    pruned_by_dominance = 0
 
     parameters = ring.get("parameters") or {}
     amount_reference = max(float(parameters.get("amount_reference", 10_000)), 1.0)
@@ -252,81 +295,235 @@ def evaluate_candidate_edge_for_ring(
             signals=signals,
         )
 
+    def shortest_distances(
+        origin: int,
+        graph: Mapping[int, set[int]],
+    ) -> dict[int, int]:
+        distances = {origin: 0}
+        pending = deque([origin])
+        while pending:
+            node = pending.popleft()
+            if distances[node] >= max_historical_edges:
+                continue
+            for neighbor in sorted(graph.get(node, ())):
+                if neighbor not in distances:
+                    distances[neighbor] = distances[node] + 1
+                    pending.append(neighbor)
+        return distances
+
+    distance_from_start = shortest_distances(start, adjacency)
+    distance_to_target = shortest_distances(target, reverse_adjacency)
+    if target not in distance_from_start:
+        return None
+
+    corridor_nodes = {
+        node for node, forward_distance in distance_from_start.items()
+        if node in distance_to_target
+        and forward_distance + distance_to_target[node] <= max_historical_edges
+    }
+    corridor_adjacency: dict[int, tuple[int, ...]] = {}
+    for node in sorted(corridor_nodes):
+        neighbors = tuple(
+            neighbor for neighbor in sorted(adjacency.get(node, ()))
+            if neighbor in corridor_nodes
+            and distance_from_start[node] + 1 + distance_to_target[neighbor]
+            <= max_historical_edges
+        )
+        corridor_adjacency[node] = neighbors
+        pruned_unreachable += len(adjacency.get(node, ())) - len(neighbors)
+    pruned_unreachable += sum(
+        len(neighbors) for node, neighbors in adjacency.items()
+        if node not in corridor_nodes
+    )
+
+    amount_bound_cache: dict[tuple[int, int], float | None] = {}
+    count_bound_cache: dict[tuple[int, int], int | None] = {}
+
+    def maximum_additional_metric(
+        node: int,
+        exact_edges: int,
+        metric: Mapping[tuple[int, int], float | int],
+        cache: dict,
+    ):
+        key = (node, exact_edges)
+        if key in cache:
+            return cache[key]
+        if exact_edges == 0:
+            result = 0 if node == target else None
+        else:
+            values = []
+            for neighbor in corridor_adjacency.get(node, ()):
+                remainder = maximum_additional_metric(
+                    neighbor, exact_edges - 1, metric, cache
+                )
+                if remainder is not None:
+                    values.append(metric[(node, neighbor)] + remainder)
+            result = max(values) if values else None
+        cache[key] = result
+        return result
+
     def upper_bound(path: tuple[int, ...], amount: float, count: int) -> float:
         used_edges = len(path) - 1
         remaining = max_historical_edges - used_edges
-        # A completion needs at least one more edge and at least three users.
-        shortest_size = max(3, len(path) + 1)
-        possible_amount = amount + remaining * maximum_edge_amount
-        possible_count = count + remaining * maximum_edge_count
-        return score_ring_path_finding(
-            shortest_size, possible_amount, possible_count
-        )[0]
+        minimum_more = max(1, 2 - used_edges)
+        bounds = []
+        for additional_edges in range(minimum_more, remaining + 1):
+            possible_amount = maximum_additional_metric(
+                path[-1], additional_edges, edge_amount, amount_bound_cache
+            )
+            possible_count = maximum_additional_metric(
+                path[-1], additional_edges, edge_nomination_count, count_bound_cache
+            )
+            if possible_amount is None or possible_count is None:
+                continue
+            ring_size = used_edges + additional_edges + 1
+            bounds.append(score_ring_path_finding(
+                ring_size,
+                amount + float(possible_amount),
+                count + int(possible_count),
+            )[0])
+        return max(bounds, default=float("-inf"))
+
+    def build_evaluation(path: tuple[int, ...]) -> RingEvaluation:
+        nonlocal paths_considered
+        paths_considered += 1
+        historical: list[SnapshotNomination] = []
+        for source, destination in zip(path, path[1:]):
+            historical.extend(edge_items[(source, destination)])
+        nomination_ids = tuple(sorted(
+            {item.nomination_id for item in historical} | {candidate.nomination_id}
+        ))
+        total_amount = candidate.amount + sum(item.amount for item in historical)
+        nomination_count = 1 + len(historical)
+        score, components = score_ring_path_finding(
+            len(path), total_amount, nomination_count
+        )
+        return RingEvaluation(
+            detector="Ring",
+            evaluation_mode="CANDIDATE_EDGE",
+            evidence_scope="CURRENT_NOMINATION",
+            score=score,
+            severity=derive_graph_finding_severity(
+                score, snapshot.scoring_policy["thresholds"]
+            ),
+            score_components=components,
+            affected_user_ids=tuple(sorted(path)),
+            supporting_nomination_ids=nomination_ids,
+            total_amount=round(total_amount, 2),
+            candidate_nomination_id=candidate.nomination_id,
+            path_user_ids=tuple(path) + (start,),
+            paths_considered=0,
+            states_visited=0,
+            states_generated=0,
+            search_status="COMPLETE",
+            search_complete=True,
+            score_semantics="EXACT",
+            configured_max_states=configured_max_states,
+            configured_max_ring_size=configured_max_ring_size,
+            limit_strategy=limit_strategy,
+            pruned_unreachable=0,
+            pruned_by_bound=0,
+            pruned_by_dominance=0,
+            remaining_score_upper_bound=None,
+        )
+
+    def consider(path: tuple[int, ...]) -> None:
+        nonlocal best
+        evaluation = build_evaluation(path)
+        rank = (
+            -evaluation.score,
+            len(path),
+            tuple(path),
+            evaluation.supporting_nomination_ids,
+        )
+        if best is None or rank < best[0]:
+            best = (rank, evaluation)
+
+    # Establish concrete evidence before the bounded optimization search.
+    # Three-person rings are both important and cheap to enumerate.
+    for middle in corridor_adjacency.get(start, ()):
+        if middle not in (start, target) and target in corridor_adjacency.get(middle, ()):
+            consider((start, middle, target))
+
+    if best is None:
+        # Remove direct reciprocity and find the deterministic shortest return
+        # path. A shortest path is simple, so this proves a Ring exists without
+        # enumerating the dense set of longer alternatives.
+        pending = deque([(start, (start,))])
+        seen = {start}
+        while pending and best is None:
+            node, path = pending.popleft()
+            if len(path) - 1 >= max_historical_edges:
+                continue
+            for neighbor in corridor_adjacency.get(node, ()):
+                if node == start and neighbor == target:
+                    continue
+                if neighbor in path:
+                    continue
+                new_path = path + (neighbor,)
+                if neighbor == target:
+                    consider(new_path)
+                    break
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    pending.append((neighbor, new_path))
+
+    if best is None:
+        # Reachability may be supplied only by a two-person reciprocal edge,
+        # which is intentionally not a Ring.
+        return None
+
+    maximum_score = float(ring.get("maximum_score", 100.0))
+    if best[1].score >= maximum_score:
+        result = best[1]
+        return RingEvaluation(**{
+            **result.__dict__,
+            "paths_considered": paths_considered,
+            "states_visited": states_visited,
+            "states_generated": states_generated,
+            "pruned_unreachable": pruned_unreachable,
+        })
 
     initial_path = (start,)
     initial_amount = candidate.amount
     initial_count = 1
-    queue: list[tuple[float, int, tuple[int, ...], float, int]] = [(
-        -upper_bound(initial_path, initial_amount, initial_count),
+    initial_bound = upper_bound(initial_path, initial_amount, initial_count)
+    queue: list[tuple[float, int, float, int, tuple[int, ...], float, int]] = [(
+        -initial_bound,
         1,
+        -initial_amount,
+        -initial_count,
         initial_path,
         initial_amount,
         initial_count,
     )]
+    dominance: dict[tuple[int, int, frozenset[int]], list[tuple[float, int, tuple[int, ...]]]] = {}
+    limited = False
+    remaining_upper_bound: float | None = None
 
     while queue:
-        negative_bound, _path_length, path, accumulated_amount, accumulated_count = heapq.heappop(queue)
-        if best is not None and -negative_bound < best[1].score:
+        (
+            negative_bound, _path_length, _negative_amount, _negative_count,
+            path, accumulated_amount, accumulated_count,
+        ) = heapq.heappop(queue)
+        branch_bound = -negative_bound
+        if best is not None and branch_bound <= best[1].score:
+            pruned_by_bound += 1
             continue
         node = path[-1]
         states_visited += 1
-        if states_visited > max_states:
-            raise EvaluationLimitExceeded(
-                f"Ring candidate search exceeded {max_states} states"
-            )
         path_edge_count = len(path) - 1
         if node == target:
             if path_edge_count < 2:
                 continue
-            paths_considered += 1
-            historical: list[SnapshotNomination] = []
-            for source, destination in zip(path, path[1:]):
-                historical.extend(edge_items[(source, destination)])
-            nomination_ids = sorted(
-                {item.nomination_id for item in historical} | {candidate.nomination_id}
-            )
-            total_amount = accumulated_amount
-            size = len(path)
-            score, components = score_ring_path_finding(
-                size, total_amount, accumulated_count
-            )
-            thresholds = snapshot.scoring_policy["thresholds"]
-            evaluation = RingEvaluation(
-                detector="Ring",
-                evaluation_mode="CANDIDATE_EDGE",
-                evidence_scope="CURRENT_NOMINATION",
-                score=score,
-                severity=derive_graph_finding_severity(score, thresholds),
-                score_components=components,
-                affected_user_ids=tuple(sorted(path)),
-                supporting_nomination_ids=tuple(nomination_ids),
-                total_amount=round(total_amount, 2),
-                candidate_nomination_id=candidate.nomination_id,
-                path_user_ids=tuple(path) + (start,),
-                paths_considered=paths_considered,
-                states_visited=states_visited,
-                states_generated=states_generated,
-            )
-            # Highest score wins. Remaining fields make ties stable regardless
-            # of set/dictionary iteration or source query ordering.
-            rank = (-score, size, tuple(path), tuple(nomination_ids))
-            if best is None or rank < best[0]:
-                best = (rank, evaluation)
+            consider(path)
+            if best[1].score >= maximum_score:
+                queue.clear()
             continue
         if path_edge_count >= max_historical_edges:
             continue
         neighbors = sorted(
-            adjacency.get(node, ()),
+            corridor_adjacency.get(node, ()),
             key=lambda neighbor: (
                 -edge_amount[(node, neighbor)],
                 -edge_nomination_count[(node, neighbor)],
@@ -337,30 +534,78 @@ def evaluate_candidate_edge_for_ring(
             if neighbor in path:
                 continue
             new_path = path + (neighbor,)
+            new_depth = len(new_path) - 1
+            if new_depth + distance_to_target.get(neighbor, max_historical_edges + 1) > max_historical_edges:
+                pruned_unreachable += 1
+                continue
             new_amount = accumulated_amount + edge_amount[(node, neighbor)]
             new_count = accumulated_count + edge_nomination_count[(node, neighbor)]
-            bound = upper_bound(new_path, new_amount, new_count)
-            if best is not None and bound < best[1].score:
+            if neighbor == target:
+                if new_depth >= 2:
+                    consider(new_path)
+                    if best[1].score >= maximum_score:
+                        queue.clear()
+                        break
                 continue
-            states_generated += 1
-            if states_generated > max_states:
-                raise EvaluationLimitExceeded(
-                    f"Ring candidate search exceeded {max_states} generated states"
+            bound = upper_bound(new_path, new_amount, new_count)
+            if best is not None and bound <= best[1].score:
+                pruned_by_bound += 1
+                continue
+            dominance_key = (neighbor, len(new_path), frozenset(new_path))
+            prior_states = dominance.setdefault(dominance_key, [])
+            if any(
+                prior_amount >= new_amount and prior_count >= new_count
+                for prior_amount, prior_count, _prior_path in prior_states
+            ):
+                pruned_by_dominance += 1
+                continue
+            dominance[dominance_key] = [
+                prior for prior in prior_states
+                if not (
+                    new_amount >= prior[0] and new_count >= prior[1]
+                    and (new_amount > prior[0] or new_count > prior[1])
                 )
+            ] + [(new_amount, new_count, new_path)]
+            if states_generated >= configured_max_states:
+                limited = True
+                remaining_upper_bound = max(
+                    bound,
+                    -queue[0][0] if queue else float("-inf"),
+                )
+                break
+            states_generated += 1
             heapq.heappush(
                 queue,
-                (-bound, len(new_path), new_path, new_amount, new_count),
+                (
+                    -bound, len(new_path), -new_amount, -new_count,
+                    new_path, new_amount, new_count,
+                ),
             )
+        if limited:
+            break
 
-    if best is None:
-        return None
+    if limited and require_complete:
+        raise EvaluationLimitExceeded(
+            f"Ring candidate search reached its {configured_max_states} state budget"
+        )
     result = best[1]
-    # Report totals for the complete search, not the moment the winner appeared.
     return RingEvaluation(
         **{
             **result.__dict__,
             "paths_considered": paths_considered,
             "states_visited": states_visited,
             "states_generated": states_generated,
+            "search_status": "BOUNDED" if limited else "COMPLETE",
+            "search_complete": not limited,
+            "score_semantics": "LOWER_BOUND" if limited else "EXACT",
+            "configured_max_states": configured_max_states,
+            "pruned_unreachable": pruned_unreachable,
+            "pruned_by_bound": pruned_by_bound,
+            "pruned_by_dominance": pruned_by_dominance,
+            "remaining_score_upper_bound": (
+                round(float(remaining_upper_bound), 2)
+                if limited and remaining_upper_bound is not None
+                else None
+            ),
         }
     )
