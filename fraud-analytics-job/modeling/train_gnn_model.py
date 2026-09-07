@@ -9,7 +9,8 @@ Per tenant:
     2. Build the per-tenant heterogeneous graph from dbo.Nominations / dbo.Users.
     3. Train the encoder + decoder end to end with a three-window temporal split.
     4. Publish per-user node embeddings to dbo.GNN_UserEmbeddings.
-    5. Upload gnn_encoder_tenant_<N>.pt (audit) and gnn_head_tenant_<N>.pt (inference).
+    5. Upload gnn/gnn_encoder_tenant_<N>.pt (audit) and
+       gnn/gnn_head_tenant_<N>.pt (inference).
     6. Evict node embeddings older than the retention window.
 
 Ordering rationale
@@ -479,9 +480,9 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     # Upload model artifacts encoder first and head second: until the head lands,
     # inference finds no decoder for this version and scores nothing. The JSON
     # representation is presentation metadata and is published only afterward.
-    _upload_artefact(enc_path)
-    _upload_artefact(head_path)
-    _upload_artefact(manifest_path)
+    _upload_artefact(enc_path, blob_folder="gnn")
+    _upload_artefact(head_path, blob_folder="gnn")
+    _upload_artefact(manifest_path, blob_folder="gnn")
 
     n_evicted = _evict_stale_embeddings(conn, tenant_id, GNN_EMBEDDING_RETENTION_DAYS)
 

@@ -25,9 +25,11 @@ resource "azurerm_storage_account" "storage" {
   # ── Artifact recovery ───────────────────────────────────────────────────────
   # Both ML pipelines overwrite their model artifacts in place:
   #   modeling.train_rf_model._upload_artefact() -> upload_blob(..., overwrite=True)
-  #     random_forest_tenant_<N>.pkl            (Random Forest)
-  #     gnn_encoder_tenant_<N>.pt              (GNN encoder — audit/retrain)
-  #     gnn_head_tenant_<N>.pt                 (GNN decoder — read by inference)
+  #     random_forest/random_forest_tenant_<N>.pkl (Random Forest)
+  #     gnn/gnn_encoder_tenant_<N>.pt              (GNN encoder — audit/retrain)
+  #     gnn/gnn_head_tenant_<N>.pt                 (GNN decoder — read by inference)
+  # Graph snapshots are immutable and grouped by analytics execution:
+  #     graph/runs/<run-id>/inference-snapshot-tenant-<N>.json.gz
   #
   # Without versioning that overwrite is destructive: a bad weekly run replaces
   # the last known-good model and there is no way back except retraining, which

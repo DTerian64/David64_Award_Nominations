@@ -4,8 +4,8 @@ Random Forest Model Cache — Multi-Tenant Blob-Direct Edition
 
 One Random Forest model per tenant is trained by modeling/train_rf_model.py and
 stored in Azure Blob Storage as:
-    ml-models/random_forest_tenant_1.pkl
-    ml-models/random_forest_tenant_2.pkl
+    ml-models/random_forest/random_forest_tenant_1.pkl
+    ml-models/random_forest/random_forest_tenant_2.pkl
     ...
 
 Models are loaded ON DEMAND: the first get_model() call for a given tenant
@@ -97,7 +97,7 @@ class RandomForestModelCache:
     @staticmethod
     def _blob_name(tenant_id: int) -> str:
         """Canonical Random Forest artifact name."""
-        return f"random_forest_tenant_{tenant_id}.pkl"
+        return f"random_forest/random_forest_tenant_{tenant_id}.pkl"
 
     # ── Blob client factory ──────────────────────────────────────────────────
 

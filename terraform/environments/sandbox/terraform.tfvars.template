@@ -51,6 +51,7 @@ location_primary                = "eastus2"
 location_secondary              = "westus2"
 model_blob_name                 = "fraud_detection_model.pkl"
 logging_level                   = "INFO"   # DEBUG drives up Log Analytics ingestion cost — only use temporarily while troubleshooting
+graph_snapshot_cache_size       = 8        # Per integrity-check replica; tune for tenant count and snapshot size
 blob_sas_expiry_hours           = 24
 email_action_token_expiry_hours = 72
 

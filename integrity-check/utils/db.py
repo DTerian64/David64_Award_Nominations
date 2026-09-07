@@ -917,7 +917,7 @@ def get_gnn_user_embeddings(
 
     That distinction is what makes a decoder-only rollback work. dbo.GNN_UserEmbeddings
     is append-only within its retention window, so restoring a previous
-    gnn_head_tenant_<N>.pt is sufficient on its own: this query then picks up that
+    gnn/gnn_head_tenant_<N>.pt is sufficient on its own: this query then picks up that
     decoder's own generation of embeddings. Matching on "newest overall" instead
     would leave a rolled-back decoder permanently unable to score, because every
     lookup would return embeddings from a version it was not trained against.

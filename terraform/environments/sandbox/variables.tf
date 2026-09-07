@@ -56,9 +56,19 @@ variable "email_action_token_expiry_hours" {
   default = 72
 }
 variable "model_idle_ttl_seconds" {
-  description = "Seconds a per-tenant fraud model can sit idle before being evicted from memory. Shorter in sandbox to make eviction observable during development."
+  description = "Seconds a per-tenant RF, GNN, or Graph artifact can sit idle before being evicted from memory. Shorter in sandbox to make eviction observable during development."
   type        = number
   default     = 600
+}
+variable "graph_snapshot_cache_size" {
+  description = "Maximum number of Graph inference snapshots retained in memory by each integrity-check replica."
+  type        = number
+  default     = 8
+
+  validation {
+    condition     = var.graph_snapshot_cache_size >= 1 && floor(var.graph_snapshot_cache_size) == var.graph_snapshot_cache_size
+    error_message = "graph_snapshot_cache_size must be a positive whole number."
+  }
 }
 variable "model_eviction_interval_seconds" {
   description = "How often the eviction background loop runs. Faster in sandbox for easier testing."

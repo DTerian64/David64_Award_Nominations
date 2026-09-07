@@ -48,6 +48,20 @@ def decision(risk: str = "NONE", *, available: bool = True) -> dict:
 
 
 class RoutingRuleTests(unittest.TestCase):
+    @patch.object(handler.graph_check, "_evict_idle_snapshots", return_value=3)
+    @patch.object(handler.gnn_check, "_evict_idle_heads", return_value=2)
+    @patch.object(handler.random_forest_check, "_evict_idle_models", return_value=1)
+    def test_idle_artifact_eviction_covers_all_three_engines(
+        self, evict_rf, evict_gnn, evict_graph
+    ):
+        self.assertEqual(
+            handler.evict_idle_artifacts(),
+            {"rf": 1, "gnn": 2, "graph": 3},
+        )
+        evict_rf.assert_called_once_with()
+        evict_gnn.assert_called_once_with()
+        evict_graph.assert_called_once_with()
+
     def test_description_rejection_has_final_routing_priority(self):
         desc = description_check.CheckResult("reject", "Incoherent.", "category_alignment")
         route = handler._select_route(desc, decision("CRITICAL"))

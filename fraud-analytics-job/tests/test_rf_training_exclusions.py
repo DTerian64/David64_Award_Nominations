@@ -158,6 +158,10 @@ class RFHistoricalRateTests(unittest.TestCase):
             json.dumps(manifest, allow_nan=False)
             self.assertTrue((root / 'random_forest_tenant_2.png').is_file())
             self.assertEqual(upload.call_count, 3)
+            self.assertTrue(all(
+                call.kwargs.get('blob_folder') == 'random_forest'
+                for call in upload.call_args_list
+            ))
 
     def test_tenant_failure_logs_underlying_exception_and_records_status(self):
         with (

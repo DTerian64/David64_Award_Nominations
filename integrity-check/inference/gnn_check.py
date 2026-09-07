@@ -6,7 +6,8 @@ Structural twin of random_forest_check.py, for the third fraud model.
 
 What runs here is only the DECODER. The weekly fraud-analytics-job trains a
 heterogeneous GraphSAGE encoder, publishes per-user node embeddings to
-dbo.GNN_UserEmbeddings, and uploads the decoder as gnn_head_tenant_<N>.pt.
+dbo.GNN_UserEmbeddings, and uploads the decoder as
+gnn/gnn_head_tenant_<N>.pt.
 Inference is two keyed embedding lookups plus a small MLP forward
 pass — no graph traversal, no PyTorch Geometric, no new dependency in this
 image (torch is already here via sentence-transformers).
@@ -41,7 +42,7 @@ mismatch, and the model goes dark.
 So the lookup selects the newest snapshot WHOSE ModelVersion MATCHES THE
 DECODER. Because dbo.GNN_UserEmbeddings is append-only within its retention
 window, last week's embeddings are still present, and restoring the previous
-gnn_head_tenant_<N>.pt is sufficient to roll the whole model back — no SQL
+gnn/gnn_head_tenant_<N>.pt is sufficient to roll the whole model back — no SQL
 surgery, no coordinated deploy.
 
 The equality assert is kept anyway, as a cheap invariant check on a path where
@@ -53,6 +54,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
@@ -74,36 +76,64 @@ _STORAGE_KEY     = os.getenv("AZURE_STORAGE_KEY")   # local dev only
 _STALE_EMBEDDING_DAYS = int(os.getenv("GNN_STALE_EMBEDDING_DAYS", "14"))
 
 # ── Per-tenant decoder cache ──────────────────────────────────────────────────
-# Streamed from blob on first assess_gnn() call per tenant and held for the
-# process lifetime. KEDA scales this container to zero when the queue drains, so
-# the cache evicts naturally between bursts — same reasoning as random_forest_check.py.
+# Streamed from Blob on first use and evicted after MODEL_IDLE_TTL_SECONDS of
+# inactivity. KEDA scale-to-zero remains the final whole-process cleanup.
 
-_head_cache: dict[int, dict | None] = {}
+_head_cache: dict[int, tuple[dict | None, float]] = {}
 _head_cache_lock = threading.Lock()
 
 
+def _evict_idle_heads(now: float | None = None) -> int:
+    """Drop tenant GNN decoder artifacts that have not been used recently."""
+    now = time.monotonic() if now is None else now
+    idle_ttl = max(1, int(os.getenv("MODEL_IDLE_TTL_SECONDS", "1800")))
+    with _head_cache_lock:
+        expired = [
+            tenant_id
+            for tenant_id, (_head, last_used) in _head_cache.items()
+            if now - last_used > idle_ttl
+        ]
+        for tenant_id in expired:
+            del _head_cache[tenant_id]
+    if expired:
+        logger.info("Evicted %d idle GNN decoder(s): %s", len(expired), expired)
+    return len(expired)
+
+
 def _get_head(tenant_id: int) -> dict | None:
+    now = time.monotonic()
+    _evict_idle_heads(now)
     with _head_cache_lock:
         if tenant_id in _head_cache:
-            return _head_cache[tenant_id]
+            head, _last_used = _head_cache[tenant_id]
+            _head_cache[tenant_id] = (head, now)
+            return head
 
     # Stream outside the lock so other tenants are not blocked.
     head = _stream_head_from_blob(tenant_id)
 
     with _head_cache_lock:
-        if tenant_id not in _head_cache:
-            _head_cache[tenant_id] = head
+        existing = _head_cache.get(tenant_id)
+        if existing is None:
+            _head_cache[tenant_id] = (head, time.monotonic())
             if head is not None:
                 logger.info(
                     "GNN decoder cached for tenant %d (version=%s, emb_dim=%d)",
                     tenant_id, head.get("model_version"), head.get("emb_dim", -1),
                 )
-    return _head_cache[tenant_id]
+            return head
+        existing_head, _last_used = existing
+        _head_cache[tenant_id] = (existing_head, time.monotonic())
+        return existing_head
+
+
+def _head_blob_name(tenant_id: int) -> str:
+    return f"gnn/gnn_head_tenant_{tenant_id}.pt"
 
 
 def _stream_head_from_blob(tenant_id: int) -> dict | None:
     """
-    Download and deserialise gnn_head_tenant_<N>.pt.
+    Download and deserialise gnn/gnn_head_tenant_<N>.pt.
 
     weights_only=True is deliberate and load-bearing. torch.save uses pickle
     underneath, so a .pt file is as executable as a .pkl unless restricted. The
@@ -117,7 +147,7 @@ def _stream_head_from_blob(tenant_id: int) -> dict | None:
     """
     from azure.storage.blob import BlobServiceClient
 
-    blob_name = f"gnn_head_tenant_{tenant_id}.pt"
+    blob_name = _head_blob_name(tenant_id)
 
     if _STORAGE_KEY:
         conn_str = (

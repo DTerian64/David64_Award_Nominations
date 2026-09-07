@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 from opentelemetry import context as otel_context
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from inference.handler import handle
+from inference.handler import evict_idle_artifacts, handle
 from logging_config import setup_logging
 from utils import db
 from utils.azure_credential import credential
@@ -125,6 +125,10 @@ def main() -> None:
                     max_wait_time=MAX_WAIT_TIME,
                 )
                 if not messages:
+                    # The receiver wakes at least every MAX_WAIT_TIME seconds,
+                    # so idle model memory is released even when no new
+                    # nomination arrives to trigger an inference cache lookup.
+                    evict_idle_artifacts()
                     continue
 
                 for message in messages:

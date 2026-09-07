@@ -66,7 +66,7 @@ variable "email_action_token_expiry_hours" {
   default = 24
 }
 variable "model_idle_ttl_seconds" {
-  description = "Seconds a per-tenant fraud model can sit idle before being evicted from memory. Default: 1800 (30 min)."
+  description = "Seconds a per-tenant RF, GNN, or Graph artifact can sit idle before being evicted from memory. Default: 1800 (30 min)."
   type        = number
   default     = 1800
 }

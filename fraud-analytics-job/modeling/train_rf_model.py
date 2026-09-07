@@ -15,8 +15,8 @@ Why separate files?
     - Models can be retrained and uploaded independently without touching
       production scoring for other tenants.
 
-After training, each .pkl is uploaded directly to Azure Blob Storage under
-the same filename. The backend RandomForestModelCache streams models directly from
+After training, each .pkl is uploaded to the ``random_forest/`` folder in Azure
+Blob Storage. The backend RandomForestModelCache streams models directly from
 blob (no local copy); idle models are evicted from the in-process cache after
 MODEL_IDLE_TTL_SECONDS.  The next request after eviction re-streams the blob,
 so fresh models propagate automatically within one TTL period of upload — no
@@ -97,9 +97,9 @@ load_dotenv(env_path)
 
 # ── Blob Storage upload helper ─────────────────────────────────────────────────
 
-def _upload_artefact(local_path: Path) -> None:
+def _upload_artefact(local_path: Path, *, blob_folder: str) -> None:
     """
-    Upload a local file to Azure Blob Storage under its local filename.
+    Upload a local file to its model-family folder in Azure Blob Storage.
     Uses the User-Assigned Managed Identity
     injected via MI_CLIENT_ID; falls back to env-var key auth when
     running locally with AZURE_STORAGE_KEY set.
@@ -135,11 +135,12 @@ def _upload_artefact(local_path: Path) -> None:
                 credential=DefaultAzureCredential(managed_identity_client_id=os.getenv("MI_CLIENT_ID")),
             )
 
-        blob_client = client.get_blob_client(container=container, blob=local_path.name)
+        blob_name = f"{blob_folder.strip('/')}/{local_path.name}"
+        blob_client = client.get_blob_client(container=container, blob=blob_name)
         with open(local_path, "rb") as f:
             blob_client.upload_blob(f, overwrite=True)
 
-        print(f"  ✓ Uploaded '{local_path.name}' → blob://{account}/{container}/{local_path.name}")
+        print(f"  ✓ Uploaded '{local_path.name}' → blob://{account}/{container}/{blob_name}")
 
     except Exception as exc:
         # Non-fatal: model is still saved locally for the duration of the run.
@@ -849,7 +850,7 @@ def train_model(
         pickle.dump(model_data, f)
 
     print(f"\n✓ Model saved to '{pkl_filename}'")
-    _upload_artefact(pkl_filename)
+    _upload_artefact(pkl_filename, blob_folder="random_forest")
 
     # ── Visualisations ────────────────────────────────────────────────────────
     # Compute probability arrays from the already-loaded df so we don't need
@@ -871,7 +872,7 @@ def train_model(
         pkl_path=pkl_filename,
         png_path=OUTPUT_DIR / f"random_forest_tenant_{tenant_id}.png",
     )
-    _upload_artefact(manifest_path)
+    _upload_artefact(manifest_path, blob_folder="random_forest")
 
     return model_data, training_metrics
 
@@ -909,7 +910,7 @@ def create_visualizations(
     png_filename = OUTPUT_DIR / f"random_forest_tenant_{tenant_id}.png"
     plt.savefig(png_filename, dpi=300, bbox_inches='tight')
     print(f"✓ Visualisation saved to '{png_filename}'")
-    _upload_artefact(png_filename)
+    _upload_artefact(png_filename, blob_folder="random_forest")
     plt.close()
 
 

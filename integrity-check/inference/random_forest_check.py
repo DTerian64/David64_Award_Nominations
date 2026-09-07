@@ -3,7 +3,7 @@ random_forest_check.py — Random Forest nomination inference.
 =========================================================================
 
 Owns the full fraud detection pipeline:
-  • Per-tenant RF model cache (blob-direct, lazy-loaded, process-lifetime)
+  • Per-tenant RF model cache (blob-direct, lazy-loaded, idle eviction)
   • Per-tenant SHAP TreeExplainer cache (lazy-created alongside model)
   • Sentence-transformer embedding cache (module singleton)
   • Feature engineering — behavioural + semantic, mirrors modeling/train_rf_model.py
@@ -39,6 +39,7 @@ import os
 import pickle
 import re
 import threading
+import time
 from datetime import datetime, timezone
 
 import numpy as np
@@ -103,12 +104,33 @@ def _is_independent_rf_artifact(model_data: object) -> bool:
 
 
 # ── Per-tenant model cache ────────────────────────────────────────────────────
-# Streamed from blob on first assess() call per tenant, held for the process
-# lifetime. KEDA scales the container to zero when the queue drains, so the
-# cache naturally evicts between bursts — no TTL needed.
+# Streamed from Blob on first use and evicted after the same idle period used
+# by the backend RF cache. KEDA scale-to-zero remains the final whole-process
+# cleanup, while this bound prevents a busy multi-tenant replica accumulating
+# every tenant model indefinitely.
 
-_model_cache: dict[int, dict | None] = {}
+_model_cache: dict[int, tuple[dict | None, float]] = {}
 _model_cache_lock = threading.Lock()
+
+
+def _evict_idle_models(now: float | None = None) -> int:
+    """Drop RF artifacts (and their embedded SHAP explainers) after inactivity."""
+    now = time.monotonic() if now is None else now
+    idle_ttl = max(1, int(os.getenv("MODEL_IDLE_TTL_SECONDS", "1800")))
+    with _model_cache_lock:
+        expired = [
+            tenant_id
+            for tenant_id, (_model, last_used) in _model_cache.items()
+            if now - last_used > idle_ttl
+        ]
+        for tenant_id in expired:
+            del _model_cache[tenant_id]
+    if expired:
+        logger.info(
+            "Evicted %d idle Random Forest artifact(s): %s",
+            len(expired), expired,
+        )
+    return len(expired)
 
 # ── Per-tenant integrity config cache ─────────────────────────────────────────
 # Loaded from dbo.Tenants on first assess() call per tenant, held for the
@@ -152,25 +174,32 @@ def _score_routing_thresholds(tenant_id: int) -> dict:
 
 def _get_model(tenant_id: int) -> dict | None:
     """Return cached model, streaming from blob on first access."""
+    now = time.monotonic()
+    _evict_idle_models(now)
     with _model_cache_lock:
         if tenant_id in _model_cache:
-            return _model_cache[tenant_id]
+            model_data, _last_used = _model_cache[tenant_id]
+            _model_cache[tenant_id] = (model_data, now)
+            return model_data
 
     # Stream outside the lock so other tenants aren't blocked.
     model_data = _stream_from_blob(tenant_id)
 
     with _model_cache_lock:
-        if tenant_id not in _model_cache:
-            _model_cache[tenant_id] = model_data
+        existing = _model_cache.get(tenant_id)
+        if existing is None:
+            _model_cache[tenant_id] = (model_data, time.monotonic())
             if model_data is not None:
                 logger.info("Fraud model cached for tenant %d", tenant_id)
-
-    return _model_cache[tenant_id]
+            return model_data
+        existing_model, _last_used = existing
+        _model_cache[tenant_id] = (existing_model, time.monotonic())
+        return existing_model
 
 
 def _stream_from_blob(tenant_id: int) -> dict | None:
     from azure.storage.blob import BlobServiceClient
-    blob_name = f"random_forest_tenant_{tenant_id}.pkl"
+    blob_name = f"random_forest/random_forest_tenant_{tenant_id}.pkl"
 
     if _STORAGE_KEY:
         conn_str = (

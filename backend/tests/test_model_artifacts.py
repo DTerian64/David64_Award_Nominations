@@ -24,7 +24,10 @@ class ModelArtifactTests(unittest.TestCase):
         self.assertEqual(list(result["models"]), ["p2p"])
         self.assertEqual(result["retired_components"], ["approver"])
         self.assertNotIn("appr_auc", result["training"])
-        self.assertEqual(download.call_args.args[0], "random_forest_tenant_7.manifest.json")
+        self.assertEqual(
+            download.call_args.args[0],
+            "random_forest/random_forest_tenant_7.manifest.json",
+        )
 
     @patch("utils.model_artifacts._download")
     def test_gnn_manifest_rejects_a_tenant_mismatch(self, download):
@@ -36,6 +39,10 @@ class ModelArtifactTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "tenant"):
             model_artifacts.get_manifest(tenant_id=7, component="gnn")
+        self.assertEqual(
+            download.call_args.args[0],
+            "gnn/gnn_tenant_7.manifest.json",
+        )
 
     @patch("utils.model_artifacts._download")
     def test_rf_visualization_uses_server_constructed_tenant_blob_name(self, download):
@@ -47,8 +54,14 @@ class ModelArtifactTests(unittest.TestCase):
         }).encode(), b"png"]
 
         self.assertEqual(model_artifacts.get_rf_visualization(9), b"png")
-        self.assertEqual(download.call_args_list[0].args[0], "random_forest_tenant_9.manifest.json")
-        self.assertEqual(download.call_args_list[1].args[0], "random_forest_tenant_9.png")
+        self.assertEqual(
+            download.call_args_list[0].args[0],
+            "random_forest/random_forest_tenant_9.manifest.json",
+        )
+        self.assertEqual(
+            download.call_args_list[1].args[0],
+            "random_forest/random_forest_tenant_9.png",
+        )
 
     @patch("utils.model_artifacts._download")
     def test_rf_visualization_hides_a_legacy_approver_chart(self, download):

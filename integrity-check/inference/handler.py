@@ -37,6 +37,15 @@ logger = logging.getLogger("integrity_check.handler")
 ACTOR_DESCRIPTION_CHECK = "Fraud Detection (Description)"
 
 
+def evict_idle_artifacts() -> dict[str, int]:
+    """Release tenant model artifacts that have exceeded the shared idle TTL."""
+    return {
+        "rf": random_forest_check._evict_idle_models(),
+        "gnn": gnn_check._evict_idle_heads(),
+        "graph": graph_check._evict_idle_snapshots(),
+    }
+
+
 def _select_route(desc_result, decision: dict) -> dict:
     """Return the final rules-based route after every assessment is persisted."""
     if desc_result.action == "reject":

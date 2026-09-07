@@ -187,6 +187,14 @@ def _get_connection() -> pyodbc.Connection:
     return connect()
 
 
+def _graph_snapshot_blob_name(tenant_id: int, run_id: str) -> str:
+    """Return the immutable Blob path shared by one multi-tenant Graph run."""
+    return (
+        f"graph/runs/{run_id}/"
+        f"inference-snapshot-tenant-{tenant_id}.json.gz"
+    )
+
+
 def _publish_graph_inference_snapshot(
     *,
     tenant_id: int,
@@ -234,7 +242,7 @@ def _publish_graph_inference_snapshot(
     ).encode("utf-8")
     compressed = gzip.compress(serialized, compresslevel=6, mtime=0)
     digest = hashlib.sha256(compressed).hexdigest()
-    blob_name = f"graph/tenant-{tenant_id}/{run_id}/inference-snapshot.json.gz"
+    blob_name = _graph_snapshot_blob_name(tenant_id, run_id)
 
     from azure.storage.blob import BlobServiceClient, ContentSettings
     storage_key = os.getenv("AZURE_STORAGE_KEY")

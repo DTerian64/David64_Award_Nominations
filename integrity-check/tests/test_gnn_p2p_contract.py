@@ -40,6 +40,12 @@ class _RecordingModule(torch.nn.Module):
 
 
 class GnnP2PContractTests(unittest.TestCase):
+    def setUp(self):
+        gnn_check._head_cache.clear()
+
+    def tearDown(self):
+        gnn_check._head_cache.clear()
+
     def test_serving_uses_only_nominator_and_beneficiary_embeddings(self):
         module = _RecordingModule()
         head = {
@@ -79,6 +85,12 @@ class GnnP2PContractTests(unittest.TestCase):
         self.assertEqual(module.input_shape, (1, 2 * 4 + len(FEATURES)))
         self.assertNotIn("approver", " ".join(result["warning_flags"]).lower())
 
+    def test_decoder_uses_the_gnn_folder(self):
+        self.assertEqual(
+            gnn_check._head_blob_name(7),
+            "gnn/gnn_head_tenant_7.pt",
+        )
+
     def test_decoder_rebuild_uses_two_participant_embeddings(self):
         source = torch.nn.Sequential(
             torch.nn.Linear(2 * 4 + len(FEATURES), 64),
@@ -96,6 +108,17 @@ class GnnP2PContractTests(unittest.TestCase):
         })
 
         self.assertEqual(rebuilt[0].in_features, 2 * 4 + len(FEATURES))
+
+    def test_idle_decoder_is_evicted(self):
+        gnn_check._head_cache[7] = ({"model_version": "old"}, 10.0)
+        gnn_check._head_cache[8] = ({"model_version": "recent"}, 95.0)
+
+        with patch.dict(os.environ, {"MODEL_IDLE_TTL_SECONDS": "30"}):
+            evicted = gnn_check._evict_idle_heads(now=100.0)
+
+        self.assertEqual(evicted, 1)
+        self.assertNotIn(7, gnn_check._head_cache)
+        self.assertIn(8, gnn_check._head_cache)
 
 
 if __name__ == "__main__":

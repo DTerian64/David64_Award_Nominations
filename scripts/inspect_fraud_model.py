@@ -56,7 +56,7 @@ def load_from_blob(tenant_id: int) -> dict:
     account   = os.environ["AZURE_STORAGE_ACCOUNT"]
     key       = os.getenv("AZURE_STORAGE_KEY")
     container = os.getenv("MODEL_CONTAINER", "ml-models")
-    blob_name = f"random_forest_tenant_{tenant_id}.pkl"
+    blob_name = f"random_forest/random_forest_tenant_{tenant_id}.pkl"
 
     if key:
         client = BlobServiceClient(

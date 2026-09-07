@@ -15,7 +15,7 @@ class RfArtifactNamingTests(unittest.TestCase):
     def test_canonical_name_is_random_forest(self):
         self.assertEqual(
             RandomForestModelCache._blob_name(3),
-            "random_forest_tenant_3.pkl",
+            "random_forest/random_forest_tenant_3.pkl",
         )
 
 if __name__ == "__main__":

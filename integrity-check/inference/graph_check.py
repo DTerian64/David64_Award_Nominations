@@ -25,8 +25,27 @@ from utils import db
 
 logger = logging.getLogger("integrity_check.graph_check")
 
-_snapshot_cache: OrderedDict[tuple[int, str, str], GraphInferenceSnapshot] = OrderedDict()
+_snapshot_cache: OrderedDict[
+    tuple[int, str, str], tuple[GraphInferenceSnapshot, float]
+] = OrderedDict()
 _snapshot_cache_lock = threading.Lock()
+
+
+def _evict_idle_snapshots(now: float | None = None) -> int:
+    """Drop large Graph artifacts after MODEL_IDLE_TTL_SECONDS of inactivity."""
+    now = time.monotonic() if now is None else now
+    idle_ttl = max(1, int(os.getenv("MODEL_IDLE_TTL_SECONDS", "1800")))
+    with _snapshot_cache_lock:
+        expired = [
+            key
+            for key, (_snapshot, last_used) in _snapshot_cache.items()
+            if now - last_used > idle_ttl
+        ]
+        for key in expired:
+            del _snapshot_cache[key]
+    if expired:
+        logger.info("Evicted %d idle Graph snapshot(s)", len(expired))
+    return len(expired)
 
 
 def _load_inference_snapshot(tenant_id: int, metadata: dict) -> GraphInferenceSnapshot:
@@ -37,9 +56,13 @@ def _load_inference_snapshot(tenant_id: int, metadata: dict) -> GraphInferenceSn
     if not all(isinstance(value, str) and value for value in (blob_name, digest, run_id)):
         raise db.InvalidGraphSnapshot("Graph candidate-evaluation artifact is missing")
     key = (tenant_id, run_id, digest)
+    now = time.monotonic()
+    _evict_idle_snapshots(now)
     with _snapshot_cache_lock:
-        cached = _snapshot_cache.get(key)
-        if cached is not None:
+        entry = _snapshot_cache.get(key)
+        if entry is not None:
+            cached, _last_used = entry
+            _snapshot_cache[key] = (cached, now)
             _snapshot_cache.move_to_end(key)
             return cached
 
@@ -89,7 +112,7 @@ def _load_inference_snapshot(tenant_id: int, metadata: dict) -> GraphInferenceSn
         raise db.InvalidGraphSnapshot("Graph inference snapshot provenance mismatch")
 
     with _snapshot_cache_lock:
-        _snapshot_cache[key] = snapshot
+        _snapshot_cache[key] = (snapshot, time.monotonic())
         _snapshot_cache.move_to_end(key)
         maximum = max(1, int(os.getenv("GRAPH_SNAPSHOT_CACHE_SIZE", "8")))
         while len(_snapshot_cache) > maximum:

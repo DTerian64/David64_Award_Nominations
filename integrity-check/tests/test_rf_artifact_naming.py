@@ -50,6 +50,12 @@ class _BlobService:
 
 
 class RfArtifactNamingTests(unittest.TestCase):
+    def setUp(self):
+        random_forest_check._model_cache.clear()
+
+    def tearDown(self):
+        random_forest_check._model_cache.clear()
+
     def test_integrity_check_loads_canonical_blob_name(self):
         attempts = []
         payload = pickle.dumps({
@@ -69,7 +75,23 @@ class RfArtifactNamingTests(unittest.TestCase):
             result = random_forest_check._stream_from_blob(3)
 
         self.assertEqual(result["model_version"], "rf-test")
-        self.assertEqual(attempts, ["random_forest_tenant_3.pkl"])
+        self.assertEqual(
+            attempts,
+            ["random_forest/random_forest_tenant_3.pkl"],
+        )
+
+    def test_idle_models_are_evicted_with_their_embedded_explainers(self):
+        random_forest_check._model_cache[1] = (
+            {"shap_explainer": object()}, 10.0,
+        )
+        random_forest_check._model_cache[2] = ({"model_version": "recent"}, 95.0)
+
+        with patch.dict(os.environ, {"MODEL_IDLE_TTL_SECONDS": "30"}):
+            evicted = random_forest_check._evict_idle_models(now=100.0)
+
+        self.assertEqual(evicted, 1)
+        self.assertNotIn(1, random_forest_check._model_cache)
+        self.assertIn(2, random_forest_check._model_cache)
 
 
 if __name__ == "__main__":

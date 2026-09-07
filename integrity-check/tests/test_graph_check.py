@@ -326,7 +326,9 @@ class GraphInferenceArtifactTests(unittest.TestCase):
         metadata = {
             "snapshot_run_id": "graph-run-1",
             "scoring_policy_version": 2,
-            "inference_snapshot_blob": "graph/tenant-7/graph-run-1/inference-snapshot.json.gz",
+            "inference_snapshot_blob": (
+                "graph/runs/graph-run-1/inference-snapshot-tenant-7.json.gz"
+            ),
             "inference_snapshot_sha256": hashlib.sha256(compressed).hexdigest(),
             "inference_snapshot_size_bytes": len(compressed),
         }
@@ -351,6 +353,18 @@ class GraphInferenceArtifactTests(unittest.TestCase):
         blob_service.return_value.get_blob_client.return_value.download_blob.return_value.readall.return_value = compressed
         with self.assertRaisesRegex(db.InvalidGraphSnapshot, "checksum mismatch"):
             graph_check._load_inference_snapshot(7, metadata)
+
+    def test_idle_snapshot_is_evicted(self):
+        snapshot = _inference_snapshot()
+        graph_check._snapshot_cache[(7, "graph-run-1", "a" * 64)] = (
+            snapshot, 10.0,
+        )
+
+        with patch.dict(os.environ, {"MODEL_IDLE_TTL_SECONDS": "30"}):
+            evicted = graph_check._evict_idle_snapshots(now=100.0)
+
+        self.assertEqual(evicted, 1)
+        self.assertEqual(graph_check._snapshot_cache, {})
 
 
 if __name__ == "__main__":

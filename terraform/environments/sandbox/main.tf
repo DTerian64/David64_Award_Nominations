@@ -666,6 +666,9 @@ module "integrity_check" {
   environment_variables = [
     { name = "AZURE_STORAGE_ACCOUNT",    value = module.storage.storage_account_name },
     { name = "MODEL_CONTAINER",          value = module.storage.ml_models_container_name },
+    # Shared idle eviction for tenant RF, GNN, and Graph artifacts in this worker.
+    { name = "MODEL_IDLE_TTL_SECONDS",    value = tostring(var.model_idle_ttl_seconds) },
+    { name = "GRAPH_SNAPSHOT_CACHE_SIZE", value = tostring(var.graph_snapshot_cache_size) },
     # Azure OpenAI — used by Check C (LLM semantic evaluation).
     # Endpoint and deployment name are not sensitive; passed as plain env vars.
     # Authentication uses DefaultAzureCredential (Cognitive Services OpenAI User role above).
