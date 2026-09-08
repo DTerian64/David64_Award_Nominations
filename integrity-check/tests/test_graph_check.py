@@ -8,12 +8,20 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import numpy as np
+
 os.environ.setdefault("SQL_SERVER", "test.invalid")
 os.environ.setdefault("SQL_DATABASE", "test")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from inference import graph_check
-from integrity_engine import GraphInferenceSnapshot, RingEvaluation
+from integrity_engine import (
+    CandidateDetectorEvaluation,
+    CandidateNomination,
+    GraphInferenceSnapshot,
+    RingEvaluation,
+    SnapshotNomination,
+)
 from utils import db
 
 DETAILS = {
@@ -86,8 +94,75 @@ def _candidate_ring(score=82, *, complete=True):
     )
 
 
+def _candidate_detector(detector, score, *, eligible=True, routing=True):
+    return CandidateDetectorEvaluation(
+        detector=detector,
+        score=score,
+        severity="HIGH",
+        eligible=eligible,
+        enabled_for_routing=routing,
+        state="SCORING" if eligible and routing else (
+            "ANALYTICS_ONLY" if not routing else "NOT_SCORING"
+        ),
+        eligibility_reasons=() if eligible else ("minimum evidence not met",),
+        score_components={"finding_score": score},
+        affected_user_ids=(1, 2),
+        supporting_nomination_ids=(10,),
+        detail="Candidate detector evidence",
+    )
+
+
 class GraphCheckTests(unittest.TestCase):
-    def test_all_eight_detectors_remain_visible_but_only_six_can_win(self):
+    def test_copy_paste_evidence_finds_candidate_connected_component(self):
+        copy_snapshot = GraphInferenceSnapshot(
+            tenant_id=7,
+            run_id="copy-run",
+            policy_version=2,
+            generated_at=DETAILS["nomination_date"],
+            window_days=365,
+            scoring_policy={
+                "thresholds": POLICY["thresholds"],
+                "patterns": {"CopyPaste": {
+                    "enabled": True,
+                    "enabled_for_routing": True,
+                    "parameters": {"similarity_threshold": 0.92},
+                }},
+            },
+            nominations=(
+                SnapshotNomination(
+                    1, 11, 21, 1000, "Approved",
+                    DETAILS["nomination_date"] - timedelta(days=2),
+                    "First sufficiently long historical description",
+                ),
+                SnapshotNomination(
+                    2, 12, 22, 1000, "Approved",
+                    DETAILS["nomination_date"] - timedelta(days=1),
+                    "Second sufficiently long historical description",
+                ),
+            ),
+        )
+        vectors = {
+            1: np.array([1.0, 0.0], dtype=np.float32).tobytes(),
+            2: np.array([0.95, np.sqrt(1 - 0.95 ** 2)], dtype=np.float32).tobytes(),
+        }
+        model = MagicMock()
+        model.encode.return_value = np.array([[1.0, 0.0]], dtype=np.float32)
+        candidate = CandidateNomination(
+            10, 1, 2, 1000, DETAILS["nomination_date"],
+            "Current sufficiently long candidate description",
+        )
+        graph_check._copy_paste_matrix_cache.clear()
+        with (
+            patch.object(db, "get_nomination_embedding_bytes", return_value=vectors),
+            patch.object(graph_check, "_get_copy_paste_embed_model", return_value=model),
+        ):
+            nomination_ids, similarities = graph_check._copy_paste_evidence(
+                copy_snapshot, candidate
+            )
+        self.assertEqual(nomination_ids, {1, 2})
+        self.assertEqual(len(similarities), 3)
+
+    def test_historical_detector_findings_remain_visible_but_do_not_score_candidate(self):
         patterns = ['Ring', 'BipartiteDenseBlock', 'TemporalBurst', 'SuperNominator',
                     'SuperBeneficiary', 'CopyPaste', 'HiddenCandidate', 'Desert']
         for pattern in patterns:
@@ -97,9 +172,12 @@ class GraphCheckTests(unittest.TestCase):
                     2: {'findings': [_finding(pattern, 83.5, routing=routing)]}
                 })):
                     result = graph_check.assess_graph(DETAILS, 7)
-                expected = 83.5 if routing and pattern != 'Ring' else 0
-                self.assertEqual(result['fraud_score'], expected)
-                self.assertEqual(result['detector_summary'][0]['count'], 1)
+                self.assertEqual(result['fraud_score'], 0)
+                summary = next(
+                    item for item in result['detector_summary']
+                    if item['pattern_type'] == pattern
+                )
+                self.assertEqual(summary['count'], 1)
                 self.assertEqual(len(result['pattern_findings']), 1)
 
     def test_invalid_snapshot_is_unavailable_not_clean(self):
@@ -108,21 +186,20 @@ class GraphCheckTests(unittest.TestCase):
         self.assertFalse(result['model_available'])
         self.assertEqual(result['unavailable_reason'], 'INVALID_SNAPSHOT')
 
-    def test_grouping_keeps_every_finding_and_does_not_add_scores(self):
+    def test_grouping_keeps_historical_findings_without_routing_them(self):
         findings = [_finding('Ring', 80, finding_hash=f'ring-{i}') for i in range(10)]
         findings.append(_finding('CopyPaste', 91, finding_hash='winner'))
         with patch.object(db, 'get_graph_component_snapshot', return_value=_snapshot({1: {'findings': findings}})):
             result = graph_check.assess_graph(DETAILS, 7)
-        self.assertEqual(result['fraud_score'], 91)
+        self.assertEqual(result['fraud_score'], 0)
         self.assertEqual(len(result['pattern_findings']), 11)
-        self.assertEqual(result['winning_finding']['finding_hash'], 'winner')
-        self.assertEqual(result['detector_summary'][1]['count'], 10)
-        self.assertEqual(result['winning_pattern_count'], 1)
-        self.assertEqual(result['warning_flags'], ['[Graph] nominator: CopyPaste (91.00, CRITICAL)'])
+        self.assertIsNone(result['winning_finding'])
+        self.assertEqual(result['winning_pattern_count'], 0)
+        self.assertEqual(result['warning_flags'], [])
         by_type = {
             item['pattern_type']: item for item in result['detector_summary']
         }
-        self.assertEqual(by_type['CopyPaste']['highest_scoring_score'], 91)
+        self.assertEqual(by_type['CopyPaste']['highest_scoring_score'], 0)
         self.assertEqual(by_type['Ring']['highest_scoring_score'], 0)
 
     def test_historical_rings_are_context_only(self):
@@ -195,6 +272,27 @@ class GraphCheckTests(unittest.TestCase):
         )
 
     @patch(
+        "inference.graph_check.evaluate_candidate_detectors",
+        return_value=(
+            _candidate_detector("SuperBeneficiary", 86),
+            _candidate_detector("SuperNominator", 94, eligible=False),
+        ),
+    )
+    @patch("inference.graph_check.db.get_graph_component_snapshot")
+    def test_highest_eligible_candidate_detector_wins(
+        self, lookup, _evaluate_detectors
+    ):
+        lookup.return_value = _snapshot()
+        result = graph_check.assess_graph(DETAILS, tenant_id=7)
+        self.assertEqual(result["fraud_score"], 86)
+        self.assertEqual(result["winning_pattern_type"], "SuperBeneficiary")
+        scores = {
+            item["detector"]: item for item in result["candidate_detector_scores"]
+        }
+        self.assertEqual(scores["SuperNominator"]["score"], 94)
+        self.assertEqual(scores["SuperNominator"]["state"], "NOT_SCORING")
+
+    @patch(
         "inference.graph_check.evaluate_candidate_edge_for_ring",
         return_value=_candidate_ring(82, complete=False),
     )
@@ -236,7 +334,7 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(result["unavailable_reason"], "LEGACY_SNAPSHOT")
 
     @patch("inference.graph_check.db.get_graph_component_snapshot")
-    def test_maximum_relevant_graph_finding_score_wins(self, lookup):
+    def test_historical_role_findings_do_not_win_candidate_evaluation(self, lookup):
         lookup.return_value = _snapshot({
             1: {"findings": [
                 _finding("SuperNominator", 64.25, roles=["nominator"], finding_hash="super"),
@@ -248,9 +346,9 @@ class GraphCheckTests(unittest.TestCase):
             ]},
         })
         result = graph_check.assess_graph(DETAILS, tenant_id=7)
-        self.assertEqual(result["fraud_score"], 64.25)
-        self.assertEqual(result["risk_level"], "MEDIUM")
-        self.assertEqual(result["winning_finding_hash"], "super")
+        self.assertEqual(result["fraud_score"], 0)
+        self.assertEqual(result["risk_level"], "NONE")
+        self.assertIsNone(result["winning_finding_hash"])
         by_hash = {item["finding_hash"]: item for item in result["pattern_findings"]}
         self.assertFalse(by_hash["wrong-role"]["routing_relevant"])
         self.assertFalse(by_hash["analytics"]["routing_relevant"])

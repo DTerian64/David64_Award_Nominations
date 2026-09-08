@@ -43,6 +43,7 @@ class SnapshotNomination:
     amount: float
     status: str
     created_at: datetime
+    description: str = ""
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "SnapshotNomination":
@@ -53,6 +54,7 @@ class SnapshotNomination:
             amount=float(value.get("amount") or 0.0),
             status=str(value["status"]),
             created_at=_as_utc(value["created_at"]),
+            description=str(value.get("description") or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +65,7 @@ class SnapshotNomination:
             "amount": self.amount,
             "status": self.status,
             "created_at": self.created_at.isoformat(),
+            "description": self.description,
         }
 
 
@@ -73,6 +76,7 @@ class CandidateNomination:
     beneficiary_id: int
     amount: float
     created_at: datetime
+    description: str = ""
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "CandidateNomination":
@@ -85,6 +89,7 @@ class CandidateNomination:
             beneficiary_id=int(value["beneficiary_id"]),
             amount=float(value.get("amount") or 0.0),
             created_at=_as_utc(created_at),
+            description=str(value.get("description") or ""),
         )
 
 

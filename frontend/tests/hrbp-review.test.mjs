@@ -84,11 +84,12 @@ test('Graph verdict shows its biggest contributor and maximum finding_score', ()
         derived_severity: 'HIGH', detail: 'Three-person reciprocal nomination cycle.',
         evidence_scope: 'CURRENT_NOMINATION', evaluation_mode: 'CANDIDATE_EDGE',
         affected_roles: ['nominator', 'beneficiary'], affected_user_ids: [12, 15, 19], nomination_ids: [201, 202, 203] },
-      detector_summary: [
-        { pattern_type: 'Ring', highest_scoring_score: 88.2, enabled: true, enabled_for_routing: true },
-        { pattern_type: 'CopyPaste', highest_scoring_score: 72.4, enabled: true, enabled_for_routing: true },
-        { pattern_type: 'SuperNominator', highest_scoring_score: 41, enabled: true, enabled_for_routing: true },
-        { pattern_type: 'Desert', highest_scoring_score: 99, enabled: true, enabled_for_routing: false },
+      candidate_detector_scores: [
+        { detector: 'Ring', score: 88.2, eligible: true, enabled_for_routing: true, state: 'SCORING' },
+        { detector: 'CopyPaste', score: 72.4, eligible: true, enabled_for_routing: true, state: 'SCORING' },
+        { detector: 'SuperBeneficiary', score: 55.25, eligible: false, enabled_for_routing: true,
+          state: 'NOT_SCORING', eligibility_reasons: ['unique nominators 2/4'] },
+        { detector: 'Desert', score: 40, eligible: true, enabled_for_routing: false, state: 'ANALYTICS_ONLY' },
       ],
       findings: ['[Graph] nominator: Ring (88.20, HIGH)'],
     },
@@ -105,8 +106,10 @@ test('Graph verdict shows its biggest contributor and maximum finding_score', ()
   assert.match(html, /Nominations:<\/span> #201, #202, #203/);
   assert.match(html, /Other detector scores/);
   assert.match(html, /Copy-Paste Fraud.*72\.40/s);
-  assert.match(html, /Super Nominator.*41\.00/s);
-  assert.doesNotMatch(html, /Nomination Desert/);
+  assert.match(html, /Copy-Paste Fraud.*Scoring.*72\.40/s);
+  assert.match(html, /Super Beneficiary.*Not scoring.*55\.25/s);
+  assert.match(html, /Nomination Desert.*Analytics only.*40\.00/s);
+  assert.doesNotMatch(html, /Nomination Ring.*Scoring.*88\.20/s);
   assert.equal((html.match(/nominator: Ring/g) || []).length, 0);
 });
 

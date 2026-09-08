@@ -12,12 +12,16 @@ import time
 from collections import OrderedDict
 from datetime import date
 
+import numpy as np
+
 from integrity_engine import (
     CandidateNomination,
     EvaluationLimitExceeded,
     GraphInferenceSnapshot,
     __version__ as integrity_engine_version,
+    evaluate_candidate_detectors,
     evaluate_candidate_edge_for_ring,
+    evaluate_no_finding,
 )
 
 from . import component_availability
@@ -29,6 +33,15 @@ _snapshot_cache: OrderedDict[
     tuple[int, str, str], tuple[GraphInferenceSnapshot, float]
 ] = OrderedDict()
 _snapshot_cache_lock = threading.Lock()
+_copy_paste_matrix_cache: OrderedDict[
+    tuple[int, str], tuple[tuple[int, ...], np.ndarray, float]
+] = OrderedDict()
+
+
+def _get_copy_paste_embed_model():
+    """Share the service's sentence-transformer instance, not RF evidence."""
+    from .random_forest_check import _get_embed_model
+    return _get_embed_model("all-MiniLM-L6-v2")
 
 
 def _evict_idle_snapshots(now: float | None = None) -> int:
@@ -43,6 +56,13 @@ def _evict_idle_snapshots(now: float | None = None) -> int:
         ]
         for key in expired:
             del _snapshot_cache[key]
+        active_runs = {(key[0], key[1]) for key in _snapshot_cache}
+        expired_matrices = [
+            key for key, (_ids, _matrix, last_used) in _copy_paste_matrix_cache.items()
+            if now - last_used > idle_ttl or key not in active_runs
+        ]
+        for key in expired_matrices:
+            del _copy_paste_matrix_cache[key]
     if expired:
         logger.info("Evicted %d idle Graph snapshot(s)", len(expired))
     return len(expired)
@@ -125,6 +145,106 @@ def _load_inference_snapshot(tenant_id: int, metadata: dict) -> GraphInferenceSn
     return snapshot
 
 
+def _copy_paste_evidence(
+    snapshot: GraphInferenceSnapshot,
+    candidate: CandidateNomination,
+) -> tuple[set[int], list[float]]:
+    """Return the exact similarity component formed by the candidate text."""
+    config = (snapshot.scoring_policy.get("patterns") or {}).get("CopyPaste") or {}
+    if not config.get("enabled", False):
+        return set(), []
+    parameters = config.get("parameters") or {}
+    threshold = float(parameters.get("similarity_threshold", 0.92))
+    history = [
+        item for item in snapshot.nominations
+        if item.nomination_id != candidate.nomination_id
+        and item.created_at < candidate.created_at
+        and item.status in ("Pending", "Approved", "Paid")
+        and item.description
+        and len(item.description.strip()) > 20
+    ]
+    if not history or len(candidate.description.strip()) <= 20:
+        return set(), []
+
+    cache_key = (snapshot.tenant_id, snapshot.run_id)
+    now = time.monotonic()
+    with _snapshot_cache_lock:
+        cached = _copy_paste_matrix_cache.get(cache_key)
+        if cached is not None:
+            nomination_ids, matrix, _last_used = cached
+            _copy_paste_matrix_cache[cache_key] = (nomination_ids, matrix, now)
+            _copy_paste_matrix_cache.move_to_end(cache_key)
+        else:
+            nomination_ids, matrix = (), np.empty((0, 0), dtype=np.float32)
+
+    expected_ids = tuple(item.nomination_id for item in history)
+    if nomination_ids != expected_ids:
+        embedding_bytes = db.get_nomination_embedding_bytes(list(expected_ids))
+        vectors: list[np.ndarray | None] = []
+        missing: list[int] = []
+        for index, item in enumerate(history):
+            raw = embedding_bytes.get(item.nomination_id)
+            if raw:
+                vectors.append(np.frombuffer(raw, dtype=np.float32).copy())
+            else:
+                vectors.append(None)
+                missing.append(index)
+        if missing:
+            model = _get_copy_paste_embed_model()
+            encoded = np.asarray(model.encode(
+                [history[index].description for index in missing],
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            ), dtype=np.float32)
+            for encoded_index, history_index in enumerate(missing):
+                vectors[history_index] = encoded[encoded_index]
+        matrix = np.stack([vector for vector in vectors if vector is not None])
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        matrix = matrix / np.maximum(norms, 1e-12)
+        nomination_ids = expected_ids
+        with _snapshot_cache_lock:
+            _copy_paste_matrix_cache[cache_key] = (nomination_ids, matrix, now)
+            _copy_paste_matrix_cache.move_to_end(cache_key)
+            maximum = max(1, int(os.getenv("GRAPH_SNAPSHOT_CACHE_SIZE", "8")))
+            while len(_copy_paste_matrix_cache) > maximum:
+                _copy_paste_matrix_cache.popitem(last=False)
+
+    candidate_vector = np.asarray(
+        _get_copy_paste_embed_model().encode(
+            [candidate.description],
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )[0],
+        dtype=np.float32,
+    )
+    candidate_vector /= max(float(np.linalg.norm(candidate_vector)), 1e-12)
+
+    component_indexes = set(np.flatnonzero(matrix @ candidate_vector >= threshold).tolist())
+    frontier = list(component_indexes)
+    while frontier:
+        index = frontier.pop()
+        neighbors = set(np.flatnonzero(matrix @ matrix[index] >= threshold).tolist())
+        new_indexes = neighbors - component_indexes
+        component_indexes.update(new_indexes)
+        frontier.extend(new_indexes)
+
+    component_vectors = [candidate_vector] + [
+        matrix[index] for index in sorted(component_indexes)
+    ]
+    qualifying: list[float] = []
+    if len(component_vectors) > 1:
+        component_matrix = np.stack(component_vectors)
+        similarities = component_matrix @ component_matrix.T
+        for left in range(len(component_vectors)):
+            for right in range(left + 1, len(component_vectors)):
+                value = float(similarities[left, right])
+                if value >= threshold:
+                    qualifying.append(value)
+    return {
+        nomination_ids[index] for index in component_indexes
+    }, qualifying
+
+
 def _derive_graph_nomination_severity(
     graph_nomination_score: float,
     thresholds: dict[str, float],
@@ -161,6 +281,7 @@ def _unavailable(
         "affected_user_ids": [],
         "pattern_findings": [],
         "candidate_findings": [],
+        "candidate_detector_scores": [],
         "nominator_history": [],
         "beneficiary_history": [],
         "shared_history": [],
@@ -233,6 +354,7 @@ def assess_graph(
             "detector_summary": result.get("detector_summary") or [],
             "pattern_findings": result.get("pattern_findings") or [],
             "candidate_findings": result.get("candidate_findings") or [],
+            "candidate_detector_scores": result.get("candidate_detector_scores") or [],
             "snapshot_as_of": result.get("snapshot_as_of"),
             "snapshot_run_id": result.get("snapshot_run_id"),
             "snapshot_age_days": result.get("snapshot_age_days"),
@@ -302,11 +424,23 @@ def _assess_graph_inner(
     ring_policy = (inference_snapshot.scoring_policy.get("patterns") or {}).get(
         "Ring", {}
     )
+    ring_enabled = bool(ring_policy.get("enabled", False))
     candidate_policy = ring_policy.get("candidate_evaluation") or {}
     candidate_started = time.perf_counter()
-    ring_evaluation = evaluate_candidate_edge_for_ring(
+    candidate = CandidateNomination.from_dict(details)
+    ring_evaluation = (
+        evaluate_candidate_edge_for_ring(inference_snapshot, candidate)
+        if ring_enabled else None
+    )
+    copy_paste_ids, copy_paste_similarities = _copy_paste_evidence(
         inference_snapshot,
-        CandidateNomination.from_dict(details),
+        candidate,
+    )
+    other_detector_evaluations = evaluate_candidate_detectors(
+        inference_snapshot,
+        candidate,
+        copy_paste_component_nomination_ids=copy_paste_ids,
+        copy_paste_qualifying_similarities=copy_paste_similarities,
     )
     candidate_evaluation_ms = round(
         (time.perf_counter() - candidate_started) * 1000.0, 3
@@ -361,11 +495,15 @@ def _assess_graph_inner(
             finding["evidence_scope"] = "NOMINATOR_HISTORY"
         else:
             finding["evidence_scope"] = "BENEFICIARY_HISTORY"
-        # Historical Ring membership is context, not evidence that this
-        # nomination creates a ring. Other detectors retain their existing
-        # role-based behavior until they receive candidate-aware evaluators.
+        # Historical membership is participant context, not evidence that the
+        # current nomination creates a detector finding. The six routing
+        # detectors are evaluated against the candidate below.
+        candidate_aware_types = {
+            "Ring", "BipartiteDenseBlock", "TemporalBurst",
+            "SuperNominator", "SuperBeneficiary", "CopyPaste",
+        }
         finding["routing_relevant"] = bool(
-            finding["pattern_type"] != "Ring"
+            finding["pattern_type"] not in candidate_aware_types
             and finding["enabled_for_routing"]
             and any(
                 role in finding["applicable_roles"]
@@ -374,6 +512,7 @@ def _assess_graph_inner(
         )
 
     candidate_findings: list[dict] = []
+    candidate_detector_scores: list[dict] = []
     if ring_evaluation is not None:
         ring_data = ring_evaluation.to_dict()
         candidate_hash = hashlib.sha256(
@@ -427,6 +566,78 @@ def _assess_graph_inner(
             ),
             "detector_evaluation": ring_data,
         })
+        candidate_detector_scores.append({
+            "detector": "Ring",
+            "score": ring_evaluation.score,
+            "severity": ring_evaluation.severity,
+            "eligible": True,
+            "enabled_for_routing": bool(
+                ring_policy.get("enabled_for_routing", True)
+            ),
+            "state": (
+                "SCORING" if ring_policy.get("enabled_for_routing", True)
+                else "ANALYTICS_ONLY"
+            ),
+            "eligibility_reasons": [],
+            "score_components": dict(ring_evaluation.score_components),
+        })
+    elif ring_enabled:
+        candidate_detector_scores.append(evaluate_no_finding(
+            inference_snapshot,
+            "Ring",
+            "Candidate edge does not complete a directed ring.",
+        ).to_dict())
+
+    for evaluation in other_detector_evaluations:
+        evaluation_data = evaluation.to_dict()
+        candidate_detector_scores.append({
+            "detector": evaluation.detector,
+            "score": evaluation.score,
+            "severity": evaluation.severity,
+            "eligible": evaluation.eligible,
+            "enabled_for_routing": evaluation.enabled_for_routing,
+            "state": evaluation.state,
+            "eligibility_reasons": list(evaluation.eligibility_reasons),
+            "score_components": dict(evaluation.score_components),
+            "detail": evaluation.detail,
+        })
+        if not evaluation.eligible:
+            continue
+        config = (inference_snapshot.scoring_policy.get("patterns") or {}).get(
+            evaluation.detector, {}
+        )
+        applicable_roles = [
+            str(role).lower()
+            for role in (config.get("applicable_roles") or [])
+        ]
+        candidate_hash = hashlib.sha256(
+            (
+                f"{inference_snapshot.run_id}|{evaluation.detector}|"
+                f"{candidate.nomination_id}"
+            ).encode("utf-8")
+        ).hexdigest()
+        candidate_findings.append({
+            "finding_hash": candidate_hash,
+            "pattern_type": evaluation.detector,
+            "finding_score": evaluation.score,
+            "derived_severity": evaluation.severity,
+            "nomination_ids": list(evaluation.supporting_nomination_ids),
+            "detail": evaluation.detail,
+            "score_components": dict(evaluation.score_components),
+            "enabled_for_routing": evaluation.enabled_for_routing,
+            "applicable_roles": applicable_roles,
+            "affected_roles": applicable_roles,
+            "affected_role_user_ids": {
+                "nominator": int(details["nominator_id"]),
+                "beneficiary": int(details["beneficiary_id"]),
+            },
+            "affected_user_ids": list(evaluation.affected_user_ids),
+            "evaluation_mode": "CANDIDATE_EDGE",
+            "evidence_scope": "CURRENT_NOMINATION",
+            "routing_relevant": evaluation.state == "SCORING",
+            "candidate_nomination_id": candidate.nomination_id,
+            "detector_evaluation": evaluation_data,
+        })
 
     findings = history_findings + candidate_findings
 
@@ -455,6 +666,9 @@ def _assess_graph_inner(
         f"{_derive_graph_nomination_severity(winner['finding_score'], policy['thresholds'])})"
     ]
     pattern_configs = inference_snapshot.scoring_policy.get("patterns") or {}
+    evaluations_by_type = {
+        item["detector"]: item for item in candidate_detector_scores
+    }
     groups: dict[str, dict] = {
         pattern_type: {
             "pattern_type": pattern_type,
@@ -465,6 +679,11 @@ def _assess_graph_inner(
             "enabled": bool(config.get("enabled", True)),
             "enabled_for_routing": bool(
                 config.get("enabled_for_routing", False)
+            ),
+            "candidate_score": evaluations_by_type.get(pattern_type, {}).get("score"),
+            "candidate_state": evaluations_by_type.get(pattern_type, {}).get("state"),
+            "eligibility_reasons": evaluations_by_type.get(pattern_type, {}).get(
+                "eligibility_reasons", []
             ),
         }
         for pattern_type, config in pattern_configs.items()
@@ -507,6 +726,7 @@ def _assess_graph_inner(
         "affected_user_ids": list(dict.fromkeys(affected)),
         "pattern_findings": findings,
         "candidate_findings": candidate_findings,
+        "candidate_detector_scores": candidate_detector_scores,
         "nominator_history": [
             item for item in history_findings
             if item["evidence_scope"] == "NOMINATOR_HISTORY"

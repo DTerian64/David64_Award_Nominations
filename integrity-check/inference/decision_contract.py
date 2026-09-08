@@ -83,6 +83,9 @@ def graph_result(result: dict) -> dict:
         "affected_user_ids": list(result.get("affected_user_ids") or []),
         "pattern_findings": list(result.get("pattern_findings") or []),
         "candidate_findings": list(result.get("candidate_findings") or []),
+        "candidate_detector_scores": list(
+            result.get("candidate_detector_scores") or []
+        ),
         "nominator_history": list(result.get("nominator_history") or []),
         "beneficiary_history": list(result.get("beneficiary_history") or []),
         "shared_history": list(result.get("shared_history") or []),

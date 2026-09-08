@@ -240,6 +240,7 @@ def _publish_graph_inference_snapshot(
                 amount=float(item.get("Amount") or 0.0),
                 status=str(item["Status"]),
                 created_at=item["CreatedAt"],
+                description=str(item.get("Description") or ""),
             )
             for item in nominations
         ),

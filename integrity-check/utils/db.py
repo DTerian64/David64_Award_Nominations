@@ -900,6 +900,28 @@ def insert_nomination_logs(rows: list) -> None:
         conn.commit()
 
 
+def get_nomination_embedding_bytes(nomination_ids: list[int]) -> dict[int, bytes]:
+    """Load cached Graph description embeddings without crossing SQL's limit."""
+    unique_ids = sorted({int(value) for value in nomination_ids})
+    if not unique_ids:
+        return {}
+    result: dict[int, bytes] = {}
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        for offset in range(0, len(unique_ids), 2_000):
+            batch = unique_ids[offset:offset + 2_000]
+            placeholders = ",".join("?" for _ in batch)
+            cursor.execute(
+                "SELECT NominationId, Embedding "
+                "FROM dbo.NomGraph_NominationEmbedding "
+                f"WHERE NominationId IN ({placeholders})",
+                batch,
+            )
+            for nomination_id, embedding in cursor.fetchall():
+                result[int(nomination_id)] = bytes(embedding)
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # GNN model support — called by gnn_check.py
 # ═══════════════════════════════════════════════════════════════════════════════

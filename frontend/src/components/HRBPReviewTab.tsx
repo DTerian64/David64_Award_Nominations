@@ -82,6 +82,16 @@ export interface EngineResult {
     remaining_score_upper_bound?: number | null;
   } | null;
   candidate_findings?: Array<NonNullable<EngineResult['winning_finding']>>;
+  candidate_detector_scores?: Array<{
+    detector: string;
+    score: number;
+    severity?: string;
+    eligible: boolean;
+    enabled_for_routing: boolean;
+    state: 'SCORING' | 'NOT_SCORING' | 'ANALYTICS_ONLY';
+    eligibility_reasons?: string[];
+    detail?: string;
+  }>;
   nominator_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   beneficiary_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   shared_history?: Array<NonNullable<EngineResult['winning_finding']>>;
@@ -156,7 +166,8 @@ export const GraphScoreContribution: React.FC<{
   const beneficiaryRingCount = (engine.beneficiary_history || []).filter(item => item.pattern_type === 'Ring').length;
   const sharedRingCount = (engine.shared_history || []).filter(item => item.pattern_type === 'Ring').length;
   const hasRingHistory = nominatorRingCount + beneficiaryRingCount + sharedRingCount > 0;
-  if (!patternType && !fallback && !hasRingHistory) return null;
+  const hasDetectorScores = (engine.candidate_detector_scores || []).length > 0;
+  if (!patternType && !fallback && !hasRingHistory && !hasDetectorScores) return null;
   const patternLabel = patternType ? GRAPH_PATTERN_LABELS[patternType] || `${patternType} pattern` : null;
   const candidateAware = finding?.evidence_scope === 'CURRENT_NOMINATION';
   const candidateEvaluation = engine.candidate_evaluation;
@@ -174,25 +185,9 @@ export const GraphScoreContribution: React.FC<{
     const userId = persistedId ?? fallbackId;
     return userId === undefined ? role : `${role} #${userId}`;
   });
-  const relevantScores = new Map<string, number>();
-  for (const summary of engine.detector_summary || []) {
-    if (summary.enabled === false || summary.enabled_for_routing === false) continue;
-    const type = summary.pattern_type;
-    if (!type || type === patternType) continue;
-    const score = summary.highest_scoring_score;
-    if (typeof score === 'number') relevantScores.set(type, score);
-  }
-  // Compatibility for decisions written before highest_scoring_score was
-  // added to the Graph contract.
-  for (const item of engine.pattern_findings || []) {
-    const type = item.pattern_type;
-    if (!type || type === patternType || item.routing_relevant === false) continue;
-    const score = Number(item.finding_score) || 0;
-    relevantScores.set(type, Math.max(relevantScores.get(type) || 0, score));
-  }
-  const otherDetectorScores = [...relevantScores.entries()].sort(
-    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
-  );
+  const otherDetectorScores = (engine.candidate_detector_scores || [])
+    .filter(item => item.detector !== patternType && Number.isFinite(item.score))
+    .sort((left, right) => right.score - left.score || left.detector.localeCompare(right.detector));
   return (
     <div className="mt-2 space-y-2 text-xs">
       {(patternType || fallback) && <div className="text-teal-800">
@@ -232,12 +227,31 @@ export const GraphScoreContribution: React.FC<{
       {otherDetectorScores.length > 0 && (
         <div className="rounded border border-slate-200 bg-slate-50 p-2 text-slate-700">
           <p className="font-semibold text-slate-900">Other detector scores</p>
-          <p className="text-slate-500">Highest routing-relevant finding per detector · scores are not summed.</p>
+          <p className="text-slate-500">Current nomination evaluation · scores are not summed.</p>
           <div className="mt-2 space-y-1">
-            {otherDetectorScores.map(([type, score]) => (
-              <div key={type} className="flex items-center justify-between gap-2">
-                <span>{GRAPH_PATTERN_LABELS[type] || `${type} pattern`}</span>
-                <span className="rounded bg-white px-1.5 py-0.5 font-semibold text-indigo-700">{score.toFixed(2)}</span>
+            {otherDetectorScores.map(item => (
+              <div
+                key={item.detector}
+                className="flex items-center justify-between gap-2"
+                title={(item.eligibility_reasons || []).join('; ') || item.detail}
+              >
+                <span>{GRAPH_PATTERN_LABELS[item.detector] || `${item.detector} pattern`}</span>
+                <span className="flex flex-shrink-0 items-center gap-1">
+                  <span className={`rounded px-1.5 py-0.5 font-medium ${
+                    item.state === 'SCORING'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : item.state === 'ANALYTICS_ONLY'
+                        ? 'bg-slate-200 text-slate-600'
+                        : 'bg-amber-50 text-amber-700'
+                  }`}>
+                    {item.state === 'SCORING'
+                      ? 'Scoring'
+                      : item.state === 'ANALYTICS_ONLY'
+                        ? 'Analytics only'
+                        : 'Not scoring'}
+                  </span>
+                  <span className="rounded bg-white px-1.5 py-0.5 font-semibold text-indigo-700">{item.score.toFixed(2)}</span>
+                </span>
               </div>
             ))}
           </div>
