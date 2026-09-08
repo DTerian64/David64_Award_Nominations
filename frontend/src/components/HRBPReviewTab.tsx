@@ -228,32 +228,50 @@ export const GraphScoreContribution: React.FC<{
         <div className="rounded border border-slate-200 bg-slate-50 p-2 text-slate-700">
           <p className="font-semibold text-slate-900">Other detector scores</p>
           <p className="text-slate-500">Current nomination evaluation · scores are not summed.</p>
-          <div className="mt-2 space-y-1">
-            {otherDetectorScores.map(item => (
-              <div
-                key={item.detector}
-                className="flex items-center justify-between gap-2"
-                title={(item.eligibility_reasons || []).join('; ') || item.detail}
-              >
-                <span>{GRAPH_PATTERN_LABELS[item.detector] || `${item.detector} pattern`}</span>
-                <span className="flex flex-shrink-0 items-center gap-1">
-                  <span className={`rounded px-1.5 py-0.5 font-medium ${
+          <div className="mt-2 space-y-1.5">
+            {otherDetectorScores.map(item => {
+              const statusLabel = item.state === 'SCORING'
+                ? 'Eligible'
+                : item.state === 'ANALYTICS_ONLY'
+                  ? 'Analytics only'
+                  : 'Not eligible';
+              const explanation = item.state === 'SCORING'
+                ? 'Participated; lower than the winning detector.'
+                : item.state === 'ANALYTICS_ONLY'
+                  ? 'Excluded from routing by policy.'
+                  : item.eligibility_reasons?.[0] || 'Minimum detector criteria were not met.';
+              return (
+                <div
+                  key={item.detector}
+                  className={`rounded-md border px-2 py-1.5 ${
                     item.state === 'SCORING'
-                      ? 'bg-emerald-50 text-emerald-700'
+                      ? 'border-emerald-200 bg-emerald-50/60'
                       : item.state === 'ANALYTICS_ONLY'
-                        ? 'bg-slate-200 text-slate-600'
-                        : 'bg-amber-50 text-amber-700'
+                        ? 'border-slate-200 bg-slate-100'
+                        : 'border-amber-200 bg-amber-50/60'
+                  }`}
+                  title={(item.eligibility_reasons || []).join('; ') || item.detail}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-medium text-slate-800">
+                      {GRAPH_PATTERN_LABELS[item.detector] || `${item.detector} pattern`}
+                    </span>
+                    <span className="flex-shrink-0 rounded bg-white px-1.5 py-0.5 font-semibold text-indigo-700 shadow-sm">
+                      {item.score.toFixed(2)}
+                    </span>
+                  </div>
+                  <p className={`mt-1 leading-tight ${
+                    item.state === 'SCORING'
+                      ? 'text-emerald-700'
+                      : item.state === 'ANALYTICS_ONLY'
+                        ? 'text-slate-500'
+                        : 'text-amber-700'
                   }`}>
-                    {item.state === 'SCORING'
-                      ? 'Scoring'
-                      : item.state === 'ANALYTICS_ONLY'
-                        ? 'Analytics only'
-                        : 'Not scoring'}
-                  </span>
-                  <span className="rounded bg-white px-1.5 py-0.5 font-semibold text-indigo-700">{item.score.toFixed(2)}</span>
-                </span>
-              </div>
-            ))}
+                    <span className="font-semibold">{statusLabel}</span> · {explanation}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

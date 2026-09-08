@@ -106,10 +106,10 @@ test('Graph verdict shows its biggest contributor and maximum finding_score', ()
   assert.match(html, /Nominations:<\/span> #201, #202, #203/);
   assert.match(html, /Other detector scores/);
   assert.match(html, /Copy-Paste Fraud.*72\.40/s);
-  assert.match(html, /Copy-Paste Fraud.*Scoring.*72\.40/s);
-  assert.match(html, /Super Beneficiary.*Not scoring.*55\.25/s);
-  assert.match(html, /Nomination Desert.*Analytics only.*40\.00/s);
-  assert.doesNotMatch(html, /Nomination Ring.*Scoring.*88\.20/s);
+  assert.match(html, /Copy-Paste Fraud.*72\.40.*Eligible.*lower than the winning detector/s);
+  assert.match(html, /Super Beneficiary.*55\.25.*Not eligible.*unique nominators 2\/4/s);
+  assert.match(html, /Nomination Desert.*40\.00.*Analytics only.*Excluded from routing by policy/s);
+  assert.doesNotMatch(html, /Nomination Ring.*Eligible.*88\.20/s);
   assert.equal((html.match(/nominator: Ring/g) || []).length, 0);
 });
 
