@@ -13,7 +13,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ShieldAlert, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
-import { SHAP_FEATURE_LABELS, type ShapContribution } from '../utils/shap';
+import { parseShapContributions, SHAP_FEATURE_LABELS, type ShapContribution } from '../utils/shap';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ export interface HRBPQueueItem {
   fraud_probability:  number | null;
   risk_level:         string | null;
   warning_flags:      string[];
-  top_features:       string | null;
+  top_features:       ShapContribution[] | string | null;
   feature_summary:    string | null;
   llm_explanation:    string | null;
   decision_source:    'integrity_v2' | 'legacy' | null;
@@ -85,7 +85,24 @@ export interface EngineResult {
   nominator_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   beneficiary_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   shared_history?: Array<NonNullable<EngineResult['winning_finding']>>;
-  explanation?: { llm_text?: string | null };
+  explanation?: {
+    llm_text?: string | null;
+    top_features?: ShapContribution[];
+    shap_status?: string | null;
+    shap_reason?: string | null;
+  };
+  pattern_findings?: Array<NonNullable<EngineResult['winning_finding']> & {
+    routing_relevant?: boolean;
+  }>;
+  detector_summary?: Array<{
+    pattern_type?: string;
+    count?: number;
+    scoring_count?: number;
+    highest_score?: number;
+    highest_scoring_score?: number;
+    enabled?: boolean;
+    enabled_for_routing?: boolean;
+  }>;
   combined_decision?: {
     action?: string;
     checks?: string[];
@@ -157,6 +174,25 @@ export const GraphScoreContribution: React.FC<{
     const userId = persistedId ?? fallbackId;
     return userId === undefined ? role : `${role} #${userId}`;
   });
+  const relevantScores = new Map<string, number>();
+  for (const summary of engine.detector_summary || []) {
+    if (summary.enabled === false || summary.enabled_for_routing === false) continue;
+    const type = summary.pattern_type;
+    if (!type || type === patternType) continue;
+    const score = summary.highest_scoring_score;
+    if (typeof score === 'number') relevantScores.set(type, score);
+  }
+  // Compatibility for decisions written before highest_scoring_score was
+  // added to the Graph contract.
+  for (const item of engine.pattern_findings || []) {
+    const type = item.pattern_type;
+    if (!type || type === patternType || item.routing_relevant === false) continue;
+    const score = Number(item.finding_score) || 0;
+    relevantScores.set(type, Math.max(relevantScores.get(type) || 0, score));
+  }
+  const otherDetectorScores = [...relevantScores.entries()].sort(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+  );
   return (
     <div className="mt-2 space-y-2 text-xs">
       {(patternType || fallback) && <div className="text-teal-800">
@@ -193,6 +229,20 @@ export const GraphScoreContribution: React.FC<{
           </div>
         </div>
       )}
+      {otherDetectorScores.length > 0 && (
+        <div className="rounded border border-slate-200 bg-slate-50 p-2 text-slate-700">
+          <p className="font-semibold text-slate-900">Other detector scores</p>
+          <p className="text-slate-500">Highest routing-relevant finding per detector · scores are not summed.</p>
+          <div className="mt-2 space-y-1">
+            {otherDetectorScores.map(([type, score]) => (
+              <div key={type} className="flex items-center justify-between gap-2">
+                <span>{GRAPH_PATTERN_LABELS[type] || `${type} pattern`}</span>
+                <span className="rounded bg-white px-1.5 py-0.5 font-semibold text-indigo-700">{score.toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -207,23 +257,16 @@ type HRBPOutcome =
 
 // ── ShapPanel component ───────────────────────────────────────────────────
 
-export const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFeaturesJson }) => {
-  if (!topFeaturesJson) return null;
-
-  let contributions: ShapContribution[] = [];
-  try {
-    contributions = JSON.parse(topFeaturesJson);
-  } catch {
-    return null;
-  }
+export const ShapPanel: React.FC<{ topFeatures: unknown }> = ({ topFeatures }) => {
+  const contributions = parseShapContributions(topFeatures);
   if (!contributions.length) return null;
 
   const maxAbs = Math.max(...contributions.map(c => Math.abs(c.contribution)), 0.001);
 
   return (
-    <div className="mt-3 mb-3 bg-slate-50 border border-slate-200 rounded-lg p-4">
-      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">
-        RF model (SHAP) breakdown (top contributing factors)
+    <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-2">
+      <p className="mb-2 text-xs font-semibold text-slate-700">
+        Top SHAP factors
       </p>
       <div className="space-y-2">
         {contributions.map((c, i) => {
@@ -234,29 +277,28 @@ export const ShapPanel: React.FC<{ topFeaturesJson: string | null }> = ({ topFea
           const sign    = isRisk ? '+' : '';
 
           return (
-            <div key={i} className="flex items-center gap-3">
-              {/* Label + value */}
-              <div className="w-56 flex-shrink-0">
-                <p className="text-xs text-slate-700 leading-tight">{label}</p>
-                <p className="text-xs text-slate-400">{c.raw_value}</p>
+            <div key={i}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs leading-tight text-slate-700">{label}</p>
+                  <p className="text-[10px] text-slate-400">Value {c.raw_value}</p>
+                </div>
+                <span className={`flex-shrink-0 text-xs font-mono ${isRisk ? 'text-orange-600' : 'text-emerald-600'}`}>
+                  {sign}{(c.contribution * 100).toFixed(1)} pp
+                </span>
               </div>
-              {/* Bar */}
-              <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
                 <div
-                  className={`h-2 rounded-full ${barColour}`}
+                  className={`h-1.5 rounded-full ${barColour}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
-              {/* Contribution in percentage points */}
-              <span className={`text-xs font-mono w-16 text-right flex-shrink-0 ${isRisk ? 'text-orange-600' : 'text-emerald-600'}`}>
-                {sign}{(c.contribution * 100).toFixed(1)} pp
-              </span>
             </div>
           );
         })}
       </div>
-      <p className="text-xs text-slate-400 mt-3">
-        pp = percentage points of fraud probability · Orange pushes up · Green pushes down · Width = relative strength
+      <p className="mt-2 text-[10px] text-slate-400">
+        pp = probability points · Orange raises risk · Green lowers risk
       </p>
     </div>
   );
@@ -394,6 +436,7 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
                   <p className="mt-1 leading-relaxed">{rfLlmExplanation}</p>
                 </div>
               )}
+              {isRf && <ShapPanel topFeatures={engine.explanation?.top_features || item.top_features} />}
             </div>
           );
         })}
@@ -600,9 +643,6 @@ export const HRBPReviewTab: React.FC<Props> = ({ apiFetch, formatCurrency }) => 
                       ))}
                     </div>
                   )}
-
-                  {/* SHAP model signal breakdown */}
-                  <ShapPanel topFeaturesJson={nom.top_features} />
 
                   {/* Pair history toggle */}
                   <button

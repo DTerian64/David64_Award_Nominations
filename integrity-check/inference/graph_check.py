@@ -454,16 +454,39 @@ def _assess_graph_inner(
         f"{winner['pattern_type']} ({winner['finding_score']:.2f}, "
         f"{_derive_graph_nomination_severity(winner['finding_score'], policy['thresholds'])})"
     ]
-    groups: dict[str, dict] = {}
+    pattern_configs = inference_snapshot.scoring_policy.get("patterns") or {}
+    groups: dict[str, dict] = {
+        pattern_type: {
+            "pattern_type": pattern_type,
+            "count": 0,
+            "scoring_count": 0,
+            "highest_score": 0.0,
+            "highest_scoring_score": 0.0,
+            "enabled": bool(config.get("enabled", True)),
+            "enabled_for_routing": bool(
+                config.get("enabled_for_routing", False)
+            ),
+        }
+        for pattern_type, config in pattern_configs.items()
+    }
     for item in findings:
         group = groups.setdefault(item['pattern_type'], {
             'pattern_type': item['pattern_type'], 'count': 0, 'scoring_count': 0,
-            'highest_score': 0.0,
+            'highest_score': 0.0, 'highest_scoring_score': 0.0,
+            'enabled': True,
+            'enabled_for_routing': bool(item.get('enabled_for_routing', False)),
         })
         group['count'] += 1
         group['scoring_count'] += int(item['routing_relevant'])
         group['highest_score'] = max(group['highest_score'], item['finding_score'])
-    summaries = sorted(groups.values(), key=lambda group: (-group['highest_score'], group['pattern_type']))
+        if item['routing_relevant']:
+            group['highest_scoring_score'] = max(
+                group['highest_scoring_score'], item['finding_score']
+            )
+    summaries = sorted(
+        groups.values(),
+        key=lambda group: (-group['highest_scoring_score'], group['pattern_type']),
+    )
     winning_pattern_count = next(
         (group['scoring_count'] for group in summaries
          if winner and group['pattern_type'] == winner['pattern_type']),

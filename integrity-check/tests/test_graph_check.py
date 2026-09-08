@@ -119,6 +119,11 @@ class GraphCheckTests(unittest.TestCase):
         self.assertEqual(result['detector_summary'][1]['count'], 10)
         self.assertEqual(result['winning_pattern_count'], 1)
         self.assertEqual(result['warning_flags'], ['[Graph] nominator: CopyPaste (91.00, CRITICAL)'])
+        by_type = {
+            item['pattern_type']: item for item in result['detector_summary']
+        }
+        self.assertEqual(by_type['CopyPaste']['highest_scoring_score'], 91)
+        self.assertEqual(by_type['Ring']['highest_scoring_score'], 0)
 
     def test_historical_rings_are_context_only(self):
         findings = [

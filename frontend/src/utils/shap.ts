@@ -22,6 +22,13 @@ export const SHAP_FEATURE_LABELS: Record<string, string> = {
 };
 
 export function parseShapContributions(value: unknown): ShapContribution[] {
+  if (typeof value === 'string') {
+    try {
+      return parseShapContributions(JSON.parse(value));
+    } catch {
+      return [];
+    }
+  }
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is ShapContribution => {
     if (item === null || typeof item !== 'object') return false;

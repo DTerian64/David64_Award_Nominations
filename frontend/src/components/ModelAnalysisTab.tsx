@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import {
-  EngineVerdicts, RiskBadge, ShapPanel,
+  EngineVerdicts, RiskBadge,
   type HRBPQueueItem, type PairHistory,
 } from './HRBPReviewTab';
 import { DetectionEnginesPanel, FraudPanel } from './SetupPanel';
@@ -95,8 +95,6 @@ const ReadOnlyEvidence: React.FC<{
             ))}
           </div>
         )}
-
-        <ShapPanel topFeaturesJson={item.top_features} />
 
         <button
           onClick={() => setShowHistory(value => !value)}

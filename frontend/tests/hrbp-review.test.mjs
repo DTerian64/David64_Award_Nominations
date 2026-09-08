@@ -84,6 +84,12 @@ test('Graph verdict shows its biggest contributor and maximum finding_score', ()
         derived_severity: 'HIGH', detail: 'Three-person reciprocal nomination cycle.',
         evidence_scope: 'CURRENT_NOMINATION', evaluation_mode: 'CANDIDATE_EDGE',
         affected_roles: ['nominator', 'beneficiary'], affected_user_ids: [12, 15, 19], nomination_ids: [201, 202, 203] },
+      detector_summary: [
+        { pattern_type: 'Ring', highest_scoring_score: 88.2, enabled: true, enabled_for_routing: true },
+        { pattern_type: 'CopyPaste', highest_scoring_score: 72.4, enabled: true, enabled_for_routing: true },
+        { pattern_type: 'SuperNominator', highest_scoring_score: 41, enabled: true, enabled_for_routing: true },
+        { pattern_type: 'Desert', highest_scoring_score: 99, enabled: true, enabled_for_routing: false },
+      ],
       findings: ['[Graph] nominator: Ring (88.20, HIGH)'],
     },
     gnn: null,
@@ -97,7 +103,31 @@ test('Graph verdict shows its biggest contributor and maximum finding_score', ()
   assert.match(html, /Affected roles:<\/span> nominator #242, beneficiary #198/);
   assert.match(html, /Affected users:<\/span> #12, #15, #19/);
   assert.match(html, /Nominations:<\/span> #201, #202, #203/);
+  assert.match(html, /Other detector scores/);
+  assert.match(html, /Copy-Paste Fraud.*72\.40/s);
+  assert.match(html, /Super Nominator.*41\.00/s);
+  assert.doesNotMatch(html, /Nomination Desert/);
   assert.equal((html.match(/nominator: Ring/g) || []).length, 0);
+});
+
+test('Random Forest verdict renders its ranked SHAP factors inside the engine card', () => {
+  const html = renderEvidence({ engine_results: {
+    rf: {
+      available: true, score: 91, model_probability: 0.918, risk_level: 'CRITICAL',
+      findings: ['Repeated beneficiary'],
+      explanation: { top_features: [
+        { feature: 'NominatorUniqueBeneficiaries', raw_value: 6, contribution: 0.097 },
+        { feature: 'PairNominationCount', raw_value: 9, contribution: 0.067 },
+        { feature: 'HasReciprocalNomination', raw_value: 1, contribution: -0.023 },
+      ] },
+    },
+    graph: null, gnn: null, semantic: null,
+  } });
+  assert.match(html, /Top SHAP factors/);
+  assert.match(html, /Nominator unique beneficiaries/);
+  assert.match(html, /\+9\.7 pp/);
+  assert.match(html, /Same nominator.*beneficiary pair count/s);
+  assert.match(html, /-2\.3 pp/);
 });
 
 test('Graph participant Ring history is displayed but explicitly excluded from scoring', () => {
