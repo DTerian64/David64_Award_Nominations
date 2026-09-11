@@ -8,6 +8,7 @@ from typing import Any
 
 ENGINE_SCHEMA_VERSION = 1
 GRAPH_ENGINE_SCHEMA_VERSION = 2
+GNN_ENGINE_SCHEMA_VERSION = 2
 DECISION_SCHEMA_VERSION = 2
 
 _PROVENANCE_FIELDS = (
@@ -115,9 +116,23 @@ def graph_result(result: dict) -> dict:
 
 def gnn_result(result: dict) -> dict:
     payload = _common("GNN", result)
+    payload["schema_version"] = GNN_ENGINE_SCHEMA_VERSION
     payload.update({
         "model_version": result.get("model_version"),
+        "architecture": result.get("architecture"),
+        "training_policy_id": result.get("training_policy_id"),
+        "training_policy_version": result.get("training_policy_version"),
+        "scoring_policy_id": result.get("scoring_policy_id"),
+        "scoring_policy_version": result.get("scoring_policy_version"),
         "embedding_as_of": result.get("embedding_as_of"),
+        "graph_snapshot_id": result.get("graph_snapshot_id"),
+        "graph_snapshot_as_of": result.get("graph_snapshot_as_of"),
+        "feature_schema_version": result.get("feature_schema_version"),
+        "explanation": result.get("explanation") or {
+            "method": "GNNEXPLAINER",
+            "status": "NOT_REQUESTED",
+            "reason": "NOT_PLANNED",
+        },
     })
     return payload
 

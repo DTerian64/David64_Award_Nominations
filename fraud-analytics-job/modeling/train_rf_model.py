@@ -97,7 +97,7 @@ load_dotenv(env_path)
 
 # ── Blob Storage upload helper ─────────────────────────────────────────────────
 
-def _upload_artefact(local_path: Path, *, blob_folder: str) -> None:
+def _upload_artefact(local_path: Path, *, blob_folder: str) -> bool:
     """
     Upload a local file to its model-family folder in Azure Blob Storage.
     Uses the User-Assigned Managed Identity
@@ -115,7 +115,7 @@ def _upload_artefact(local_path: Path, *, blob_folder: str) -> None:
 
     if not account:
         print(f"  ⚠  AZURE_STORAGE_ACCOUNT not set — skipping upload of {local_path.name}")
-        return
+        return False
 
     try:
         from azure.storage.blob import BlobServiceClient
@@ -141,11 +141,13 @@ def _upload_artefact(local_path: Path, *, blob_folder: str) -> None:
             blob_client.upload_blob(f, overwrite=True)
 
         print(f"  ✓ Uploaded '{local_path.name}' → blob://{account}/{container}/{blob_name}")
+        return True
 
     except Exception as exc:
         # Non-fatal: model is still saved locally for the duration of the run.
         # The backend will continue to use the previous version from Blob Storage.
         print(f"  ✗ Blob upload failed for '{local_path.name}': {exc}")
+        return False
 
 # Minimum labelled samples needed to train a meaningful model.
 # Below this threshold the tenant is skipped with a warning.

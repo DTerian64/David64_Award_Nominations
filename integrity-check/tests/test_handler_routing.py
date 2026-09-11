@@ -187,5 +187,88 @@ class CompleteAssessmentTests(unittest.TestCase):
         ):
             self.assertIn(expected, messages)
 
+    def test_gnn_explanation_is_published_after_routing_with_deterministic_id(self):
+        call_order: list[str] = []
+        details = {
+            "tenant_id": 1,
+            "nominator_id": 10,
+            "beneficiary_id": 20,
+            "description": "A specific contribution aligned to the category.",
+            "category_description": "Going Above & Beyond",
+            "amount": 2000,
+        }
+        gnn_result = {
+            "model_available": True,
+            "fraud_score": 72,
+            "fraud_prob": 0.72,
+            "risk_level": "HIGH",
+            "warning_flags": [],
+            "flagged": True,
+            "model_version": "gnn-v2-test",
+            "embedding_as_of": "2026-09-09",
+            "graph_snapshot_id": "snapshot-test",
+            "graph_snapshot_as_of": "2026-09-09",
+            "feature_schema_version": "gnn-v2",
+            "scoring_policy_version": 4,
+            "_policy": {
+                "explanation_enabled": True,
+                "explanation_minimum_risk": "MEDIUM",
+            },
+        }
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("inference.handler.db.claim_message", return_value=False))
+            stack.enter_context(patch("inference.handler.db.get_nomination_details", return_value=details))
+            stack.enter_context(patch("inference.handler.db.get_tenant_desc_check_config", return_value=object()))
+            stack.enter_context(patch("inference.handler.db.get_integrity_component_statuses", return_value={}))
+            stack.enter_context(patch(
+                "inference.handler.description_check.check",
+                return_value=description_check.CheckResult("pass", None, None),
+            ))
+            stack.enter_context(patch(
+                "inference.handler.random_forest_check.assess",
+                return_value=component_unavailable("test_rf"),
+            ))
+            stack.enter_context(patch(
+                "inference.handler.graph_check.assess_graph",
+                return_value=component_unavailable("test_graph"),
+            ))
+            stack.enter_context(patch(
+                "inference.handler.gnn_check.assess_gnn",
+                return_value=gnn_result,
+            ))
+            save_decision = stack.enter_context(patch(
+                "inference.handler.db.save_integrity_decision_results",
+                side_effect=lambda **_kwargs: call_order.append("decision"),
+            ))
+            stack.enter_context(patch(
+                "inference.handler.db.set_nomination_status",
+                side_effect=lambda *_args: call_order.append("route"),
+            ))
+            publish = stack.enter_context(patch(
+                "inference.handler.service_bus_publisher.publish_event",
+                side_effect=lambda event_type, *_args, **_kwargs: call_order.append(event_type),
+            ))
+            stack.enter_context(patch("inference.handler.db.update_processed_event_result"))
+
+            handler.handle("source-message", {
+                "event_type": "nomination.submitted",
+                "nomination_id": 13881,
+            })
+
+        self.assertEqual(call_order, [
+            "decision",
+            "route",
+            "nomination.fraud-flagged",
+            "gnn.explanation.requested",
+        ])
+        persisted_gnn = save_decision.call_args.kwargs["engine_results"]["gnn"]
+        self.assertEqual(persisted_gnn["explanation"]["status"], "REQUESTED")
+        explanation_call = publish.call_args_list[-1]
+        self.assertEqual(
+            explanation_call.kwargs["message_id"],
+            "gnnexp:t1:n13881:gnn-v2-test",
+        )
+
 if __name__ == "__main__":
     unittest.main()

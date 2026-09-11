@@ -1,7 +1,7 @@
 """
-Synchronous Service Bus publisher for the auxiliary worker.
+Synchronous Service Bus publisher for the integrity-check worker.
 
-The auxiliary service is a synchronous worker loop (no asyncio), so it cannot
+The integrity service is a synchronous worker loop (no asyncio), so it cannot
 use the backend's async publish_event().  This module provides an equivalent
 synchronous implementation using the same azure-servicebus SDK in sync mode.
 
@@ -16,13 +16,14 @@ import json
 import logging
 import os
 import uuid
+from typing import Any
 
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from .azure_credential import credential
 
-logger = logging.getLogger("auxiliary.service_bus_publisher")
+logger = logging.getLogger("integrity_check.service_bus_publisher")
 
 _FQNS  = os.environ["SERVICE_BUS_FQNS"]
 _TOPIC = os.environ["SERVICE_BUS_TOPIC_NAME"]
@@ -32,7 +33,10 @@ def publish_event(
     event_type:    str,
     nomination_id: int | None = None,
     extra:         dict | None = None,
-) -> None:
+    *,
+    message_id:    str | None = None,
+    application_properties: dict[str, Any] | None = None,
+) -> str:
     """
     Publish a domain event to the Service Bus topic (synchronous).
 
@@ -47,14 +51,16 @@ def publish_event(
 
     payload = json.dumps(body).encode("utf-8")
 
-    # Propagate the current trace context so auxiliary-service can link its
-    # spans (approver email, HRBP alert) back to the originating nomination request.
+    # Propagate the current trace context so downstream workers can link their
+    # spans back to the originating nomination request.
     props: dict = {"event_type": event_type}
+    if application_properties:
+        props.update(application_properties)
     TraceContextTextMapPropagator().inject(props)
 
     msg = ServiceBusMessage(
         payload,
-        message_id=str(uuid.uuid4()),
+        message_id=message_id or str(uuid.uuid4()),
         content_type="application/json",
         application_properties=props,
     )
@@ -67,3 +73,4 @@ def publish_event(
         "Published event type=%s nomination_id=%s message_id=%s",
         event_type, nomination_id, msg.message_id,
     )
+    return str(msg.message_id)

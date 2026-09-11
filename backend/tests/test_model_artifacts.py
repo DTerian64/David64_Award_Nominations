@@ -45,6 +45,25 @@ class ModelArtifactTests(unittest.TestCase):
         )
 
     @patch("utils.model_artifacts._download")
+    def test_gnn_manifest_uses_the_active_versioned_bundle(self, download):
+        download.return_value = json.dumps({
+            "schema_version": 1,
+            "artifact_type": "graph_neural_network",
+            "tenant_id": 7,
+        }).encode()
+
+        model_artifacts.get_manifest(
+            tenant_id=7,
+            component="gnn",
+            model_version="gnn-v2-selected",
+        )
+
+        self.assertEqual(
+            download.call_args.args[0],
+            "gnn/tenant_7/gnn-v2-selected/manifest.json",
+        )
+
+    @patch("utils.model_artifacts._download")
     def test_rf_visualization_uses_server_constructed_tenant_blob_name(self, download):
         download.side_effect = [json.dumps({
             "schema_version": 1,

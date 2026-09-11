@@ -1,12 +1,12 @@
 # environments/dev/variables.tf
 
-variable "resource_group_name"  { type = string }
-variable "environment"          { type = string }
-variable "my_ips"               { type = list(string) }
+variable "resource_group_name" { type = string }
+variable "environment" { type = string }
+variable "my_ips" { type = list(string) }
 
 # SQL
-variable "sql_server_name"      { type = string }
-variable "sql_database_name"    { type = string }
+variable "sql_server_name" { type = string }
+variable "sql_database_name" { type = string }
 variable "sql_admin_login" {
   type      = string
   sensitive = true
@@ -28,21 +28,21 @@ variable "sql_entra_admin_only" {
 }
 
 # ACR
-variable "acr_name"             { type = string }
+variable "acr_name" { type = string }
 
 # Storage
 variable "storage_account_name" { type = string }
 
 # Key Vault
-variable "key_vault_name"       { type = string }
+variable "key_vault_name" { type = string }
 
 # OpenAI
-variable "openai_name"          { type = string }
-variable "openai_api_version"   { type = string }
-variable "model_capacity_tpm"   { type = number }
+variable "openai_name" { type = string }
+variable "openai_api_version" { type = string }
+variable "model_capacity_tpm" { type = number }
 
 # App config
-variable "api_base_url"         { type = string }
+variable "api_base_url" { type = string }
 variable "logging_level" {
   type    = string
   default = "INFO"
@@ -82,11 +82,11 @@ variable "email_action_secret_key" {
 }
 
 # Front Door
-variable "afd_profile_name"     { type = string }
-variable "afd_endpoint_name"    { type = string }
+variable "afd_profile_name" { type = string }
+variable "afd_endpoint_name" { type = string }
 
 # Static Web App
-variable "swa_name"             { type = string }
+variable "swa_name" { type = string }
 
 variable "swa_custom_domains" {
   description = "Custom domains to bind to the SWA. Each entry creates a DNS CNAME record and an SWA domain binding. Free SKU supports 2; Standard SKU supports 5."
@@ -150,9 +150,9 @@ variable "daily_data_cap_gb" {
 }
 
 # Container Apps
-variable "cae_name_primary"   { type = string }
+variable "cae_name_primary" { type = string }
 variable "cae_name_secondary" { type = string }
-variable "app_name_primary"   { type = string }
+variable "app_name_primary" { type = string }
 variable "app_name_secondary" { type = string }
 variable "min_replicas" {
   type    = number
@@ -230,96 +230,8 @@ variable "fraud_analytics_ring_max_cluster_size" {
     Set to 0 for no upper limit (production default).
     Example: set to 4 to see only tight 3–4 node rings.
   EOT
-  type    = number
-  default = 4
-}
-
-# ── GNN training stage ────────────────────────────────────────────────────────
-# These mirror the defaults in fraud-analytics-job/modeling/train_gnn_model.py. They are
-# surfaced as variables so a value change shows up in `terraform plan` instead of
-# requiring an image rebuild.
-
-variable "gnn_enabled" {
-  description = <<-EOT
-    Kill switch for the GNN training stage. When false, run_job.py skips the
-    stage and the rest of the weekly run is unaffected — no image rebuild needed.
-
-    This does NOT selectively disable inference. A trained, available GNN always
-    participates in routing; when training is disabled or no artifact exists it
-    contributes no opinion.
-  EOT
-  type    = bool
-  default = true
-}
-
-variable "gnn_hidden_dim" {
-  description = "Hidden dimension of the HeteroConv/SAGEConv encoder."
   type        = number
-  default     = 64
-}
-
-variable "gnn_embed_dim" {
-  description = <<-EOT
-    Dimension of the per-user embedding persisted to dbo.GNN_UserEmbeddings.
-    Changing this invalidates every stored embedding, because the decoder shipped
-    to integrity-check is built for a fixed input width. The version-matched
-    lookup in gnn_check handles the transition, but the first run after a change
-    will report cold_start_user for every user until the encoder repopulates.
-  EOT
-  type    = number
-  default = 64
-}
-
-variable "gnn_epochs" {
-  description = "Training epochs per tenant. The dominant term in stage runtime."
-  type        = number
-  default     = 300
-}
-
-variable "gnn_window_days" {
-  description = <<-EOT
-    Rolling lookback for the GNN's graph. Separate from
-    fraud_analytics_detection_window_days: the graph detector wants a long window
-    to find slow rings, while the GNN needs a window short enough that the three
-    temporal splits (message-passing / train / eval) each hold recent behaviour.
-  EOT
-  type    = number
-  default = 180
-}
-
-variable "gnn_embedding_retention_days" {
-  description = "Age at which stored user embeddings are evicted."
-  type        = number
-  default     = 90
-}
-
-variable "gnn_min_training_samples" {
-  description = "Minimum in-window nominations before a tenant is trained."
-  type        = number
-  default     = 300
-}
-
-variable "gnn_min_users" {
-  description = <<-EOT
-    Minimum distinct users before a tenant is trained.
-
-    Not arbitrary. The synthetic ablation ran 3 seeds x 2 tenant sizes: the
-    100-user tenant gained +0.12/+0.12/+0.26 PR-AUC from message passing, while
-    the 50-user tenant LOST -0.02/-0.05/-0.04. Below roughly this size the graph
-    structure is noise and the GNN is worse than the flat-feature baseline.
-  EOT
-  type    = number
-  default = 50
-}
-
-variable "gnn_min_positives" {
-  description = <<-EOT
-    Minimum positive labels before a tenant is trained. Gates on positives, not
-    on row count: a tenant can clear the sample gate and still yield a silent
-    NaN PR-AUC if almost nothing is labelled fraud.
-  EOT
-  type    = number
-  default = 10
+  default     = 4
 }
 
 variable "fraud_analytics_detection_window_days" {

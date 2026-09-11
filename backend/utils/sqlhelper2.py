@@ -3307,8 +3307,6 @@ def get_fraud_settings(tenant_id: int) -> dict:
     dcc = _parse(row[0]) if row else {}
     ic  = _parse(row[1]) if row else {}
     routing = ic.get("score_routing") if isinstance(ic.get("score_routing"), dict) else {}
-    gnn     = ic.get("gnn") if isinstance(ic.get("gnn"), dict) else {}
-    gnn_routing = gnn.get("score_routing") if isinstance(gnn.get("score_routing"), dict) else {}
     phrases = dcc.get("boilerplate_phrases")
     return {
         # Fraud score routing (0..100 cutoffs)
@@ -3316,11 +3314,6 @@ def get_fraud_settings(tenant_id: int) -> dict:
         "medium_threshold":               int(routing.get("medium_threshold", 40)),
         "high_threshold":                 int(routing.get("high_threshold", 60)),
         "critical_threshold":             int(routing.get("critical_threshold", 80)),
-        # GNN score routing (independently calibrated 0..100 cutoffs)
-        "gnn_low_threshold":              int(gnn_routing.get("low_threshold", 25)),
-        "gnn_medium_threshold":           int(gnn_routing.get("medium_threshold", 45)),
-        "gnn_high_threshold":             int(gnn_routing.get("high_threshold", 65)),
-        "gnn_critical_threshold":         int(gnn_routing.get("critical_threshold", 85)),
         # Description quality
         "use_char_count":                 bool(dcc.get("use_char_count", False)),
         "min_char_count":                 int(dcc.get("min_char_count", 12)),
@@ -3369,15 +3362,6 @@ def update_fraud_settings(tenant_id: int, data: dict, actor: str) -> None:
         routing["high_threshold"]     = int(data["high_threshold"])
         routing["critical_threshold"] = int(data["critical_threshold"])
         ic["score_routing"] = routing
-        gnn = ic.get("gnn") if isinstance(ic.get("gnn"), dict) else {}
-        gnn_routing = gnn.get("score_routing") if isinstance(gnn.get("score_routing"), dict) else {}
-        gnn_routing["low_threshold"]      = int(data["gnn_low_threshold"])
-        gnn_routing["medium_threshold"]   = int(data["gnn_medium_threshold"])
-        gnn_routing["high_threshold"]     = int(data["gnn_high_threshold"])
-        gnn_routing["critical_threshold"] = int(data["gnn_critical_threshold"])
-        gnn["score_routing"] = gnn_routing
-        ic["gnn"] = gnn
-
         session.execute(
             text("""
                 UPDATE dbo.Tenants
@@ -3794,6 +3778,216 @@ def publish_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
                 UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
             WHERE PolicyId=:policy_id AND TenantId=:tid AND Status='DRAFT'
         """), {"policy_id": draft_id, "tid": tenant_id, "actor": actor})
+        session.commit()
+        return int(draft_id)
+
+
+def _gnn_configuration_from_payload(payload: dict) -> dict:
+    thresholds = payload["thresholds"]
+    return {
+        "schema_version": 1,
+        "model": {
+            "hidden_dimension": payload["hidden_dim"],
+            "embedding_dimension": payload["embed_dim"],
+        },
+        "training": {
+            "epochs": payload["epochs"],
+            "rolling_fold_count": payload["rolling_folds"],
+            "window_days": payload["window_days"],
+            "minimum_training_samples": payload["minimum_training_samples"],
+            "minimum_users": payload["minimum_users"],
+            "minimum_positive_labels_per_split": payload[
+                "minimum_positives_per_split"
+            ],
+        },
+        "artifacts": {
+            "embedding_retention_days": payload["embedding_retention_days"],
+            "stale_embedding_days": payload["stale_embedding_days"],
+        },
+        "architecture_selection": {
+            "candidate_architectures": [
+                value.strip().lower()
+                for value in payload["candidate_architectures"]
+            ],
+            "selection_metric": payload["selection_metric"].lower(),
+            "minimum_improvement_over_mlp": payload[
+                "minimum_improvement_over_mlp"
+            ],
+            "incumbent_tie_tolerance": payload["incumbent_tie_tolerance"],
+            "minimum_eligible_graph_candidates": payload[
+                "minimum_eligible_graph_candidates"
+            ],
+        },
+        "score_routing": {
+            "low_threshold": thresholds["low"],
+            "medium_threshold": thresholds["medium"],
+            "high_threshold": thresholds["high"],
+            "critical_threshold": thresholds["critical"],
+        },
+    }
+
+
+def _gnn_policy_row(row) -> dict:
+    configuration = _json_value(row[5], {})
+    if not isinstance(configuration, dict) or configuration.get("schema_version") != 1:
+        raise ValueError("GNN ConfigurationJson must use schema_version 1")
+    try:
+        model = configuration["model"]
+        training = configuration["training"]
+        artifacts = configuration["artifacts"]
+        selection = configuration["architecture_selection"]
+        routing = configuration["score_routing"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("GNN ConfigurationJson is missing required settings") from exc
+    return {
+        "policy_id": int(row[0]),
+        "policy_version": int(row[1]),
+        "status": row[2],
+        "training_enabled": bool(row[3]),
+        "inference_enabled": bool(row[4]),
+        "hidden_dim": int(model["hidden_dimension"]),
+        "embed_dim": int(model["embedding_dimension"]),
+        "epochs": int(training["epochs"]),
+        "rolling_folds": int(training["rolling_fold_count"]),
+        "window_days": int(training["window_days"]),
+        "embedding_retention_days": int(artifacts["embedding_retention_days"]),
+        "stale_embedding_days": int(artifacts["stale_embedding_days"]),
+        "minimum_training_samples": int(training["minimum_training_samples"]),
+        "minimum_users": int(training["minimum_users"]),
+        "minimum_positives_per_split": int(
+            training["minimum_positive_labels_per_split"]
+        ),
+        "candidate_architectures": selection["candidate_architectures"],
+        "selection_metric": str(selection["selection_metric"]).lower(),
+        "minimum_improvement_over_mlp": float(
+            selection["minimum_improvement_over_mlp"]
+        ),
+        "incumbent_tie_tolerance": float(selection["incumbent_tie_tolerance"]),
+        "minimum_eligible_graph_candidates": int(
+            selection["minimum_eligible_graph_candidates"]
+        ),
+        "thresholds": {
+            "low": float(routing["low_threshold"]),
+            "medium": float(routing["medium_threshold"]),
+            "high": float(routing["high_threshold"]),
+            "critical": float(routing["critical_threshold"]),
+        },
+        "explanation_enabled": bool(row[6]),
+        "explanation_minimum_risk": str(row[7]).upper(),
+        "created_at": _iso_utc(row[8]), "created_by": row[9],
+        "updated_at": _iso_utc(row[10]), "updated_by": row[11],
+        "published_at": _iso_utc(row[12]), "published_by": row[13],
+    }
+
+
+def get_gnn_scoring_policy_bundle(tenant_id: int) -> dict:
+    """Return the tenant's active, draft, and historical GNN policies."""
+    with get_db_context() as session:
+        rows = session.execute(text("""
+            SELECT PolicyId, PolicyVersion, Status,
+                   TrainingEnabled, InferenceEnabled,
+                   ConfigurationJson,
+                   ExplanationEnabled, ExplanationMinimumRisk,
+                   CreatedAt, CreatedBy, UpdatedAt, UpdatedBy,
+                   PublishedAt, PublishedBy
+            FROM dbo.GNNScoringPolicies
+            WHERE TenantId=:tid
+            ORDER BY PolicyVersion DESC
+        """), {"tid": tenant_id}).fetchall()
+    policies = [_gnn_policy_row(row) for row in rows]
+    return {
+        "active_policy": next(
+            (item for item in policies if item["status"] == "ACTIVE"), None
+        ),
+        "draft_policy": next(
+            (item for item in policies if item["status"] == "DRAFT"), None
+        ),
+        "history": policies,
+    }
+
+
+def create_gnn_scoring_policy_draft(tenant_id: int, actor: str) -> int:
+    """Clone the active GNN policy; return an existing draft when present."""
+    with get_db_context() as session:
+        existing = session.execute(text("""
+            SELECT TOP 1 PolicyId FROM dbo.GNNScoringPolicies
+            WHERE TenantId=:tid AND Status='DRAFT'
+        """), {"tid": tenant_id}).scalar_one_or_none()
+        if existing is not None:
+            return int(existing)
+        draft_id = session.execute(text("""
+            INSERT INTO dbo.GNNScoringPolicies (
+                TenantId, PolicyVersion, Status,
+                TrainingEnabled, InferenceEnabled,
+                ConfigurationJson,
+                ExplanationEnabled, ExplanationMinimumRisk,
+                CreatedBy, UpdatedBy
+            ) OUTPUT INSERTED.PolicyId
+            SELECT TenantId, PolicyVersion + 1, 'DRAFT',
+                   TrainingEnabled, InferenceEnabled,
+                   ConfigurationJson,
+                   ExplanationEnabled, ExplanationMinimumRisk,
+                   :actor, :actor
+            FROM dbo.GNNScoringPolicies
+            WHERE TenantId=:tid AND Status='ACTIVE'
+        """), {"tid": tenant_id, "actor": actor}).scalar_one_or_none()
+        if draft_id is None:
+            raise ValueError("No active GNN policy exists")
+        session.commit()
+        return int(draft_id)
+
+
+def update_gnn_scoring_policy_draft(
+    tenant_id: int, actor: str, payload: dict
+) -> None:
+    configuration = json.dumps(
+        _gnn_configuration_from_payload(payload), separators=(",", ":")
+    )
+    with get_db_context() as session:
+        result = session.execute(text("""
+            UPDATE dbo.GNNScoringPolicies SET
+                TrainingEnabled=:training_enabled,
+                InferenceEnabled=:inference_enabled,
+                ConfigurationJson=:configuration,
+                ExplanationEnabled=:explanation_enabled,
+                ExplanationMinimumRisk=:explanation_risk,
+                UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
+            WHERE TenantId=:tid AND Status='DRAFT'
+        """), {
+            "training_enabled": int(payload["training_enabled"]),
+            "inference_enabled": int(payload["inference_enabled"]),
+            "configuration": configuration,
+            "explanation_enabled": int(payload["explanation_enabled"]),
+            "explanation_risk": payload["explanation_minimum_risk"].upper(),
+            "actor": actor, "tid": tenant_id,
+        })
+        if result.rowcount != 1:
+            raise ValueError("Create a draft GNN policy before editing")
+        session.commit()
+
+
+def publish_gnn_scoring_policy_draft(tenant_id: int, actor: str) -> int:
+    """Atomically retire the current policy and activate the tenant draft."""
+    with get_db_context() as session:
+        draft_id = session.execute(text("""
+            SELECT TOP 1 PolicyId FROM dbo.GNNScoringPolicies
+            WHERE TenantId=:tid AND Status='DRAFT'
+        """), {"tid": tenant_id}).scalar_one_or_none()
+        if draft_id is None:
+            raise ValueError("No draft GNN policy exists")
+        session.execute(text("""
+            UPDATE dbo.GNNScoringPolicies
+            SET Status='RETIRED', UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
+            WHERE TenantId=:tid AND Status='ACTIVE'
+        """), {"tid": tenant_id, "actor": actor})
+        session.execute(text("""
+            UPDATE dbo.GNNScoringPolicies
+            SET Status='ACTIVE', PublishedAt=SYSUTCDATETIME(), PublishedBy=:actor,
+                UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
+            WHERE PolicyId=:policy_id AND TenantId=:tid AND Status='DRAFT'
+        """), {
+            "policy_id": draft_id, "tid": tenant_id, "actor": actor,
+        })
         session.commit()
         return int(draft_id)
 

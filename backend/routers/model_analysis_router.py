@@ -81,6 +81,27 @@ async def get_graph_scoring_policy(
     return result
 
 
+@router.get("/setup/gnn-policy")
+async def get_gnn_scoring_policy(
+    user_context: dict = Depends(require_analytics_access),
+):
+    """Inspect the effective tenant's active GNN policy and version history."""
+    tenant_id = user_context["effective_user"]["TenantId"]
+    result = sqlhelper.get_gnn_scoring_policy_bundle(tenant_id)
+    can_edit = bool(
+        is_admin(user_context["actual_user"])
+        and not user_context.get("is_impersonating")
+    )
+    result["can_edit"] = can_edit
+    if not can_edit:
+        result["draft_policy"] = None
+        result["history"] = [
+            item for item in result.get("history", [])
+            if item.get("status") != "DRAFT"
+        ]
+    return result
+
+
 @router.post("/setup/graph-policy/requests")
 async def request_graph_scoring_change(
     payload: GraphFineTuningRequest,
@@ -124,7 +145,23 @@ async def get_model_manifest(
     """Return safe model metadata, never the executable model artifact."""
     tenant_id = user_context["effective_user"]["TenantId"]
     try:
-        manifest = model_artifacts.get_manifest(tenant_id, component)
+        model_version = None
+        if component == "gnn":
+            gnn_status = next(
+                (
+                    row for row in sqlhelper.get_integrity_component_statuses(tenant_id)
+                    if row["component"] == "GNN"
+                ),
+                None,
+            )
+            model_version = gnn_status["serving_version"] if gnn_status else None
+        manifest = (
+            model_artifacts.get_manifest(
+                tenant_id, component, model_version=model_version
+            )
+            if component == "gnn"
+            else model_artifacts.get_manifest(tenant_id, component)
+        )
     except (UnicodeDecodeError, ValueError) as exc:
         raise HTTPException(
             status_code=502,

@@ -20,9 +20,10 @@ below (STAGES) is the single source of truth; this list documents it.
       Uploads the retrained .pkl model to Azure Blob Storage.
 
   Stage 3: modeling/train_gnn_model.py
-      Per-tenant heterogeneous GNN — HeteroConv + SAGEConv over user and
-      nomination nodes, trained on a three-window temporal split so message
-      passing, training targets and evaluation targets never overlap.
+      Per-tenant operational bake-off of GraphSAGE, GCN-family, and GATv2 over
+      disjoint rolling-origin target windows, with a no-graph MLP admission
+      baseline. The eligible graph winner is refitted and supplies the one GNN
+      opinion; candidate architectures never become additional decision votes.
 
       Split encoder/decoder by design: the encoder runs HERE and persists one
       embedding per user to dbo.GNN_UserEmbeddings; only the ~15k-parameter
@@ -37,13 +38,17 @@ below (STAGES) is the single source of truth; this list documents it.
       Forest's engineered graph features would just be relearning the detector
       it is meant to be a second opinion on.
 
-      Skips a tenant rather than failing it when below GNN_MIN_TRAINING_SAMPLES
-      / GNN_MIN_USERS / GNN_MIN_POSITIVES. Those gates are empirical: in the
-      The synthetic ablation found that a 50-user tenant scored WORSE with message passing than
-      without it, so training a small tenant is not a neutral act.
+      Reads the tenant's active dbo.GNNScoringPolicies version immediately
+      before processing that tenant. Volume, label, architecture-selection,
+      training, retention, scoring, and explanation settings therefore change
+      without a Terraform run or image rebuild.
 
-      Requires the tables from Alembic revision 0040. Set GNN_ENABLED=false to
-      skip the stage without rebuilding the image.
+      Skips a tenant rather than failing it when below its policy gates. Those
+      gates are empirical: the synthetic ablation found that a 50-user tenant
+      scored worse with message passing than without it, so training a small
+      tenant is not a neutral act.
+
+      Requires the tables through Alembic revision 0059.
 
   Stage 4: misc_jobs/sync_holidays.py
       Refreshes dbo.Holidays from the Nager.Date API, falling back to the

@@ -17,6 +17,7 @@ from routers.model_analysis_router import (
     get_decision_engines_setup,
     get_fraud_integrity_setup,
     get_graph_scoring_policy,
+    get_gnn_scoring_policy,
     get_model_manifest,
     get_nomination_analysis,
     get_rf_model_visualization,
@@ -62,14 +63,23 @@ class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
         get_manifest.assert_called_once_with(4, "rf")
         self.assertTrue(result["available"])
 
+    @patch(
+        "routers.model_analysis_router.sqlhelper.get_integrity_component_statuses",
+        return_value=[{"component": "GNN", "serving_version": "gnn-v2-test"}],
+    )
     @patch("routers.model_analysis_router.model_artifacts.get_manifest")
-    async def test_missing_manifest_returns_a_training_run_message(self, get_manifest):
+    async def test_missing_manifest_returns_a_training_run_message(
+        self, get_manifest, _get_statuses
+    ):
         get_manifest.return_value = None
         context = {
             "actual_user": {"roles": []},
             "effective_user": {"UserId": 19, "TenantId": 4},
         }
         result = await get_model_manifest("gnn", context)
+        get_manifest.assert_called_once_with(
+            4, "gnn", model_version="gnn-v2-test"
+        )
         self.assertFalse(result["available"])
         self.assertIn("next training run", result["message"])
 
@@ -123,6 +133,27 @@ class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
             "is_impersonating": False,
         }
         result = await get_graph_scoring_policy(context)
+        get_policy.assert_called_once_with(4)
+        self.assertFalse(result["can_edit"])
+        self.assertIsNone(result["draft_policy"])
+        self.assertEqual([item["policy_version"] for item in result["history"]], [2])
+
+    @patch("routers.model_analysis_router.sqlhelper.get_gnn_scoring_policy_bundle")
+    async def test_data_scientist_can_inspect_but_not_edit_gnn_policy(self, get_policy):
+        get_policy.return_value = {
+            "active_policy": {"policy_version": 2},
+            "draft_policy": {"policy_version": 3},
+            "history": [
+                {"policy_version": 3, "status": "DRAFT"},
+                {"policy_version": 2, "status": "ACTIVE"},
+            ],
+        }
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+            "is_impersonating": False,
+        }
+        result = await get_gnn_scoring_policy(context)
         get_policy.assert_called_once_with(4)
         self.assertFalse(result["can_edit"])
         self.assertIsNone(result["draft_policy"])

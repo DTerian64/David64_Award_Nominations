@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from . import decision_contract
 from . import description_check
 from . import gnn_check
+from . import gnn_explanation
 from . import graph_check
 from . import random_forest_check
 from . import result_fusion
@@ -234,8 +235,19 @@ def handle(message_id: str, payload: dict) -> None:
             "fraud_score": gnn_result.get("fraud_score"),
             "risk_level": gnn_result.get("risk_level"),
             "model_version": gnn_result.get("model_version"),
+            "architecture": gnn_result.get("architecture"),
+            "training_policy_version": gnn_result.get("training_policy_version"),
+            "scoring_policy_version": gnn_result.get("scoring_policy_version"),
         },
     )
+    explanation_plan = gnn_explanation.plan(
+        gnn_result=gnn_result,
+        gnn_policy=gnn_result.get("_policy"),
+        tenant_id=tenant_id,
+        nomination_id=nomination_id,
+        source_message_id=message_id,
+    )
+    gnn_result["explanation"] = explanation_plan.explanation
 
     decision = result_fusion.combine(rf_result, graph_result, gnn_result)
     all_flags = pre_ml_flags + decision["warning_flags"]
@@ -385,5 +397,69 @@ def handle(message_id: str, payload: dict) -> None:
                 "routing_rule": route_decision["routing_rule"],
             },
         )
+
+    # Explanation is deliberately downstream of score persistence and routing.
+    # A missing extension subscription or transient publish failure must never
+    # strand the nomination or change its integrity verdict.
+    if explanation_plan.should_publish:
+        explanation_event = explanation_plan.event or {}
+        try:
+            service_bus_publisher.publish_event(
+                gnn_explanation.EVENT_TYPE,
+                nomination_id,
+                extra={
+                    key: value
+                    for key, value in explanation_event.items()
+                    if key not in {"event_type", "nomination_id"}
+                },
+                message_id=explanation_event["request_id"],
+                application_properties={
+                    "schema_version": gnn_explanation.SCHEMA_VERSION,
+                    "extension": "gnn_explainer",
+                },
+            )
+            logger.info(
+                "GNN explanation requested",
+                extra={
+                    "nomination_id": nomination_id,
+                    "tenant_id": tenant_id,
+                    "request_id": explanation_event["request_id"],
+                    "model_version": explanation_event["gnn_model_version"],
+                    "graph_snapshot_id": explanation_event["graph_snapshot_id"],
+                },
+            )
+        except Exception as exc:
+            failed = gnn_explanation.publish_failed(
+                explanation_plan.explanation, exc
+            )
+            try:
+                db.mark_gnn_explanation_publish_failed(
+                    nomination_id=nomination_id,
+                    tenant_id=tenant_id,
+                    model_version=explanation_event["gnn_model_version"],
+                    request_id=explanation_event["request_id"],
+                    explanation=failed,
+                )
+            except Exception as state_exc:
+                logger.error(
+                    "Could not persist GNN explanation publish failure",
+                    extra={
+                        "nomination_id": nomination_id,
+                        "tenant_id": tenant_id,
+                        "request_id": explanation_event["request_id"],
+                        "error": str(state_exc),
+                    },
+                    exc_info=True,
+                )
+            logger.error(
+                "GNN explanation request publish failed; nomination routing is unchanged",
+                extra={
+                    "nomination_id": nomination_id,
+                    "tenant_id": tenant_id,
+                    "request_id": explanation_event["request_id"],
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
 
     db.update_processed_event_result(message_id, "success")

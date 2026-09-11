@@ -7,11 +7,11 @@ after train_rf_model.
 Per tenant:
     1. Load labels via labels.py (shared with the Random Forest).
     2. Build the per-tenant heterogeneous graph from dbo.Nominations / dbo.Users.
-    3. Train the encoder + decoder end to end with a three-window temporal split.
-    4. Publish per-user node embeddings to dbo.GNN_UserEmbeddings.
-    5. Upload gnn/gnn_encoder_tenant_<N>.pt (audit) and
-       gnn/gnn_head_tenant_<N>.pt (inference).
-    6. Evict node embeddings older than the retention window.
+    3. Compare the MLP admission baseline and configured graph architectures.
+    4. Select one graph winner by the versioned operational policy.
+    5. Refit the winner over all matured labels and publish its embeddings.
+    6. Upload the immutable candidate and serving bundle.
+    7. Activate it through dbo.IntegrityComponentStatus as the final step.
 
 Ordering rationale
 ------------------
@@ -54,17 +54,26 @@ JOB_DIR = Path(__file__).resolve().parents[1]
 env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
-from . import gnn_graph as G  # noqa: E402 - .env must load before model imports
+from .gnn import graph as G  # noqa: E402 - .env must load before model imports
+from .gnn import artifact_bundle as bundle  # noqa: E402
 from . import labels as labels_mod  # noqa: E402
 from .artifact_manifest import (  # noqa: E402
     MANIFEST_SCHEMA_VERSION,
     artifact_descriptor,
-    state_dict_summary,
     write_manifest,
 )
 from utils.component_status import upsert_component_status  # noqa: E402
 from utils.db_conn import connect  # noqa: E402
-from .gnn_model import _RELATIONS, train_gnn  # noqa: E402
+from .gnn.model import (  # noqa: E402
+    _RELATIONS,
+    fit_candidate_rolling,
+    train_candidate_rolling,
+)
+from .gnn.selection import (  # noqa: E402
+    GRAPH_ARCHITECTURES,
+    select_architecture,
+)
+from .gnn.policy import GNNPolicy, load_active_policy  # noqa: E402
 
 # Reuse the Random Forest's blob upload helper rather than duplicating the auth
 # and error handling. Both stages run in the same process under run_job.py.
@@ -74,22 +83,6 @@ logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = JOB_DIR / "Output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# ── Tunables (Terraform-injected) ─────────────────────────────────────────────
-GNN_ENABLED                  = os.getenv("GNN_ENABLED", "true").lower() != "false"
-GNN_HIDDEN_DIM               = int(os.getenv("GNN_HIDDEN_DIM", "64"))
-GNN_EMBED_DIM                = int(os.getenv("GNN_EMBED_DIM", "64"))
-GNN_EPOCHS                   = int(os.getenv("GNN_EPOCHS", "300"))
-GNN_WINDOW_DAYS              = int(os.getenv("GNN_WINDOW_DAYS", os.getenv("DETECTION_WINDOW_DAYS", "180")))
-GNN_EMBEDDING_RETENTION_DAYS = int(os.getenv("GNN_EMBEDDING_RETENTION_DAYS", "90"))
-
-# Below these a per-tenant graph carries too little structure to learn from.
-# Synthetic validation showed message passing losing to a flat-feature baseline
-# on the smaller of two tenant sizes, so this gate is empirical, not decorative.
-MIN_NOMINATIONS = int(os.getenv("GNN_MIN_TRAINING_SAMPLES", "300"))
-MIN_USERS       = int(os.getenv("GNN_MIN_USERS", "50"))
-# A model trained on a handful of positives is noise with a confidence interval.
-MIN_POSITIVES   = int(os.getenv("GNN_MIN_POSITIVES", "10"))
 
 
 # ── Tenant discovery ──────────────────────────────────────────────────────────
@@ -192,7 +185,7 @@ def _publish_embeddings(
     # fast_executemany makes pyodbc pre-bind a single fixed-width buffer per
     # column rather than describing each row, and for a bytes parameter that
     # buffer defaults to 255. A float32 embedding is 4 bytes per dimension, so
-    # GNN_EMBED_DIM=64 is exactly 256 bytes and overflows it by one float:
+    # An embedding dimension of 64 is exactly 256 bytes and overflows it by one float:
     #     ('String data, right truncation: length 256 buffer 255', 'HY000')
     # The column is VARBINARY(MAX); the limit was entirely client-side. Any
     # embed_dim >= 64 hits it, which is to say the shipped default did.
@@ -214,6 +207,7 @@ def _publish_embeddings(
                FROM #gnn_emb) AS src
             ON  target.TenantId = src.TenantId
             AND target.UserId   = src.UserId
+            AND target.ModelVersion = src.ModelVersion
             AND target.AsOfDate = src.AsOfDate
         WHEN MATCHED THEN
             UPDATE SET Embedding = src.Embedding, EmbeddingDim = src.EmbeddingDim,
@@ -224,7 +218,6 @@ def _publish_embeddings(
                     src.EmbeddingDim, src.ModelVersion);
     """, tenant_id)
     cur.execute("DROP TABLE #gnn_emb")
-    conn.commit()
     return len(rows)
 
 
@@ -237,13 +230,20 @@ def _evict_stale_embeddings(conn, tenant_id: int, retention_days: int) -> int:
         tenant_id, cutoff,
     )
     n = cur.rowcount
-    conn.commit()
     return max(n, 0)
 
 
 # ── Artifacts ─────────────────────────────────────────────────────────────────
 
-def _write_head(model, graph: dict, model_version: str, metrics: dict, path: Path) -> None:
+def _write_head(
+    model,
+    graph: dict,
+    model_version: str,
+    graph_snapshot_id: str,
+    metrics: dict,
+    path: Path,
+    policy: GNNPolicy,
+) -> None:
     """
     Serialise the decoder — the only artifact integrity-check downloads.
 
@@ -257,7 +257,15 @@ def _write_head(model, graph: dict, model_version: str, metrics: dict, path: Pat
         "decoder_state_dict":         model.decoder.net.state_dict(),
         "decoder_hidden":             [64, 32],
         "emb_dim":                    int(model.emb_dim),
+        "architecture":               str(model.architecture),
         "model_version":              model_version,
+        "training_policy_id":         policy.policy_id,
+        "training_policy_version":    policy.policy_version,
+        "feature_schema_version":     graph["feature_schema_version"],
+        "graph_snapshot_id":          graph_snapshot_id,
+        "graph_snapshot_as_of":       graph.get(
+            "graph_snapshot_as_of", graph["t_graph"]
+        ).isoformat(),
         "participant_roles":          ["nominator", "beneficiary"],
         "behavior_statuses":          ["Pending", "Approved", "Paid"],
         "nomination_feature_columns": list(G.NOMINATION_FEATURE_COLUMNS),
@@ -269,8 +277,15 @@ def _write_head(model, graph: dict, model_version: str, metrics: dict, path: Pat
         "user_scaler_std":            [float(v) for v in graph["user_scaler"]["std"]],
         "amount_mean":                float(graph["amount_mean"]),
         "amount_std":                 float(graph["amount_std"]),
-        "metrics":                    {k: (float(v) if isinstance(v, (int, float)) else str(v))
-                                       for k, v in metrics.items() if k != "history"},
+        "category_amount_stats":      graph["category_amount_stats"],
+        # Serving needs headline metrics only. Rolling-fold detail and offline
+        # candidate comparisons remain in the manifest, avoiding a large and
+        # operationally irrelevant decoder artifact.
+        "metrics":                    {
+            k: (float(v) if isinstance(v, (int, float)) else str(v))
+            for k, v in metrics.items()
+            if k not in {"history", "folds", "selection", "candidates"}
+        },
     }
     torch.save(head, path)
 
@@ -280,57 +295,73 @@ def _write_head(model, graph: dict, model_version: str, metrics: dict, path: Pat
         torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=True)
 
 
-def _write_gnn_manifest(
-    tenant_id: int,
+def _write_encoder(
     model,
+    graph: dict,
     model_version: str,
-    metrics: dict,
-    encoder_path: Path,
-    head_path: Path,
+    graph_snapshot_id: str,
+    path: Path,
+    policy: GNNPolicy,
+) -> None:
+    """Write one graph encoder as a restricted-deserialization-safe artifact."""
+    torch.save({
+        "encoder_state_dict": model.encoder.state_dict(),
+        "architecture": str(model.architecture),
+        "model_version": model_version,
+        "training_policy_id": policy.policy_id,
+        "training_policy_version": policy.policy_version,
+        "emb_dim": int(model.emb_dim),
+        "hidden_dim": policy.hidden_dim,
+        "num_layers": len(model.encoder.convs),
+        "feature_schema_version": graph["feature_schema_version"],
+        "graph_snapshot_id": graph_snapshot_id,
+        "graph_snapshot_as_of": graph.get(
+            "graph_snapshot_as_of", graph["t_graph"]
+        ).isoformat(),
+        "relations": [list(relation) for relation in _RELATIONS],
+    }, path)
+    with path.open("rb") as handle:
+        torch.load(io.BytesIO(handle.read()), map_location="cpu", weights_only=True)
+
+
+def _write_operational_manifest(
+    *,
+    tenant_id: int,
+    graph: dict,
+    model_version: str,
+    graph_snapshot_id: str,
+    selection: dict,
+    artifact_paths: list[tuple[Path, str]],
+    manifest_path: Path,
+    policy: GNNPolicy,
 ) -> Path:
-    """Publish a non-executable representation of the encoder and serving head."""
-    manifest_path = OUTPUT_DIR / f"gnn_tenant_{tenant_id}.manifest.json"
-    emb_dim = int(model.emb_dim)
-    nomination_feature_count = len(G.NOMINATION_FEATURE_COLUMNS)
+    """Describe the complete bake-off and the one atomically activated winner."""
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "artifact_type": "graph_neural_network",
         "tenant_id": tenant_id,
         "model_version": model_version,
+        "feature_schema_version": G.FEATURE_SCHEMA_VERSION,
+        "graph_snapshot_id": graph_snapshot_id,
+        "graph_snapshot_as_of": graph.get(
+            "graph_snapshot_as_of", graph["t_graph"]
+        ).isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "description": "Tenant-scoped heterogeneous GraphSAGE fraud model",
-        "architecture": {
-            "encoder": {
-                "type": "Heterogeneous GraphSAGE",
-                "role": "audit_and_retraining",
-                "layer_count": len(model.encoder.convs),
-                "embedding_dimension": emb_dim,
-                "aggregation": "mean",
-                "relations": [
-                    {"source": source, "relationship": relation, "target": target}
-                    for source, relation, target in _RELATIONS
-                ],
-                **state_dict_summary(model.encoder.state_dict()),
-            },
-            "decoder": {
-                "type": "Multilayer Perceptron",
-                "role": "live_inference",
-                "input_dimension": 2 * emb_dim + nomination_feature_count,
-                "layers": [2 * emb_dim + nomination_feature_count, 64, 32, 1],
-                "dropout": 0.2,
-                **state_dict_summary(model.decoder.net.state_dict()),
-            },
-        },
+        "description": "Tenant-scoped operational GNN architecture bake-off",
+        "training_policy": policy.snapshot(),
+        "selection": selection,
         "features": {
             "user": list(G.USER_FEATURE_COLUMNS),
             "nomination": list(G.NOMINATION_FEATURE_COLUMNS),
             "participant_roles": ["nominator", "beneficiary"],
             "behavior_statuses": ["Pending", "Approved", "Paid"],
         },
-        "training": {key: value for key, value in metrics.items() if key != "history"},
         "artifacts": [
-            artifact_descriptor(encoder_path, "audit_encoder"),
-            artifact_descriptor(head_path, "serving_head"),
+            {
+                **artifact_descriptor(path, role),
+                "relative_path": path.relative_to(manifest_path.parent).as_posix(),
+            }
+            for path, role in artifact_paths
         ],
     }
     write_manifest(manifest_path, manifest)
@@ -339,36 +370,206 @@ def _write_gnn_manifest(
 
 # ── Per-tenant run ────────────────────────────────────────────────────────────
 
+def _retain_labelled_targets(
+    graph: dict,
+    split: str,
+    label_map: dict[int, int],
+) -> np.ndarray:
+    """Filter one target interval to independently human-confirmed outcomes."""
+    target = graph[split]
+    keep = [
+        index
+        for index, nomination_id in enumerate(target["nom_ids"])
+        if nomination_id in label_map
+    ]
+    target["nom_ids"] = [target["nom_ids"][index] for index in keep]
+    target["x"] = target["x"][keep]
+    target["pairs"] = target["pairs"][keep]
+    return np.asarray(
+        [label_map[nomination_id] for nomination_id in target["nom_ids"]],
+        dtype=np.int64,
+    )
+
+
+def _headline_candidate_metrics(metrics: dict) -> dict:
+    return {
+        key: metrics[key]
+        for key in (
+            "eval_pr_auc",
+            "eval_roc_auc",
+            "eval_base_rate",
+            "eval_lift",
+            "eval_brier_score",
+            "training_duration_seconds",
+            "holdout_inference_ms",
+            "parameter_count",
+            "n_train",
+            "n_eval",
+            "n_train_pos",
+            "n_eval_pos",
+            "epochs_run",
+        )
+    }
+
+
+def _incumbent_selection(conn, tenant_id: int) -> dict | None:
+    """Read the active architecture without making the status row a model registry."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT DiagnosticsJson
+        FROM dbo.IntegrityComponentStatus
+        WHERE TenantId = ? AND Component = 'GNN'
+    """, tenant_id)
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        import json
+
+        diagnostics = json.loads(row[0])
+        selection = diagnostics.get("selection") or {}
+        value = selection.get("selected_architecture")
+        return selection if value in GRAPH_ARCHITECTURES else None
+    except (TypeError, ValueError):
+        logger.warning(
+            "Tenant %d has invalid GNN selection diagnostics; ignoring incumbent",
+            tenant_id,
+        )
+        return None
+
+
+def _candidate_training_set(
+    folds: list[dict], y_train_by_fold: list[np.ndarray], y_holdout: np.ndarray
+) -> tuple[list[dict], list[np.ndarray]]:
+    """Add the untouched holdout as a final time-valid refit interval."""
+    holdout_as_training = dict(folds[-1])
+    holdout_as_training["train"] = folds[-1]["eval"]
+    return [*folds, holdout_as_training], [*y_train_by_fold, y_holdout]
+
+
+def _train_candidates(
+    folds: list[dict],
+    y_train_by_fold: list[np.ndarray],
+    y_holdout: np.ndarray,
+    policy: GNNPolicy,
+) -> tuple[dict[str, object], dict[str, dict]]:
+    """Run the standard MLP admission baseline and every configured graph model."""
+    if policy.selection_metric != "holdout_pr_auc":
+        raise ValueError(
+            "The active GNN policy selection metric must be holdout_pr_auc"
+        )
+    invalid = sorted(
+        set(policy.candidate_architectures) - set(GRAPH_ARCHITECTURES)
+    )
+    if invalid:
+        raise ValueError(
+            f"Unsupported GNN candidate(s): {invalid}; expected {GRAPH_ARCHITECTURES}"
+        )
+    architectures = ("mlp", *dict.fromkeys(policy.candidate_architectures))
+    models: dict[str, object] = {}
+    candidates: dict[str, dict] = {}
+    for architecture in architectures:
+        logger.info("GNN operational candidate starting: %s", architecture)
+        try:
+            model, metrics = train_candidate_rolling(
+                folds,
+                y_train_by_fold,
+                y_holdout,
+                architecture=architecture,
+                hidden_dim=policy.hidden_dim,
+                emb_dim=policy.embed_dim,
+                epochs=policy.epochs,
+            )
+            models[architecture] = model
+            candidates[architecture] = {
+                "status": "COMPLETED",
+                **_headline_candidate_metrics(metrics),
+            }
+        except Exception as exc:
+            logger.exception("GNN candidate %s failed", architecture)
+            candidates[architecture] = {
+                "status": "FAILED",
+                "reason": type(exc).__name__,
+                "detail": str(exc)[:500],
+            }
+    return models, candidates
+
 def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     t0 = time.monotonic()
     run_id = run_id or str(uuid.uuid4())
+    policy = load_active_policy(conn, tenant_id)
+    if policy is None:
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+            reason_code="NO_ACTIVE_POLICY",
+            reason_detail="No active dbo.GNNScoringPolicies row exists for this tenant.",
+            diagnostics={"gnn_policy_available": False},
+            run_id=run_id,
+        )
+        return "SKIPPED (no active GNN scoring policy)"
+    if not policy.training_enabled:
+        incumbent_selection = _incumbent_selection(conn, tenant_id)
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="DISABLED",
+            reason_code="DISABLED",
+            reason_detail=(
+                f"GNN training is disabled by active policy v{policy.policy_version}; "
+                "the incumbent serving model was preserved."
+            ),
+            diagnostics={
+                "gnn_training_enabled": False,
+                "gnn_policy_id": policy.policy_id,
+                "gnn_policy_version": policy.policy_version,
+                "selection": incumbent_selection,
+            },
+            run_id=run_id,
+        )
+        return f"DISABLED (policy v{policy.policy_version})"
 
-    users, nominations = G.fetch_tenant_rows(conn, tenant_id, GNN_WINDOW_DAYS)
+    logger.info(
+        "Tenant %d GNN policy v%d: window %d days | folds %d | hidden %d | "
+        "embedding %d | epochs %d | retention %d days",
+        tenant_id, policy.policy_version, policy.window_days,
+        policy.rolling_folds, policy.hidden_dim, policy.embed_dim,
+        policy.epochs, policy.embedding_retention_days,
+    )
+    incumbent_selection = _incumbent_selection(conn, tenant_id)
+    incumbent = (
+        incumbent_selection.get("selected_architecture")
+        if incumbent_selection else None
+    )
+
+    users, nominations = G.fetch_tenant_rows(conn, tenant_id, policy.window_days)
     behavior_nominations = [
         row for row in nominations
         if bool(row.get("IsBehaviorEligible", True))
     ]
     base_diagnostics = {
-        "window_days": GNN_WINDOW_DAYS,
+        "window_days": policy.window_days,
         "nomination_count": len(behavior_nominations),
         "user_count": len(users),
+        "gnn_policy_id": policy.policy_id,
+        "gnn_policy_version": policy.policy_version,
+        **({"selection": incumbent_selection} if incumbent_selection else {}),
     }
-    if len(behavior_nominations) < MIN_NOMINATIONS or len(users) < MIN_USERS:
+    if (len(behavior_nominations) < policy.minimum_training_samples
+            or len(users) < policy.minimum_users):
         detail = (f"{len(behavior_nominations)} nominations / {len(users)} users; "
-                  f"requires {MIN_NOMINATIONS} / {MIN_USERS}")
+                  f"requires {policy.minimum_training_samples} / {policy.minimum_users}")
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="BELOW_MINIMUM_VOLUME", reason_detail=detail,
             diagnostics={
                 **base_diagnostics,
-                "minimum_nominations": MIN_NOMINATIONS, "minimum_users": MIN_USERS,
+                "minimum_nominations": policy.minimum_training_samples,
+                "minimum_users": policy.minimum_users,
             },
             run_id=run_id,
         )
         return (f"SKIPPED (below gate: {len(behavior_nominations)} nominations / {len(users)} users, "
-                f"need {MIN_NOMINATIONS}/{MIN_USERS})")
+                f"need {policy.minimum_training_samples}/{policy.minimum_users})")
 
-    label_df = labels_mod.load_labels(conn, tenant_id, window_days=GNN_WINDOW_DAYS)
+    label_df = labels_mod.load_labels(conn, tenant_id, window_days=policy.window_days)
     labels_mod.summarise(label_df, tenant_id)
 
     # True training independence: only human-confirmed HRBP outcomes may enter
@@ -387,40 +588,67 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         )
         return "SKIPPED (no human-confirmed nominations)"
 
-    graph = G.build_hetero_data(users, nominations)
+    try:
+        G.rolling_thresholds(
+            behavior_nominations,
+            n_folds=policy.rolling_folds,
+        )
+    except ValueError as exc:
+        upsert_component_status(
+            conn,
+            tenant_id=tenant_id,
+            component="GNN",
+            attempt_status="SKIPPED",
+            reason_code="INSUFFICIENT_TEMPORAL_COVERAGE",
+            reason_detail=str(exc),
+            diagnostics={
+                **base_diagnostics,
+                "rolling_fold_count": policy.rolling_folds,
+            },
+            run_id=run_id,
+        )
+        return f"SKIPPED (insufficient temporal coverage: {exc})"
+    # Isolation and graph-construction failures are not ordinary data-volume
+    # skips. Let them fail the tenant run visibly rather than misclassifying a
+    # possible cross-tenant reference as insufficient temporal coverage.
+    folds = G.build_rolling_folds(
+        users,
+        nominations,
+        n_folds=policy.rolling_folds,
+    )
 
-    def _y(split: str):
-        ids = graph[split]["nom_ids"]
-        keep = [i for i, nid in enumerate(ids) if nid in label_map]
-        return keep, np.array([label_map[ids[i]] for i in keep])
-
-    keep_tr, y_tr = _y("train")
-    keep_ev, y_ev = _y("eval")
-    for split, keep in (("train", keep_tr), ("eval", keep_ev)):
-        graph[split]["nom_ids"] = [graph[split]["nom_ids"][i] for i in keep]
-        graph[split]["x"]       = graph[split]["x"][keep]
-        graph[split]["pairs"] = graph[split]["pairs"][keep]
+    y_train_by_fold = [
+        _retain_labelled_targets(fold, "train", label_map) for fold in folds
+    ]
+    y_ev = _retain_labelled_targets(folds[-1], "eval", label_map)
+    y_tr = np.concatenate(y_train_by_fold)
+    holdout_graph = folds[-1]
 
     train_pos = int(y_tr.sum())
     eval_pos = int(y_ev.sum())
     train_neg = int(len(y_tr) - train_pos)
     eval_neg = int(len(y_ev) - eval_pos)
-    if train_pos < MIN_POSITIVES or eval_pos < MIN_POSITIVES:
-        detail = (f"train fraud labels {train_pos}, eval fraud labels {eval_pos}; "
-                  f"requires {MIN_POSITIVES} in each split")
+    if (train_pos < policy.minimum_positives_per_split
+            or eval_pos < policy.minimum_positives_per_split):
+        detail = (
+            f"rolling-train fraud labels {train_pos}, final-holdout fraud labels "
+            f"{eval_pos}; requires {policy.minimum_positives_per_split} in each population"
+        )
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="INSUFFICIENT_FRAUD_LABELS", reason_detail=detail,
             diagnostics={
                 **base_diagnostics,
                 "train_positive_count": train_pos, "eval_positive_count": eval_pos,
-                "minimum_positives_per_split": MIN_POSITIVES,
+                "minimum_positives_per_split": policy.minimum_positives_per_split,
                 "train_negative_count": train_neg, "eval_negative_count": eval_neg,
+                "rolling_fold_count": len(folds),
+                "fold_training_counts": [len(labels) for labels in y_train_by_fold],
             },
             run_id=run_id,
         )
         return (f"SKIPPED (too few human-confirmed fraud labels: train {train_pos}, "
-                f"eval {eval_pos}, need {MIN_POSITIVES} each)")
+                f"eval {eval_pos}, need {policy.minimum_positives_per_split} each)")
     if train_neg == 0 or eval_neg == 0:
         detail = (f"train {train_pos} fraud/{train_neg} legitimate; "
                   f"eval {eval_pos} fraud/{eval_neg} legitimate")
@@ -431,6 +659,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
                 **base_diagnostics,
                 "train_positive_count": train_pos, "train_negative_count": train_neg,
                 "eval_positive_count": eval_pos, "eval_negative_count": eval_neg,
+                "rolling_fold_count": len(folds),
+                "fold_training_counts": [len(labels) for labels in y_train_by_fold],
             },
             run_id=run_id,
         )
@@ -438,70 +668,196 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
                 f"train {train_pos} fraud/{train_neg} legitimate, "
                 f"eval {eval_pos} fraud/{eval_neg} legitimate)")
 
-    model, metrics = train_gnn(
-        graph, y_tr, y_ev,
-        hidden_dim=GNN_HIDDEN_DIM, emb_dim=GNN_EMBED_DIM, epochs=GNN_EPOCHS,
+    candidate_models, candidate_metrics = _train_candidates(
+        folds, y_train_by_fold, y_ev, policy
     )
-
-    # Every target is now human-confirmed, so the ordinary training metrics are
-    # the independent metrics. Keep the explicit aliases for existing reports.
-    metrics["eval_pr_auc_hrbp"] = metrics["eval_pr_auc"]
-    metrics["n_eval_hrbp"] = int(len(y_ev))
-    metrics["n_eval_hrbp_pos"] = eval_pos
-    logger.info(
-        "[Tenant %d] human-confirmed PR-AUC %.4f (n=%d, fraud=%d) | ROC %.4f",
-        tenant_id, metrics["eval_pr_auc"], len(y_ev), eval_pos,
-        metrics["eval_roc_auc"],
+    selection = select_architecture(
+        candidate_metrics,
+        incumbent_architecture=incumbent,
+        minimum_improvement_over_mlp=policy.minimum_improvement_over_mlp,
+        incumbent_tie_tolerance=policy.incumbent_tie_tolerance,
+        minimum_eligible_graph_candidates=policy.minimum_eligible_graph_candidates,
     )
+    candidate_metrics = selection["candidates"]
 
+    # Candidate evaluation remains tied to the untouched holdout. Only after
+    # selection is final do we admit that matured interval to a fresh refit.
+    graph = G.build_serving_graph(users, nominations)
     as_of = date.today()
-    model_version = f"gnn-{as_of:%Y%m%d}-t{tenant_id}"
+    run_suffix = run_id.replace("-", "")[:8]
+    model_version = f"gnn-v2-{as_of:%Y%m%d}-t{tenant_id}-{run_suffix}"
+    graph_snapshot_id = f"gnn-graph-v2-{as_of:%Y%m%d}-t{tenant_id}-{run_suffix}"
+    selection["model_version"] = model_version
+    selection["selected_at"] = datetime.now(timezone.utc).isoformat()
+
+    bundle_dir = OUTPUT_DIR / "gnn" / f"tenant_{tenant_id}" / model_version
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_path = bundle_dir / "graph_snapshot.pt"
+    manifest_path = bundle_dir / "manifest.json"
+    snapshot = bundle.build_snapshot(
+        graph=graph,
+        tenant_id=tenant_id,
+        model_version=model_version,
+        graph_snapshot_id=graph_snapshot_id,
+    )
+    bundle.write_snapshot(snapshot_path, snapshot)
+    artifact_paths: list[tuple[Path, str]] = [
+        (snapshot_path, "explanation_graph_snapshot")
+    ]
+    for architecture, model in candidate_models.items():
+        candidate_dir = bundle_dir / "candidates" / architecture
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        metrics_path = candidate_dir / "metrics.json"
+        write_manifest(metrics_path, candidate_metrics[architecture])
+        artifact_paths.append((metrics_path, f"candidate_{architecture}_metrics"))
+        decoder_path = candidate_dir / "decoder.pt"
+        _write_head(
+            model, graph, model_version, graph_snapshot_id,
+            candidate_metrics[architecture], decoder_path, policy,
+        )
+        artifact_paths.append((decoder_path, f"candidate_{architecture}_decoder"))
+        if architecture in GRAPH_ARCHITECTURES:
+            encoder_path = candidate_dir / "encoder.pt"
+            _write_encoder(
+                model, graph, model_version, graph_snapshot_id, encoder_path,
+                policy,
+            )
+            artifact_paths.append(
+                (encoder_path, f"candidate_{architecture}_encoder")
+            )
+
+    selected_architecture = selection["selected_architecture"]
+    serving_model = None
+    serving_metrics = None
+    if selected_architecture:
+        refit_folds, refit_labels = _candidate_training_set(
+            folds, y_train_by_fold, y_ev
+        )
+        serving_model, serving_metrics = fit_candidate_rolling(
+            refit_folds,
+            refit_labels,
+            architecture=selected_architecture,
+            hidden_dim=policy.hidden_dim,
+            emb_dim=policy.embed_dim,
+            epochs=policy.epochs,
+        )
+        serving_dir = bundle_dir / "serving"
+        serving_dir.mkdir(parents=True, exist_ok=True)
+        serving_encoder = serving_dir / "encoder.pt"
+        serving_decoder = serving_dir / "decoder.pt"
+        _write_encoder(
+            serving_model, graph, model_version, graph_snapshot_id,
+            serving_encoder, policy,
+        )
+        _write_head(
+            serving_model, graph, model_version, graph_snapshot_id,
+            {**candidate_metrics[selected_architecture], "refit": serving_metrics},
+            serving_decoder, policy,
+        )
+        artifact_paths.extend([
+            (serving_encoder, "serving_encoder"),
+            (serving_decoder, "serving_decoder"),
+        ])
+
+    _write_operational_manifest(
+        tenant_id=tenant_id,
+        graph=graph,
+        model_version=model_version,
+        graph_snapshot_id=graph_snapshot_id,
+        selection=selection,
+        artifact_paths=artifact_paths,
+        manifest_path=manifest_path,
+        policy=policy,
+    )
+    artifact_paths.append((manifest_path, "operational_manifest"))
+
+    # Upload the whole immutable run before the SQL serving pointer changes.
+    versioned_folder = f"gnn/tenant_{tenant_id}/{model_version}"
+    bundle_uploads = []
+    for artifact, _role in artifact_paths:
+        relative_parent = artifact.relative_to(bundle_dir).parent.as_posix()
+        blob_folder = (
+            versioned_folder
+            if relative_parent == "."
+            else f"{versioned_folder}/{relative_parent}"
+        )
+        bundle_uploads.append(
+            _upload_artefact(artifact, blob_folder=blob_folder)
+        )
+    if os.getenv("AZURE_STORAGE_ACCOUNT") and not all(bundle_uploads):
+        raise RuntimeError(
+            "GNN candidate bundle upload was incomplete; serving pointer was preserved"
+        )
+
+    common_diagnostics = {
+        **base_diagnostics,
+        "human_confirmed_eval_count": len(y_ev),
+        "human_confirmed_train_count": len(y_tr),
+        "rolling_fold_count": len(folds),
+        "holdout_start": holdout_graph["t_cut"].isoformat(),
+        "holdout_end": holdout_graph["eval_end"].isoformat(),
+        "selection": selection,
+        "feature_schema_version": graph["feature_schema_version"],
+        "graph_snapshot_id": graph_snapshot_id,
+        "graph_snapshot_as_of": graph.get(
+            "graph_snapshot_as_of", graph["t_graph"]
+        ).isoformat(),
+        "artifact_bundle_prefix": versioned_folder,
+    }
+    if serving_model is None:
+        reason = selection["selection_reason"]
+        skipped_diagnostics = {
+            **common_diagnostics,
+            "selection": incumbent_selection or selection,
+            "last_candidate_selection": selection,
+        }
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+            reason_code=reason,
+            reason_detail=(
+                "The candidate run did not produce an eligible graph architecture; "
+                "the current serving model was preserved."
+            ),
+            diagnostics=skipped_diagnostics,
+            run_id=run_id,
+        )
+        return (
+            f"SKIPPED ({reason}; incumbent {incumbent or 'none'} preserved; "
+            f"{time.monotonic() - t0:.1f}s)"
+        )
 
     with torch.no_grad():
-        z = model.embed_users(graph["data"]).numpy().astype(np.float32)
-    user_ids = sorted(graph["user_index"], key=lambda u: graph["user_index"][u])
-    n_emb = _publish_embeddings(conn, tenant_id, user_ids, z, as_of, model_version)
-
-    enc_path  = OUTPUT_DIR / f"gnn_encoder_tenant_{tenant_id}.pt"
-    head_path = OUTPUT_DIR / f"gnn_head_tenant_{tenant_id}.pt"
-    torch.save({"encoder_state_dict": model.encoder.state_dict(),
-                "model_version": model_version,
-                "emb_dim": int(model.emb_dim)}, enc_path)
-    _write_head(model, graph, model_version, metrics, head_path)
-    manifest_path = _write_gnn_manifest(
-        tenant_id=tenant_id,
-        model=model,
-        model_version=model_version,
-        metrics=metrics,
-        encoder_path=enc_path,
-        head_path=head_path,
+        z = serving_model.embed_users(graph["data"]).numpy().astype(np.float32)
+        user_ids = sorted(
+            graph["user_index"], key=lambda user_id: graph["user_index"][user_id]
+        )
+    n_emb = _publish_embeddings(
+        conn, tenant_id, user_ids, z, as_of, model_version
+    )
+    n_evicted = _evict_stale_embeddings(
+        conn, tenant_id, policy.embedding_retention_days
     )
 
-    # Upload model artifacts encoder first and head second: until the head lands,
-    # inference finds no decoder for this version and scores nothing. The JSON
-    # representation is presentation metadata and is published only afterward.
-    _upload_artefact(enc_path, blob_folder="gnn")
-    _upload_artefact(head_path, blob_folder="gnn")
-    _upload_artefact(manifest_path, blob_folder="gnn")
-
-    n_evicted = _evict_stale_embeddings(conn, tenant_id, GNN_EMBEDDING_RETENTION_DAYS)
-
+    # This upsert is the activation pointer and therefore happens last.
     upsert_component_status(
         conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
-        serving_status="AVAILABLE", serving_version=model_version,
-        serving_as_of=as_of, run_id=run_id,
+        serving_status="AVAILABLE",
+        serving_version=model_version,
+        serving_as_of=as_of,
+        run_id=run_id,
         diagnostics={
-            **base_diagnostics,
+            **common_diagnostics,
             "embedding_count": n_emb,
             "evicted_embedding_count": n_evicted,
-            "human_label_pr_auc": metrics["eval_pr_auc"],
-            "human_confirmed_eval_count": len(y_ev),
+            "human_label_pr_auc": selection["selected_metric_value"],
+            "serving_refit_training_count": serving_metrics["n_train"],
         },
     )
 
-    return (f"OK ({model_version}, {n_emb} embeddings, "
+    return (f"OK ({model_version}, {selected_architecture}, {n_emb} embeddings, "
             f"{n_evicted} evicted, human-label PR-AUC "
-            f"{metrics['eval_pr_auc']:.4f}, {time.monotonic() - t0:.1f}s)")
+            f"{selection['selected_metric_value']:.4f}, "
+            f"{time.monotonic() - t0:.1f}s)")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -509,28 +865,11 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
 def main(tenants_to_process: list | None = None) -> None:
     """Called by run_job.py. Signature matches every other stage."""
     run_id = str(uuid.uuid4())
-    if not GNN_ENABLED:
-        logger.info("GNN_ENABLED=false — skipping GNN training stage.")
-        conn = connect()
-        try:
-            tenants = _get_tenants(conn)
-            if tenants_to_process is not None:
-                tenants = [t for t in tenants if t in tenants_to_process]
-            for tenant_id in tenants:
-                upsert_component_status(
-                    conn, tenant_id=tenant_id, component="GNN",
-                    attempt_status="DISABLED", reason_code="DISABLED",
-                    reason_detail="GNN_ENABLED=false for this analytics job run.",
-                    diagnostics={"gnn_enabled": False}, run_id=run_id,
-                )
-        finally:
-            conn.close()
-        return
-
     logger.info("GNN MODEL TRAINING - Multi-Tenant")
-    logger.info("Window: %d days | hidden %d | emb %d | epochs %d | retention %d days",
-                GNN_WINDOW_DAYS, GNN_HIDDEN_DIM, GNN_EMBED_DIM,
-                GNN_EPOCHS, GNN_EMBEDDING_RETENTION_DAYS)
+    logger.info(
+        "Each tenant's active dbo.GNNScoringPolicies row is read immediately "
+        "before that tenant is processed."
+    )
 
     conn = connect()
     try:

@@ -11,6 +11,7 @@ export type InspectableModel = 'rf' | 'gnn';
 
 interface ArtifactInfo {
   file_name: string;
+  relative_path?: string;
   role: string;
   size_bytes: number;
   sha256: string;
@@ -74,6 +75,18 @@ interface ModelManifest {
   architecture?: {
     encoder: ArchitecturePart;
     decoder: ArchitecturePart;
+  };
+  selection?: {
+    policy_version: string;
+    selection_metric: string;
+    selected_architecture: string | null;
+    selected_metric_value: number | null;
+    mlp_baseline_value: number | null;
+    improvement_over_mlp: number | null;
+    selection_reason: string;
+    incumbent_architecture?: string | null;
+    selected_at?: string;
+    candidates: Record<string, Record<string, any>>;
   };
   features?: {
     user: string[];
@@ -140,10 +153,10 @@ const Artifacts: React.FC<{ artifacts: ArtifactInfo[] }> = ({ artifacts }) => (
     <h4 className="mb-2 text-sm font-semibold text-gray-700">Published artifacts</h4>
     <div className="grid gap-2 md:grid-cols-2">
       {artifacts.map(artifact => (
-        <div key={artifact.file_name} className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
+        <div key={artifact.relative_path || `${artifact.role}-${artifact.file_name}`} className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
           <FileBox className="mt-0.5 h-5 w-5 shrink-0 text-indigo-500" />
           <div className="min-w-0 text-xs">
-            <div className="break-all font-mono font-medium text-gray-700">{artifact.file_name}</div>
+            <div className="break-all font-mono font-medium text-gray-700">{artifact.relative_path || artifact.file_name}</div>
             <div className="mt-1 text-gray-500">{prettyLabel(artifact.role)} · {formatBytes(artifact.size_bytes)}</div>
             <div className="mt-1 truncate font-mono text-[10px] text-gray-400" title={artifact.sha256}>SHA-256 {artifact.sha256}</div>
           </div>
@@ -254,6 +267,54 @@ const FeatureList: React.FC<{ title: string; features: string[] }> = ({ title, f
 );
 
 const GnnView: React.FC<{ manifest: ModelManifest }> = ({ manifest }) => {
+  const selection = manifest.selection;
+  if (selection) {
+    return (
+      <div className="space-y-5">
+        <section className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-800"><BrainCircuit className="h-4 w-4 text-indigo-600" />Operational architecture selection</h4>
+              <p className="mt-1 text-xs text-gray-500">The MLP is an admission baseline. Only the selected graph architecture supplies the GNN decision-engine opinion.</p>
+            </div>
+            {selection.selected_architecture && <span className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold text-indigo-700">Serving {selection.selected_architecture.toUpperCase()}</span>}
+          </div>
+          <dl className="mt-4 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+            <div className="rounded bg-white p-2"><dt className="text-gray-400">Selection metric</dt><dd className="font-medium text-gray-700">{prettyLabel(selection.selection_metric)}</dd></div>
+            <div className="rounded bg-white p-2"><dt className="text-gray-400">Selected PR-AUC</dt><dd className="font-medium text-gray-700">{displayValue(selection.selected_metric_value)}</dd></div>
+            <div className="rounded bg-white p-2"><dt className="text-gray-400">MLP baseline</dt><dd className="font-medium text-gray-700">{displayValue(selection.mlp_baseline_value)}</dd></div>
+            <div className="rounded bg-white p-2"><dt className="text-gray-400">Improvement over MLP</dt><dd className="font-medium text-gray-700">{displayValue(selection.improvement_over_mlp)}</dd></div>
+            <div className="rounded bg-white p-2 md:col-span-2"><dt className="text-gray-400">Selection reason</dt><dd className="font-medium text-gray-700">{prettyLabel(selection.selection_reason)}</dd></div>
+            <div className="rounded bg-white p-2 md:col-span-2"><dt className="text-gray-400">Policy</dt><dd className="font-medium text-gray-700">{selection.policy_version}</dd></div>
+          </dl>
+        </section>
+
+        <section>
+          <h4 className="mb-2 text-sm font-semibold text-gray-700">Candidate comparison</h4>
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Role</th><th className="px-3 py-2">PR-AUC</th><th className="px-3 py-2">ROC-AUC</th><th className="px-3 py-2">Eligibility</th></tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {Object.entries(selection.candidates || {}).map(([name, candidate]) => {
+                  const failures = Array.isArray(candidate.guardrail_failures) ? candidate.guardrail_failures : [];
+                  return <tr key={name} className={name === selection.selected_architecture ? 'bg-indigo-50/50' : ''}>
+                    <td className="px-3 py-2 font-medium text-gray-700">{name === 'mlp' ? 'MLP' : name.toUpperCase()}</td>
+                    <td className="px-3 py-2 text-gray-500">{name === 'mlp' ? 'Admission baseline' : name === selection.selected_architecture ? 'Selected GNN' : 'Graph candidate'}</td>
+                    <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.eval_pr_auc)}</td>
+                    <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.eval_roc_auc)}</td>
+                    <td className="px-3 py-2 text-gray-600">{candidate.eligible ? 'Eligible' : failures.map((value: unknown) => prettyLabel(String(value))).join(', ') || candidate.status}</td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {manifest.features && <FeatureList title="User features" features={manifest.features.user} />}
+        {manifest.features && <FeatureList title="Nomination features" features={manifest.features.nomination} />}
+      </div>
+    );
+  }
   const architecture = manifest.architecture;
   if (!architecture) return null;
   return (

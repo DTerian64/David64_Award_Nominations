@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pytest
@@ -19,7 +19,7 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modeling import gnn_graph as G
+from modeling.gnn import graph as G
 from tests.synthetic import make_tenant, make_two_tenants
 
 
@@ -34,7 +34,7 @@ class _RecordingCursor:
             self.description = [
                 (name,) for name in (
                     "NominationId", "NominatorId", "BeneficiaryId", "Status",
-                    "Amount", "CreatedAt", "IsBehaviorEligible",
+                    "Amount", "CategoryId", "CreatedAt", "IsBehaviorEligible",
                 )
             ]
         else:
@@ -129,6 +129,53 @@ def test_windows_are_disjoint_and_cover_everything():
     assert ids[0] | ids[1] | ids[2] == {n["NominationId"] for n in noms}
 
 
+def test_rolling_thresholds_cover_the_newest_date_in_final_holdout():
+    rows = [
+        {"CreatedAt": date(2026, 1, 1) + timedelta(days=index)}
+        for index in range(10)
+    ]
+
+    folds = G.rolling_thresholds(rows, n_folds=3)
+
+    assert len(folds) == 3
+    assert all(t_graph < t_cut < eval_end for t_graph, t_cut, eval_end in folds)
+    assert [folds[index][0] for index in range(1, 3)] == [
+        folds[index][1] for index in range(2)
+    ]
+    assert folds[-1][2] == date(2026, 1, 11)
+
+
+def test_rolling_folds_are_leak_free_and_training_windows_are_disjoint():
+    users, noms, _ = make_tenant(
+        1, n_users=30, nominations_per_user=4, n_decoys=8
+    )
+    folds = G.build_rolling_folds(users, noms, n_folds=3)
+
+    train_id_sets = []
+    for fold in folds:
+        graph_ids = set(fold["graph_nomination_ids"])
+        train_ids = set(fold["train"]["nom_ids"])
+        eval_ids = set(fold["eval"]["nom_ids"])
+        assert graph_ids.isdisjoint(train_ids | eval_ids)
+        assert train_ids.isdisjoint(eval_ids)
+        train_id_sets.append(train_ids)
+
+    assert train_id_sets[0].isdisjoint(train_id_sets[1])
+    assert train_id_sets[0].isdisjoint(train_id_sets[2])
+    assert train_id_sets[1].isdisjoint(train_id_sets[2])
+    assert max(G._as_date(row["CreatedAt"]) for row in noms) < folds[-1]["eval_end"]
+
+
+def test_rolling_thresholds_reject_timeline_too_short_for_requested_folds():
+    rows = [
+        {"CreatedAt": date(2026, 1, 1) + timedelta(days=index)}
+        for index in range(4)
+    ]
+
+    with pytest.raises(ValueError, match="at least 5 distinct dates"):
+        G.rolling_thresholds(rows, n_folds=3)
+
+
 def test_rejected_hrbp_label_is_target_only_not_message_passing_behavior():
     users, noms, _ = make_tenant(1)
     t_graph = date(2025, 10, 1)
@@ -183,6 +230,43 @@ def test_edge_counts_and_reverse_relations_match():
         rev = d[dst, f"rev_{rel}", src].edge_index
         assert fwd.shape == rev.shape
         assert torch.equal(fwd[0], rev[1]) and torch.equal(fwd[1], rev[0])
+
+
+def test_v2_adds_category_nodes_and_graph_native_features():
+    users, noms, _ = make_tenant(1)
+    for i, nomination in enumerate(noms):
+        nomination["CategoryId"] = 10 + (i % 3)
+    g = G.build_hetero_data(users, noms)
+    assert G.FEATURE_SCHEMA_VERSION == "gnn-v2"
+    assert G.USER_FEATURE_COLUMNS == [
+        "LogNominationsMade",
+        "LogNominationsReceived",
+        "LogUniqueCounterparties",
+    ]
+    assert "ConcentrationRatio" not in G.USER_FEATURE_COLUMNS
+    assert "ReciprocalPairCount" not in G.USER_FEATURE_COLUMNS
+    assert g["data"]["category"].num_nodes == 3
+    assert g["data"]["nomination", "belongs_to", "category"].edge_index.shape[1] == g["data"]["nomination"].num_nodes
+
+
+def test_target_status_is_not_exposed_as_a_v2_feature():
+    rows = [{
+        "NominationId": 1,
+        "NominatorId": 1,
+        "BeneficiaryId": 2,
+        "CategoryId": 10,
+        "Amount": 500,
+        "CreatedAt": date(2026, 1, 2),
+        "Status": "Paid",
+    }]
+    stats = G.build_category_amount_stats(rows)
+    features = G.build_nomination_features(
+        rows, stats, date(2026, 1, 1), historical=False
+    )
+    status_index = G.NOMINATION_FEATURE_COLUMNS.index("HistoricalStatus")
+    recency_index = G.NOMINATION_FEATURE_COLUMNS.index("DaysBeforeGraphCutoff")
+    assert features[0, status_index] == 0.0
+    assert features[0, recency_index] == 0.0
 
 
 def test_no_userGraphFlags_column_leaks_into_user_features():

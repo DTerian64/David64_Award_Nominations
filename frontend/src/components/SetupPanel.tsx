@@ -17,6 +17,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { html } from '@codemirror/lang-html';
 import { ModelInspectionModal, type InspectableModel } from './ModelInspectionModal';
 import { GraphPolicyModal } from './GraphPolicyModal';
+import { GNNPolicyModal } from './GNNPolicyModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -81,7 +82,7 @@ export const SetupPanel: React.FC = () => {
 };
 
 // ── Engine Status ───────────────────────────────────────────────────────────
-// Operational state only. Routing thresholds remain under Scoring & Routing.
+// Operational state plus versioned Graph and GNN policy inspection.
 
 interface DetectionEngineStatus {
   component: string;
@@ -128,6 +129,8 @@ const HIDDEN_DIAGNOSTICS = new Set([
   'inference_snapshot_schema_version',
   'inference_snapshot_size_bytes',
   'inference_snapshot_generated_at',
+  'selection',
+  'last_candidate_selection',
 ]);
 
 const orderedDiagnostics = (diagnostics: Record<string, unknown>) =>
@@ -168,6 +171,54 @@ const diagnosticValue = (value: unknown): string => {
   return String(value);
 };
 
+const asRecord = (value: unknown): Record<string, any> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, any>
+    : null;
+
+const GnnSelectionSummary: React.FC<{ diagnostics: Record<string, unknown> }> = ({ diagnostics }) => {
+  const selection = asRecord(diagnostics.selection);
+  if (!selection) return null;
+  const candidates = asRecord(selection.candidates) || {};
+  const selected = selection.selected_architecture as string | null;
+  return (
+    <section className="rounded-lg border border-violet-100 bg-violet-50/40 p-3 text-xs">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h4 className="font-semibold text-violet-900">Architecture selection</h4>
+          <p className="mt-1 text-violet-700">
+            {selected ? `${String(selected).toUpperCase()} supplies the single live GNN opinion.` : 'No graph candidate is currently selected.'}
+          </p>
+        </div>
+        {selected && <span className="rounded-full bg-violet-100 px-2 py-1 font-medium text-violet-800">Selected: {selected}</span>}
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-2">
+        <div><dt className="text-gray-400">Selection policy</dt><dd className="font-medium text-gray-700">{diagnosticValue(selection.policy_version)}</dd></div>
+        <div><dt className="text-gray-400">Metric</dt><dd className="font-medium text-gray-700">{diagnosticLabel(String(selection.selection_metric || ''))}</dd></div>
+        <div><dt className="text-gray-400">Selection reason</dt><dd className="font-medium text-gray-700">{diagnosticLabel(String(selection.selection_reason || ''))}</dd></div>
+        <div><dt className="text-gray-400">Selected</dt><dd className="font-medium text-gray-700">{fmtTime(selection.selected_at || null)}</dd></div>
+        <div><dt className="text-gray-400">PR-AUC</dt><dd className="font-medium text-gray-700">{diagnosticValue(selection.selected_metric_value)}</dd></div>
+        <div><dt className="text-gray-400">Improvement over MLP</dt><dd className="font-medium text-gray-700">{diagnosticValue(selection.improvement_over_mlp)}</dd></div>
+      </dl>
+      <div className="mt-3 space-y-1.5">
+        {Object.entries(candidates).map(([name, raw]) => {
+          const candidate = asRecord(raw) || {};
+          const failures = Array.isArray(candidate.guardrail_failures) ? candidate.guardrail_failures : [];
+          return (
+            <div key={name} className="flex flex-wrap items-center justify-between gap-2 rounded bg-white px-2.5 py-2">
+              <span className="font-medium text-gray-700">{name === 'mlp' ? 'MLP baseline' : name.toUpperCase()}</span>
+              <span className="text-gray-600">PR-AUC {diagnosticValue(candidate.eval_pr_auc)}</span>
+              <span className={candidate.eligible ? 'text-green-700' : 'text-amber-700'}>
+                {candidate.eligible ? (name === selected ? 'Selected' : 'Eligible') : failures.map((value: unknown) => diagnosticLabel(String(value))).join(', ') || candidate.status}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+};
+
 interface DetectionEnginesPanelProps {
   endpoint?: string;
   impersonatedUPN?: string;
@@ -182,6 +233,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [inspection, setInspection] = useState<InspectableModel | null>(null);
   const [showGraphPolicy, setShowGraphPolicy] = useState(false);
+  const [showGNNPolicy, setShowGNNPolicy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -212,7 +264,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
           <h2 className="text-lg font-semibold text-gray-800">Engine Status</h2>
           <p className="text-sm text-gray-500 mt-1">
             Read-only operational status for the integrity detection engines.
-            Inspect deployed models and the active Graph Analytics scoring policy.
+            Inspect deployed models and the active Graph Analytics and GNN policies.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -287,6 +339,15 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                           <Eye className="h-3.5 w-3.5" /> Inspect scoring policy
                         </button>
                       )}
+                      {row.component === 'GNN' && (
+                        <button
+                          type="button"
+                          onClick={() => setShowGNNPolicy(true)}
+                          className="mt-2 ml-3 inline-flex appearance-none items-center gap-1 border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline"
+                        >
+                          <Eye className="h-3.5 w-3.5" /> Inspect policy
+                        </button>
+                      )}
                     </div>
                     <span className={`shrink-0 px-2 py-0.5 rounded-full border text-xs font-medium ${statusClass(row.serving_status)}`}>
                       {row.serving_status}
@@ -330,6 +391,10 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                     {row.reason_code && <div className="font-medium text-amber-800">{diagnosticLabel(row.reason_code)}</div>}
                     {row.reason_detail && <p className="text-amber-700 mt-1">{row.reason_detail}</p>}
                   </div>
+                )}
+
+                {row.component === 'GNN' && (
+                  <GnnSelectionSummary diagnostics={row.diagnostics || {}} />
                 )}
 
                 {diagnostics.length > 0 && (
@@ -376,6 +441,12 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
         <GraphPolicyModal
           impersonatedUPN={impersonatedUPN}
           onClose={() => setShowGraphPolicy(false)}
+        />
+      )}
+      {showGNNPolicy && (
+        <GNNPolicyModal
+          impersonatedUPN={impersonatedUPN}
+          onClose={() => setShowGNNPolicy(false)}
         />
       )}
     </div>
@@ -876,10 +947,6 @@ interface FraudSettings {
   medium_threshold: number;
   high_threshold: number;
   critical_threshold: number;
-  gnn_low_threshold: number;
-  gnn_medium_threshold: number;
-  gnn_high_threshold: number;
-  gnn_critical_threshold: number;
   use_char_count: boolean;
   min_char_count: number;
   min_word_count: number;
@@ -1008,7 +1075,7 @@ export const FraudPanel: React.FC<FraudPanelProps> = ({
       ) : (
         <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Changes are saved immediately but the fraud pipeline caches config, so they take effect after the integrity-check service restarts.</span>
+          <span>Changes are saved immediately and apply to subsequent integrity checks.</span>
         </div>
       )}
 
@@ -1024,21 +1091,6 @@ export const FraudPanel: React.FC<FraudPanelProps> = ({
           {numField('medium_threshold', 'Medium', { min: 0, max: 100 })}
           {numField('high_threshold', 'High', { min: 0, max: 100 })}
           {numField('critical_threshold', 'Critical', { min: 0, max: 100 })}
-        </div>
-      </div>
-
-      {/* GNN score routing */}
-      <div className="rounded-xl border border-violet-200 bg-violet-50/30 p-4 sm:p-5">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="rounded bg-violet-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-violet-700">GNN</span>
-          <h3 className="text-sm font-semibold text-gray-800">GNN score routing (0–100)</h3>
-        </div>
-        <p className="text-xs text-gray-500 mb-3">GNN cutoffs are configured independently because its scores can have a different calibration from the Random Forest.</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {numField('gnn_low_threshold', 'Low', { min: 0, max: 100 })}
-          {numField('gnn_medium_threshold', 'Medium', { min: 0, max: 100 })}
-          {numField('gnn_high_threshold', 'High', { min: 0, max: 100 })}
-          {numField('gnn_critical_threshold', 'Critical', { min: 0, max: 100 })}
         </div>
       </div>
 

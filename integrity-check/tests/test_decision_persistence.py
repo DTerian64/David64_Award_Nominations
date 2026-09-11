@@ -93,12 +93,15 @@ class DecisionPersistenceTests(unittest.TestCase):
         self.assertNotIn("FraudDecisionResults", new_sql)
         self.assertIn("message-13866", new_params)
         self.assertIn('["RF","GRAPH"]', new_params)
-        self.assertEqual(new_params[:2], ("message-13866", 13866))
+        self.assertEqual(new_params[0], "message-13866")
+        self.assertEqual(new_params[2], 13866)
         self.assertIn("JOIN dbo.Users u ON u.UserId = n.NominatorId", new_sql)
         self.assertIn("target.TenantId = source.TenantId", new_sql)
         self.assertIn("TenantId = source.TenantId,", new_sql)
         self.assertIn("TenantId, NominationId, DecisionSchemaVersion", new_sql)
         self.assertIn("VALUES (source.TenantId,", new_sql)
+        self.assertIn("IN ('RUNNING', 'COMPLETED')", new_sql)
+        self.assertIn("JSON_QUERY(target.GnnResultJson, '$.explanation')", new_sql)
 
     def test_unresolved_tenant_or_conflicting_decision_does_not_commit(self):
         conn = _Connection(rowcount=0)
@@ -152,6 +155,39 @@ class DecisionPersistenceTests(unittest.TestCase):
         self.assertTrue(conn.committed)
         _, params = conn.cursor_value.calls[0]
         self.assertIn(None, params)
+
+    def test_publish_failure_updates_only_matching_gnn_explanation(self):
+        conn = _Connection()
+        explanation = {
+            "method": "GNNEXPLAINER",
+            "status": "FAILED",
+            "request_id": "gnnexp:t1:n13881:gnn-v2-test",
+            "reason": "PUBLISH_FAILED",
+        }
+
+        with patch("utils.db._get_conn", return_value=_connection_context(conn)):
+            updated = db.mark_gnn_explanation_publish_failed(
+                nomination_id=13881,
+                tenant_id=1,
+                model_version="gnn-v2-test",
+                request_id="gnnexp:t1:n13881:gnn-v2-test",
+                explanation=explanation,
+            )
+
+        self.assertTrue(updated)
+        self.assertTrue(conn.committed)
+        sql, params = conn.cursor_value.calls[0]
+        self.assertIn("JSON_MODIFY", sql)
+        self.assertIn("$.explanation", sql)
+        self.assertNotIn("RfResultJson =", sql)
+        self.assertNotIn("GraphResultJson =", sql)
+        self.assertNotIn("SemanticResultJson =", sql)
+        self.assertEqual(params[1:5], (
+            13881,
+            1,
+            "gnn-v2-test",
+            "gnnexp:t1:n13881:gnn-v2-test",
+        ))
 
 
 if __name__ == "__main__":

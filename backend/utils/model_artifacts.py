@@ -58,11 +58,19 @@ def _download(blob_name: str, maximum_bytes: int) -> Optional[bytes]:
         return None
 
 
-def get_manifest(tenant_id: int, component: ModelComponent) -> Optional[dict]:
+def get_manifest(
+    tenant_id: int,
+    component: ModelComponent,
+    model_version: str | None = None,
+) -> Optional[dict]:
     """Return a validated JSON manifest for exactly one authenticated tenant."""
     names = {
         "rf": f"random_forest/random_forest_tenant_{tenant_id}.manifest.json",
-        "gnn": f"gnn/gnn_tenant_{tenant_id}.manifest.json",
+        "gnn": (
+            f"gnn/tenant_{tenant_id}/{model_version}/manifest.json"
+            if model_version
+            else f"gnn/gnn_tenant_{tenant_id}.manifest.json"
+        ),
     }
     payload = _download(names[component], _MAX_MANIFEST_BYTES)
     if payload is None:

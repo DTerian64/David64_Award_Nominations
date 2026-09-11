@@ -228,10 +228,9 @@ async def update_category(category_id: int, payload: CategoryPayload,
     return {"ok": True}
 
 
-# ── Fraud / Integrity ─────────────────────────────────────────────────────────
-# Edits desc_check_config + integrity_config. NOTE: the integrity-check service
-# caches these for its process lifetime, so changes take effect on its next
-# restart (documented behaviour; hot-reload is deferred to the fraud project).
+# ── Scoring & Routing ────────────────────────────────────────────────────────
+# Edits RF routing and semantic pre-check settings. GNN is independently owned
+# by the versioned dbo.GNNScoringPolicies contract below.
 
 class FraudConfig(BaseModel):
     # Fraud score routing (0..100 cutoffs)
@@ -239,10 +238,6 @@ class FraudConfig(BaseModel):
     medium_threshold:   int
     high_threshold:     int
     critical_threshold: int
-    gnn_low_threshold:      int = 25
-    gnn_medium_threshold:   int = 45
-    gnn_high_threshold:     int = 65
-    gnn_critical_threshold: int = 85
     # Description quality
     use_char_count:                 bool
     min_char_count:                 int
@@ -285,6 +280,29 @@ class GraphPolicyDraft(BaseModel):
 class GraphRequestReview(BaseModel):
     status: str
     admin_response: Optional[str] = None
+
+
+class GNNPolicyDraft(BaseModel):
+    training_enabled: bool
+    inference_enabled: bool
+    hidden_dim: int
+    embed_dim: int
+    epochs: int
+    rolling_folds: int
+    window_days: int
+    embedding_retention_days: int
+    stale_embedding_days: int
+    minimum_training_samples: int
+    minimum_users: int
+    minimum_positives_per_split: int
+    candidate_architectures: list[str]
+    selection_metric: str
+    minimum_improvement_over_mlp: float
+    incumbent_tie_tolerance: float
+    minimum_eligible_graph_candidates: int
+    thresholds: GraphThresholds
+    explanation_enabled: bool
+    explanation_minimum_risk: str
 
 
 _GRAPH_PATTERNS = {
@@ -387,16 +405,6 @@ def _validate_fraud(p: "FraudConfig") -> None:
     if not (p.low_threshold <= p.medium_threshold <= p.high_threshold <= p.critical_threshold):
         raise HTTPException(status_code=422,
                             detail="Score thresholds must be non-decreasing: low <= medium <= high <= critical.")
-    gnn_routing = [p.gnn_low_threshold, p.gnn_medium_threshold,
-                   p.gnn_high_threshold, p.gnn_critical_threshold]
-    if not all(0 <= x <= 100 for x in gnn_routing):
-        raise HTTPException(status_code=422, detail="GNN score thresholds must be between 0 and 100.")
-    if not (p.gnn_low_threshold <= p.gnn_medium_threshold
-            <= p.gnn_high_threshold <= p.gnn_critical_threshold):
-        raise HTTPException(
-            status_code=422,
-            detail="GNN score thresholds must be non-decreasing: low <= medium <= high <= critical.",
-        )
     for name, val in (("Category alignment", p.category_alignment_threshold),
                       ("Duplicate similarity", p.duplicate_similarity_threshold),
                       ("LLM fit", p.llm_fit_threshold)):
@@ -404,6 +412,78 @@ def _validate_fraud(p: "FraudConfig") -> None:
             raise HTTPException(status_code=422, detail=f"{name} threshold must be between 0 and 1.")
     if p.min_char_count < 0 or p.min_word_count < 0:
         raise HTTPException(status_code=422, detail="Counts must be non-negative.")
+
+
+def _validate_gnn_policy(payload: GNNPolicyDraft) -> None:
+    architectures = [item.strip().lower() for item in payload.candidate_architectures]
+    allowed = {"graphsage", "gcn", "gatv2"}
+    if not architectures or len(set(architectures)) != len(architectures):
+        raise HTTPException(
+            status_code=422,
+            detail="Choose at least one unique GNN candidate architecture.",
+        )
+    if set(architectures) - allowed:
+        raise HTTPException(
+            status_code=422,
+            detail="GNN candidates must be GraphSAGE, GCN, and/or GATv2.",
+        )
+    if payload.selection_metric.lower() != "holdout_pr_auc":
+        raise HTTPException(
+            status_code=422, detail="GNN selection metric must be holdout PR-AUC."
+        )
+    positive_values = {
+        "Hidden dimension": payload.hidden_dim,
+        "Embedding dimension": payload.embed_dim,
+        "Epochs": payload.epochs,
+        "Window days": payload.window_days,
+        "Embedding retention days": payload.embedding_retention_days,
+        "Stale embedding days": payload.stale_embedding_days,
+        "Minimum training samples": payload.minimum_training_samples,
+        "Minimum users": payload.minimum_users,
+        "Minimum positive labels": payload.minimum_positives_per_split,
+        "Minimum eligible candidates": payload.minimum_eligible_graph_candidates,
+    }
+    for name, value in positive_values.items():
+        if value <= 0:
+            raise HTTPException(status_code=422, detail=f"{name} must be positive.")
+    if payload.rolling_folds < 2:
+        raise HTTPException(status_code=422, detail="Rolling folds must be at least 2.")
+    if payload.minimum_eligible_graph_candidates > len(architectures):
+        raise HTTPException(
+            status_code=422,
+            detail="Minimum eligible graph candidates cannot exceed the configured candidates.",
+        )
+    if payload.embedding_retention_days < payload.stale_embedding_days:
+        raise HTTPException(
+            status_code=422,
+            detail="Embedding retention must be at least the stale-embedding threshold.",
+        )
+    for name, value in (
+        ("Minimum improvement over MLP", payload.minimum_improvement_over_mlp),
+        ("Incumbent tie tolerance", payload.incumbent_tie_tolerance),
+    ):
+        if not math.isfinite(value) or not 0 <= value <= 1:
+            raise HTTPException(
+                status_code=422, detail=f"{name} must be between 0 and 1."
+            )
+    values = [
+        payload.thresholds.low, payload.thresholds.medium,
+        payload.thresholds.high, payload.thresholds.critical,
+    ]
+    if not all(math.isfinite(value) and 0 <= value <= 100 for value in values):
+        raise HTTPException(status_code=422, detail="GNN thresholds must be between 0 and 100.")
+    if values != sorted(values):
+        raise HTTPException(
+            status_code=422,
+            detail="GNN thresholds must be ordered low, medium, high, critical.",
+        )
+    if payload.explanation_minimum_risk.upper() not in {
+        "NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"
+    }:
+        raise HTTPException(
+            status_code=422,
+            detail="GNN explanation risk must be NONE, LOW, MEDIUM, HIGH, or CRITICAL.",
+        )
 
 
 @router.get("/api/admin/setup/fraud")
@@ -470,6 +550,59 @@ async def publish_graph_policy_draft(admin: dict = Depends(require_setup_admin))
         "policy_id": policy_id,
         "status": "ACTIVE",
         "message": "The new policy will be used by the next weekly Graph Analytics run.",
+    }
+
+
+@router.get("/api/admin/setup/gnn-policy")
+async def get_gnn_policy(admin: dict = Depends(require_setup_admin)):
+    result = sqlhelper.get_gnn_scoring_policy_bundle(admin["TenantId"])
+    result["can_edit"] = True
+    return result
+
+
+@router.post("/api/admin/setup/gnn-policy/draft")
+async def create_gnn_policy_draft(admin: dict = Depends(require_setup_admin)):
+    try:
+        policy_id = sqlhelper.create_gnn_scoring_policy_draft(
+            admin["TenantId"], admin.get("userPrincipalName", "unknown")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"policy_id": policy_id, "status": "DRAFT"}
+
+
+@router.put("/api/admin/setup/gnn-policy/draft")
+async def update_gnn_policy_draft(
+    payload: GNNPolicyDraft,
+    admin: dict = Depends(require_setup_admin),
+):
+    _validate_gnn_policy(payload)
+    try:
+        sqlhelper.update_gnn_scoring_policy_draft(
+            admin["TenantId"],
+            admin.get("userPrincipalName", "unknown"),
+            payload.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/api/admin/setup/gnn-policy/draft/publish")
+async def publish_gnn_policy_draft(admin: dict = Depends(require_setup_admin)):
+    try:
+        policy_id = sqlhelper.publish_gnn_scoring_policy_draft(
+            admin["TenantId"], admin.get("userPrincipalName", "unknown")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "policy_id": policy_id,
+        "status": "ACTIVE",
+        "message": (
+            "Serving settings apply to the next nomination. Training settings "
+            "apply when the analytics job next processes this tenant."
+        ),
     }
 
 

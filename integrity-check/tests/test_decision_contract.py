@@ -80,6 +80,19 @@ def test_each_engine_preserves_its_own_kind_of_evidence():
             "fraud_prob": 0.618,
             "risk_level": "HIGH",
             "warning_flags": [],
+            "model_version": "gnn-v2-test",
+            "architecture": "gatv2",
+            "training_policy_id": 12,
+            "training_policy_version": 3,
+            "scoring_policy_id": 14,
+            "scoring_policy_version": 4,
+            "graph_snapshot_id": "snapshot-test",
+            "feature_schema_version": "gnn-v2",
+            "explanation": {
+                "method": "GNNEXPLAINER",
+                "status": "REQUESTED",
+                "request_id": "gnnexp:t1:n1:gnn-v2-test",
+            },
         },
         semantic,
     )
@@ -100,5 +113,11 @@ def test_each_engine_preserves_its_own_kind_of_evidence():
          "state": "NOT_SCORING", "eligible": False}
     ]
     assert payloads["gnn"]["model_probability"] == 0.618
+    assert payloads["gnn"]["schema_version"] == 2
+    assert payloads["gnn"]["graph_snapshot_id"] == "snapshot-test"
+    assert payloads["gnn"]["architecture"] == "gatv2"
+    assert payloads["gnn"]["training_policy_version"] == 3
+    assert payloads["gnn"]["scoring_policy_version"] == 4
+    assert payloads["gnn"]["explanation"]["status"] == "REQUESTED"
     assert payloads["semantic"]["llm"]["response"]["category_fit_score"] == 0.35
     json.dumps(payloads)

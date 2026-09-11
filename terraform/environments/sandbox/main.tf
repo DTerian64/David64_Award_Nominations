@@ -55,8 +55,8 @@ module "sql" {
   source = "../../modules/sql"
 
   resource_group_name        = var.resource_group_name
-  location                   = var.sql_location              # westus2 — SQL provisioning restricted in eastus/eastus2
-  private_endpoint_location  = var.location_primary          # eastus2 — PE NIC must match subnet region
+  location                   = var.sql_location     # westus2 — SQL provisioning restricted in eastus/eastus2
+  private_endpoint_location  = var.location_primary # eastus2 — PE NIC must match subnet region
   server_name                = var.sql_server_name
   database_name              = var.sql_database_name
   admin_login                = var.sql_admin_login
@@ -91,10 +91,10 @@ module "container_registry" {
 module "storage" {
   source = "../../modules/storage"
 
-  resource_group_name        = var.resource_group_name
-  location                   = var.location_primary
-  storage_account_name       = var.storage_account_name
-  allowed_ips                = var.my_ips
+  resource_group_name  = var.resource_group_name
+  location             = var.location_primary
+  storage_account_name = var.storage_account_name
+  allowed_ips          = var.my_ips
   # Only the primary (westus2) ACA subnet — Azure blocks cross-region service-endpoint ACLs.
   # Secondary ACA (eastus) reaches storage via VNet peering → private endpoint.
   aca_subnet_ids             = [module.networking.subnet_aca_primary_id]
@@ -174,10 +174,10 @@ resource "azurerm_user_assigned_identity" "integrity_check" {
 module "key_vault" {
   source = "../../modules/key-vault"
 
-  resource_group_name        = var.resource_group_name
-  location                   = var.location_primary
-  key_vault_name             = var.key_vault_name
-  allowed_ips                = var.my_ips
+  resource_group_name = var.resource_group_name
+  location            = var.location_primary
+  key_vault_name      = var.key_vault_name
+  allowed_ips         = var.my_ips
   # Only the primary (westus2) ACA subnet — same cross-region ACL restriction as storage.
   aca_subnet_ids             = [module.networking.subnet_aca_primary_id]
   private_endpoint_subnet_id = module.networking.subnet_private_endpoints_id
@@ -201,32 +201,32 @@ module "key_vault" {
     # Gusto OAuth credentials — used by the Payroll Broker to call the Gusto API.
     # client_id is not sensitive per se but stored in KV for consistency and to
     # avoid embedding provider-specific config in environment variables.
-    GUSTO-CLIENT-ID                       = var.gusto_client_id
-    GUSTO-CLIENT-SECRET                   = var.gusto_client_secret
+    GUSTO-CLIENT-ID     = var.gusto_client_id
+    GUSTO-CLIENT-SECRET = var.gusto_client_secret
     # Shared webhook secret — Payroll Broker validates the X-Gusto-Signature
     # header on every inbound Gusto callback to reject spoofed payroll events.
     # Must match the webhook secret configured in the Gusto developer portal.
-    GUSTO-WEBHOOK-SECRET                  = var.gusto_webhook_secret
+    GUSTO-WEBHOOK-SECRET = var.gusto_webhook_secret
     # Rippling OAuth credentials — used by the Payroll Broker for Rippling-connected tenants.
     # Populated after Rippling App Shop approval. Stub mode is on (RIPPLING_STUB_MODE=true)
     # until real credentials are available.
-    RIPPLING-CLIENT-ID                    = var.rippling_client_id
-    RIPPLING-CLIENT-SECRET                = var.rippling_client_secret
+    RIPPLING-CLIENT-ID     = var.rippling_client_id
+    RIPPLING-CLIENT-SECRET = var.rippling_client_secret
     # Shared webhook secret — Payroll Broker validates the X-Rippling-Signature
     # header on every inbound Rippling callback.
     # Must match the webhook secret configured in the Rippling developer portal.
-    RIPPLING-WEBHOOK-SECRET               = var.rippling_webhook_secret
+    RIPPLING-WEBHOOK-SECRET = var.rippling_webhook_secret
     # AES-256 key for encrypting Gusto OAuth tokens at rest in dbo.payroll_tokens.
     # Generate once: python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
-    PAYROLL-TOKEN-ENCRYPTION-KEY          = var.payroll_token_encryption_key
-    WORKDAY-WEBHOOK-SECRET                = var.workday_webhook_secret
+    PAYROLL-TOKEN-ENCRYPTION-KEY = var.payroll_token_encryption_key
+    WORKDAY-WEBHOOK-SECRET       = var.workday_webhook_secret
     # Shared secret — Award API validates this on the internal POST
     # /api/internal/refresh-fraud-model callback from the fraud-analytics-job.
     # Same value must be set in fraud-analytics-job terraform → fraud_analytics_job_webhook_secret.
     FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET = var.fraud_analytics_job_webhook_secret
     # Shared secret — Award API validates this on the daily POST
     # /api/internal/checkPendingHRBPReview callback from la-award-hrbp-sla.
-    HRBP-SLA-WEBHOOK-SECRET            = var.hrbp_sla_webhook_secret
+    HRBP-SLA-WEBHOOK-SECRET = var.hrbp_sla_webhook_secret
   })
 }
 
@@ -276,18 +276,18 @@ module "application_insights" {
 module "container_apps" {
   source = "../../modules/container-apps"
 
-  resource_group_name                  = var.resource_group_name
-  location_primary                     = var.location_primary
-  location_secondary                   = var.location_secondary
-  cae_name_primary                     = var.cae_name_primary
-  cae_name_secondary                   = var.cae_name_secondary
-  app_name_primary                     = var.app_name_primary
-  app_name_secondary                   = var.app_name_secondary
-  subnet_aca_primary_id                = module.networking.subnet_aca_primary_id
-  subnet_aca_secondary_id              = module.networking.subnet_aca_secondary_id
+  resource_group_name                = var.resource_group_name
+  location_primary                   = var.location_primary
+  location_secondary                 = var.location_secondary
+  cae_name_primary                   = var.cae_name_primary
+  cae_name_secondary                 = var.cae_name_secondary
+  app_name_primary                   = var.app_name_primary
+  app_name_secondary                 = var.app_name_secondary
+  subnet_aca_primary_id              = module.networking.subnet_aca_primary_id
+  subnet_aca_secondary_id            = module.networking.subnet_aca_secondary_id
   min_replicas                       = var.min_replicas
   max_replicas                       = var.max_replicas
-  log_analytics_workspace_primary_id   = module.log_analytics.workspace_primary_id
+  log_analytics_workspace_primary_id = module.log_analytics.workspace_primary_id
   # Redirected to the primary workspace — workspace-award-secondary-sandbox
   # never received data (confirmed: az containerapp env show on the secondary
   # CAE returned an apparently-correct logAnalyticsConfiguration, but the
@@ -299,69 +299,69 @@ module "container_apps" {
   # NOTE: log_analytics_workspace_id is immutable on azurerm_container_app_environment —
   # this forces a replace of the secondary CAE (and award-api-secondary-sandbox with it).
   log_analytics_workspace_secondary_id = module.log_analytics.workspace_primary_id
-  acr_login_server                   = module.container_registry.login_server
-  acr_admin_username                 = module.container_registry.admin_username
-  acr_admin_password                 = module.container_registry.admin_password
-  key_vault_uri                      = module.key_vault.vault_uri
-  aca_primary_identity_id            = azurerm_user_assigned_identity.aca_primary.id
-  aca_primary_identity_client_id     = azurerm_user_assigned_identity.aca_primary.client_id
-  aca_secondary_identity_id          = azurerm_user_assigned_identity.aca_secondary.id
-  aca_secondary_identity_client_id   = azurerm_user_assigned_identity.aca_secondary.client_id
+  acr_login_server                     = module.container_registry.login_server
+  acr_admin_username                   = module.container_registry.admin_username
+  acr_admin_password                   = module.container_registry.admin_password
+  key_vault_uri                        = module.key_vault.vault_uri
+  aca_primary_identity_id              = azurerm_user_assigned_identity.aca_primary.id
+  aca_primary_identity_client_id       = azurerm_user_assigned_identity.aca_primary.client_id
+  aca_secondary_identity_id            = azurerm_user_assigned_identity.aca_secondary.id
+  aca_secondary_identity_client_id     = azurerm_user_assigned_identity.aca_secondary.client_id
   # KV access policies and Service Bus RBAC must exist before Container Apps start.
-  depends_on                      = [azurerm_resource_group.rg, module.key_vault,
-                                     azurerm_key_vault_access_policy.aca_primary,
-                                     azurerm_key_vault_access_policy.aca_secondary,
-                                     module.service_bus]
+  depends_on = [azurerm_resource_group.rg, module.key_vault,
+    azurerm_key_vault_access_policy.aca_primary,
+    azurerm_key_vault_access_policy.aca_secondary,
+  module.service_bus]
 
   # Non-secret config — passed as plain env vars
   environment_variables = [
-    { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
-    { name = "MODEL_CONTAINER",                 value = module.storage.ml_models_container_name },
-    { name = "EXTRACTS_CONTAINER",              value = module.storage.extracts_container_name },
-    { name = "CERTIFICATES_CONTAINER",          value = module.storage.certificates_container_name },
-    { name = "CERT_TEMPLATES_CONTAINER",        value = module.storage.certificate_templates_container_name },
-    { name = "AZURE_OPENAI_MODEL",              value = module.openai.model_deployment_name },
-    { name = "KEY_VAULT_URL",                   value = module.key_vault.vault_uri },
-    { name = "ENVIRONMENT",                     value = var.environment },
-    { name = "REGION",                          value = var.location_primary },
-    { name = "CONTAINER_APP_NAME",              value = var.app_name_primary },
-    { name = "AZURE_OPENAI_API_VERSION",        value = var.openai_api_version },
-    { name = "MODEL_BLOB_NAME",                 value = var.model_blob_name },
-    { name = "API_BASE_URL",                    value = var.api_base_url },
-    { name = "CORS_ALLOWED_ORIGINS",            value = var.cors_allowed_origins },
-    { name = "LOGGING_LEVEL",                   value = var.logging_level },
-    { name = "BLOB_SAS_EXPIRY_HOURS",           value = tostring(var.blob_sas_expiry_hours) },
+    { name = "AZURE_STORAGE_ACCOUNT", value = module.storage.storage_account_name },
+    { name = "MODEL_CONTAINER", value = module.storage.ml_models_container_name },
+    { name = "EXTRACTS_CONTAINER", value = module.storage.extracts_container_name },
+    { name = "CERTIFICATES_CONTAINER", value = module.storage.certificates_container_name },
+    { name = "CERT_TEMPLATES_CONTAINER", value = module.storage.certificate_templates_container_name },
+    { name = "AZURE_OPENAI_MODEL", value = module.openai.model_deployment_name },
+    { name = "KEY_VAULT_URL", value = module.key_vault.vault_uri },
+    { name = "ENVIRONMENT", value = var.environment },
+    { name = "REGION", value = var.location_primary },
+    { name = "CONTAINER_APP_NAME", value = var.app_name_primary },
+    { name = "AZURE_OPENAI_API_VERSION", value = var.openai_api_version },
+    { name = "MODEL_BLOB_NAME", value = var.model_blob_name },
+    { name = "API_BASE_URL", value = var.api_base_url },
+    { name = "CORS_ALLOWED_ORIGINS", value = var.cors_allowed_origins },
+    { name = "LOGGING_LEVEL", value = var.logging_level },
+    { name = "BLOB_SAS_EXPIRY_HOURS", value = tostring(var.blob_sas_expiry_hours) },
     # CLIENT_ID is required by auth.py for JWT audience validation (api://<client_id>).
-    { name = "CLIENT_ID",                       value = module.app_registrations.api_client_id },
+    { name = "CLIENT_ID", value = module.app_registrations.api_client_id },
     # Service Bus — neither FQNS nor topic name is sensitive; MI credential grants access.
-    { name = "SERVICE_BUS_FQNS",                value = module.service_bus.namespace_fqns },
-    { name = "SERVICE_BUS_TOPIC_NAME",          value = module.service_bus.topic_name },
+    { name = "SERVICE_BUS_FQNS", value = module.service_bus.namespace_fqns },
+    { name = "SERVICE_BUS_TOPIC_NAME", value = module.service_bus.topic_name },
     # Fraud model lazy-load tuning — shorter than prod so eviction is observable in dev.
-    { name = "MODEL_IDLE_TTL_SECONDS",          value = tostring(var.model_idle_ttl_seconds) },
+    { name = "MODEL_IDLE_TTL_SECONDS", value = tostring(var.model_idle_ttl_seconds) },
     { name = "MODEL_EVICTION_INTERVAL_SECONDS", value = tostring(var.model_eviction_interval_seconds) },
     # Demo tenant self-registration — non-sensitive IDs; secret goes via Key Vault below
-    { name = "DEMO_AAD_TENANT_ID",              value = var.demo_aad_tenant_id },
-    { name = "DEMO_GRAPH_CLIENT_ID",            value = var.demo_graph_client_id },
+    { name = "DEMO_AAD_TENANT_ID", value = var.demo_aad_tenant_id },
+    { name = "DEMO_GRAPH_CLIENT_ID", value = var.demo_graph_client_id },
     # Owner/developer test accounts that bypass the personal-email domain block
-    { name = "DEMO_ALLOWED_EMAILS",             value = var.demo_allowed_emails },
+    { name = "DEMO_ALLOWED_EMAILS", value = var.demo_allowed_emails },
     # HRBP SLA — hours before a PendingHRBPReview nomination triggers an escalation email
-    { name = "HRBP_SLA_HOURS",                  value = tostring(var.hrbp_sla_hours) },
+    { name = "HRBP_SLA_HOURS", value = tostring(var.hrbp_sla_hours) },
     # Log Analytics workspace GUID — used by the admin nomination-logs endpoint (azure-monitor-query).
     # Must be the customer/workspace GUID, NOT the ARM resource ID.
-    { name = "LOG_ANALYTICS_WORKSPACE_ID",       value = module.log_analytics.workspace_primary_customer_id },
+    { name = "LOG_ANALYTICS_WORKSPACE_ID", value = module.log_analytics.workspace_primary_customer_id },
     # Backend → payroll-broker for the PayrollBP employee-pay lookup.
     # Same value as PAYROLL_BROKER_BASE_URL on the broker side; set separately here
     # to avoid a circular Terraform dependency (payroll_broker depends on container_apps for CAE ID).
-    { name = "PAYROLL_BROKER_BASE_URL",          value = "https://${var.payroll_broker_custom_domain}" },
+    { name = "PAYROLL_BROKER_BASE_URL", value = "https://${var.payroll_broker_custom_domain}" },
     # OTel cost controls — configure_azure_monitor() in main.py hooks the root Python
     # logger by default, which double-ships every log line (once via stdout →
     # ContainerAppConsoleLogs, once via the OTel logs exporter → AppTraces), both
     # landing in the same Log Analytics workspace. OTEL_LOGS_EXPORTER=None stops the
     # second copy. OTEL_TRACES_SAMPLER samples AppRequests/AppDependencies at 20%
     # instead of capturing every single request/dependency call.
-    { name = "OTEL_LOGS_EXPORTER",               value = "None" },
-    { name = "OTEL_TRACES_SAMPLER",              value = "microsoft.fixed_percentage" },
-    { name = "OTEL_TRACES_SAMPLER_ARG",          value = "0.2" },
+    { name = "OTEL_LOGS_EXPORTER", value = "None" },
+    { name = "OTEL_TRACES_SAMPLER", value = "microsoft.fixed_percentage" },
+    { name = "OTEL_TRACES_SAMPLER_ARG", value = "0.2" },
     # /health is probed by Front Door every ~30s per origin, generating enough
     # volume (confirmed via AppDependencies breakdown: ~29k "HEAD /health http
     # send" spans/hour per region) to dominate ingestion on its own. Excluding
@@ -374,21 +374,21 @@ module "container_apps" {
   # KV secret name convention: UPPER-HYPHEN (e.g. "SQL-PASSWORD")
   # ACA secret name derived as: lower(kv_secret_name) (e.g. "sql-password")
   kv_secret_references = [
-    { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
-    { env_name = "AZURE_STORAGE_KEY",   kv_secret_name = "AZURE-STORAGE-KEY" },
-    { env_name = "EMAIL_ACTION_SECRET_KEY",                  kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
-    { env_name = "AZURE_OPENAI_KEY",                         kv_secret_name = "AZURE-OPENAI-KEY" },
-    { env_name = "AZURE_OPENAI_ENDPOINT",                    kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
-    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING",    kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
+    { env_name = "SQL_SERVER", kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
+    { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
+    { env_name = "EMAIL_ACTION_SECRET_KEY", kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
+    { env_name = "AZURE_OPENAI_KEY", kv_secret_name = "AZURE-OPENAI-KEY" },
+    { env_name = "AZURE_OPENAI_ENDPOINT", kv_secret_name = "AZURE-OPENAI-ENDPOINT" },
+    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
     # Validates inbound webhook calls from Workday_Proxy (sandbox) or real Workday (prod).
-    { env_name = "WORKDAY_WEBHOOK_SECRET",                   kv_secret_name = "WORKDAY-WEBHOOK-SECRET" },
+    { env_name = "WORKDAY_WEBHOOK_SECRET", kv_secret_name = "WORKDAY-WEBHOOK-SECRET" },
     # Validates the post-training cache-refresh callback from the fraud-analytics-job.
     { env_name = "FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET", kv_secret_name = "FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET" },
     # Validates the daily SLA-check callback from la-award-hrbp-sla Logic App.
-    { env_name = "HRBP_SLA_WEBHOOK_SECRET",            kv_secret_name = "HRBP-SLA-WEBHOOK-SECRET" },
+    { env_name = "HRBP_SLA_WEBHOOK_SECRET", kv_secret_name = "HRBP-SLA-WEBHOOK-SECRET" },
     # Demo tenant — Graph API client secret for self-registration (demo_router.py / graph_admin.py)
-    { env_name = "DEMO_GRAPH_CLIENT_SECRET",           kv_secret_name = "DEMO-GRAPH-CLIENT-SECRET" },
+    { env_name = "DEMO_GRAPH_CLIENT_SECRET", kv_secret_name = "DEMO-GRAPH-CLIENT-SECRET" },
   ]
 
   tags = local.tags
@@ -522,8 +522,8 @@ module "service_bus" {
 
   # Static string keys let Terraform plan for_each even when principal IDs are unknown.
   sender_principal_ids = {
-    "aca-primary"    = azurerm_user_assigned_identity.aca_primary.principal_id
-    "aca-secondary"  = azurerm_user_assigned_identity.aca_secondary.principal_id
+    "aca-primary"   = azurerm_user_assigned_identity.aca_primary.principal_id
+    "aca-secondary" = azurerm_user_assigned_identity.aca_secondary.principal_id
     # Payroll Broker publishes payroll.accepted / payroll.failed back to the topic
     # after the Gusto webhook callback confirms the payout result.
     "payroll-broker" = azurerm_user_assigned_identity.payroll_broker.principal_id
@@ -533,9 +533,9 @@ module "service_bus" {
     # auxiliary-function consumes email, payout, hrbp, and notification events.
     "auxiliary-function" = azurerm_user_assigned_identity.auxiliary_function.principal_id
     # integrity-check consumes nomination.submitted for async fraud detection.
-    "integrity-check"    = azurerm_user_assigned_identity.integrity_check.principal_id
+    "integrity-check" = azurerm_user_assigned_identity.integrity_check.principal_id
     # Payroll Broker consumes nomination.approved from the payroll-processor subscription.
-    "payroll-broker"     = azurerm_user_assigned_identity.payroll_broker.principal_id
+    "payroll-broker" = azurerm_user_assigned_identity.payroll_broker.principal_id
   }
 
   depends_on = [azurerm_resource_group.rg]
@@ -579,34 +579,34 @@ module "auxiliary" {
   # Non-secret env vars — must be Terraform-managed so they survive every
   # terraform apply (unlike vars set only via az containerapp update --set-env-vars).
   environment_variables = [
-    { name = "API_BASE_URL",                    value = var.api_base_url },
+    { name = "API_BASE_URL", value = var.api_base_url },
     { name = "EMAIL_ACTION_TOKEN_EXPIRY_HOURS", value = tostring(var.email_action_token_expiry_hours) },
     # Fallback recipient for payroll failure alerts when no Support-role users are
     # configured for the tenant.  Support-role users in dbo.UserRoles take priority.
-    { name = "CORPORATE_SUPPORT_EMAIL",         value = var.corporate_support_email },
+    { name = "CORPORATE_SUPPORT_EMAIL", value = var.corporate_support_email },
     # Certificate attachment (opt-in per tenant) — worker downloads the cached
     # PDF from the certificates container to attach to the beneficiary email.
-    { name = "AZURE_STORAGE_ACCOUNT",           value = module.storage.storage_account_name },
-    { name = "CERTIFICATES_CONTAINER",          value = module.storage.certificates_container_name },
+    { name = "AZURE_STORAGE_ACCOUNT", value = module.storage.storage_account_name },
+    { name = "CERTIFICATES_CONTAINER", value = module.storage.certificates_container_name },
     # SMTP sender (Zoho) — non-secret config; SMTP_PASSWORD is a Key Vault secret below.
-    { name = "SMTP_USER",                       value = "support@terian-services.com" },
-    { name = "SMTP_HOST",                       value = "smtppro.zoho.com" },
+    { name = "SMTP_USER", value = "support@terian-services.com" },
+    { name = "SMTP_HOST", value = "smtppro.zoho.com" },
     # OTel cost controls — same rationale as the backend container apps above:
     # avoid double-shipping log lines into Log Analytics and sample traces at 20%.
-    { name = "OTEL_LOGS_EXPORTER",               value = "None" },
-    { name = "OTEL_TRACES_SAMPLER",              value = "microsoft.fixed_percentage" },
-    { name = "OTEL_TRACES_SAMPLER_ARG",          value = "0.2" },
+    { name = "OTEL_LOGS_EXPORTER", value = "None" },
+    { name = "OTEL_TRACES_SAMPLER", value = "microsoft.fixed_percentage" },
+    { name = "OTEL_TRACES_SAMPLER_ARG", value = "0.2" },
   ]
 
   # Secrets from Key Vault — fetched at runtime via managed identity
   kv_secret_references = [
-    { env_name = "SQL_SERVER",                    kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE",                  kv_secret_name = "SQL-DATABASE" },
-    { env_name = "AZURE_STORAGE_KEY",             kv_secret_name = "AZURE-STORAGE-KEY" },
-    { env_name = "SMTP_PASSWORD",                 kv_secret_name = "SMTP-PASSWORD" },
-    { env_name = "FROM_EMAIL",                    kv_secret_name = "FROM-EMAIL" },
-    { env_name = "FROM_NAME",                     kv_secret_name = "FROM-NAME" },
-    { env_name = "EMAIL_ACTION_SECRET_KEY",       kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
+    { env_name = "SQL_SERVER", kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
+    { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
+    { env_name = "SMTP_PASSWORD", kv_secret_name = "SMTP-PASSWORD" },
+    { env_name = "FROM_EMAIL", kv_secret_name = "FROM-EMAIL" },
+    { env_name = "FROM_NAME", kv_secret_name = "FROM-NAME" },
+    { env_name = "EMAIL_ACTION_SECRET_KEY", kv_secret_name = "EMAIL-ACTION-SECRET-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
   ]
 
@@ -655,7 +655,7 @@ module "integrity_check" {
   # Scale to zero — fraud check is async so cold-start latency is acceptable.
   min_replicas       = 0
   max_replicas       = 2
-  keda_message_count = 1   # 1 replica per pending nomination for fast processing
+  keda_message_count = 1 # 1 replica per pending nomination for fast processing
 
   # ML inference workload: sentence-transformers + PyTorch need ~500 MB RAM.
   # Azure Consumption plan requires cpu:memory ratio of 1:2 — 1.0 vCPU / 2Gi
@@ -664,26 +664,26 @@ module "integrity_check" {
   memory = "2Gi"
 
   environment_variables = [
-    { name = "AZURE_STORAGE_ACCOUNT",    value = module.storage.storage_account_name },
-    { name = "MODEL_CONTAINER",          value = module.storage.ml_models_container_name },
+    { name = "AZURE_STORAGE_ACCOUNT", value = module.storage.storage_account_name },
+    { name = "MODEL_CONTAINER", value = module.storage.ml_models_container_name },
     # Shared idle eviction for tenant RF, GNN, and Graph artifacts in this worker.
-    { name = "MODEL_IDLE_TTL_SECONDS",    value = tostring(var.model_idle_ttl_seconds) },
+    { name = "MODEL_IDLE_TTL_SECONDS", value = tostring(var.model_idle_ttl_seconds) },
     { name = "GRAPH_SNAPSHOT_CACHE_SIZE", value = tostring(var.graph_snapshot_cache_size) },
     # Azure OpenAI — used by Check C (LLM semantic evaluation).
     # Endpoint and deployment name are not sensitive; passed as plain env vars.
     # Authentication uses DefaultAzureCredential (Cognitive Services OpenAI User role above).
-    { name = "AZURE_OPENAI_ENDPOINT",    value = module.openai.endpoint },
-    { name = "AZURE_OPENAI_DEPLOYMENT",  value = module.openai.model_deployment_name },
+    { name = "AZURE_OPENAI_ENDPOINT", value = module.openai.endpoint },
+    { name = "AZURE_OPENAI_DEPLOYMENT", value = module.openai.model_deployment_name },
     { name = "AZURE_OPENAI_API_VERSION", value = var.openai_api_version },
     # OTel cost controls — same rationale as the backend container apps above.
-    { name = "OTEL_LOGS_EXPORTER",       value = "None" },
-    { name = "OTEL_TRACES_SAMPLER",      value = "microsoft.fixed_percentage" },
-    { name = "OTEL_TRACES_SAMPLER_ARG",  value = "0.2" },
+    { name = "OTEL_LOGS_EXPORTER", value = "None" },
+    { name = "OTEL_TRACES_SAMPLER", value = "microsoft.fixed_percentage" },
+    { name = "OTEL_TRACES_SAMPLER_ARG", value = "0.2" },
   ]
 
   kv_secret_references = [
-    { env_name = "SQL_SERVER",       kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE",     kv_secret_name = "SQL-DATABASE" },
+    { env_name = "SQL_SERVER", kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
     { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
   ]
@@ -734,7 +734,7 @@ module "payroll_broker" {
 
   key_vault_uri = module.key_vault.vault_uri
 
-  min_replicas       = 1   # always-on — webhook endpoint must be live
+  min_replicas       = 1 # always-on — webhook endpoint must be live
   max_replicas       = 2
   keda_message_count = 5
 
@@ -742,20 +742,20 @@ module "payroll_broker" {
     # Public URL of this broker — embedded in the OAuth redirect_uri sent to Gusto.
     { name = "PAYROLL_BROKER_BASE_URL", value = "https://${var.payroll_broker_custom_domain}" },
     # OTel cost controls — same rationale as the backend container apps above.
-    { name = "OTEL_LOGS_EXPORTER",      value = "None" },
-    { name = "OTEL_TRACES_SAMPLER",     value = "microsoft.fixed_percentage" },
+    { name = "OTEL_LOGS_EXPORTER", value = "None" },
+    { name = "OTEL_TRACES_SAMPLER", value = "microsoft.fixed_percentage" },
     { name = "OTEL_TRACES_SAMPLER_ARG", value = "0.2" },
     # /health noise — same rationale as the backend container apps above.
     { name = "OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", value = "health" },
   ]
 
   kv_secret_references = [
-    { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
-    { env_name = "GUSTO_CLIENT_ID",        kv_secret_name = "GUSTO-CLIENT-ID" },
-    { env_name = "GUSTO_CLIENT_SECRET",    kv_secret_name = "GUSTO-CLIENT-SECRET" },
-    { env_name = "GUSTO_WEBHOOK_SECRET",   kv_secret_name = "GUSTO-WEBHOOK-SECRET" },
-    { env_name = "RIPPLING_CLIENT_ID",     kv_secret_name = "RIPPLING-CLIENT-ID" },
+    { env_name = "SQL_SERVER", kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
+    { env_name = "GUSTO_CLIENT_ID", kv_secret_name = "GUSTO-CLIENT-ID" },
+    { env_name = "GUSTO_CLIENT_SECRET", kv_secret_name = "GUSTO-CLIENT-SECRET" },
+    { env_name = "GUSTO_WEBHOOK_SECRET", kv_secret_name = "GUSTO-WEBHOOK-SECRET" },
+    { env_name = "RIPPLING_CLIENT_ID", kv_secret_name = "RIPPLING-CLIENT-ID" },
     { env_name = "RIPPLING_CLIENT_SECRET", kv_secret_name = "RIPPLING-CLIENT-SECRET" },
     { env_name = "RIPPLING_WEBHOOK_SECRET", kv_secret_name = "RIPPLING-WEBHOOK-SECRET" },
     { env_name = "PAYROLL_TOKEN_ENCRYPTION_KEY", kv_secret_name = "PAYROLL-TOKEN-ENCRYPTION-KEY" },
@@ -807,38 +807,23 @@ module "fraud_analytics_job" {
 
   # Non-secret env vars
   environment_variables = [
-    { name = "GRAPH_FINDINGS_TABLE",      value = "dbo.GraphPatternFindings" },
-    { name = "LOGGING_LEVEL",             value = var.logging_level },
-    { name = "DETECTION_WINDOW_DAYS",     value = tostring(var.fraud_analytics_detection_window_days) },
-    { name = "RING_MAX_CLUSTER_SIZE",     value = tostring(var.fraud_analytics_ring_max_cluster_size) },
+    { name = "GRAPH_FINDINGS_TABLE", value = "dbo.GraphPatternFindings" },
+    { name = "LOGGING_LEVEL", value = var.logging_level },
+    { name = "DETECTION_WINDOW_DAYS", value = tostring(var.fraud_analytics_detection_window_days) },
+    { name = "RING_MAX_CLUSTER_SIZE", value = tostring(var.fraud_analytics_ring_max_cluster_size) },
 
-    # ── GNN training stage ────────────────────────────────────────────────────
-    # Defaults in modeling/train_gnn_model.py match these; they are declared explicitly
-    # so the operative values are visible in the plan rather than buried in code.
-    # GNN_ENABLED is the kill switch: set false to skip the stage without
-    # redeploying the image.
-    { name = "GNN_ENABLED",                  value = tostring(var.gnn_enabled) },
-    { name = "GNN_HIDDEN_DIM",               value = tostring(var.gnn_hidden_dim) },
-    { name = "GNN_EMBED_DIM",                value = tostring(var.gnn_embed_dim) },
-    { name = "GNN_EPOCHS",                   value = tostring(var.gnn_epochs) },
-    { name = "GNN_WINDOW_DAYS",              value = tostring(var.gnn_window_days) },
-    { name = "GNN_EMBEDDING_RETENTION_DAYS", value = tostring(var.gnn_embedding_retention_days) },
-    # Sample gates. Below any of these the tenant is skipped rather than trained
-    # on too little signal — the synthetic ablation found that a
-    # 50-user tenant scored WORSE with message passing than without it.
-    { name = "GNN_MIN_TRAINING_SAMPLES",     value = tostring(var.gnn_min_training_samples) },
-    { name = "GNN_MIN_USERS",                value = tostring(var.gnn_min_users) },
-    { name = "GNN_MIN_POSITIVES",            value = tostring(var.gnn_min_positives) },
+    # GNN modeling and serving policy lives in dbo.GNNScoringPolicies. The job
+    # reads the tenant's active version when it begins processing that tenant.
     # Post-training cache-refresh callback — job POSTs here after uploading new pkls.
     # Uses the primary app's internal FQDN (ACA-to-ACA routing within the same CAE).
-    { name = "API_BASE_URL",              value = "https://${var.app_name_primary}.internal.${module.container_apps.cae_primary_default_domain}" },
+    { name = "API_BASE_URL", value = "https://${var.app_name_primary}.internal.${module.container_apps.cae_primary_default_domain}" },
   ]
 
   # Secrets from Key Vault — SQL + Storage + callback secret
   kv_secret_references = [
-    { env_name = "SQL_SERVER",          kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE",        kv_secret_name = "SQL-DATABASE" },
-    { env_name = "AZURE_STORAGE_KEY",   kv_secret_name = "AZURE-STORAGE-KEY" },
+    { env_name = "SQL_SERVER", kv_secret_name = "SQL-SERVER" },
+    { env_name = "SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
+    { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
     # Shared secret for /api/internal/refresh-fraud-model — must match FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET on the API.
     { env_name = "FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET", kv_secret_name = "FRAUD-ANALYTICS-JOB-WEBHOOK-SECRET" },
@@ -905,7 +890,7 @@ resource "azurerm_dns_cname_record" "swa_custom_domains" {
 # CNAME — payroll-broker.terianix.ai → AFD endpoint (Azure DNS — non-authoritative)
 resource "azurerm_dns_cname_record" "payroll_broker" {
   count               = var.payroll_broker_custom_domain != "" ? 1 : 0
-  name                = split(".", var.payroll_broker_custom_domain)[0]   # "payroll-broker"
+  name                = split(".", var.payroll_broker_custom_domain)[0] # "payroll-broker"
   zone_name           = data.azurerm_dns_zone.terianix[0].name
   resource_group_name = var.dns_zone_terianix_resource_group
   ttl                 = 300
@@ -941,7 +926,7 @@ data "cloudflare_zone" "terianix" {
 resource "cloudflare_record" "payroll_broker_cname" {
   count   = var.payroll_broker_custom_domain != "" ? 1 : 0
   zone_id = data.cloudflare_zone.terianix.id
-  name    = split(".", var.payroll_broker_custom_domain)[0]   # "payroll-broker"
+  name    = split(".", var.payroll_broker_custom_domain)[0] # "payroll-broker"
   type    = "CNAME"
   content = module.front_door.afd_endpoint_hostname
   proxied = false
@@ -965,7 +950,7 @@ resource "cloudflare_record" "payroll_broker_dnsauth" {
 # Low TTL (300 s) speeds up cut-over; raise to 3600 once migration is stable.
 resource "azurerm_dns_cname_record" "legacy_redirect_domains" {
   for_each            = var.legacy_redirect_domains
-  name                = split(".", each.key)[0]  # "sandbox-awards", "acme-awards", "demo-awards"
+  name                = split(".", each.key)[0] # "sandbox-awards", "acme-awards", "demo-awards"
   zone_name           = data.azurerm_dns_zone.terian_services[0].name
   resource_group_name = var.dns_zone_resource_group
   ttl                 = 300
@@ -985,7 +970,7 @@ data "azurerm_dns_zone" "terianix" {
 
 resource "azurerm_dns_cname_record" "swa_terianix_domains" {
   for_each            = toset(var.swa_terianix_domains)
-  name                = split(".", each.value)[0]  # "sandbox-awards", "acme-awards", "demo-awards"
+  name                = split(".", each.value)[0] # "sandbox-awards", "acme-awards", "demo-awards"
   zone_name           = data.azurerm_dns_zone.terianix[0].name
   resource_group_name = var.dns_zone_terianix_resource_group
   ttl                 = 3600
@@ -998,11 +983,11 @@ resource "azurerm_dns_cname_record" "swa_terianix_domains" {
 module "static_web_app" {
   source = "../../modules/static-web-app"
 
-  resource_group_name = var.resource_group_name
-  location            = var.location_primary
-  app_name            = var.swa_name
-  afd_hostname        = module.front_door.afd_endpoint_hostname
-  vite_api_url        = "https://${module.front_door.afd_endpoint_hostname}"
+  resource_group_name                = var.resource_group_name
+  location                           = var.location_primary
+  app_name                           = var.swa_name
+  afd_hostname                       = module.front_door.afd_endpoint_hostname
+  vite_api_url                       = "https://${module.front_door.afd_endpoint_hostname}"
   vite_api_client_id                 = module.app_registrations.api_client_id
   vite_client_id                     = module.app_registrations.frontend_client_id
   vite_api_scope                     = module.app_registrations.api_scope

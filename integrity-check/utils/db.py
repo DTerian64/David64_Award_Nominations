@@ -230,18 +230,10 @@ def get_tenant_integrity_config(tenant_id: int) -> dict:
           "medium_threshold":   40,
           "low_threshold":      20
       },
-      "gnn": {
-          "score_routing": {
-              "critical_threshold": 85,
-              "high_threshold":     65,
-              "medium_threshold":   45,
-              "low_threshold":      25
-          }
-      },
     }
 
-    The cache lifetime is the container process lifetime — config changes
-    require a container restart (acceptable operational behaviour).
+    GNN settings are deliberately excluded. They live in the versioned
+    dbo.GNNScoringPolicies table and are read independently for every score.
     """
     with _get_conn() as conn:
         cursor = conn.cursor()
@@ -264,6 +256,82 @@ def get_tenant_integrity_config(tenant_id: int) -> dict:
         )
         return {}
 
+
+def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
+    """Read the tenant's currently published GNN policy without caching.
+
+    Training and serving use the same versioned source of truth.  A newly
+    published policy is therefore effective for the next nomination handled by
+    this process; no container restart or Terraform run is required.
+    """
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT TOP 1
+                PolicyId, PolicyVersion, TrainingEnabled, InferenceEnabled,
+                ConfigurationJson,
+                ExplanationEnabled, ExplanationMinimumRisk
+            FROM dbo.GNNScoringPolicies
+            WHERE TenantId = ? AND Status = 'ACTIVE'
+            ORDER BY PolicyVersion DESC
+        """, tenant_id)
+        row = cursor.fetchone()
+    if not row:
+        return None
+    try:
+        configuration = json.loads(row[4])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("GNN ConfigurationJson is invalid") from exc
+    if not isinstance(configuration, dict) or configuration.get("schema_version") != 1:
+        raise ValueError("GNN ConfigurationJson must use schema_version 1")
+    try:
+        model = configuration["model"]
+        training = configuration["training"]
+        artifacts = configuration["artifacts"]
+        selection = configuration["architecture_selection"]
+        routing = configuration["score_routing"]
+        candidates = selection["candidate_architectures"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("GNN ConfigurationJson is missing required settings") from exc
+    if not isinstance(candidates, list) or not all(
+        isinstance(item, str) for item in candidates
+    ):
+        raise ValueError("GNN candidate architectures must be a JSON string array")
+    return {
+        "policy_id": int(row[0]),
+        "policy_version": int(row[1]),
+        "training_enabled": bool(row[2]),
+        "inference_enabled": bool(row[3]),
+        "hidden_dim": int(model["hidden_dimension"]),
+        "embed_dim": int(model["embedding_dimension"]),
+        "epochs": int(training["epochs"]),
+        "rolling_folds": int(training["rolling_fold_count"]),
+        "window_days": int(training["window_days"]),
+        "embedding_retention_days": int(artifacts["embedding_retention_days"]),
+        "stale_embedding_days": int(artifacts["stale_embedding_days"]),
+        "minimum_training_samples": int(training["minimum_training_samples"]),
+        "minimum_users": int(training["minimum_users"]),
+        "minimum_positives_per_split": int(
+            training["minimum_positive_labels_per_split"]
+        ),
+        "candidate_architectures": candidates,
+        "selection_metric": str(selection["selection_metric"]).lower(),
+        "minimum_improvement_over_mlp": float(
+            selection["minimum_improvement_over_mlp"]
+        ),
+        "incumbent_tie_tolerance": float(selection["incumbent_tie_tolerance"]),
+        "minimum_eligible_graph_candidates": int(
+            selection["minimum_eligible_graph_candidates"]
+        ),
+        "thresholds": {
+            "low": float(routing["low_threshold"]),
+            "medium": float(routing["medium_threshold"]),
+            "high": float(routing["high_threshold"]),
+            "critical": float(routing["critical_threshold"]),
+        },
+        "explanation_enabled": bool(row[5]),
+        "explanation_minimum_risk": str(row[6]).upper(),
+    }
 
 # ── Producer-owned component availability ────────────────────────────────────
 
@@ -717,7 +785,8 @@ def save_integrity_decision_results(
         cursor.execute("""
             MERGE dbo.IntegrityDecisionResults AS target
             USING (
-                SELECT n.NominationId, u.TenantId, ? AS SourceMessageId
+                SELECT n.NominationId, u.TenantId, ? AS SourceMessageId,
+                       ? AS IncomingGnnResultJson
                 FROM dbo.Nominations n
                 JOIN dbo.Users u ON u.UserId = n.NominatorId
                 WHERE n.NominationId = ? AND u.TenantId IS NOT NULL
@@ -729,7 +798,21 @@ def save_integrity_decision_results(
             ) THEN UPDATE SET
                 TenantId = source.TenantId,
                 DecisionSchemaVersion = ?, PolicyVersion = ?, SourceMessageId = ?,
-                RfResultJson = ?, GraphResultJson = ?, GnnResultJson = ?,
+                RfResultJson = ?, GraphResultJson = ?,
+                GnnResultJson = CASE
+                    WHEN JSON_VALUE(target.GnnResultJson, '$.model_version') =
+                         JSON_VALUE(source.IncomingGnnResultJson, '$.model_version')
+                     AND JSON_VALUE(target.GnnResultJson, '$.explanation.request_id') =
+                         JSON_VALUE(source.IncomingGnnResultJson, '$.explanation.request_id')
+                     AND JSON_VALUE(target.GnnResultJson, '$.explanation.status')
+                         IN ('RUNNING', 'COMPLETED')
+                    THEN JSON_MODIFY(
+                        source.IncomingGnnResultJson,
+                        '$.explanation',
+                        JSON_QUERY(target.GnnResultJson, '$.explanation')
+                    )
+                    ELSE source.IncomingGnnResultJson
+                END,
                 SemanticResultJson = ?, CompositeScore = ?,
                 CompositeRiskLevel = ?, DecisiveEnginesJson = ?,
                 FinalRoute = ?, RoutingRule = ?, ReviewScope = ?,
@@ -740,16 +823,17 @@ def save_integrity_decision_results(
                 SemanticResultJson, CompositeScore, CompositeRiskLevel,
                 DecisiveEnginesJson, FinalRoute, RoutingRule, ReviewScope,
                 ScoredBy
-            ) VALUES (source.TenantId, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (source.TenantId, ?, ?, ?, ?, ?, ?, source.IncomingGnnResultJson,
+                      ?, ?, ?, ?, ?, ?, ?, ?);
         """, (
-            message_id, nomination_id,
+            message_id, engine_json["gnn"], nomination_id,
             2, policy_version, message_id,
-            engine_json["rf"], engine_json["graph"], engine_json["gnn"],
-            engine_json["semantic"], composite_score, decision.get("risk_level"),
+            engine_json["rf"], engine_json["graph"], engine_json["semantic"],
+            composite_score, decision.get("risk_level"),
             decisive_json, final_route, routing_rule, review_scope, _AUDIT_ACTOR,
             nomination_id, 2, policy_version, message_id,
-            engine_json["rf"], engine_json["graph"], engine_json["gnn"],
-            engine_json["semantic"], composite_score, decision.get("risk_level"),
+            engine_json["rf"], engine_json["graph"], engine_json["semantic"],
+            composite_score, decision.get("risk_level"),
             decisive_json, final_route, routing_rule, review_scope, _AUDIT_ACTOR,
         ))
 
@@ -760,6 +844,51 @@ def save_integrity_decision_results(
                 f"nomination {nomination_id}"
             )
         conn.commit()
+
+
+def mark_gnn_explanation_publish_failed(
+    *,
+    nomination_id: int,
+    tenant_id: int,
+    model_version: str,
+    request_id: str,
+    explanation: dict,
+) -> bool:
+    """Atomically mark only the matching GNN explanation request as failed.
+
+    The status and request predicates prevent a delayed publisher failure from
+    overwriting an explanation already claimed or completed by the extension
+    worker. Every other engine and routing field remains untouched.
+    """
+    explanation_json = json.dumps(
+        explanation, default=str, separators=(",", ":")
+    )
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE dbo.IntegrityDecisionResults
+            SET GnnResultJson = JSON_MODIFY(
+                    GnnResultJson,
+                    '$.explanation',
+                    JSON_QUERY(?)
+                ),
+                UpdatedAt = SYSUTCDATETIME()
+            WHERE NominationId = ?
+              AND TenantId = ?
+              AND ISJSON(GnnResultJson) = 1
+              AND JSON_VALUE(GnnResultJson, '$.model_version') = ?
+              AND JSON_VALUE(GnnResultJson, '$.explanation.request_id') = ?
+              AND JSON_VALUE(GnnResultJson, '$.explanation.status') = 'REQUESTED'
+        """, (
+            explanation_json,
+            nomination_id,
+            tenant_id,
+            model_version,
+            request_id,
+        ))
+        updated = cursor.rowcount == 1
+        conn.commit()
+        return updated
 
 
 # ── Idempotency (dbo.ProcessedEvents) ────────────────────────────────────────
@@ -937,12 +1066,11 @@ def get_gnn_user_embeddings(
     Selects, per user, the NEWEST snapshot whose ModelVersion equals the caller's
     decoder version — not the newest snapshot overall.
 
-    That distinction is what makes a decoder-only rollback work. dbo.GNN_UserEmbeddings
-    is append-only within its retention window, so restoring a previous
-    gnn/gnn_head_tenant_<N>.pt is sufficient on its own: this query then picks up that
-    decoder's own generation of embeddings. Matching on "newest overall" instead
-    would leave a rolled-back decoder permanently unable to score, because every
-    lookup would return embeddings from a version it was not trained against.
+    That distinction makes a serving-pointer rollback work.
+    dbo.GNN_UserEmbeddings retains independently keyed model versions within its
+    retention window, so restoring an earlier IntegrityComponentStatus serving
+    version also selects that decoder's own generation of embeddings. Matching
+    on "newest overall" instead would mix incompatible versions.
 
     model_version=None returns the newest snapshot for each user regardless of
     version. That is NOT a scoring path — gnn_check.py uses it only to tell a
@@ -967,30 +1095,26 @@ def get_gnn_user_embeddings(
 
     placeholders = ",".join("?" for _ in unique_ids)
     version_filter = "AND ModelVersion = ?" if model_version is not None else ""
-    outer_filter   = "AND e.ModelVersion = ?" if model_version is not None else ""
     sql = f"""
-        SELECT e.UserId, e.Embedding, e.AsOfDate, e.ModelVersion
-        FROM   dbo.GNN_UserEmbeddings e
-        JOIN  (
-                 SELECT UserId, MAX(AsOfDate) AS AsOfDate
-                 FROM   dbo.GNN_UserEmbeddings
-                 WHERE  TenantId = ?
-                   {version_filter}
-                   AND  UserId IN ({placeholders})
-                 GROUP BY UserId
-              ) latest
-          ON  latest.UserId   = e.UserId
-         AND  latest.AsOfDate = e.AsOfDate
-        WHERE e.TenantId = ?
-          {outer_filter}
+        WITH ranked AS (
+            SELECT UserId, Embedding, AsOfDate, ModelVersion,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY UserId
+                       ORDER BY AsOfDate DESC, LastUpdatedUtc DESC, ModelVersion DESC
+                   ) AS version_rank
+            FROM dbo.GNN_UserEmbeddings
+            WHERE TenantId = ?
+              {version_filter}
+              AND UserId IN ({placeholders})
+        )
+        SELECT UserId, Embedding, AsOfDate, ModelVersion
+        FROM ranked
+        WHERE version_rank = 1
     """
     params = [tenant_id]
     if model_version is not None:
         params.append(model_version)
     params += unique_ids
-    params.append(tenant_id)
-    if model_version is not None:
-        params.append(model_version)
 
     out: dict = {}
     with _get_conn() as conn:

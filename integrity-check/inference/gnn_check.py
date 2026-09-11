@@ -5,9 +5,9 @@ gnn_check.py — GNN fraud assessment for the integrity-check worker
 Structural twin of random_forest_check.py, for the third fraud model.
 
 What runs here is only the DECODER. The weekly fraud-analytics-job trains a
-heterogeneous GraphSAGE encoder, publishes per-user node embeddings to
+the selected heterogeneous graph encoder, publishes per-user node embeddings to
 dbo.GNN_UserEmbeddings, and uploads the decoder as
-gnn/gnn_head_tenant_<N>.pt.
+gnn/tenant_<N>/<ServingVersion>/serving/decoder.pt.
 Inference is two keyed embedding lookups plus a small MLP forward
 pass — no graph traversal, no PyTorch Geometric, no new dependency in this
 image (torch is already here via sentence-transformers).
@@ -39,11 +39,11 @@ user and then asserted its ModelVersion matched the decoder. That fails safe but
 not useful: rolling the decoder back to last week's build makes every lookup
 mismatch, and the model goes dark.
 
-So the lookup selects the newest snapshot WHOSE ModelVersion MATCHES THE
-DECODER. Because dbo.GNN_UserEmbeddings is append-only within its retention
-window, last week's embeddings are still present, and restoring the previous
-gnn/gnn_head_tenant_<N>.pt is sufficient to roll the whole model back — no SQL
-surgery, no coordinated deploy.
+So the registry selects an immutable serving bundle and the lookup selects the
+newest snapshot WHOSE ModelVersion MATCHES THAT DECODER. Because
+dbo.GNN_UserEmbeddings is version-addressable within its retention window, an
+operator can roll back by restoring the previous
+IntegrityComponentStatus.ServingVersion; artifacts are never replaced in place.
 
 The equality assert is kept anyway, as a cheap invariant check on a path where
 being wrong is worse than being unavailable.
@@ -52,6 +52,7 @@ being wrong is worse than being unavailable.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 import time
@@ -70,16 +71,11 @@ _STORAGE_ACCOUNT = os.environ["AZURE_STORAGE_ACCOUNT"]
 _MODEL_CONTAINER = os.getenv("MODEL_CONTAINER", "ml-models")
 _STORAGE_KEY     = os.getenv("AZURE_STORAGE_KEY")   # local dev only
 
-# Beyond this the embeddings still score, but the result is flagged and the
-# staleness is recorded on the row. The weekly cadence means ~7 days is normal;
-# 14 means a run was missed.
-_STALE_EMBEDDING_DAYS = int(os.getenv("GNN_STALE_EMBEDDING_DAYS", "14"))
-
 # ── Per-tenant decoder cache ──────────────────────────────────────────────────
 # Streamed from Blob on first use and evicted after MODEL_IDLE_TTL_SECONDS of
 # inactivity. KEDA scale-to-zero remains the final whole-process cleanup.
 
-_head_cache: dict[int, tuple[dict | None, float]] = {}
+_head_cache: dict[tuple[int, str | None], tuple[dict | None, float]] = {}
 _head_cache_lock = threading.Lock()
 
 
@@ -89,33 +85,34 @@ def _evict_idle_heads(now: float | None = None) -> int:
     idle_ttl = max(1, int(os.getenv("MODEL_IDLE_TTL_SECONDS", "1800")))
     with _head_cache_lock:
         expired = [
-            tenant_id
-            for tenant_id, (_head, last_used) in _head_cache.items()
+            cache_key
+            for cache_key, (_head, last_used) in _head_cache.items()
             if now - last_used > idle_ttl
         ]
-        for tenant_id in expired:
-            del _head_cache[tenant_id]
+        for cache_key in expired:
+            del _head_cache[cache_key]
     if expired:
         logger.info("Evicted %d idle GNN decoder(s): %s", len(expired), expired)
     return len(expired)
 
 
-def _get_head(tenant_id: int) -> dict | None:
+def _get_head(tenant_id: int, serving_version: str | None = None) -> dict | None:
     now = time.monotonic()
     _evict_idle_heads(now)
+    cache_key = (tenant_id, serving_version)
     with _head_cache_lock:
-        if tenant_id in _head_cache:
-            head, _last_used = _head_cache[tenant_id]
-            _head_cache[tenant_id] = (head, now)
+        if cache_key in _head_cache:
+            head, _last_used = _head_cache[cache_key]
+            _head_cache[cache_key] = (head, now)
             return head
 
     # Stream outside the lock so other tenants are not blocked.
-    head = _stream_head_from_blob(tenant_id)
+    head = _stream_head_from_blob(tenant_id, serving_version)
 
     with _head_cache_lock:
-        existing = _head_cache.get(tenant_id)
+        existing = _head_cache.get(cache_key)
         if existing is None:
-            _head_cache[tenant_id] = (head, time.monotonic())
+            _head_cache[cache_key] = (head, time.monotonic())
             if head is not None:
                 logger.info(
                     "GNN decoder cached for tenant %d (version=%s, emb_dim=%d)",
@@ -123,17 +120,21 @@ def _get_head(tenant_id: int) -> dict | None:
                 )
             return head
         existing_head, _last_used = existing
-        _head_cache[tenant_id] = (existing_head, time.monotonic())
+        _head_cache[cache_key] = (existing_head, time.monotonic())
         return existing_head
 
 
-def _head_blob_name(tenant_id: int) -> str:
+def _head_blob_name(tenant_id: int, serving_version: str | None = None) -> str:
+    if serving_version:
+        return f"gnn/tenant_{tenant_id}/{serving_version}/serving/decoder.pt"
     return f"gnn/gnn_head_tenant_{tenant_id}.pt"
 
 
-def _stream_head_from_blob(tenant_id: int) -> dict | None:
+def _stream_head_from_blob(
+    tenant_id: int, serving_version: str | None = None
+) -> dict | None:
     """
-    Download and deserialise gnn/gnn_head_tenant_<N>.pt.
+    Download the versioned serving decoder (or the legacy decoder during transition).
 
     weights_only=True is deliberate and load-bearing. torch.save uses pickle
     underneath, so a .pt file is as executable as a .pkl unless restricted. The
@@ -147,7 +148,7 @@ def _stream_head_from_blob(tenant_id: int) -> dict | None:
     """
     from azure.storage.blob import BlobServiceClient
 
-    blob_name = _head_blob_name(tenant_id)
+    blob_name = _head_blob_name(tenant_id, serving_version)
 
     if _STORAGE_KEY:
         conn_str = (
@@ -203,6 +204,19 @@ def _stream_head_from_blob(tenant_id: int) -> dict | None:
             tenant_id, sorted(missing),
         )
         return None
+    if head.get("feature_schema_version") == "gnn-v2":
+        v2_missing = {
+            "graph_snapshot_id",
+            "graph_snapshot_as_of",
+            "category_amount_stats",
+        } - set(head)
+        if v2_missing:
+            logger.error(
+                "GNN v2 decoder for tenant %d is missing reproducibility keys: %s",
+                tenant_id,
+                sorted(v2_missing),
+            )
+            return None
 
     if head["participant_roles"] != ["nominator", "beneficiary"]:
         logger.error(
@@ -231,7 +245,7 @@ def _build_decoder(head: dict):
     """
     Reconstruct the decoder from its state_dict.
 
-    Defined inline rather than imported from fraud-analytics-job/gnn_model.py:
+    Defined inline rather than imported from fraud-analytics-job/modeling/gnn/model.py:
     that module imports torch_geometric at module scope, which is not installed
     in this image and must not be. The architecture is duplicated deliberately —
     the shape is asserted against the state_dict below, so a divergence fails
@@ -287,14 +301,39 @@ def _nomination_features(details: dict, head: dict) -> np.ndarray:
     a_std = float(head.get("amount_std", 0.0))
     z = (amount - a_mean) / a_std if a_std > 0 else 0.0
 
-    values = {
-        "Amount":        amount,
-        "AmountZScore":  z,
-        "DayOfWeek":     float(when.weekday()),
-        "Month":         float(when.month),
-        "IsWeekend":     1.0 if when.weekday() >= 5 else 0.0,
-        "IsHighAmount":  1.0 if amount > a_mean + 2.0 * a_std else 0.0,
-    }
+    if head.get("feature_schema_version") == "gnn-v2":
+        category_stats = head.get("category_amount_stats") or {}
+        per_category = category_stats.get("categories") or {}
+        robust = per_category.get(
+            str(int(details.get("category_id") or 0)),
+            category_stats.get("global") or {"median": 0.0, "scale": 1.0},
+        )
+        robust_z = (
+            amount - float(robust.get("median", 0.0))
+        ) / max(float(robust.get("scale", 1.0)), 1.0)
+        dow_angle = 2.0 * math.pi * when.weekday() / 7.0
+        month_angle = 2.0 * math.pi * (when.month - 1) / 12.0
+        values = {
+            "LogAmount": math.log1p(max(amount, 0.0)),
+            "CategoryRelativeAmountRobustZScore": robust_z,
+            # The candidate is outside the immutable history snapshot. Its
+            # future status and negative relative age must never enter scoring.
+            "DaysBeforeGraphCutoff": 0.0,
+            "DayOfWeekSin": math.sin(dow_angle),
+            "DayOfWeekCos": math.cos(dow_angle),
+            "MonthSin": math.sin(month_angle),
+            "MonthCos": math.cos(month_angle),
+            "HistoricalStatus": 0.0,
+        }
+    else:
+        values = {
+            "Amount":        amount,
+            "AmountZScore":  z,
+            "DayOfWeek":     float(when.weekday()),
+            "Month":         float(when.month),
+            "IsWeekend":     1.0 if when.weekday() >= 5 else 0.0,
+            "IsHighAmount":  1.0 if amount > a_mean + 2.0 * a_std else 0.0,
+        }
 
     cols = head["nomination_feature_columns"]
     row = np.array([[values.get(c, 0.0) for c in cols]], dtype=np.float32)
@@ -305,24 +344,20 @@ def _nomination_features(details: dict, head: dict) -> np.ndarray:
 
 # ── Risk mapping ──────────────────────────────────────────────────────────────
 
-def _thresholds(tenant_id: int) -> dict:
+def _thresholds(policy: dict) -> dict:
     """
-    GNN-specific routing thresholds from integrity_config.gnn.score_routing.
+    GNN-specific routing thresholds from the active GNN scoring policy.
 
     Separate from the Random Forest's thresholds by design: the two models have
     different score distributions, and reusing one set would silently mis-tune
     whichever model was not calibrated for it.
     """
-    cfg = db.get_tenant_integrity_config(tenant_id) or {}
-    gnn = cfg.get("gnn", {}) if isinstance(cfg, dict) else {}
-    gnn = gnn if isinstance(gnn, dict) else {}
-    routing = gnn.get("score_routing", {})
-    routing = routing if isinstance(routing, dict) else {}
+    routing = policy.get("thresholds") or {}
     return {
-        "critical": int(routing.get("critical_threshold", 85)),
-        "high":     int(routing.get("high_threshold",     65)),
-        "medium":   int(routing.get("medium_threshold",   45)),
-        "low":      int(routing.get("low_threshold",      25)),
+        "critical": float(routing["critical"]),
+        "high":     float(routing["high"]),
+        "medium":   float(routing["medium"]),
+        "low":      float(routing["low"]),
     }
 
 
@@ -344,6 +379,7 @@ def _unavailable(
     component_status: dict | None = None,
     *,
     source_missing: bool = False,
+    policy: dict | None = None,
 ) -> dict:
     result = {
         "model_available":  False,
@@ -354,6 +390,17 @@ def _unavailable(
         "flagged":          False,
         "model_version":    None,
         "embedding_as_of":  None,
+        "graph_snapshot_id": None,
+        "graph_snapshot_as_of": None,
+        "feature_schema_version": None,
+        "architecture": None,
+        "training_policy_id": None,
+        "training_policy_version": None,
+        "scoring_policy_id": policy.get("policy_id") if policy else None,
+        "scoring_policy_version": (
+            policy.get("policy_version") if policy else None
+        ),
+        "_policy": policy,
     }
     result.update(component_availability.unavailable_metadata(
         "GNN", reason, component_status, source_missing=source_missing
@@ -390,13 +437,37 @@ def _assess_gnn_inner(
     tenant_id: int,
     component_status: dict | None = None,
 ) -> dict:
-    head = _get_head(tenant_id)
+    policy = db.get_active_gnn_scoring_policy(tenant_id)
+    if policy is None:
+        return _unavailable("NO_ACTIVE_POLICY", component_status=component_status)
+    if not bool(policy["inference_enabled"]):
+        return _unavailable(
+            "DISABLED_BY_POLICY", component_status=component_status,
+            policy=policy,
+        )
+
+    serving_version = (
+        component_status.get("serving_version") if component_status else None
+    )
+    head = _get_head(tenant_id, serving_version)
     if head is None:
         return _unavailable(
-            "NO_MODEL", component_status=component_status, source_missing=True
+            "NO_MODEL", component_status=component_status, source_missing=True,
+            policy=policy,
         )
 
     model_version = head["model_version"]
+    if serving_version and model_version != serving_version:
+        logger.error(
+            "GNN serving pointer %s loaded decoder version %s for tenant %d",
+            serving_version,
+            model_version,
+            tenant_id,
+        )
+        return _unavailable(
+            "VERSION_UNAVAILABLE", component_status=component_status,
+            policy=policy,
+        )
     nominator_id   = details["nominator_id"]
     beneficiary_id = details["beneficiary_id"]
 
@@ -436,7 +507,8 @@ def _assess_gnn_inner(
                 details.get("nomination_id"), tenant_id, model_version, have,
             )
             return _unavailable(
-                "VERSION_UNAVAILABLE", ["[GNN] embedding version gap"], component_status
+                "VERSION_UNAVAILABLE", ["[GNN] embedding version gap"],
+                component_status, policy=policy,
             )
 
         logger.info(
@@ -444,7 +516,8 @@ def _assess_gnn_inner(
             details.get("nomination_id"), tenant_id, who,
         )
         return _unavailable(
-            "COLD_START_USER", ["[GNN] cold-start user"], component_status
+            "COLD_START_USER", ["[GNN] cold-start user"], component_status,
+            policy=policy,
         )
 
     emb_dim = int(head["emb_dim"])
@@ -471,7 +544,9 @@ def _assess_gnn_inner(
     as_of_dates = [embeddings[u][1] for u in (nominator_id, beneficiary_id)]
     embedding_as_of = min(d for d in as_of_dates if d is not None)
 
-    if embedding_as_of < date.today() - timedelta(days=_STALE_EMBEDDING_DAYS):
+    if embedding_as_of < date.today() - timedelta(
+        days=int(policy["stale_embedding_days"])
+    ):
         flags.append("[GNN] stale embeddings")
         logger.warning(
             "GNN embeddings for tenant %d are %d days old (nomination %s)",
@@ -502,7 +577,7 @@ def _assess_gnn_inner(
         fraud_prob = float(torch.sigmoid(logit))
 
     fraud_score = int(round(fraud_prob * 100))
-    thresholds = _thresholds(tenant_id)
+    thresholds = _thresholds(policy)
     risk = _risk_level(fraud_score, thresholds)
 
     result = {
@@ -514,8 +589,17 @@ def _assess_gnn_inner(
         "flagged":          risk in ("MEDIUM", "HIGH", "CRITICAL"),
         "model_version":    model_version,
         "embedding_as_of":  embedding_as_of,
+        "graph_snapshot_id": head.get("graph_snapshot_id"),
+        "graph_snapshot_as_of": head.get("graph_snapshot_as_of", embedding_as_of),
+        "feature_schema_version": head.get("feature_schema_version"),
+        "architecture": head.get("architecture", "graphsage"),
+        "training_policy_id": head.get("training_policy_id"),
+        "training_policy_version": head.get("training_policy_version"),
+        "scoring_policy_id": policy["policy_id"],
+        "scoring_policy_version": policy["policy_version"],
         "score_thresholds": thresholds,
         "score_derivation": "round(model_probability * 100)",
+        "_policy": policy,
     }
     result.update(component_availability.available_metadata(component_status))
     return result
