@@ -158,18 +158,6 @@ resource "azurerm_user_assigned_identity" "payroll_broker" {
   depends_on          = [azurerm_resource_group.rg]
 }
 
-# Integrity Check identity — pre-created so KV access policy and Service Bus /
-# Blob RBAC assignments can be granted before the Container App is created.
-# This container runs the integrity inference pipeline: streams model artifacts from Blob, writes to SQL,
-# re-publishes events to Service Bus.
-resource "azurerm_user_assigned_identity" "integrity_check" {
-  name                = "id-award-integrity-check-${var.environment}"
-  resource_group_name = var.resource_group_name
-  location            = var.location_primary
-  tags                = local.tags
-  depends_on          = [azurerm_resource_group.rg]
-}
-
 # ── 5. Key Vault ──────────────────────────────────────────────────────────────
 module "key_vault" {
   source = "../../modules/key-vault"
@@ -440,17 +428,6 @@ resource "azurerm_key_vault_access_policy" "fraud_analytics_job" {
   depends_on = [module.key_vault, azurerm_user_assigned_identity.fraud_analytics_job]
 }
 
-# KV access policy — Integrity Check container
-resource "azurerm_key_vault_access_policy" "integrity_check" {
-  key_vault_id = module.key_vault.key_vault_id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = azurerm_user_assigned_identity.integrity_check.principal_id
-
-  secret_permissions = ["Get", "List"]
-
-  depends_on = [module.key_vault, azurerm_user_assigned_identity.integrity_check]
-}
-
 # Log Analytics Reader — both backend containers query Log Analytics for the admin
 # nomination-logs endpoint (/api/admin/nominations/{id}/logs).
 # Both primary and secondary need the role — Front Door load-balances between them
@@ -469,33 +446,6 @@ resource "azurerm_role_assignment" "aca_secondary_log_analytics_reader" {
   role_definition_name = "Log Analytics Reader"
   principal_id         = azurerm_user_assigned_identity.aca_secondary.principal_id
   depends_on           = [azurerm_user_assigned_identity.aca_secondary, module.log_analytics]
-}
-
-# Blob Storage reader — Integrity Check needs to stream pkl files from ml-models
-resource "azurerm_role_assignment" "integrity_check_blob_reader" {
-  scope                = module.storage.storage_account_id
-  role_definition_name = "Storage Blob Data Reader"
-  principal_id         = azurerm_user_assigned_identity.integrity_check.principal_id
-  depends_on           = [azurerm_user_assigned_identity.integrity_check, module.storage]
-}
-
-# Service Bus Data Sender — Integrity Check re-publishes nomination.created /
-# nomination.fraud-flagged back to the topic after fraud assessment completes.
-resource "azurerm_role_assignment" "integrity_check_sb_sender" {
-  scope                = module.service_bus.topic_id
-  role_definition_name = "Azure Service Bus Data Sender"
-  principal_id         = azurerm_user_assigned_identity.integrity_check.principal_id
-  depends_on           = [azurerm_user_assigned_identity.integrity_check, module.service_bus]
-}
-
-# Cognitive Services OpenAI User — Integrity Check calls Azure OpenAI (Check C)
-# using DefaultAzureCredential + get_bearer_token_provider. No API key required;
-# this role grants token-based access to the /chat/completions endpoint.
-resource "azurerm_role_assignment" "integrity_check_openai_user" {
-  scope                = module.openai.openai_id
-  role_definition_name = "Cognitive Services OpenAI User"
-  principal_id         = azurerm_user_assigned_identity.integrity_check.principal_id
-  depends_on           = [azurerm_user_assigned_identity.integrity_check, module.openai]
 }
 
 # KV access policy — Payroll Broker
@@ -532,8 +482,6 @@ module "service_bus" {
   receiver_principal_ids = {
     # auxiliary-function consumes email, payout, hrbp, and notification events.
     "auxiliary-function" = azurerm_user_assigned_identity.auxiliary_function.principal_id
-    # integrity-check consumes nomination.submitted for async fraud detection.
-    "integrity-check" = azurerm_user_assigned_identity.integrity_check.principal_id
     # Payroll Broker consumes nomination.approved from the payroll-processor subscription.
     "payroll-broker" = azurerm_user_assigned_identity.payroll_broker.principal_id
   }
@@ -626,12 +574,10 @@ module "auxiliary" {
 # runs the integrity inference pipeline (semantic checks + RF + Graph + GNN), writes results to SQL,
 # and re-publishes nomination.created or nomination.fraud-flagged.
 #
-# Uses the same auxiliary-container-app module as award-auxiliary-sandbox —
-# same KEDA / Service Bus / KV pattern, different subscription + resources.
-# Higher CPU/memory than the auxiliary worker: sentence-transformers + sklearn
-# need ~500 MB RAM and meaningful CPU for inference.
+# The service-specific module owns its identity, permissions, KEDA contract,
+# runtime variables, and underlying generic Container App.
 module "integrity_check" {
-  source = "../../modules/auxiliary-container-app"
+  source = "../../modules/integrity-check-app"
 
   resource_group_name          = var.resource_group_name
   location                     = var.location_primary
@@ -639,23 +585,33 @@ module "integrity_check" {
   environment                  = var.environment
   container_app_environment_id = module.container_apps.cae_primary_id
 
-  auxiliary_identity_id        = azurerm_user_assigned_identity.integrity_check.id
-  auxiliary_identity_client_id = azurerm_user_assigned_identity.integrity_check.client_id
-
   acr_login_server   = module.container_registry.login_server
   acr_admin_username = module.container_registry.admin_username
   acr_admin_password = module.container_registry.admin_password
 
   service_bus_fqns              = module.service_bus.namespace_fqns
   service_bus_topic_name        = module.service_bus.topic_name
+  service_bus_topic_id          = module.service_bus.topic_id
   service_bus_subscription_name = module.service_bus.fraud_processor_subscription_name
 
+  key_vault_id  = module.key_vault.key_vault_id
   key_vault_uri = module.key_vault.vault_uri
 
+  storage_account_id   = module.storage.storage_account_id
+  storage_account_name = module.storage.storage_account_name
+  model_container_name = module.storage.ml_models_container_name
+
+  openai_id          = module.openai.openai_id
+  openai_endpoint    = module.openai.endpoint
+  openai_deployment  = module.openai.model_deployment_name
+  openai_api_version = var.openai_api_version
+
+  model_idle_ttl_seconds    = var.model_idle_ttl_seconds
+  graph_snapshot_cache_size = var.graph_snapshot_cache_size
+
   # Scale to zero — fraud check is async so cold-start latency is acceptable.
-  min_replicas       = 0
-  max_replicas       = 2
-  keda_message_count = 1 # 1 replica per pending nomination for fast processing
+  min_replicas = 0
+  max_replicas = 2
 
   # ML inference workload: sentence-transformers + PyTorch need ~500 MB RAM.
   # Azure Consumption plan requires cpu:memory ratio of 1:2 — 1.0 vCPU / 2Gi
@@ -663,44 +619,46 @@ module "integrity_check" {
   cpu    = 1.0
   memory = "2Gi"
 
-  environment_variables = [
-    { name = "AZURE_STORAGE_ACCOUNT", value = module.storage.storage_account_name },
-    { name = "MODEL_CONTAINER", value = module.storage.ml_models_container_name },
-    # Shared idle eviction for tenant RF, GNN, and Graph artifacts in this worker.
-    { name = "MODEL_IDLE_TTL_SECONDS", value = tostring(var.model_idle_ttl_seconds) },
-    { name = "GRAPH_SNAPSHOT_CACHE_SIZE", value = tostring(var.graph_snapshot_cache_size) },
-    # Azure OpenAI — used by Check C (LLM semantic evaluation).
-    # Endpoint and deployment name are not sensitive; passed as plain env vars.
-    # Authentication uses DefaultAzureCredential (Cognitive Services OpenAI User role above).
-    { name = "AZURE_OPENAI_ENDPOINT", value = module.openai.endpoint },
-    { name = "AZURE_OPENAI_DEPLOYMENT", value = module.openai.model_deployment_name },
-    { name = "AZURE_OPENAI_API_VERSION", value = var.openai_api_version },
-    # OTel cost controls — same rationale as the backend container apps above.
-    { name = "OTEL_LOGS_EXPORTER", value = "None" },
-    { name = "OTEL_TRACES_SAMPLER", value = "microsoft.fixed_percentage" },
-    { name = "OTEL_TRACES_SAMPLER_ARG", value = "0.2" },
-  ]
+  tags = local.tags
+}
 
-  kv_secret_references = [
-    { env_name = "SQL_SERVER", kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
-    { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
-    { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
-  ]
+# ── 10c. Integrity Check Extension Container App ────────────────────────────
+# Dedicated asynchronous worker for immutable GNN score reproduction and later
+# GNNExplainer execution. It never participates in nomination routing.
+module "integrity_check_extension" {
+  source = "../../modules/integrity-check-extension-app"
 
-  depends_on = [
-    azurerm_key_vault_access_policy.integrity_check,
-    azurerm_role_assignment.integrity_check_blob_reader,
-    azurerm_role_assignment.integrity_check_sb_sender,
-    azurerm_role_assignment.integrity_check_openai_user,
-    module.service_bus,
-    module.container_apps,
-  ]
+  resource_group_name          = var.resource_group_name
+  location                     = var.location_primary
+  app_name                     = var.integrity_check_extension_container_app_name
+  environment                  = var.environment
+  container_app_environment_id = module.container_apps.cae_primary_id
+
+  acr_login_server   = module.container_registry.login_server
+  acr_admin_username = module.container_registry.admin_username
+  acr_admin_password = module.container_registry.admin_password
+
+  service_bus_fqns              = module.service_bus.namespace_fqns
+  service_bus_topic_name        = module.service_bus.topic_name
+  service_bus_topic_id          = module.service_bus.topic_id
+  service_bus_subscription_name = module.service_bus.gnn_explanation_processor_subscription_name
+
+  key_vault_id  = module.key_vault.key_vault_id
+  key_vault_uri = module.key_vault.vault_uri
+
+  storage_account_id   = module.storage.storage_account_id
+  storage_account_name = module.storage.storage_account_name
+  model_container_name = module.storage.ml_models_container_name
+
+  min_replicas = 0
+  max_replicas = 1
+  cpu          = 2.0
+  memory       = "4Gi"
 
   tags = local.tags
 }
 
-# ── 10c. Payroll Broker Container App ────────────────────────────────────────
+# ── 10d. Payroll Broker Container App ────────────────────────────────────────
 # HTTP-capable ACA that bridges the award nomination workflow with external
 # payroll providers (Gusto in sandbox; extensible per tenant to other providers).
 #

@@ -1,0 +1,100 @@
+name: Deploy Integrity Check Extension
+
+on:
+  push:
+    branches:
+      - main     # → production    (rg_award_nomination)
+      - sandbox  # → sandbox       (rg_award_nomination_sandbox)
+      - dev      # → development   (rg_award_nomination_dev)
+    paths:
+      - 'integrity-check-extension/**'
+  workflow_dispatch:
+
+# Single image name across all environments — the tag (latest/sandbox/dev)
+# and the target container app differ per GitHub Environment.
+env:
+  IMAGE_NAME: award-integrity-check-extension
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    # Selects the GitHub Environment, which supplies that environment's
+    # vars.* and secrets.* values.
+    # main → production  |  sandbox → sandbox  |  dev → development
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'sandbox' && 'sandbox' || 'development' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Login to Azure Container Registry
+      run: |
+        az acr login --name ${{ vars.ACR_NAME }}
+
+    # ------------------------------------------------------------------
+    # Build & push — same tagging convention as integrity-check:
+    #   Prod tags:    latest   and  latest-<sha>
+    #   Sandbox tags: sandbox  and  sandbox-<sha>
+    #   Dev tags:     dev      and  dev-<sha>
+    # ------------------------------------------------------------------
+    - name: Build Docker image
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker build -f integrity-check-extension/Dockerfile -t ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} .
+        docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker tag ${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }} \
+          ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    - name: Push to Azure Container Registry
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ vars.IMAGE_TAG }}
+        docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    # Keep the ACA registry credential synchronized if the ACR admin password
+    # has changed since Terraform provisioned the worker.
+    - name: Set Container App secrets
+      run: |
+        ACR_PASSWORD=$(az acr credential show \
+          --name ${{ vars.ACR_NAME }} \
+          --query "passwords[0].value" -o tsv)
+
+        if [ -z "$ACR_PASSWORD" ]; then
+          echo "::error::ACR password is empty — check that admin credentials are enabled on ${{ vars.ACR_NAME }}"
+          exit 1
+        fi
+
+        az containerapp secret set \
+          --name ${{ vars.CONTAINER_APP_INTEGRITY_CHECK_EXTENSION }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --secrets "${{ vars.ACR_SECRET_NAME }}=${ACR_PASSWORD}"
+
+    # Deploy the immutable SHA tag. Terraform ignores later image changes, so
+    # a subsequent infrastructure apply does not restore the placeholder image.
+    - name: Deploy to Container App
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        az containerapp update \
+          --name ${{ vars.CONTAINER_APP_INTEGRITY_CHECK_EXTENSION }} \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --image ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
+
+    - name: Deployment summary
+      run: |
+        SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
+        echo "### Integrity Check Extension Deployed! :jigsaw:"                                  >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                   >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ vars.ENVIRONMENT }}"                                          >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}"                                                >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}"         >> $GITHUB_STEP_SUMMARY
+        echo "**Container App:** ${{ vars.CONTAINER_APP_INTEGRITY_CHECK_EXTENSION }}"            >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}"                                                     >> $GITHUB_STEP_SUMMARY
+        echo ""                                                                                   >> $GITHUB_STEP_SUMMARY
+        echo "KEDA will scale the worker when GNN explanation requests are queued."              >> $GITHUB_STEP_SUMMARY

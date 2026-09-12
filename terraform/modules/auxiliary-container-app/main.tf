@@ -89,7 +89,7 @@ resource "azurerm_container_app" "auxiliary" {
     max_replicas = var.max_replicas
 
     container {
-      name  = var.app_name
+      name = var.app_name
       # Placeholder image — GitHub Actions overwrites this on first deploy.
       image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
       cpu    = var.cpu
@@ -173,7 +173,7 @@ resource "azurerm_container_app" "auxiliary" {
       name             = "servicebus-scaler"
       custom_rule_type = "azure-servicebus"
       metadata = {
-        namespace        = split(".", var.service_bus_fqns)[0]   # short name only: "sb-award-sandbox"
+        namespace        = split(".", var.service_bus_fqns)[0] # short name only: "sb-award-sandbox"
         topicName        = var.service_bus_topic_name
         subscriptionName = var.service_bus_subscription_name
         messageCount     = tostring(var.keda_message_count)

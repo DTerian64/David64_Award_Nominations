@@ -11,6 +11,11 @@ This document defines the next GNN implementation for the Award Nomination Syste
 The detailed operational training, evaluation, selection, and activation process is defined
 separately in `Documentation_Misc/gnn_v2_training_strategy.md`.
 
+The implementation-level service boundary, message settlement, artifact loading,
+concurrency, and rollout contract for the asynchronous worker is defined in
+`Documentation_Misc/integrity_check_extension_design.md`. That document is
+authoritative for `integrity-check-extension` if the two documents differ.
+
 The design preserves the central ELCE premise: the integrity decision is informed by independent engines, each of which produces its own finding before rules-based routing combines their results.
 
 The four decision engines are:
@@ -635,7 +640,8 @@ gnnexp:t<tenant_id>:n<nomination_id>:<gnn_model_version>
 
 At-least-once delivery is expected. Reprocessing the same request must not duplicate the explanation, alter the route, or append contradictory audit events.
 
-The existing publisher must be extended to accept an explicit message ID or a dedicated explanation-request publisher must be introduced. A random UUID is not sufficient for this workflow.
+The integrity-check publisher now accepts an explicit message ID and uses the
+deterministic request ID for this workflow. A random UUID is not sufficient.
 
 ### 12.3 Delivery and retry behavior
 
@@ -851,6 +857,8 @@ Implementation requires:
 - a new `integrity-check-extension` application directory and container image;
 - an Azure Container Apps event-driven job named `award-integrity-check-extension`;
 - a dedicated Service Bus subscription filtered to `gnn.explanation.requested`;
+- an updated `email-processor` filter that excludes
+  `gnn.explanation.requested` rather than receiving the internal work item;
 - managed identity and RBAC assignments;
 - artifact storage configuration;
 - database and persistent-log configuration;

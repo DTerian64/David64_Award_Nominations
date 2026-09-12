@@ -13,6 +13,16 @@ variable "location" {
 variable "app_name" {
   description = "Container App name — globally unique within the CAE. Convention: award-auxiliary-{env}"
   type        = string
+
+  validation {
+    condition = (
+      length(var.app_name) >= 2 &&
+      length(var.app_name) <= 32 &&
+      can(regex("^[a-z][a-z0-9-]*[a-z0-9]$", var.app_name)) &&
+      !can(regex("--", var.app_name))
+    )
+    error_message = "Container App names must be 2-32 characters, contain only lowercase letters, numbers, or hyphens, begin with a letter, end with a letter or number, and cannot contain consecutive hyphens."
+  }
 }
 
 variable "environment" {
@@ -140,8 +150,8 @@ variable "environment_variables" {
 variable "kv_secret_references" {
   description = "Secrets to pull from Key Vault and expose as env vars via ACA secret references. Values are never stored in Terraform state — resolved at container startup via managed identity."
   type = list(object({
-    env_name       = string  # env var name the app reads:  "SQL_PASSWORD"
-    kv_secret_name = string  # Key Vault secret name:       "SQL-PASSWORD"
+    env_name       = string # env var name the app reads:  "SQL_PASSWORD"
+    kv_secret_name = string # Key Vault secret name:       "SQL-PASSWORD"
   }))
   default = []
 }
@@ -169,6 +179,6 @@ variable "workload_profile_name" {
     azurerm_container_app_environment: azurerm#31840 makes that plan never
     converge (min/max counts round-trip as 0).
   EOT
-  type    = string
-  default = "Consumption"
+  type        = string
+  default     = "Consumption"
 }

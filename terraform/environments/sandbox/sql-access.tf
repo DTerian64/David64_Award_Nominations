@@ -11,11 +11,12 @@ module "sql_access" {
 
   # Runtime workloads that get db_datareader + db_datawriter via group membership.
   runtime_identity_principal_ids = {
-    "aca-primary"     = azurerm_user_assigned_identity.aca_primary.principal_id
-    "aca-secondary"   = azurerm_user_assigned_identity.aca_secondary.principal_id
-    "auxiliary"       = azurerm_user_assigned_identity.auxiliary_function.principal_id
-    "fraud-analytics" = azurerm_user_assigned_identity.fraud_analytics_job.principal_id
-    "payroll-broker"  = azurerm_user_assigned_identity.payroll_broker.principal_id
-    "integrity-check" = azurerm_user_assigned_identity.integrity_check.principal_id
+    "aca-primary"               = azurerm_user_assigned_identity.aca_primary.principal_id
+    "aca-secondary"             = azurerm_user_assigned_identity.aca_secondary.principal_id
+    "auxiliary"                 = azurerm_user_assigned_identity.auxiliary_function.principal_id
+    "fraud-analytics"           = azurerm_user_assigned_identity.fraud_analytics_job.principal_id
+    "payroll-broker"            = azurerm_user_assigned_identity.payroll_broker.principal_id
+    "integrity-check"           = module.integrity_check.identity_principal_id
+    "integrity-check-extension" = module.integrity_check_extension.identity_principal_id
   }
 }

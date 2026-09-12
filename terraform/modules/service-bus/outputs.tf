@@ -40,6 +40,11 @@ output "payroll_processor_subscription_name" {
   value       = azurerm_servicebus_subscription.payroll_processor.name
 }
 
+output "gnn_explanation_processor_subscription_name" {
+  description = "Name of the subscription consumed by integrity-check-extension"
+  value       = azurerm_servicebus_subscription.gnn_explanation_processor.name
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # POST-DEPLOY NOTES
 # ─────────────────────────────────────────────────────────────────────────────

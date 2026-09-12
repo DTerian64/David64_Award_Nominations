@@ -209,6 +209,12 @@ variable "integrity_check_container_app_name" {
   default     = "award-integrity-check-sandbox"
 }
 
+variable "integrity_check_extension_container_app_name" {
+  description = "Integrity Check Extension worker name. Convention: award-integrity-ext-{env} (Azure Container App names are limited to 32 characters)"
+  type        = string
+  default     = "award-integrity-ext-sandbox"
+}
+
 # ── Fraud Analytics Job ───────────────────────────────────────────────────────
 variable "fraud_analytics_job_name" {
   description = "Container Apps Job name for the fraud analytics pipeline. Convention: award-fraud-analytics-{env}"

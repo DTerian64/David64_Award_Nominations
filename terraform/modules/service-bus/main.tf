@@ -91,14 +91,14 @@ resource "azurerm_servicebus_subscription" "email_processor" {
 }
 
 # Replace the auto-created $Default TrueFilter with a SQL filter that excludes
-# nomination.submitted — those are routed exclusively to the fraud-processor
-# subscription and handled by award-integrity-check. Auxiliary only needs the
-# downstream events (nomination.created, nomination.approved, etc.).
+# events owned by dedicated workers. Explanation requests contain no email
+# intent and must never leak into the auxiliary email dispatcher.
 resource "azurerm_servicebus_subscription_rule" "email_processor_filter" {
+  # Preserve the deployed rule name; only its expression changes in place.
   name            = "exclude-submitted"
   subscription_id = azurerm_servicebus_subscription.email_processor.id
   filter_type     = "SqlFilter"
-  sql_filter      = "event_type != 'nomination.submitted'"
+  sql_filter      = "event_type != 'nomination.submitted' AND event_type != 'gnn.explanation.requested'"
 }
 
 # ── Subscription — payroll-processor ─────────────────────────────────────────
@@ -152,6 +152,26 @@ resource "azurerm_servicebus_subscription_rule" "fraud_processor_filter" {
   subscription_id = azurerm_servicebus_subscription.fraud_processor.id
   filter_type     = "SqlFilter"
   sql_filter      = "event_type = 'nomination.submitted'"
+}
+
+# ── Subscription — gnn-explanation-processor ────────────────────────────────
+# Consumed only by integrity-check-extension. The exact-match filter prevents
+# normal nomination lifecycle messages from waking this compute-heavy worker.
+resource "azurerm_servicebus_subscription" "gnn_explanation_processor" {
+  name     = "gnn-explanation-processor"
+  topic_id = azurerm_servicebus_topic.award_events.id
+
+  max_delivery_count                   = var.max_delivery_count
+  lock_duration                        = "PT5M"
+  dead_lettering_on_message_expiration = true
+  default_message_ttl                  = "P7D"
+}
+
+resource "azurerm_servicebus_subscription_rule" "gnn_explanation_processor_filter" {
+  name            = "gnn-explanation-only"
+  subscription_id = azurerm_servicebus_subscription.gnn_explanation_processor.id
+  filter_type     = "SqlFilter"
+  sql_filter      = "event_type = 'gnn.explanation.requested'"
 }
 
 # ── Private endpoint (Premium SKU only) ───────────────────────────────────────
