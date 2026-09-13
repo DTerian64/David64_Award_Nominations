@@ -2,9 +2,10 @@
 labels.py — one definition of "fraud" for every model
 ======================================================
 
-Both the Random Forest and the GNN need a training label. Human outcomes live
-in dbo.IntegrityDecisionResults so neither model owns the ground truth. Component
-scores remain immutable evidence that can be compared with the HRBP outcome.
+Both the Random Forest and the GNN need a training label. Model-neutral outcomes
+live in dbo.IntegrityDecisionResults so neither model owns the ground truth.
+Component scores remain immutable evidence that can be compared with the
+adjudicated or synthetic outcome.
 
     FRAUD      -> IsFraud = 1
     LEGITIMATE -> IsFraud = 0
@@ -13,7 +14,9 @@ scores remain immutable evidence that can be compared with the HRBP outcome.
 
 Inference risk and score fields are deliberately absent from this mapping.
 
-    LabelSource   'hrbp'        eligible human ground truth
+    LabelSource   'hrbp'        eligible human investigation or random audit
+                  'synthetic_ground_truth'
+                                eligible only when Tenants.is_synthetic = 1
                   'excluded'    reviewed by HRBP, deliberately not a label
                   'model'       deprecated compatibility value; never emitted
                                 by the canonical loader
@@ -21,11 +24,13 @@ Inference risk and score fields are deliberately absent from this mapping.
 
 Training behavior
 -----------------
-Eligible human labels are the only supervised ground truth. Explicitly excluded
-reviews and unreviewed rows remain NULL in this shared contract. RF may create
-in-memory Isolation Forest pseudo-labels until it has at least 50 human labels
-with at least five examples of each class. RF preserves human labels and never
-bootstraps explicitly excluded reviews. GNN never consumes these pseudo-labels.
+Eligible human labels and explicitly isolated synthetic ground truth are the
+only supervised targets. Explicitly excluded reviews and unreviewed rows remain
+NULL in this shared contract. RF may create in-memory Isolation Forest
+pseudo-labels until it has at least 50 model-neutral labels with at least five
+examples of each class. RF preserves human and eligible synthetic labels and
+never bootstraps explicitly excluded reviews. GNN never consumes RF
+pseudo-labels.
 
 Scope
 -----
@@ -37,7 +42,8 @@ in train_rf_model.py as an RF-only cold-start path.
 The GNN does not inherit it. Training a GNN on labels produced by an anomaly
 detector fitted to the Random Forest's feature space would be a particularly
 circular way to violate model independence — so the GNN
-requires real labels or skips the tenant, which the sample gate already handles.
+requires eligible model-neutral labels or skips the tenant, which the sample
+gate already handles.
 """
 
 from __future__ import annotations
@@ -51,6 +57,7 @@ logger = logging.getLogger(__name__)
 # SOURCE_MODEL remains only so parity/audit callers can classify legacy frames;
 # load_labels() never emits it.
 SOURCE_HRBP       = "hrbp"
+SOURCE_SYNTHETIC  = "synthetic_ground_truth"
 SOURCE_EXCLUDED   = "excluded"
 SOURCE_MODEL      = "model"
 SOURCE_UNLABELLED = "unlabelled"
@@ -82,7 +89,8 @@ def load_labels(
     -------
     NominationId  int
     IsFraud       nullable int — 0/1 for human labels, NULL otherwise
-    LabelSource   str   'hrbp' | 'excluded' | 'model' | 'unlabelled'
+    LabelSource   str   'hrbp' | 'synthetic_ground_truth' | 'excluded' |
+                        'model' | 'unlabelled'
     RiskLevel     str   the model's own risk level, preserved even where a
                         human has overridden the label
     ConfirmedBy   str   HRBP actor when reviewed, else None
@@ -107,20 +115,48 @@ def load_labels(
             idr.ReviewedBy AS ConfirmedBy,
             idr.ReviewedAt AS ConfirmedAt,
             idr.TrainingDisposition,
+            idr.TrainingDispositionSource,
+            CAST(t.is_synthetic AS INT) AS IsSyntheticTenant,
             CASE
-                WHEN idr.TrainingDisposition = 'FRAUD' THEN 1
-                WHEN idr.TrainingDisposition = 'LEGITIMATE' THEN 0
+                WHEN idr.TrainingDisposition = 'FRAUD'
+                 AND (
+                    idr.TrainingDispositionSource IN (
+                        'HUMAN_INVESTIGATION', 'RANDOM_AUDIT'
+                    )
+                    OR (idr.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
+                        AND t.is_synthetic = 1)
+                 ) THEN 1
+                WHEN idr.TrainingDisposition = 'LEGITIMATE'
+                 AND (
+                    idr.TrainingDispositionSource IN (
+                        'HUMAN_INVESTIGATION', 'RANDOM_AUDIT'
+                    )
+                    OR (idr.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
+                        AND t.is_synthetic = 1)
+                 ) THEN 0
                 ELSE NULL
             END AS IsFraud,
             CASE
                 WHEN idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
+                 AND idr.TrainingDispositionSource IN (
+                    'HUMAN_INVESTIGATION', 'RANDOM_AUDIT'
+                 )
                     THEN '{SOURCE_HRBP}'
+                WHEN idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
+                 AND idr.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
+                 AND t.is_synthetic = 1
+                    THEN '{SOURCE_SYNTHETIC}'
                 WHEN idr.TrainingDisposition = 'EXCLUDED'
                     THEN '{SOURCE_EXCLUDED}'
                 ELSE '{SOURCE_UNLABELLED}'
-            END AS LabelSource
+            END AS LabelSource,
+            CASE
+                WHEN idr.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
+                 AND t.is_synthetic = 0 THEN 1 ELSE 0
+            END AS InvalidSyntheticSource
         FROM       dbo.Nominations n
         JOIN       dbo.Users u   ON u.UserId       = n.NominatorId
+        JOIN       dbo.Tenants t ON t.TenantId     = u.TenantId
         LEFT JOIN  dbo.IntegrityDecisionResults idr
                ON idr.NominationId = n.NominationId
         WHERE {_INCLUSION_SQL}
@@ -131,52 +167,67 @@ def load_labels(
 
     params = [tenant_id] + ([window_days] if window_days is not None else [])
     df = pd.read_sql(query, conn, params=params)
+    if (
+        "InvalidSyntheticSource" in df.columns
+        and pd.to_numeric(df["InvalidSyntheticSource"], errors="coerce")
+        .fillna(0)
+        .astype(bool)
+        .any()
+    ):
+        raise ValueError(
+            f"Tenant {tenant_id} contains SYNTHETIC_GROUND_TRUTH labels but is not "
+            "marked is_synthetic; refusing to train."
+        )
     df["IsFraud"] = pd.to_numeric(df["IsFraud"], errors="coerce").astype("Int64")
     return df
 
 
 def summarise(df: pd.DataFrame, tenant_id: int) -> dict:
     """
-    Per-source counts, for logging and human-label evaluation.
+    Per-source counts, for logging and supervised-label evaluation.
 
-    n_hrbp is the number that actually matters: it is the size of the only subset
-    on which a GNN-versus-Random-Forest comparison means anything. If it is small,
-    no amount of modelling work will make the comparison informative, and that is
-    a scheduling fact rather than a modelling one.
+    Human and isolated synthetic counts remain separate for provenance, while
+    n_supervised is the model-neutral population eligible for model fitting.
     """
     counts = df["LabelSource"].value_counts().to_dict()
     stats = {
         "n_total":      int(len(df)),
         "n_hrbp":       int(counts.get(SOURCE_HRBP, 0)),
+        "n_synthetic":  int(counts.get(SOURCE_SYNTHETIC, 0)),
         "n_excluded":   int(counts.get(SOURCE_EXCLUDED, 0)),
         "n_model":      int(counts.get(SOURCE_MODEL, 0)),
         "n_unlabelled": int(counts.get(SOURCE_UNLABELLED, 0)),
         "n_fraud":      int(df["IsFraud"].sum()),
         "n_hrbp_fraud": int(df.loc[df["LabelSource"] == SOURCE_HRBP, "IsFraud"].sum()),
+        "n_synthetic_fraud": int(
+            df.loc[df["LabelSource"] == SOURCE_SYNTHETIC, "IsFraud"].sum()
+        ),
     }
+    stats["n_supervised"] = stats["n_hrbp"] + stats["n_synthetic"]
     logger.info(
-        "[Tenant %d] labels — total %d | hrbp %d (%d fraud) | excluded %d | "
-        "model %d | unlabelled %d | fraud %d",
+        "[Tenant %d] labels — total %d | human %d (%d fraud) | synthetic %d "
+        "(%d fraud) | excluded %d | model %d | unlabelled %d | fraud %d",
         tenant_id, stats["n_total"], stats["n_hrbp"], stats["n_hrbp_fraud"],
+        stats["n_synthetic"], stats["n_synthetic_fraud"],
         stats["n_excluded"], stats["n_model"], stats["n_unlabelled"],
         stats["n_fraud"],
     )
-    if stats["n_hrbp"] == 0:
+    if stats["n_supervised"] == 0:
         logger.warning(
-            "[Tenant %d] NO eligible human-confirmed labels. Model/unlabelled rows "
-            "cannot support independent human-label evaluation for this tenant.",
+            "[Tenant %d] NO eligible supervised labels. Model/unlabelled rows "
+            "cannot support independent evaluation for this tenant.",
             tenant_id,
         )
     return stats
 
 
 def human_confirmed(df: pd.DataFrame) -> pd.DataFrame:
-    """Return the only rows that are valid independent GNN training targets.
+    """Return human-reviewed training targets only.
 
     ``SOURCE_MODEL`` rows are Random Forest outputs, ``SOURCE_UNLABELLED`` rows
     have no outcome evidence, and ``SOURCE_EXCLUDED`` rows were deliberately
-    withheld by HRBP. Keeping this filter here prevents any of them from being
-    reintroduced into the GNN loss function.
+    withheld by HRBP. Keeping this filter here preserves a human-only evaluation
+    slice even when an isolated synthetic corpus is also available.
     """
     required = {"NominationId", "IsFraud", "LabelSource"}
     missing = required - set(df.columns)
@@ -188,6 +239,29 @@ def human_confirmed(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Human-confirmed labels must have a non-null IsFraud value")
     confirmed["IsFraud"] = confirmed["IsFraud"].astype(int)
     return confirmed
+
+
+def supervised_targets(df: pd.DataFrame) -> pd.DataFrame:
+    """Return eligible model-neutral human and synthetic training targets.
+
+    Synthetic eligibility is decided in ``load_labels`` only after checking the
+    owning tenant's ``is_synthetic`` flag.  This function never treats model
+    outputs, RF bootstrap labels, exclusions, or unreviewed rows as targets.
+    """
+    required = {"NominationId", "IsFraud", "LabelSource"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Label frame is missing required columns: {sorted(missing)}")
+
+    supervised = df.loc[
+        df["LabelSource"].isin((SOURCE_HRBP, SOURCE_SYNTHETIC))
+    ].copy()
+    if supervised["IsFraud"].isna().any():
+        raise ValueError("Eligible supervised labels must have a non-null IsFraud value")
+    if not supervised["IsFraud"].isin((0, 1)).all():
+        raise ValueError("Eligible supervised labels must be binary")
+    supervised["IsFraud"] = supervised["IsFraud"].astype(int)
+    return supervised
 
 
 def attach_training_labels(
@@ -259,10 +333,14 @@ def compare_with_legacy(
         # data gets good, and would be switched off. Only model/unlabelled
         # divergence indicates a genuine defect in this module.
         expected = differing[
-            differing["LabelSource"].isin((SOURCE_HRBP, SOURCE_EXCLUDED))
+            differing["LabelSource"].isin(
+                (SOURCE_HRBP, SOURCE_SYNTHETIC, SOURCE_EXCLUDED)
+            )
         ]
         unexpected = differing[
-            ~differing["LabelSource"].isin((SOURCE_HRBP, SOURCE_EXCLUDED))
+            ~differing["LabelSource"].isin(
+                (SOURCE_HRBP, SOURCE_SYNTHETIC, SOURCE_EXCLUDED)
+            )
         ]
 
         result = {

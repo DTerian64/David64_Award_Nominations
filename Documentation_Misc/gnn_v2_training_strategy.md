@@ -69,18 +69,24 @@ not inserted into later message-passing history as ordinary accepted behavior.
 
 ### 3.2 Canonical labels
 
-`dbo.IntegrityDecisionResults.TrainingDisposition` is the model-neutral label
-contract:
+`dbo.IntegrityDecisionResults.TrainingDisposition` is the model-neutral label,
+and `TrainingDispositionSource` establishes its provenance:
 
 | TrainingDisposition | GNN target | Treatment |
 |---|---:|---|
-| `FRAUD` | 1 | Eligible human-confirmed target |
-| `LEGITIMATE` | 0 | Eligible human-confirmed target |
+| `FRAUD` | 1 | Eligible human outcome, or isolated synthetic ground truth for an explicitly synthetic tenant |
+| `LEGITIMATE` | 0 | Eligible human outcome, or isolated synthetic ground truth for an explicitly synthetic tenant |
 | `EXCLUDED` | — | Never used as a target |
 | `NULL` | — | Unlabeled; never used as a target |
 
 Semantic-check routing never creates a GNN training label. RF bootstrapping and
 pseudo-labels are RF-only and are never shared with GNN.
+
+Allowed supervised sources are `HUMAN_INVESTIGATION`, `RANDOM_AUDIT`, and
+`SYNTHETIC_GROUND_TRUTH`. The last source is accepted only when the owning
+tenant has `is_synthetic = 1`; encountering it on any other tenant aborts
+training. Human and synthetic metrics remain separately attributable even when
+both are used in a candidate run.
 
 ### 3.3 Outcome maturity
 
@@ -207,7 +213,7 @@ gate fails.
 | Eligible behavior nominations | 300 | `BELOW_MINIMUM_VOLUME` |
 | Tenant users | 50 | `BELOW_MINIMUM_VOLUME` |
 | Distinct dates | `fold_count + 2` | `INSUFFICIENT_TEMPORAL_COVERAGE` |
-| Human-confirmed labels | At least one | `NO_HUMAN_CONFIRMED_LABELS` |
+| Eligible model-neutral labels | At least one | `NO_ELIGIBLE_SUPERVISED_LABELS` |
 | Fraud labels in combined rolling train population | 10 | `INSUFFICIENT_FRAUD_LABELS` |
 | Fraud labels in final holdout | 10 | `INSUFFICIENT_FRAUD_LABELS` |
 | Legitimate labels in combined rolling train population | At least one | `MISSING_LABEL_CLASS` |
@@ -251,7 +257,7 @@ for the same single GNN engine.
 Every standard training run evaluates every configured candidate using:
 
 - the same tenant data;
-- the same human-confirmed labels;
+- the same eligible model-neutral labels and provenance slices;
 - the same rolling training folds;
 - the same untouched final holdout;
 - the same fixed epoch budget;
@@ -571,7 +577,7 @@ activates its eligible winner or retains the incumbent with an explicit reason.
 
 Before enabling standard winner activation, verify all of the following:
 
-- [ ] Both human label classes satisfy the approved train and holdout minimums.
+- [ ] Both supervised label classes satisfy the approved train and holdout minimums.
 - [ ] Outcome-maturity policy is defined and enforced.
 - [ ] Candidate comparison has been repeated across approved seeds.
 - [ ] At least one graph candidate materially exceeds the no-graph MLP under the approved metric.
@@ -642,7 +648,9 @@ also be completed before v2 activation.
 | Tenant graph, features, temporal folds, serving snapshot | `fraud-analytics-job/modeling/gnn/graph.py` |
 | Candidate encoders, decoder, rolling optimization, metrics | `fraud-analytics-job/modeling/gnn/model.py` |
 | Gates, labels, candidate bake-off, winner refit and activation | `fraud-analytics-job/modeling/train_gnn_model.py` |
-| Canonical human-label contract | `fraud-analytics-job/modeling/labels.py` |
+| Canonical model-neutral label contract | `fraud-analytics-job/modeling/labels.py` |
+| Synthetic-label provenance schema | `schema-migration/alembic/versions/0060_synthetic_training_labels.py` |
+| Synthetics Inc. dry-run generator | `scripts/synthetic_tenant/` |
 | Restricted graph snapshot bundle | `fraud-analytics-job/modeling/gnn/artifact_bundle.py` |
 | Active training policy loader | `fraud-analytics-job/modeling/gnn/policy.py` |
 | Live decoder inference | `integrity-check/inference/gnn_check.py` |

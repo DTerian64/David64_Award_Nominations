@@ -214,6 +214,21 @@ class RFTrainingTransitionTests(unittest.TestCase):
                     self.assertEqual(len(training), 50)
                     self.assertEqual(stats['pseudo_label_count'], 0)
 
+    def test_isolated_synthetic_ground_truth_is_supervised_without_rf_bootstrap(self):
+        source = _label_frame(5, 45, unlabelled=0, excluded=0)
+        source['LabelSource'] = train_rf_model.labels_mod.SOURCE_SYNTHETIC
+
+        with patch.object(train_rf_model, 'IsolationForest') as isolation_forest:
+            training, stats = train_rf_model.prepare_rf_training_data(source, 4)
+
+        isolation_forest.assert_not_called()
+        self.assertEqual(stats['training_mode'], 'SUPERVISED')
+        self.assertEqual(stats['human_label_count'], 0)
+        self.assertEqual(stats['synthetic_label_count'], 50)
+        self.assertEqual(stats['supervised_label_count'], 50)
+        self.assertEqual(stats['supervised_fraud_count'], 5)
+        self.assertEqual(len(training), 50)
+
     def test_insufficient_candidates_skip_without_fitting_isolation_forest(self):
         for source in [_label_frame(unlabelled=0), _label_frame(0, 0, 10, 100),
                        _label_frame(1, 49, 0), _label_frame(0, 0, 0, 0)]:
@@ -247,7 +262,7 @@ class RFTrainingTransitionTests(unittest.TestCase):
         source = _label_frame()
         source.loc[0, 'IsFraud'] = pd.NA
         with patch.object(train_rf_model, 'IsolationForest') as iso:
-            with self.assertRaisesRegex(ValueError, 'Human RF training labels'):
+            with self.assertRaisesRegex(ValueError, 'Model-neutral RF training labels'):
                 train_rf_model.prepare_rf_training_data(source, 1)
         iso.assert_not_called()
 

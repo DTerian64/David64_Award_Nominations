@@ -572,21 +572,32 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     label_df = labels_mod.load_labels(conn, tenant_id, window_days=policy.window_days)
     labels_mod.summarise(label_df, tenant_id)
 
-    # True training independence: only human-confirmed HRBP outcomes may enter
-    # the GNN loss. Random Forest scores and unexamined rows remain graph edges,
-    # but neither is a target. A tenant without enough human outcomes is skipped
-    # rather than silently teaching the GNN to reproduce the RF.
-    labelled = labels_mod.human_confirmed(label_df)
+    # True training independence: only model-neutral outcomes may enter the GNN
+    # loss. These are human adjudications plus isolated synthetic ground truth
+    # for a tenant explicitly marked synthetic. Random Forest scores and
+    # unexamined rows remain graph edges, but neither is a target.
+    labelled = labels_mod.supervised_targets(label_df)
+    label_source_counts = {
+        str(source): int(count)
+        for source, count in labelled["LabelSource"].value_counts().items()
+    }
     label_map = dict(zip(labelled["NominationId"], labelled["IsFraud"]))
     if not label_map:
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
-            reason_code="NO_HUMAN_CONFIRMED_LABELS",
-            reason_detail="No human-confirmed HRBP outcomes are available for GNN training.",
-            diagnostics={**base_diagnostics, "human_confirmed_count": 0},
+            reason_code="NO_ELIGIBLE_SUPERVISED_LABELS",
+            reason_detail=(
+                "No eligible human outcomes or isolated synthetic ground-truth "
+                "labels are available for GNN training."
+            ),
+            diagnostics={
+                **base_diagnostics,
+                "supervised_label_count": 0,
+                "label_source_counts": label_source_counts,
+            },
             run_id=run_id,
         )
-        return "SKIPPED (no human-confirmed nominations)"
+        return "SKIPPED (no eligible supervised nominations)"
 
     try:
         G.rolling_thresholds(
@@ -647,7 +658,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             },
             run_id=run_id,
         )
-        return (f"SKIPPED (too few human-confirmed fraud labels: train {train_pos}, "
+        return (f"SKIPPED (too few supervised fraud labels: train {train_pos}, "
                 f"eval {eval_pos}, need {policy.minimum_positives_per_split} each)")
     if train_neg == 0 or eval_neg == 0:
         detail = (f"train {train_pos} fraud/{train_neg} legitimate; "
@@ -664,7 +675,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             },
             run_id=run_id,
         )
-        return (f"SKIPPED (human-confirmed labels need both classes: "
+        return (f"SKIPPED (supervised labels need both classes: "
                 f"train {train_pos} fraud/{train_neg} legitimate, "
                 f"eval {eval_pos} fraud/{eval_neg} legitimate)")
 
@@ -791,8 +802,9 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
 
     common_diagnostics = {
         **base_diagnostics,
-        "human_confirmed_eval_count": len(y_ev),
-        "human_confirmed_train_count": len(y_tr),
+        "supervised_eval_count": len(y_ev),
+        "supervised_train_count": len(y_tr),
+        "label_source_counts": label_source_counts,
         "rolling_fold_count": len(folds),
         "holdout_start": holdout_graph["t_cut"].isoformat(),
         "holdout_end": holdout_graph["eval_end"].isoformat(),
@@ -849,13 +861,13 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             **common_diagnostics,
             "embedding_count": n_emb,
             "evicted_embedding_count": n_evicted,
-            "human_label_pr_auc": selection["selected_metric_value"],
+            "holdout_pr_auc": selection["selected_metric_value"],
             "serving_refit_training_count": serving_metrics["n_train"],
         },
     )
 
     return (f"OK ({model_version}, {selected_architecture}, {n_emb} embeddings, "
-            f"{n_evicted} evicted, human-label PR-AUC "
+            f"{n_evicted} evicted, supervised holdout PR-AUC "
             f"{selection['selected_metric_value']:.4f}, "
             f"{time.monotonic() - t0:.1f}s)")
 

@@ -637,36 +637,54 @@ def prepare_rf_training_data(
     """Select supervised vs RF bootstrap training without changing source data."""
     df = df.copy()
     human = df['LabelSource'].eq(labels_mod.SOURCE_HRBP)
-    if not df.loc[human, 'IsFraud'].isin([0, 1]).all():
-        raise ValueError('Human RF training labels must be 0 or 1')
+    synthetic = df['LabelSource'].eq(labels_mod.SOURCE_SYNTHETIC)
+    confirmed = human | synthetic
+    if not df.loc[confirmed, 'IsFraud'].isin([0, 1]).all():
+        raise ValueError('Model-neutral RF training labels must be 0 or 1')
     # Neither legacy model outputs nor explicit exclusions are training targets.
-    df.loc[~human, 'IsFraud'] = pd.NA
+    df.loc[~confirmed, 'IsFraud'] = pd.NA
     human_count = int(human.sum())
     human_fraud = int(df.loc[human, 'IsFraud'].eq(1).sum())
     human_legitimate = human_count - human_fraud
+    synthetic_count = int(synthetic.sum())
+    synthetic_fraud = int(df.loc[synthetic, 'IsFraud'].eq(1).sum())
+    synthetic_legitimate = synthetic_count - synthetic_fraud
+    supervised_count = int(confirmed.sum())
+    supervised_fraud = int(df.loc[confirmed, 'IsFraud'].eq(1).sum())
+    supervised_legitimate = supervised_count - supervised_fraud
     unlabelled_count = int(df['LabelSource'].eq(labels_mod.SOURCE_UNLABELLED).sum())
     supervised = (
-        human_count >= MIN_TRAINING_SAMPLES
-        and min(human_fraud, human_legitimate) >= MIN_TRAINING_CLASS_SAMPLES
+        supervised_count >= MIN_TRAINING_SAMPLES
+        and min(supervised_fraud, supervised_legitimate) >= MIN_TRAINING_CLASS_SAMPLES
     )
     diagnostics = {
         'nomination_count': len(df),
         'human_label_count': human_count,
         'human_fraud_count': human_fraud,
         'human_legitimate_count': human_legitimate,
+        'synthetic_label_count': synthetic_count,
+        'synthetic_fraud_count': synthetic_fraud,
+        'synthetic_legitimate_count': synthetic_legitimate,
+        'supervised_label_count': supervised_count,
+        'supervised_fraud_count': supervised_fraud,
+        'supervised_legitimate_count': supervised_legitimate,
         'unlabelled_count': unlabelled_count,
         'excluded_count': int(df['LabelSource'].eq(labels_mod.SOURCE_EXCLUDED).sum()),
         'training_mode': 'SUPERVISED' if supervised else (
-            'BOOTSTRAP_HYBRID' if human_count else 'BOOTSTRAP'
+            'BOOTSTRAP_HYBRID' if supervised_count else 'BOOTSTRAP'
         ),
         'minimum_training_samples': MIN_TRAINING_SAMPLES,
         'minimum_class_samples': MIN_TRAINING_CLASS_SAMPLES,
     }
-    if not supervised and unlabelled_count and human_count + unlabelled_count >= MIN_TRAINING_SAMPLES:
+    if (
+        not supervised
+        and unlabelled_count
+        and supervised_count + unlabelled_count >= MIN_TRAINING_SAMPLES
+    ):
         df = bootstrap_fraud_labels(df, tenant_id)
 
     pseudo = df['LabelSource'].eq(RF_BOOTSTRAP_SOURCE) & df['IsFraud'].notna()
-    training = df.loc[(human | pseudo) & df['IsFraud'].notna()].copy()
+    training = df.loc[(confirmed | pseudo) & df['IsFraud'].notna()].copy()
     training['IsFraud'] = training['IsFraud'].astype(int)
     diagnostics.update({
         'pseudo_label_count': int(pseudo.sum()),
@@ -687,7 +705,8 @@ def prepare_rf_training_data(
             'skipped': True,
             'reason_code': 'BOOTSTRAP_UNAVAILABLE',
             'reason_detail': (
-                f'{human_count} human labels + {diagnostics["pseudo_label_count"]} RF pseudo-labels; '
+                f'{supervised_count} model-neutral labels + '
+                f'{diagnostics["pseudo_label_count"]} RF pseudo-labels; '
                 f'{diagnostics["training_fraud_count"]} fraud / '
                 f'{diagnostics["training_legitimate_count"]} legitimate. '
                 f'Requires {MIN_TRAINING_SAMPLES} labels and at least '
@@ -760,7 +779,8 @@ def train_model(
     n_legit = int((df_train['IsFraud'] == 0).sum())
 
     label_diagnostics['evaluation_basis'] = (
-        'HUMAN_LABEL_HOLDOUT' if label_diagnostics['training_mode'] == 'SUPERVISED'
+        'MODEL_NEUTRAL_LABEL_HOLDOUT'
+        if label_diagnostics['training_mode'] == 'SUPERVISED'
         else 'BOOTSTRAP_LABEL_HOLDOUT_NOT_INDEPENDENT'
     )
 

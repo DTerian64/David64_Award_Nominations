@@ -24,6 +24,28 @@ class HumanConfirmedLabelTests(unittest.TestCase):
         self.assertEqual(result["NominationId"].tolist(), [1, 4])
         self.assertEqual(result["IsFraud"].tolist(), [1, 0])
 
+    def test_supervised_targets_combine_human_and_isolated_synthetic_labels(self):
+        frame = pd.DataFrame([
+            {"NominationId": 1, "IsFraud": 1, "LabelSource": labels.SOURCE_HRBP},
+            {
+                "NominationId": 2,
+                "IsFraud": 0,
+                "LabelSource": labels.SOURCE_SYNTHETIC,
+            },
+            {"NominationId": 3, "IsFraud": 1, "LabelSource": labels.SOURCE_MODEL},
+            {
+                "NominationId": 4,
+                "IsFraud": pd.NA,
+                "LabelSource": labels.SOURCE_EXCLUDED,
+            },
+        ])
+
+        result = labels.supervised_targets(frame)
+
+        self.assertEqual(result["NominationId"].tolist(), [1, 2])
+        self.assertEqual(result["IsFraud"].tolist(), [1, 0])
+        self.assertEqual(labels.human_confirmed(frame)["NominationId"].tolist(), [1])
+
     def test_excluded_review_is_explicit_but_not_a_training_target(self):
         frame = pd.DataFrame([
             {"NominationId": 5, "IsFraud": pd.NA, "LabelSource": labels.SOURCE_EXCLUDED},
@@ -59,6 +81,9 @@ class HumanConfirmedLabelTests(unittest.TestCase):
 
         query = read_sql.call_args.args[0]
         self.assertIn("dbo.IntegrityDecisionResults", query)
+        self.assertIn("JOIN       dbo.Tenants", query)
+        self.assertIn("t.is_synthetic = 1", query)
+        self.assertIn("SYNTHETIC_GROUND_TRUTH", query)
         self.assertIn("idr.TrainingDisposition = 'EXCLUDED'", query)
         self.assertNotIn("dbo.FraudDecisionResults", query)
         self.assertNotIn("dbo.P2P_FraudScores", query)
@@ -80,6 +105,24 @@ class HumanConfirmedLabelTests(unittest.TestCase):
 
         self.assertTrue(result.loc[0, "IsFraud"] is pd.NA)
         self.assertEqual(result.loc[0, "LabelSource"], labels.SOURCE_UNLABELLED)
+
+    @patch.object(labels.pd, "read_sql")
+    def test_synthetic_label_on_non_synthetic_tenant_is_rejected(self, read_sql):
+        read_sql.return_value = pd.DataFrame([{
+            "NominationId": 11,
+            "RiskLevel": None,
+            "ConfirmedBy": None,
+            "ConfirmedAt": None,
+            "TrainingDisposition": "FRAUD",
+            "TrainingDispositionSource": "SYNTHETIC_GROUND_TRUTH",
+            "IsSyntheticTenant": 0,
+            "IsFraud": None,
+            "LabelSource": labels.SOURCE_UNLABELLED,
+            "InvalidSyntheticSource": 1,
+        }])
+
+        with self.assertRaisesRegex(ValueError, "not marked is_synthetic"):
+            labels.load_labels(object(), tenant_id=3)
 
     def test_rf_feature_frame_receives_same_shared_labels(self):
         features = pd.DataFrame([
