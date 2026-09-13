@@ -65,6 +65,7 @@ swa_custom_domains = [
   "sandbox-awards.terianix.ai",   # main sandbox — existing tenants
   "acme-awards.terianix.ai",      # ACME Corp tenant
   "demo-awards.terianix.ai",      # public demo — self-registration
+  "synthetic-awards.terianix.ai", # Synthetics Inc. GNN validation tenant
 ]
 dns_zone_resource_group = "rg_platform"                         # RG holding terianix.ai DNS zone
 

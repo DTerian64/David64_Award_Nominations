@@ -146,6 +146,7 @@ class HRBPAdjudicationPersistenceTests(unittest.TestCase):
         self.assertEqual(result["training_disposition"], "EXCLUDED")
         self.assertEqual(decision_params["training_disposition"], "EXCLUDED")
         self.assertIn("IntegrityDecisionResults", integrity_sql)
+        self.assertIn("TrainingDispositionSource = 'HUMAN_INVESTIGATION'", integrity_sql)
         self.assertNotIn("FraudDecisionResults", all_sql)
         self.assertNotIn("RfScore", integrity_sql)
         session.commit.assert_called_once()

@@ -2359,6 +2359,8 @@ def apply_hrbp_adjudication(
                 UPDATE dbo.IntegrityDecisionResults
                 SET HumanReviewOutcome = :outcome,
                     TrainingDisposition = :training_disposition,
+                    TrainingDispositionSource = 'HUMAN_INVESTIGATION',
+                    TrainingDispositionMetadataJson = NULL,
                     ReviewReason = :reason,
                     ReviewedBy = :reviewed_by,
                     ReviewedAt = SYSUTCDATETIME(),
