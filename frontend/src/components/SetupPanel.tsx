@@ -16,6 +16,7 @@ import { getAccessToken } from '../services/api';
 import CodeMirror from '@uiw/react-codemirror';
 import { html } from '@codemirror/lang-html';
 import { ModelInspectionModal, type InspectableModel } from './ModelInspectionModal';
+import { GNNTrainingRunsModal } from './GNNTrainingRunsModal';
 import { GraphPolicyModal } from './GraphPolicyModal';
 import { GNNPolicyModal } from './GNNPolicyModal';
 
@@ -168,6 +169,15 @@ const diagnosticValue = (value: unknown): string => {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number') return value.toLocaleString();
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.map(diagnosticValue).join(', ') : 'None';
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return entries.length > 0
+      ? entries.map(([key, item]) => `${diagnosticLabel(key)}: ${diagnosticValue(item)}`).join(' · ')
+      : 'None';
+  }
   return String(value);
 };
 
@@ -177,7 +187,8 @@ const asRecord = (value: unknown): Record<string, any> | null =>
     : null;
 
 const GnnSelectionSummary: React.FC<{ diagnostics: Record<string, unknown> }> = ({ diagnostics }) => {
-  const selection = asRecord(diagnostics.selection);
+  const selection = asRecord(diagnostics.last_candidate_selection)
+    || asRecord(diagnostics.selection);
   if (!selection) return null;
   const candidates = asRecord(selection.candidates) || {};
   const selected = selection.selected_architecture as string | null;
@@ -185,9 +196,9 @@ const GnnSelectionSummary: React.FC<{ diagnostics: Record<string, unknown> }> = 
     <section className="rounded-lg border border-violet-100 bg-violet-50/40 p-3 text-xs">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h4 className="font-semibold text-violet-900">Architecture selection</h4>
+          <h4 className="font-semibold text-violet-900">Latest architecture evaluation</h4>
           <p className="mt-1 text-violet-700">
-            {selected ? `${String(selected).toUpperCase()} supplies the single live GNN opinion.` : 'No graph candidate is currently selected.'}
+            {selected ? `The latest attempt selected ${String(selected).toUpperCase()} for serving.` : 'No graph candidate was admitted by the latest training attempt.'}
           </p>
         </div>
         {selected && <span className="rounded-full bg-violet-100 px-2 py-1 font-medium text-violet-800">Selected: {selected}</span>}
@@ -209,7 +220,7 @@ const GnnSelectionSummary: React.FC<{ diagnostics: Record<string, unknown> }> = 
               <span className="font-medium text-gray-700">{name === 'mlp' ? 'MLP baseline' : name.toUpperCase()}</span>
               <span className="text-gray-600">PR-AUC {diagnosticValue(candidate.eval_pr_auc)}</span>
               <span className={candidate.eligible ? 'text-green-700' : 'text-amber-700'}>
-                {candidate.eligible ? (name === selected ? 'Selected' : 'Eligible') : failures.map((value: unknown) => diagnosticLabel(String(value))).join(', ') || candidate.status}
+                {candidate.eligible ? (name === selected ? 'Selected' : 'Eligible for comparison') : failures.map((value: unknown) => diagnosticLabel(String(value))).join(', ') || candidate.status}
               </span>
             </div>
           );
@@ -232,6 +243,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [inspection, setInspection] = useState<InspectableModel | null>(null);
+  const [showGNNTrainingRuns, setShowGNNTrainingRuns] = useState(false);
   const [showGraphPolicy, setShowGraphPolicy] = useState(false);
   const [showGNNPolicy, setShowGNNPolicy] = useState(false);
 
@@ -310,7 +322,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
             const diagnostics = orderedDiagnostics(row.diagnostics || {});
             const inspectable: InspectableModel | null = row.component === 'RF'
               ? 'rf'
-              : row.component === 'GNN' ? 'gnn' : null;
+              : row.component === 'GNN' && row.serving_version ? 'gnn' : null;
             return (
               <section key={row.component} className="border border-gray-200 rounded-lg p-4 space-y-4">
                 <div>
@@ -327,7 +339,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                           onClick={() => setInspection(inspectable)}
                           className="mt-2 inline-flex appearance-none items-center gap-1 border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline"
                         >
-                          <Eye className="h-3.5 w-3.5" /> Inspect model
+                          <Eye className="h-3.5 w-3.5" /> {row.component === 'GNN' ? 'Inspect serving model' : 'Inspect model'}
                         </button>
                       )}
                       {row.component === 'GRAPH' && (
@@ -340,13 +352,22 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                         </button>
                       )}
                       {row.component === 'GNN' && (
-                        <button
-                          type="button"
-                          onClick={() => setShowGNNPolicy(true)}
-                          className="mt-2 ml-3 inline-flex appearance-none items-center gap-1 border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline"
-                        >
-                          <Eye className="h-3.5 w-3.5" /> Inspect policy
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setShowGNNTrainingRuns(true)}
+                            className="mt-2 ml-3 inline-flex appearance-none items-center gap-1 border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline"
+                          >
+                            <History className="h-3.5 w-3.5" /> Training runs
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowGNNPolicy(true)}
+                            className="mt-2 ml-3 inline-flex appearance-none items-center gap-1 border-0 bg-transparent p-0 text-xs font-medium text-indigo-600 shadow-none hover:underline"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Inspect policy
+                          </button>
+                        </>
                       )}
                     </div>
                     <span className={`shrink-0 px-2 py-0.5 rounded-full border text-xs font-medium ${statusClass(row.serving_status)}`}>
@@ -447,6 +468,12 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
         <GNNPolicyModal
           impersonatedUPN={impersonatedUPN}
           onClose={() => setShowGNNPolicy(false)}
+        />
+      )}
+      {showGNNTrainingRuns && (
+        <GNNTrainingRunsModal
+          impersonatedUPN={impersonatedUPN}
+          onClose={() => setShowGNNTrainingRuns(false)}
         />
       )}
     </div>
@@ -621,7 +648,7 @@ const OrganizationForm: React.FC = () => {
 };
 
 interface RoleMember { user_id: number; name: string; upn: string; roles: string[]; }
-interface RoleUser   { user_id: number; name: string; upn: string; }
+interface RoleUser   { user_id: number; name: string; upn: string; title: string | null; }
 interface RolesData  { assignable_roles: string[]; members: RoleMember[]; users: RoleUser[]; }
 const roleLabel = (role: string) => role === 'DataScientist' ? 'Data Scientist' : role;
 
@@ -696,7 +723,9 @@ const RolesPanel: React.FC = () => {
           >
             <option value="">Select a user…</option>
             {data.users.map(u => (
-              <option key={u.user_id} value={u.user_id}>{u.name} ({u.upn})</option>
+              <option key={u.user_id} value={u.user_id}>
+                {u.name} — {u.title?.trim() || 'Title not set'}
+              </option>
             ))}
           </select>
         </div>

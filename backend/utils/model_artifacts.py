@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Literal, Optional
 
 
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 ModelComponent = Literal["rf", "gnn"]
 _MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 _MAX_VISUALIZATION_BYTES = 10 * 1024 * 1024
+_MODEL_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def _blob_service_client():
@@ -64,6 +66,8 @@ def get_manifest(
     model_version: str | None = None,
 ) -> Optional[dict]:
     """Return a validated JSON manifest for exactly one authenticated tenant."""
+    if model_version and not _MODEL_VERSION.fullmatch(model_version):
+        raise ValueError("Model version is invalid")
     names = {
         "rf": f"random_forest/random_forest_tenant_{tenant_id}.manifest.json",
         "gnn": (
@@ -81,6 +85,8 @@ def get_manifest(
         raise ValueError("Model manifest must be a JSON object")
     if manifest.get("tenant_id") != tenant_id:
         raise ValueError("Model manifest tenant does not match the authenticated tenant")
+    if model_version and manifest.get("model_version") != model_version:
+        raise ValueError("Model manifest version does not match the requested run")
     expected_type = "random_forest" if component == "rf" else "graph_neural_network"
     if manifest.get("artifact_type") != expected_type:
         raise ValueError("Model manifest type is invalid")

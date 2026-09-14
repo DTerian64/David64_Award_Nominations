@@ -176,6 +176,67 @@ async def get_model_manifest(
     return {"available": True, "component": component, "manifest": manifest}
 
 
+@router.get("/setup/models/gnn/runs")
+async def get_gnn_training_runs(
+    limit: int = Query(default=25, ge=1, le=100),
+    user_context: dict = Depends(require_analytics_access),
+):
+    """List GNN attempts from tenant-scoped temporal component status."""
+    tenant_id = user_context["effective_user"]["TenantId"]
+    statuses = sqlhelper.get_integrity_component_statuses(tenant_id)
+    current = next(
+        (row for row in statuses if row["component"] == "GNN"),
+        None,
+    )
+    serving = None if current is None else {
+        "status": current["serving_status"],
+        "version": current["serving_version"],
+        "as_of": current["serving_as_of"],
+        "last_successful_at": current["last_successful_at"],
+    }
+    return {
+        "serving": serving,
+        "runs": sqlhelper.get_gnn_training_runs(tenant_id, limit=limit),
+    }
+
+
+@router.get("/setup/models/gnn/runs/{run_id}")
+async def get_gnn_training_run_manifest(
+    run_id: str,
+    user_context: dict = Depends(require_analytics_access),
+):
+    """Return an immutable GNN run manifest resolved through temporal status."""
+    tenant_id = user_context["effective_user"]["TenantId"]
+    run = sqlhelper.get_gnn_training_run(tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="GNN training run was not found")
+
+    model_version = run.get("model_version")
+    manifest = None
+    if model_version:
+        try:
+            manifest = model_artifacts.get_manifest(
+                tenant_id,
+                "gnn",
+                model_version=model_version,
+            )
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="The GNN training-run manifest is invalid",
+            ) from exc
+    return {
+        "available": manifest is not None,
+        "run": run,
+        "manifest": manifest,
+        "message": (
+            None
+            if manifest is not None
+            else "This attempt did not publish an immutable candidate manifest."
+        ),
+    }
+
+
 @router.get("/setup/models/rf/visualization")
 async def get_rf_model_visualization(
     user_context: dict = Depends(require_analytics_access),

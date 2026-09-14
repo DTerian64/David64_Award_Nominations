@@ -3197,11 +3197,11 @@ def get_tenant_role_members(tenant_id: int) -> list:
 
 
 def get_tenant_users_brief(tenant_id: int) -> list:
-    """All users in the tenant (id, name, upn) for the role-assignment picker."""
+    """All users in the tenant (id, name, upn, title) for the role picker."""
     with get_db_context() as session:
         rows = session.execute(
             text("""
-                SELECT UserId, FirstName, LastName, userPrincipalName
+                SELECT UserId, FirstName, LastName, userPrincipalName, Title
                 FROM   dbo.Users
                 WHERE  TenantId = :tid
                 ORDER  BY LastName, FirstName
@@ -3209,7 +3209,12 @@ def get_tenant_users_brief(tenant_id: int) -> list:
             {"tid": tenant_id},
         ).fetchall()
     return [
-        {"user_id": r[0], "name": f"{r[1] or ''} {r[2] or ''}".strip() or r[3], "upn": r[3]}
+        {
+            "user_id": r[0],
+            "name": f"{r[1] or ''} {r[2] or ''}".strip() or r[3],
+            "upn": r[3],
+            "title": r[4],
+        }
         for r in rows
     ]
 
@@ -3501,6 +3506,98 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
             "updated_by":            row[12],
         })
     return result
+
+
+def _gnn_training_run_row(row) -> dict:
+    """Render one current or temporal GNN status version as a training run."""
+    diagnostics = _json_value(row[6], {})
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    latest_selection = diagnostics.get("last_candidate_selection")
+    if not isinstance(latest_selection, dict):
+        latest_selection = diagnostics.get("selection")
+    if not isinstance(latest_selection, dict):
+        latest_selection = {}
+
+    valid_to = row[13]
+    return {
+        "serving_status":        row[0],
+        "serving_version":       row[1],
+        "serving_as_of":         _iso_utc(row[2]),
+        "last_attempt_status":   row[3],
+        "reason_code":           row[4],
+        "reason_detail":         row[5],
+        "diagnostics":           diagnostics,
+        "last_attempt_at":       _iso_utc(row[7]),
+        "last_successful_at":    _iso_utc(row[8]),
+        "run_id":                row[9],
+        "updated_at":            _iso_utc(row[10]),
+        "updated_by":            row[11],
+        "valid_from":            _iso_utc(row[12]),
+        "valid_to":              _iso_utc(valid_to),
+        "is_current":            bool(
+            valid_to is not None and valid_to.year == _TEMPORAL_OPEN_YEAR
+        ),
+        "model_version":         latest_selection.get("model_version"),
+        "selected_architecture": latest_selection.get("selected_architecture"),
+        "selection_reason":      latest_selection.get("selection_reason"),
+        "artifact_bundle_prefix": diagnostics.get("artifact_bundle_prefix"),
+    }
+
+
+def get_gnn_training_runs(tenant_id: int, limit: int = 25) -> List[dict]:
+    """Return one tenant-scoped row per GNN attempt from temporal status history."""
+    limit = max(1, min(int(limit), 100))
+    with get_db_context() as session:
+        rows = session.execute(
+            text("""
+                WITH GnnRunVersions AS (
+                    SELECT ServingStatus, ServingVersion, ServingAsOf,
+                           LastAttemptStatus, ReasonCode, ReasonDetail,
+                           DiagnosticsJson, LastAttemptAt, LastSuccessfulAt,
+                           RunId, UpdatedAt, UpdatedBy, ValidFrom, ValidTo,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY RunId
+                               ORDER BY LastAttemptAt DESC, ValidFrom DESC
+                           ) AS VersionRank
+                    FROM dbo.IntegrityComponentStatus FOR SYSTEM_TIME ALL
+                    WHERE TenantId = :tid
+                      AND Component = 'GNN'
+                      AND RunId IS NOT NULL
+                )
+                SELECT ServingStatus, ServingVersion, ServingAsOf,
+                       LastAttemptStatus, ReasonCode, ReasonDetail,
+                       DiagnosticsJson, LastAttemptAt, LastSuccessfulAt,
+                       RunId, UpdatedAt, UpdatedBy, ValidFrom, ValidTo
+                FROM GnnRunVersions
+                WHERE VersionRank = 1
+                ORDER BY LastAttemptAt DESC
+                OFFSET 0 ROWS FETCH NEXT :limit ROWS ONLY
+            """),
+            {"tid": tenant_id, "limit": limit},
+        ).fetchall()
+    return [_gnn_training_run_row(row) for row in rows]
+
+
+def get_gnn_training_run(tenant_id: int, run_id: str) -> Optional[dict]:
+    """Resolve a single GNN run inside the authenticated tenant boundary."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("""
+                SELECT TOP (1)
+                       ServingStatus, ServingVersion, ServingAsOf,
+                       LastAttemptStatus, ReasonCode, ReasonDetail,
+                       DiagnosticsJson, LastAttemptAt, LastSuccessfulAt,
+                       RunId, UpdatedAt, UpdatedBy, ValidFrom, ValidTo
+                FROM dbo.IntegrityComponentStatus FOR SYSTEM_TIME ALL
+                WHERE TenantId = :tid
+                  AND Component = 'GNN'
+                  AND RunId = :run_id
+                ORDER BY LastAttemptAt DESC, ValidFrom DESC
+            """),
+            {"tid": tenant_id, "run_id": run_id},
+        ).fetchone()
+    return _gnn_training_run_row(row) if row else None
 
 
 def _json_value(raw, fallback):

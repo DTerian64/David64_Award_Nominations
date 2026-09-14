@@ -18,6 +18,8 @@ from routers.model_analysis_router import (
     get_fraud_integrity_setup,
     get_graph_scoring_policy,
     get_gnn_scoring_policy,
+    get_gnn_training_run_manifest,
+    get_gnn_training_runs,
     get_model_manifest,
     get_nomination_analysis,
     get_rf_model_visualization,
@@ -82,6 +84,76 @@ class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(result["available"])
         self.assertIn("next training run", result["message"])
+
+    @patch("routers.model_analysis_router.sqlhelper.get_gnn_training_runs")
+    @patch("routers.model_analysis_router.sqlhelper.get_integrity_component_statuses")
+    async def test_gnn_training_runs_are_scoped_to_effective_tenant(
+        self, get_statuses, get_runs
+    ):
+        get_statuses.return_value = [{
+            "component": "GNN",
+            "serving_status": "AVAILABLE",
+            "serving_version": "gnn-v2-serving",
+            "serving_as_of": "2026-09-13T00:00:00Z",
+            "last_successful_at": "2026-09-13T00:01:00Z",
+        }]
+        get_runs.return_value = [{"run_id": "run-1"}]
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+
+        result = await get_gnn_training_runs(10, context)
+
+        get_statuses.assert_called_once_with(4)
+        get_runs.assert_called_once_with(4, limit=10)
+        self.assertEqual(result["serving"]["version"], "gnn-v2-serving")
+        self.assertEqual(result["runs"][0]["run_id"], "run-1")
+
+    @patch("routers.model_analysis_router.model_artifacts.get_manifest")
+    @patch("routers.model_analysis_router.sqlhelper.get_gnn_training_run")
+    async def test_gnn_run_manifest_is_resolved_from_tenant_owned_run(
+        self, get_run, get_manifest
+    ):
+        get_run.return_value = {
+            "run_id": "run-1",
+            "model_version": "gnn-v2-candidate",
+        }
+        get_manifest.return_value = {
+            "schema_version": 1,
+            "artifact_type": "graph_neural_network",
+            "tenant_id": 4,
+            "model_version": "gnn-v2-candidate",
+        }
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+
+        result = await get_gnn_training_run_manifest("run-1", context)
+
+        get_run.assert_called_once_with(4, "run-1")
+        get_manifest.assert_called_once_with(
+            4, "gnn", model_version="gnn-v2-candidate"
+        )
+        self.assertTrue(result["available"])
+
+    @patch("routers.model_analysis_router.model_artifacts.get_manifest")
+    @patch("routers.model_analysis_router.sqlhelper.get_gnn_training_run")
+    async def test_gnn_run_manifest_rejects_a_run_outside_effective_tenant(
+        self, get_run, get_manifest
+    ):
+        get_run.return_value = None
+        context = {
+            "actual_user": {"roles": []},
+            "effective_user": {"UserId": 19, "TenantId": 4},
+        }
+
+        with self.assertRaises(HTTPException) as raised:
+            await get_gnn_training_run_manifest("foreign-run", context)
+
+        self.assertEqual(raised.exception.status_code, 404)
+        get_manifest.assert_not_called()
 
     @patch("routers.model_analysis_router.model_artifacts.get_rf_visualization")
     async def test_rf_visualization_is_read_from_effective_tenant(self, get_image):

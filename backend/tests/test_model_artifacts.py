@@ -50,6 +50,7 @@ class ModelArtifactTests(unittest.TestCase):
             "schema_version": 1,
             "artifact_type": "graph_neural_network",
             "tenant_id": 7,
+            "model_version": "gnn-v2-selected",
         }).encode()
 
         model_artifacts.get_manifest(
@@ -62,6 +63,32 @@ class ModelArtifactTests(unittest.TestCase):
             download.call_args.args[0],
             "gnn/tenant_7/gnn-v2-selected/manifest.json",
         )
+
+    @patch("utils.model_artifacts._download")
+    def test_gnn_manifest_rejects_an_invalid_version_path(self, download):
+        with self.assertRaisesRegex(ValueError, "version"):
+            model_artifacts.get_manifest(
+                tenant_id=7,
+                component="gnn",
+                model_version="../tenant_8/other",
+            )
+        download.assert_not_called()
+
+    @patch("utils.model_artifacts._download")
+    def test_gnn_manifest_rejects_a_version_mismatch(self, download):
+        download.return_value = json.dumps({
+            "schema_version": 1,
+            "artifact_type": "graph_neural_network",
+            "tenant_id": 7,
+            "model_version": "gnn-v2-other",
+        }).encode()
+
+        with self.assertRaisesRegex(ValueError, "version"):
+            model_artifacts.get_manifest(
+                tenant_id=7,
+                component="gnn",
+                model_version="gnn-v2-selected",
+            )
 
     @patch("utils.model_artifacts._download")
     def test_rf_visualization_uses_server_constructed_tenant_blob_name(self, download):
