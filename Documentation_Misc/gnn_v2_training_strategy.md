@@ -472,7 +472,11 @@ The current GNN row in `dbo.IntegrityComponentStatus` identifies what is active:
   required by the Detection Engines UI.
 
 The table is system-versioned, so earlier winners remain available through
-`dbo.IntegrityComponentStatus_History`. No new selection table is required.
+`dbo.IntegrityComponentStatus_History`. Its online history is retained for 24
+months—roughly 104 weekly attempts per component and tenant—while the current
+row remains indefinitely. The database-level temporal history cleanup setting
+must remain enabled, including after a point-in-time restore. No new selection
+table is required.
 
 ### 10.3 Nomination-level scoring record
 

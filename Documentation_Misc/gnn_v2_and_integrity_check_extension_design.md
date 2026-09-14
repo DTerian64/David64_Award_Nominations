@@ -461,6 +461,14 @@ The explanation worker must never substitute the latest model or latest graph fo
 
 Artifact and snapshot retention must exceed the maximum explanation delay, operational retry window, investigation period, and rollback period. Deleting an artifact that is still referenced by an integrity result is prohibited. The concrete retention interval must be locked with the operational policy.
 
+`dbo.IntegrityComponentStatus` has a separate 24-month temporal-history
+retention policy. This bounds online training-run discovery to roughly 104
+weekly attempts per component and tenant without deleting the current serving
+pointer or any nomination-level `IntegrityDecisionResults` evidence. Temporal
+cleanup is asynchronous and requires database-level temporal retention to be
+enabled. Immutable Blob artifacts follow their own lifecycle because SQL
+history expiry does not delete model bundles.
+
 ### 9.5 Selection persistence
 
 Selection is persisted at three levels:
