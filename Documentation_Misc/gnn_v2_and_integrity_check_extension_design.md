@@ -252,7 +252,7 @@ Rules for these fields:
 - `CategoryRelativeAmountRobustZScore` is calculated only from facts available before the target time and uses a robust estimator within the tenant/category population.
 - `DaysBeforeGraphCutoff` records recency relative to the snapshot cutoff. It must never become negative for a node in the message-passing graph.
 - cyclical encodings replace ordinal day and month integers.
-- `HistoricalStatus` is permitted only for historical nomination nodes whose status was known by the snapshot cutoff. The target nomination must not expose a post-submission status.
+- `HistoricalStatus` is permitted only for historical nomination nodes whose status was known by the snapshot cutoff. The encoding is `Pending=0`, `Approved=1`, `Paid=2`, and HRBP-confirmed fraud `Rejected=3`. The target nomination must not expose a post-submission status.
 
 The baseline removes redundant raw or thresholded variants:
 
@@ -1008,7 +1008,7 @@ The following choices remain open and must be resolved before their associated i
 2. Minimum positive and negative labels required per train and evaluation interval.
 3. ~~Whether `LogUniqueCounterparties` belongs in the baseline or only an ablation.~~ Resolved: it is included in the initial v2 baseline and remains subject to measured ablation.
 4. ~~Whether `reports_to` is sufficiently complete and time-valid for the initial graph.~~ Resolved: it is excluded from the initial v2 graph.
-5. ~~Exact `HistoricalStatus` encoding and treatment of status corrections.~~ Resolved for the baseline: historical graph nodes use `Pending=0`, `Approved=1`, `Paid=2`; target nominations always receive `0`, and later corrections require a new immutable model version.
+5. ~~Exact `HistoricalStatus` encoding and treatment of status corrections.~~ Resolved for the baseline: historical graph nodes use `Pending=0`, `Approved=1`, `Paid=2`, and eligible HRBP-confirmed fraud `Rejected=3`; target nominations always receive `0`, and later corrections require a new immutable model version.
 6. ~~Minimum PR-AUC improvement over MLP and incumbent tie tolerance.~~ Resolved
    for selection policy v1 as `0.02` and `0.01`, respectively. Probability
    calibration and resource guardrail thresholds remain open.

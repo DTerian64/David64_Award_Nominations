@@ -1015,7 +1015,11 @@ def provision_corpus(
                 SELECT
                     mapping.NominationId, ?, 2, 'synthetic-historical-v1',
                     stage.SourceMessageId, ?, ?, ?, ?, NULL, 'UNKNOWN', '[]',
-                    'MANAGER_APPROVAL', 'SYNTHETIC_HISTORICAL_IMPORT', NULL,
+                    CASE WHEN stage.Status = 'Rejected'
+                         THEN 'HRBP_REVIEW' ELSE 'MANAGER_APPROVAL' END,
+                    'SYNTHETIC_HISTORICAL_IMPORT',
+                    CASE WHEN stage.Status = 'Rejected'
+                         THEN 'FRAUD' ELSE NULL END,
                     NULL, stage.TrainingDisposition,
                     'SYNTHETIC_GROUND_TRUTH',
                     stage.TrainingDispositionMetadataJson,
@@ -1032,6 +1036,38 @@ def provision_corpus(
                 ACTOR,
             )
             report(f"SQL nominations and decisions inserted: {inserted}")
+
+        # Reconcile route metadata for both newly inserted and previously
+        # seeded corpus rows.  A synthetic Rejected status represents a known
+        # historical fraud outcome routed through the HRBP fraud lane; it must
+        # not retain the ordinary manager-approval route.
+        cursor.execute(
+            """
+            UPDATE decision_result
+            SET FinalRoute = CASE WHEN nomination.Status = 'Rejected'
+                                  THEN 'HRBP_REVIEW'
+                                  ELSE 'MANAGER_APPROVAL' END,
+                ReviewScope = CASE WHEN nomination.Status = 'Rejected'
+                                   THEN 'FRAUD' ELSE NULL END,
+                UpdatedAt = SYSUTCDATETIME()
+            FROM dbo.IntegrityDecisionResults AS decision_result
+            INNER JOIN dbo.Nominations AS nomination
+                ON nomination.NominationId = decision_result.NominationId
+            WHERE decision_result.TenantId = ?
+              AND decision_result.TrainingDispositionSource =
+                  'SYNTHETIC_GROUND_TRUTH'
+              AND decision_result.RoutingRule = 'SYNTHETIC_HISTORICAL_IMPORT'
+              AND (
+                  decision_result.FinalRoute <>
+                      CASE WHEN nomination.Status = 'Rejected'
+                           THEN 'HRBP_REVIEW' ELSE 'MANAGER_APPROVAL' END
+                  OR ISNULL(decision_result.ReviewScope, '') <>
+                      CASE WHEN nomination.Status = 'Rejected'
+                           THEN 'FRAUD' ELSE '' END
+              )
+            """,
+            tenant_id,
+        )
 
         cursor.execute(
             "SELECT COUNT(*) FROM dbo.Users WHERE TenantId=?",

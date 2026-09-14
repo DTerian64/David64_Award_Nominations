@@ -64,8 +64,12 @@ behavior graph contains nominations whose current status is:
 - `Approved`; or
 - `Paid`.
 
-An HRBP-reviewed rejected nomination may remain a supervised target, but it is
-not inserted into later message-passing history as ordinary accepted behavior.
+An HRBP-reviewed rejected nomination with a canonical `FRAUD` disposition is
+inserted into later message-passing history as known fraudulent behavior. The
+eligibility contract requires `FinalRoute = HRBP_REVIEW`, a fraud-bearing
+`ReviewScope`, and `TrainingDisposition = FRAUD`; semantic and other rejected
+rows remain excluded. This preserves fraud topology without treating rejection
+status alone as a training label.
 
 ### 3.2 Canonical labels
 

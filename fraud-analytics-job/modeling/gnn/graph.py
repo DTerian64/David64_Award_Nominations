@@ -107,14 +107,22 @@ def fetch_tenant_rows(conn, tenant_id: int, window_days: int) -> tuple[list[dict
     build_hetero_data() on every run rather than left as a test-only check.
 
     The operational topology contains Pending, Approved, and Paid nominations.
-    HRBP-confirmed rejected outcomes are loaded only as supervised targets and
-    are marked ineligible for message-passing behavior.
+    A rejected nomination is also historical behavior when the canonical
+    decision shows that HRBP reviewed a fraud concern and confirmed it.  This
+    preserves known fraudulent topology for later message passing while still
+    excluding semantic and other non-fraud rejections.
     """
     cur = conn.cursor()
     cur.execute("""
         SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
                n.Status, n.Amount, n.CategoryId, n.NominationDate AS CreatedAt,
                CASE WHEN n.Status IN ('Pending', 'Approved', 'Paid')
+                         OR (
+                            n.Status = 'Rejected'
+                            AND idr.FinalRoute = 'HRBP_REVIEW'
+                            AND idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')
+                            AND idr.TrainingDisposition = 'FRAUD'
+                         )
                     THEN 1 ELSE 0 END AS IsBehaviorEligible
         FROM   dbo.Nominations n
         JOIN   dbo.Users u ON u.UserId = n.NominatorId
@@ -379,7 +387,12 @@ def build_nomination_features(
 ) -> np.ndarray:
     """Build the graph-native v2 nomination attributes without future state."""
     out = np.zeros((len(rows), len(NOMINATION_FEATURE_COLUMNS)), dtype=np.float32)
-    status_code = {"Pending": 0.0, "Approved": 1.0, "Paid": 2.0}
+    status_code = {
+        "Pending": 0.0,
+        "Approved": 1.0,
+        "Paid": 2.0,
+        "Rejected": 3.0,
+    }
     category_stats = category_amount_stats.get("categories", {})
     global_stats = category_amount_stats.get("global", {"median": 0.0, "scale": 1.0})
     for i, n in enumerate(rows):

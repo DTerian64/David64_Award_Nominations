@@ -63,6 +63,8 @@ def test_loader_uses_p2p_behavior_statuses_and_canonical_label_targets():
     sql, params = connection.recording_cursor.calls[0]
     assert "n.Status IN ('Pending', 'Approved', 'Paid')" in sql
     assert "dbo.IntegrityDecisionResults" in sql
+    assert "idr.FinalRoute = 'HRBP_REVIEW'" in sql
+    assert "idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')" in sql
     assert "idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')" in sql
     assert "ApproverId" not in sql
     assert params == (3, 180)
@@ -176,11 +178,11 @@ def test_rolling_thresholds_reject_timeline_too_short_for_requested_folds():
         G.rolling_thresholds(rows, n_folds=3)
 
 
-def test_rejected_hrbp_label_is_target_only_not_message_passing_behavior():
+def test_confirmed_hrbp_fraud_can_enter_later_message_passing_history():
     users, noms, _ = make_tenant(1)
     t_graph = date(2025, 10, 1)
     t_cut = date(2026, 1, 1)
-    old_rejected = dict(noms[0], IsBehaviorEligible=False)
+    old_rejected = dict(noms[0], Status="Rejected", IsBehaviorEligible=True)
     old_rejected["CreatedAt"] = date(2025, 7, 1)
     recent_rejected = dict(noms[-1], IsBehaviorEligible=False)
     recent_rejected["CreatedAt"] = date(2026, 2, 1)
@@ -189,11 +191,30 @@ def test_rejected_hrbp_label_is_target_only_not_message_passing_behavior():
         [old_rejected, recent_rejected], t_graph, t_cut
     )
 
-    assert graph_rows == []
+    assert [row["NominationId"] for row in graph_rows] == [
+        old_rejected["NominationId"]
+    ]
     assert train_rows == []
     assert [row["NominationId"] for row in eval_rows] == [
         recent_rejected["NominationId"]
     ]
+
+
+def test_historical_rejected_status_has_an_explicit_feature_code():
+    row = {
+        "Amount": 1000,
+        "CategoryId": 1,
+        "CreatedAt": date(2025, 7, 1),
+        "Status": "Rejected",
+    }
+    stats = G.build_category_amount_stats([row])
+
+    features = G.build_nomination_features(
+        [row], stats, date(2025, 10, 1), historical=True
+    )
+
+    status_index = G.NOMINATION_FEATURE_COLUMNS.index("HistoricalStatus")
+    assert features[0, status_index] == 3.0
 
 
 def test_user_features_ignore_post_graph_activity():

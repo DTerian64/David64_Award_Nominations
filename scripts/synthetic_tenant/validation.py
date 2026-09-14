@@ -64,6 +64,21 @@ def validate_corpus(
     class_counts = Counter(row.training_disposition for row in nominations)
     if class_counts != Counter({"LEGITIMATE": 4_900, "FRAUD": 100}):
         errors.append(f"expected 4,900/100 class balance, found {dict(class_counts)}")
+    if any(
+        row.status == "Rejected" and row.training_disposition != "FRAUD"
+        for row in nominations
+    ):
+        errors.append("a rejected synthetic nomination is not labeled FRAUD")
+    if not any(
+        row.status == "Rejected" and row.training_disposition == "FRAUD"
+        for row in nominations
+    ):
+        errors.append("the corpus has no rejected historical fraud outcomes")
+    if not any(
+        row.status in ("Approved", "Paid") and row.training_disposition == "FRAUD"
+        for row in nominations
+    ):
+        errors.append("the corpus has no retrospectively discovered fraud outcomes")
 
     segment_counts = Counter(row.segment for row in nominations)
     for segment in range(SEGMENT_COUNT):

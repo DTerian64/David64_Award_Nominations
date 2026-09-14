@@ -543,9 +543,11 @@ history, persist an honest non-inference envelope:
 - `CompositeScore = NULL`;
 - `CompositeRiskLevel = 'UNKNOWN'`;
 - `DecisiveEnginesJson = []`;
-- `FinalRoute = 'MANAGER_APPROVAL'`;
+- `FinalRoute = 'MANAGER_APPROVAL'` for `Pending`, `Approved`, and `Paid`
+  history, or `HRBP_REVIEW` for a synthetic `Rejected` fraud outcome;
 - `RoutingRule = 'SYNTHETIC_HISTORICAL_IMPORT'`;
-- `ReviewScope = NULL`;
+- `ReviewScope = NULL` for manager-routed history, or `FRAUD` for a synthetic
+  `Rejected` fraud outcome;
 - `HumanReviewOutcome = NULL`;
 - `TrainingDisposition = 'FRAUD'` or `'LEGITIMATE'` from hidden truth;
 - `TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'`; and

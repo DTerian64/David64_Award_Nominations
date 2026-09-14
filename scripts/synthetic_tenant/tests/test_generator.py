@@ -60,6 +60,15 @@ def test_exact_population_labels_segments_and_scenarios():
         <= CATEGORY_AMOUNT_BOUNDS[row.category_name][1]
         for row in nominations
     )
+    assert all(
+        row.training_disposition == "FRAUD"
+        for row in nominations
+        if row.status == "Rejected"
+    )
+    assert any(
+        row.training_disposition == "FRAUD" and row.status in ("Approved", "Paid")
+        for row in nominations
+    )
 
 
 def test_same_seed_and_as_of_produce_the_same_corpus_hash():
