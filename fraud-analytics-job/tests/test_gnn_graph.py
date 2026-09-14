@@ -69,6 +69,12 @@ def test_loader_uses_p2p_behavior_statuses_and_canonical_label_targets():
     assert "ApproverId" not in sql
     assert params == (3, 180)
 
+
+def test_artifact_behavior_contract_includes_confirmed_rejected_history():
+    assert G.BEHAVIOR_STATUSES == (
+        "Pending", "Approved", "Paid", "Rejected"
+    )
+
 def test_single_tenant_fixture_passes_isolation_check():
     users, noms, _ = make_tenant(1)
     G.assert_single_tenant(users, noms)  # must not raise

@@ -71,6 +71,15 @@ _STORAGE_ACCOUNT = os.environ["AZURE_STORAGE_ACCOUNT"]
 _MODEL_CONTAINER = os.getenv("MODEL_CONTAINER", "ml-models")
 _STORAGE_KEY     = os.getenv("AZURE_STORAGE_KEY")   # local dev only
 
+# Older immutable artifacts remain valid for rollback: they were trained before
+# HRBP-confirmed rejected fraud was admitted to graph history. New artifacts use
+# the four-status contract. Rejection status by itself is never sufficient; the
+# analytics job applies the HRBP route/disposition eligibility predicate.
+_SUPPORTED_BEHAVIOR_STATUS_CONTRACTS = {
+    ("Pending", "Approved", "Paid"),
+    ("Pending", "Approved", "Paid", "Rejected"),
+}
+
 # ── Per-tenant decoder cache ──────────────────────────────────────────────────
 # Streamed from Blob on first use and evicted after MODEL_IDLE_TTL_SECONDS of
 # inactivity. KEDA scale-to-zero remains the final whole-process cleanup.
@@ -224,7 +233,7 @@ def _stream_head_from_blob(
             tenant_id, head["participant_roles"],
         )
         return None
-    if head["behavior_statuses"] != ["Pending", "Approved", "Paid"]:
+    if tuple(head["behavior_statuses"]) not in _SUPPORTED_BEHAVIOR_STATUS_CONTRACTS:
         logger.error(
             "GNN decoder for tenant %d has unsupported behavior population %s",
             tenant_id, head["behavior_statuses"],

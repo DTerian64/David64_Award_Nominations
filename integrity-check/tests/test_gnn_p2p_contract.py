@@ -119,6 +119,16 @@ class GnnP2PContractTests(unittest.TestCase):
             "gnn/tenant_7/gnn-v2-selected/serving/decoder.pt",
         )
 
+    def test_behavior_population_accepts_new_and_legacy_artifacts(self):
+        self.assertIn(
+            ("Pending", "Approved", "Paid", "Rejected"),
+            gnn_check._SUPPORTED_BEHAVIOR_STATUS_CONTRACTS,
+        )
+        self.assertIn(
+            ("Pending", "Approved", "Paid"),
+            gnn_check._SUPPORTED_BEHAVIOR_STATUS_CONTRACTS,
+        )
+
     def test_decoder_rebuild_uses_two_participant_embeddings(self):
         source = torch.nn.Sequential(
             torch.nn.Linear(2 * 4 + len(FEATURES), 64),

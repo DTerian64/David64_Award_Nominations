@@ -267,7 +267,7 @@ def _write_head(
             "graph_snapshot_as_of", graph["t_graph"]
         ).isoformat(),
         "participant_roles":          ["nominator", "beneficiary"],
-        "behavior_statuses":          ["Pending", "Approved", "Paid"],
+        "behavior_statuses":          list(G.BEHAVIOR_STATUSES),
         "nomination_feature_columns": list(G.NOMINATION_FEATURE_COLUMNS),
         "nomination_scaler_mean":     [float(v) for v in graph["nomination_scaler"]["mean"]],
         "nomination_scaler_std":      [float(v) for v in graph["nomination_scaler"]["std"]],
@@ -354,7 +354,7 @@ def _write_operational_manifest(
             "user": list(G.USER_FEATURE_COLUMNS),
             "nomination": list(G.NOMINATION_FEATURE_COLUMNS),
             "participant_roles": ["nominator", "beneficiary"],
-            "behavior_statuses": ["Pending", "Approved", "Paid"],
+            "behavior_statuses": list(G.BEHAVIOR_STATUSES),
         },
         "artifacts": [
             {

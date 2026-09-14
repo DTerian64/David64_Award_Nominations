@@ -67,6 +67,10 @@ logger = logging.getLogger(__name__)
 
 FEATURE_SCHEMA_VERSION = "gnn-v2"
 
+# Rejected rows are eligible only under the canonical HRBP-confirmed FRAUD
+# predicate in fetch_tenant_rows(); status alone never admits them.
+BEHAVIOR_STATUSES = ("Pending", "Approved", "Paid", "Rejected")
+
 USER_FEATURE_COLUMNS = [
     "LogNominationsMade",
     "LogNominationsReceived",
