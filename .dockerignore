@@ -1,10 +1,12 @@
-# The two integrity-engine consumers build from the repository root so they can
-# install one shared package. Keep that context limited to those three trees.
+# The integrity-engine consumers build from the repository root so they can
+# install one shared package. Keep that context limited to these four trees.
 **
 !fraud-analytics-job/
 !fraud-analytics-job/**
 !integrity-check/
 !integrity-check/**
+!integrity-check-extension/
+!integrity-check-extension/**
 !integrity-engine-core/
 !integrity-engine-core/**
 
@@ -12,4 +14,3 @@
 **/.pytest_cache/
 **/*.pyc
 fraud-analytics-job/Output/
-
