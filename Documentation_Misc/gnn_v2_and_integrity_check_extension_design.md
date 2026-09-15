@@ -567,6 +567,9 @@ not additive contributions, and that Graph Analytics findings are independent
 of the learned GNN probability. Existing decisions created before
 `feature_inputs` was introduced continue to display their persisted
 `causal_context`; only new inference records can show the complete vector.
+The causal signals are presented once in a headered table with the reconstructed
+observed count and its persisted log1p value; a fixed chip subset must not imply
+feature selection or importance.
 
 The decoder, architecture-specific user embeddings, preprocessing state, model
 version, graph snapshot, and causal-context feature contract are one serving

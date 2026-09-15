@@ -389,14 +389,6 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, value]) => ({ key, label: key, value })),
   ];
-  const signalKeys = [
-    'LogPriorDirectedPairCount',
-    'LogPriorReversePairCount',
-    'LogReverseTwoHopPathCount',
-    'LogReverseThreeHopPathCount',
-    'LogDirectedPairCount30d',
-    'LogEndpointEdgeCount1h',
-  ];
   const explanation = engine.explanation;
   const topFeatures = explanation?.top_features || [];
   const topRelationships = explanation?.top_relationships || [];
@@ -441,26 +433,29 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
       {featureRows.length > 0 && (
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
           <p className="font-semibold text-slate-900">Causal graph signals</p>
-          <p className="text-[10px] text-slate-500">Observed counts reconstructed from the stored log1p model inputs.</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {signalKeys.filter(key => Number.isFinite(features[key])).map(key => {
-              const label = GNN_CAUSAL_FEATURES.find(([candidate]) => candidate === key)?.[1] || key;
-              return <span key={key} className="rounded-full border border-indigo-200 bg-white px-2 py-0.5" title={`${key}: ${featureInput(features[key])}`}>{label}: <strong>{featureCount(features[key])}</strong></span>;
-            })}
-          </div>
-          <div className="mt-3 overflow-hidden rounded border border-slate-200 bg-white">
-            {featureRows.map((row, index) => (
-              <div key={row.key} className={`grid grid-cols-[1fr_auto] gap-3 px-2 py-1.5 ${index ? 'border-t border-slate-100' : ''}`} title={row.key}>
-                <span>{row.label}</span>
-                <span className="text-right font-mono text-slate-900">
-                  {row.key.startsWith('Log') ? featureCount(row.value) : featureInput(row.value)}
-                  {row.key.startsWith('Log') && <span className="ml-2 text-[10px] text-slate-400">input {featureInput(row.value)}</span>}
-                </span>
-              </div>
-            ))}
+          <p className="text-[10px] text-slate-500">Observed counts are reconstructed from the persisted log1p values.</p>
+          <div className="mt-2 overflow-x-auto rounded border border-slate-200 bg-white">
+            <table className="w-full border-collapse text-left">
+              <thead className="bg-slate-100 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-2 py-1.5">Causal signal</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right">Observed count</th>
+                  <th className="whitespace-nowrap px-2 py-1.5 text-right">Log1p value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {featureRows.map(row => (
+                  <tr key={row.key} className="border-t border-slate-100" title={row.key}>
+                    <td className="px-2 py-1.5">{row.label}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-slate-900">{featureCount(row.value)}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-slate-700">{featureInput(row.value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
           <p className="mt-2 text-[10px] text-slate-500">
-            These are inputs, not additive score contributions. The prediction also uses learned nominator and beneficiary embeddings; attribution requires GNNExplainer.
+            Log1p values are derived inputs before standard scaling, not additive score contributions. The prediction also uses learned nominator and beneficiary embeddings; attribution requires GNNExplainer.
           </p>
         </div>
       )}
