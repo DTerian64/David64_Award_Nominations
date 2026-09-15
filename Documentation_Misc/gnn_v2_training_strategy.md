@@ -1,9 +1,9 @@
 # GNN v2 Training Strategy
 
-**Status:** Operational candidate selection implemented; deployment evaluation pending  
+**Status:** Causal candidate selection and serving implemented; deployment evaluation pending
 **Owner:** Integrity modeling  
 **Applies to:** `fraud-analytics-job`, `dbo.IntegrityDecisionResults`, `dbo.GNN_UserEmbeddings`, GNN artifact storage  
-**Last updated:** 2026-09-11
+**Last updated:** 2026-09-14
 
 ## 1. Purpose
 
@@ -35,8 +35,9 @@ The following rules are mandatory:
    model version, and one artifact bundle. Cross-tenant references fail the run.
 2. **Model independence:** inputs may contain raw business facts, but never the
    outputs of another integrity engine.
-3. **Human-only supervision:** only explicit `FRAUD` and `LEGITIMATE` HRBP
-   dispositions may enter the loss function.
+3. **Explicit supervision:** only eligible explicit `FRAUD` and `LEGITIMATE`
+   dispositions may enter the loss function: human outcomes for real tenants,
+   plus isolated ground truth for an explicitly synthetic tenant.
 4. **Temporal integrity:** a target nomination is never a node in the graph used
    to score that target.
 5. **Out-of-time evaluation:** the newest interval is evaluated only after model
@@ -141,6 +142,42 @@ later workflow outcome cannot leak into the target feature vector.
 The feature definitions and order are persisted with every artifact. Changing
 them requires a new feature-schema version.
 
+### 4.5 Dual temporal context
+
+The deployed scorer must support both forms of information that exist when a
+new nomination arrives:
+
+1. **Established context:** relationships already encoded by the most recent
+   weekly serving snapshot and tenant user embeddings.
+2. **Active context:** eligible nominations created after that snapshot but
+   strictly before the nomination being scored.
+
+The weekly snapshot remains the source of the learned user embeddings. A
+shared causal-context builder supplements those embeddings with a compact
+topology vector calculated from prior raw nominations, including directed and
+reverse pair counts, reverse two-hop paths, 30-day concentration, and one-hour
+burst activity. The decoder learns how to combine the weekly representations,
+the live causal vector, and the target's own attributes. The target nomination
+itself remains outside both message passing and its causal context.
+
+The causal boundary is ordered by nomination timestamp and a stable nomination
+identifier as the tie-breaker. No later row, workflow outcome, target status,
+or target label may enter the graph. Training must reproduce exactly the same
+boundary used by live inference.
+
+This live context is built from raw nomination and tenant data. It must not use
+Graph Analytics flags, Random Forest features or scores, semantic results, or
+another engine's decision. The reference implementation replays the ordered
+edge stream with bounded counters; any later caching optimization must reproduce
+the same vector.
+
+The implementation persists weekly embeddings and computes the live causal
+vector under the shared `gnn-v2-causal-v1` contract. The Synthetics Inc. v2.0
+corpus separates `ESTABLISHED` and `ACTIVE` targets so the two behaviors can be
+validated independently rather than hidden inside one aggregate metric. Legacy
+`gnn-v2` artifacts remain readable for rollback but do not receive live causal
+features.
+
 ## 5. Rolling-origin construction
 
 ### 5.1 Default partition
@@ -160,6 +197,8 @@ Fold 3 graph=S0+S1+S2        train=S3     final holdout=S4
 For every fold:
 
 - graph history ends before its training targets;
+- target-interval events are replayed chronologically so each target also sees
+  only the earlier active context available at its own event time;
 - training targets do not appear as graph nodes;
 - the training interval does not overlap another training interval; and
 - graph-derived attributes are refitted from that fold's historical graph.
@@ -637,6 +676,11 @@ Existing phase 2b automated tests cover:
 - feature-schema and artifact snapshot round trips; and
 - restricted artifact deserialization.
 
+The Synthetics Inc. v2.0 generator additionally verifies that every fraud target
+has exactly two earlier causal precursors, preserves the exact 60-active/
+40-established target allocation, and carries scenario identity, phase, and
+context into training-disposition metadata.
+
 The implementation includes tests for deterministic selection, MLP admission,
 incumbent retention, partial candidate failure, version-resolved inference, and
 independent tenant inference disablement. Remaining deployment-level tests cover:
@@ -647,7 +691,10 @@ independent tenant inference disablement. Remaining deployment-level tests cover
 - Detection Engines winner and candidate rendering.
 
 Multi-seed evaluation, maturity-delay enforcement, and activation rehearsal must
-also be completed before v2 activation.
+also be completed before v2 activation. The causal implementation has unit
+coverage for leakage, timestamp tie-breaking, training/inference parity, and
+score reproduction. Separate active-versus-established deployment metrics still
+need to be captured during the synthetic evaluation run.
 
 ## 16. Implementation map
 

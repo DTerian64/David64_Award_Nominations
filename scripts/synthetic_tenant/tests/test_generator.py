@@ -43,6 +43,10 @@ def test_exact_population_labels_segments_and_scenarios():
     assert result["rolling_train_fraud_count"] == 60
     assert result["holdout_legitimate_count"] == 980
     assert result["holdout_fraud_count"] == 20
+    assert result["causal_scenario_count"] == 100
+    assert result["causal_precursor_count"] == 200
+    assert result["active_context_target_count"] == 60
+    assert result["established_context_target_count"] == 40
     assert result["fraud_scenarios"] == {
         "AMOUNT": 10,
         "BURST": 15,
@@ -69,6 +73,52 @@ def test_exact_population_labels_segments_and_scenarios():
         row.training_disposition == "FRAUD" and row.status in ("Approved", "Paid")
         for row in nominations
     )
+
+
+def test_every_fraud_target_has_two_earlier_causal_precursors():
+    _users, nominations = _corpus()
+    by_scenario = {}
+    for row in nominations:
+        if row.scenario_id:
+            by_scenario.setdefault(row.scenario_id, []).append(row)
+
+    assert len(by_scenario) == 100
+    for rows in by_scenario.values():
+        target = next(row for row in rows if row.scenario_phase == "TARGET")
+        precursors = [
+            row for row in rows if row.scenario_phase == "PRECURSOR"
+        ]
+        assert target.training_disposition == "FRAUD"
+        assert len(precursors) == 2
+        assert all(
+            row.training_disposition == "LEGITIMATE" for row in precursors
+        )
+        assert all(
+            row.nomination_time_utc < target.nomination_time_utc
+            for row in precursors
+        )
+
+
+def test_established_and_active_targets_have_different_temporal_contexts():
+    _users, nominations = _corpus()
+    by_scenario = {}
+    for row in nominations:
+        if row.scenario_id:
+            by_scenario.setdefault(row.scenario_id, []).append(row)
+
+    for rows in by_scenario.values():
+        target = next(row for row in rows if row.scenario_phase == "TARGET")
+        precursors = [
+            row for row in rows if row.scenario_phase == "PRECURSOR"
+        ]
+        if target.context_mode == "ACTIVE":
+            assert all(row.segment == target.segment for row in precursors)
+        else:
+            assert target.context_mode == "ESTABLISHED"
+            assert all(
+                row.segment <= max(0, target.segment - 2)
+                for row in precursors
+            )
 
 
 def test_same_seed_and_as_of_produce_the_same_corpus_hash():

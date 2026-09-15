@@ -208,6 +208,9 @@ def test_confirmed_hrbp_fraud_can_enter_later_message_passing_history():
 
 def test_historical_rejected_status_has_an_explicit_feature_code():
     row = {
+        "NominationId": 1,
+        "NominatorId": 1,
+        "BeneficiaryId": 2,
         "Amount": 1000,
         "CategoryId": 1,
         "CreatedAt": date(2025, 7, 1),
@@ -259,12 +262,12 @@ def test_edge_counts_and_reverse_relations_match():
         assert torch.equal(fwd[0], rev[1]) and torch.equal(fwd[1], rev[0])
 
 
-def test_v2_adds_category_nodes_and_graph_native_features():
+def test_causal_v2_adds_category_nodes_and_graph_native_features():
     users, noms, _ = make_tenant(1)
     for i, nomination in enumerate(noms):
         nomination["CategoryId"] = 10 + (i % 3)
     g = G.build_hetero_data(users, noms)
-    assert G.FEATURE_SCHEMA_VERSION == "gnn-v2"
+    assert G.FEATURE_SCHEMA_VERSION == "gnn-v2-causal-v1"
     assert G.USER_FEATURE_COLUMNS == [
         "LogNominationsMade",
         "LogNominationsReceived",
@@ -272,6 +275,7 @@ def test_v2_adds_category_nodes_and_graph_native_features():
     ]
     assert "ConcentrationRatio" not in G.USER_FEATURE_COLUMNS
     assert "ReciprocalPairCount" not in G.USER_FEATURE_COLUMNS
+    assert "LogReverseTwoHopPathCount" in G.NOMINATION_FEATURE_COLUMNS
     assert g["data"]["category"].num_nodes == 3
     assert g["data"]["nomination", "belongs_to", "category"].edge_index.shape[1] == g["data"]["nomination"].num_nodes
 
@@ -294,6 +298,50 @@ def test_target_status_is_not_exposed_as_a_v2_feature():
     recency_index = G.NOMINATION_FEATURE_COLUMNS.index("DaysBeforeGraphCutoff")
     assert features[0, status_index] == 0.0
     assert features[0, recency_index] == 0.0
+
+
+def test_training_target_receives_strictly_prior_active_ring_context():
+    rows = [
+        {
+            "NominationId": 10,
+            "NominatorId": 1,
+            "BeneficiaryId": 2,
+            "CategoryId": 10,
+            "Amount": 500,
+            "CreatedAt": date(2026, 1, 1),
+            "Status": "Paid",
+        },
+        {
+            "NominationId": 20,
+            "NominatorId": 2,
+            "BeneficiaryId": 3,
+            "CategoryId": 10,
+            "Amount": 500,
+            "CreatedAt": date(2026, 1, 2),
+            "Status": "Paid",
+        },
+        {
+            "NominationId": 30,
+            "NominatorId": 3,
+            "BeneficiaryId": 1,
+            "CategoryId": 10,
+            "Amount": 500,
+            "CreatedAt": date(2026, 1, 3),
+            "Status": "Rejected",
+        },
+    ]
+    stats = G.build_category_amount_stats(rows[:2])
+    features = G.build_nomination_features(
+        [rows[2]],
+        stats,
+        date(2026, 1, 1),
+        historical=False,
+        context_rows=rows,
+        causal_window_days=365,
+    )
+
+    path_index = G.NOMINATION_FEATURE_COLUMNS.index("LogReverseTwoHopPathCount")
+    assert features[0, path_index] > 0.0
 
 
 def test_no_userGraphFlags_column_leaks_into_user_features():

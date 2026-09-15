@@ -1,10 +1,15 @@
 # Synthetics Inc. corpus generator
 
-This package is the deterministic, read-only Phase-A generator for the
-Synthetics Inc. GNN validation tenant. It creates the logical 400-user and
-5,000-nomination plan in memory, validates all exact quotas, and prints a
-reproducibility manifest. It does not mutate Microsoft Entra, SQL, Service Bus,
-or model artifacts.
+This package generates and provisions the deterministic Synthetics Inc. GNN
+validation tenant. Its default and `--validate` modes create the logical
+400-user and 5,000-nomination plan in memory, validate all exact quotas, and
+print a reproducibility manifest without mutating Microsoft Entra, SQL, Service
+Bus, or model artifacts.
+
+Generator v2.0 gives each of the 100 fraud targets exactly two earlier causal
+precursor nominations. Sixty targets exercise topology actively forming after
+a weekly snapshot; forty exercise relationships already established in an
+earlier graph snapshot.
 
 From the repository root:
 
@@ -12,7 +17,8 @@ From the repository root:
 python -m scripts.synthetic_tenant.seed_synthetics_inc --dry-run
 python -m scripts.synthetic_tenant.seed_synthetics_inc --validate --as-of 2026-09-12
 python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-configuration
-python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --manifest-out Output/synthetics-inc-manifest.json
+python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260912 --as-of 2026-09-12 --manifest-out Output/synthetics-inc-v2-manifest.json
+python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260912 --as-of 2026-09-12 --manifest-out Output/synthetics-inc-v2-manifest.json
 ```
 
 The seed and `as-of` date are part of the corpus identity. The same two inputs
@@ -43,3 +49,21 @@ and atomically inserts the 5,000 nominations and their synthetic decision
 envelopes. It never publishes Service Bus messages or calls an LLM.
 The required manifest file retains the 401 UPN/Entra-object-ID/SQL-UserId
 mappings; that detailed map is written to disk but omitted from console output.
+
+`--apply-corpus` is the repeat-corpus path for an already provisioned customer
+directory. It uses only the provider-hosted SQL connection, requires the exact
+401-user SQL roster to exist, and does not request a customer-tenant Microsoft
+Graph token. Its manifest records that the Entra directory was preserved rather
+than reconciled and retains the complete logical-to-SQL identity map.
+
+Do not run `--apply` to replace the currently deployed v1.1 corpus. Stable
+nomination identities intentionally cause the apply preflight to reject changed
+generation metadata instead of silently rewriting history. First run
+`reset_synthetics_inc_corpus.sql` as a rollback preview, review its inventory,
+and rerun it with `@CommitChanges = 1`. The script preserves the tenant,
+configuration, policies, all 401 SQL/Entra users, and the administrator. It
+removes only the manifest-owned v1.1 nomination corpus and corpus-derived data,
+then invalidates old serving pointers. After the committed reset, run the v2.0
+`--apply-corpus` command above. Keep the fixed seed and `as-of` date and write to
+the new v2 manifest path so the deployed v1.1 manifest remains available as
+reset provenance. No replacement-specific Python mode is required.

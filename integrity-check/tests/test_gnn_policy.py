@@ -6,6 +6,7 @@ Run: python -m pytest tests/test_gnn_policy.py -v
 import json
 import os
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 
@@ -108,3 +109,69 @@ def test_unknown_configuration_schema_is_rejected():
             assert "schema_version 1" in str(exc)
         else:
             raise AssertionError("unknown configuration schema was accepted")
+
+
+def test_live_causal_history_query_is_strictly_before_the_target():
+    target_time = datetime(2026, 9, 14, 12, tzinfo=timezone.utc)
+
+    class CausalCursor:
+        description = [
+            (name,)
+            for name in (
+                "NominationId",
+                "NominatorId",
+                "BeneficiaryId",
+                "CreatedAt",
+                "IsBehaviorEligible",
+            )
+        ]
+
+        def __init__(self):
+            self.query = None
+            self.params = None
+
+        def execute(self, query, *params):
+            self.query = query
+            self.params = params
+
+        @staticmethod
+        def fetchall():
+            return [(10, 1, 2, target_time, True)]
+
+    cursor = CausalCursor()
+
+    class CausalConnection:
+        @staticmethod
+        def cursor():
+            return cursor
+
+    @contextmanager
+    def connection_context():
+        yield CausalConnection()
+
+    with patch.object(db, "_get_conn", connection_context):
+        rows = db.get_gnn_causal_context_rows(
+            7,
+            target_nomination_id=30,
+            target_time=target_time,
+            nominator_id=3,
+            beneficiary_id=1,
+            window_days=365,
+        )
+
+    assert rows[0]["NominationId"] == 10
+    assert "n.NominationDate < ?" in cursor.query
+    assert "n.NominationId < ?" in cursor.query
+    assert "idr.FinalRoute = 'HRBP_REVIEW'" in cursor.query
+    assert cursor.params == (
+        7,
+        365,
+        target_time,
+        target_time,
+        target_time,
+        30,
+        3,
+        1,
+        3,
+        1,
+    )

@@ -8,9 +8,12 @@ What runs here is only the DECODER. The weekly fraud-analytics-job trains a
 the selected heterogeneous graph encoder, publishes per-user node embeddings to
 dbo.GNN_UserEmbeddings, and uploads the decoder as
 gnn/tenant_<N>/<ServingVersion>/serving/decoder.pt.
-Inference is two keyed embedding lookups plus a small MLP forward
-pass — no graph traversal, no PyTorch Geometric, no new dependency in this
-image (torch is already here via sentence-transformers).
+Inference combines two keyed embedding lookups with a bounded query for raw
+nomination edges strictly before the target, then runs a small MLP forward
+pass. The shared causal-context builder converts those edges into the same
+topology vector used during training. There is no live graph traversal and no
+PyTorch Geometric dependency in this image (torch is already here via
+sentence-transformers).
 
 Public API
 ----------
@@ -60,6 +63,11 @@ from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import torch
+from integrity_engine.gnn import (
+    CAUSAL_CONTEXT_FEATURE_COLUMNS,
+    CAUSAL_FEATURE_SCHEMA_VERSION,
+    causal_context_values,
+)
 
 from . import component_availability
 from utils import db
@@ -213,7 +221,10 @@ def _stream_head_from_blob(
             tenant_id, sorted(missing),
         )
         return None
-    if head.get("feature_schema_version") == "gnn-v2":
+    if head.get("feature_schema_version") in {
+        "gnn-v2",
+        CAUSAL_FEATURE_SCHEMA_VERSION,
+    }:
         v2_missing = {
             "graph_snapshot_id",
             "graph_snapshot_as_of",
@@ -224,6 +235,23 @@ def _stream_head_from_blob(
                 "GNN v2 decoder for tenant %d is missing reproducibility keys: %s",
                 tenant_id,
                 sorted(v2_missing),
+            )
+            return None
+    if head.get("feature_schema_version") == CAUSAL_FEATURE_SCHEMA_VERSION:
+        if "causal_context_window_days" not in head:
+            logger.error(
+                "Causal GNN decoder for tenant %d has no context window",
+                tenant_id,
+            )
+            return None
+        missing_causal = set(CAUSAL_CONTEXT_FEATURE_COLUMNS) - set(
+            head["nomination_feature_columns"]
+        )
+        if missing_causal:
+            logger.error(
+                "Causal GNN decoder for tenant %d is missing features: %s",
+                tenant_id,
+                sorted(missing_causal),
             )
             return None
 
@@ -294,7 +322,11 @@ def _standardise(x: np.ndarray, mean, std) -> np.ndarray:
     return ((x - mean) / std).astype(np.float32)
 
 
-def _nomination_features(details: dict, head: dict) -> np.ndarray:
+def _nomination_features(
+    details: dict,
+    head: dict,
+    causal_values: dict[str, float] | None = None,
+) -> np.ndarray:
     """
     Build the nomination feature row, in the exact column order the trainer used.
 
@@ -310,7 +342,10 @@ def _nomination_features(details: dict, head: dict) -> np.ndarray:
     a_std = float(head.get("amount_std", 0.0))
     z = (amount - a_mean) / a_std if a_std > 0 else 0.0
 
-    if head.get("feature_schema_version") == "gnn-v2":
+    if head.get("feature_schema_version") in {
+        "gnn-v2",
+        CAUSAL_FEATURE_SCHEMA_VERSION,
+    }:
         category_stats = head.get("category_amount_stats") or {}
         per_category = category_stats.get("categories") or {}
         robust = per_category.get(
@@ -334,6 +369,8 @@ def _nomination_features(details: dict, head: dict) -> np.ndarray:
             "MonthCos": math.cos(month_angle),
             "HistoricalStatus": 0.0,
         }
+        if head.get("feature_schema_version") == CAUSAL_FEATURE_SCHEMA_VERSION:
+            values.update(causal_values or {})
     else:
         values = {
             "Amount":        amount,
@@ -575,10 +612,33 @@ def _assess_gnn_inner(
     # The nomination row is different: it bypasses the encoder entirely and is
     # fed to the decoder directly, so it needs the same standardisation the
     # trainer applied — hence _nomination_features() applies nomination_scaler.
+    causal_history_rows: list[dict] = []
+    causal_values: dict[str, float] = {}
+    if head.get("feature_schema_version") == CAUSAL_FEATURE_SCHEMA_VERSION:
+        causal_history_rows = db.get_gnn_causal_context_rows(
+            tenant_id,
+            target_nomination_id=int(details["nomination_id"]),
+            target_time=details["nomination_date"],
+            nominator_id=int(nominator_id),
+            beneficiary_id=int(beneficiary_id),
+            window_days=int(head["causal_context_window_days"]),
+        )
+        causal_values = causal_context_values(
+            causal_history_rows,
+            {
+                "NominationId": details["nomination_id"],
+                "NominatorId": details["nominator_id"],
+                "BeneficiaryId": details["beneficiary_id"],
+                "CreatedAt": details["nomination_date"],
+                "IsBehaviorEligible": False,
+            },
+            window_days=int(head["causal_context_window_days"]),
+        )
+
     z = np.concatenate([
         z_nom.reshape(1, -1),
         z_ben.reshape(1, -1),
-        _nomination_features(details, head),
+        _nomination_features(details, head, causal_values),
     ], axis=1)
 
     with torch.no_grad():
@@ -608,6 +668,20 @@ def _assess_gnn_inner(
         "scoring_policy_version": policy["policy_version"],
         "score_thresholds": thresholds,
         "score_derivation": "round(model_probability * 100)",
+        "causal_context_edge_count": len(causal_history_rows),
+        "causal_context_window_days": head.get("causal_context_window_days"),
+        "causal_context": (
+            {
+                "schema_version": 1,
+                "ordering": "CreatedAt,NominationId",
+                "target_cutoff": details["nomination_date"],
+                "window_days": int(head["causal_context_window_days"]),
+                "eligible_edge_count": len(causal_history_rows),
+                "features": causal_values,
+            }
+            if head.get("feature_schema_version") == CAUSAL_FEATURE_SCHEMA_VERSION
+            else None
+        ),
         "_policy": policy,
     }
     result.update(component_availability.available_metadata(component_status))

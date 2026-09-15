@@ -4,8 +4,10 @@ import torch
 import torch.nn as nn
 
 from extensions.gnn_explainer.artifacts import ArtifactBundle
+from extensions.gnn_explainer.errors import PermanentExtensionError
 from extensions.gnn_explainer.model import HeteroEncoder, RELATIONS
 from extensions.gnn_explainer.reproduction import ReproductionPolicy, nomination_features, reproduce
+from integrity_engine.gnn import CAUSAL_CONTEXT_FEATURE_COLUMNS
 
 
 def graph_fixture():
@@ -57,3 +59,41 @@ def test_supported_architecture_score_reproduction(architecture):
                        policy=ReproductionPolicy())
     assert result.graph_probability_difference < 1e-7
     assert result.embedding_max_difference < 1e-7
+
+
+def test_causal_feature_reproduction_requires_persisted_score_context():
+    columns = [
+        "LogAmount",
+        "CategoryRelativeAmountRobustZScore",
+        "DaysBeforeGraphCutoff",
+        "DayOfWeekSin",
+        "DayOfWeekCos",
+        "MonthSin",
+        "MonthCos",
+        "HistoricalStatus",
+        *CAUSAL_CONTEXT_FEATURE_COLUMNS,
+    ]
+    decoder = {
+        "feature_schema_version": "gnn-v2-causal-v1",
+        "nomination_feature_columns": columns,
+        "nomination_scaler_mean": [0.0] * len(columns),
+        "nomination_scaler_std": [1.0] * len(columns),
+        "category_amount_stats": {
+            "global": {"median": 100.0, "scale": 20.0},
+            "categories": {},
+        },
+    }
+    details = {"amount": 125.0, "category_id": 4, "nomination_date": "2026-09-11"}
+
+    with pytest.raises(
+        PermanentExtensionError, match="STORED_CAUSAL_CONTEXT_MISSING"
+    ):
+        nomination_features(details, decoder)
+
+    context = {
+        "features": {name: float(index) for index, name in enumerate(
+            CAUSAL_CONTEXT_FEATURE_COLUMNS, start=1
+        )}
+    }
+    values = nomination_features(details, decoder, context)[0]
+    assert values[columns.index("LogPriorReversePairCount")] == 2.0

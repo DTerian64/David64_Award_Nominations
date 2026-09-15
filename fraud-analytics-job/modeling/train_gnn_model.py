@@ -269,6 +269,7 @@ def _write_head(
         "participant_roles":          ["nominator", "beneficiary"],
         "behavior_statuses":          list(G.BEHAVIOR_STATUSES),
         "nomination_feature_columns": list(G.NOMINATION_FEATURE_COLUMNS),
+        "causal_context_window_days": int(graph["causal_context_window_days"]),
         "nomination_scaler_mean":     [float(v) for v in graph["nomination_scaler"]["mean"]],
         "nomination_scaler_std":      [float(v) for v in graph["nomination_scaler"]["std"]],
         # Persisted for reproducibility only. gnn_check.py must NOT apply these:
@@ -353,6 +354,9 @@ def _write_operational_manifest(
         "features": {
             "user": list(G.USER_FEATURE_COLUMNS),
             "nomination": list(G.NOMINATION_FEATURE_COLUMNS),
+            "causal_context_window_days": int(
+                graph["causal_context_window_days"]
+            ),
             "participant_roles": ["nominator", "beneficiary"],
             "behavior_statuses": list(G.BEHAVIOR_STATUSES),
         },
@@ -626,6 +630,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         users,
         nominations,
         n_folds=policy.rolling_folds,
+        causal_window_days=policy.window_days,
     )
 
     y_train_by_fold = [
@@ -693,7 +698,11 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
 
     # Candidate evaluation remains tied to the untouched holdout. Only after
     # selection is final do we admit that matured interval to a fresh refit.
-    graph = G.build_serving_graph(users, nominations)
+    graph = G.build_serving_graph(
+        users,
+        nominations,
+        causal_window_days=policy.window_days,
+    )
     as_of = date.today()
     run_suffix = run_id.replace("-", "")[:8]
     model_version = f"gnn-v2-{as_of:%Y%m%d}-t{tenant_id}-{run_suffix}"

@@ -65,6 +65,7 @@ def build_snapshot(
         },
         "user_feature_columns": list(graph["user_feature_columns"]),
         "nomination_feature_columns": list(graph["nomination_feature_columns"]),
+        "causal_context_window_days": int(graph["causal_context_window_days"]),
         "user_scaler_mean": [
             float(value) for value in graph["user_scaler"]["mean"]
         ],

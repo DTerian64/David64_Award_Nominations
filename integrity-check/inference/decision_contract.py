@@ -128,6 +128,7 @@ def gnn_result(result: dict) -> dict:
         "graph_snapshot_id": result.get("graph_snapshot_id"),
         "graph_snapshot_as_of": result.get("graph_snapshot_as_of"),
         "feature_schema_version": result.get("feature_schema_version"),
+        "causal_context": result.get("causal_context"),
         "explanation": result.get("explanation") or {
             "method": "GNNEXPLAINER",
             "status": "NOT_REQUESTED",

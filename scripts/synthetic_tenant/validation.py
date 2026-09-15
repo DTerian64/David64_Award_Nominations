@@ -99,44 +99,104 @@ def validate_corpus(
                 f"segment {segment} fraud allocation is {dict(actual_families)}"
             )
 
-        fraud_rows = {
-            family: [row for row in segment_rows if row.scenario_family == family]
-            for family in FRAUD_PER_SEGMENT
-        }
-        ring_edges = {
-            (row.nominator_logical_id, row.beneficiary_logical_id)
-            for row in fraud_rows["RING"]
-        }
-        closed_ring_edges = sum(
-            any((beneficiary, third) in ring_edges and (third, nominator) in ring_edges
-                for third in user_ids)
-            for nominator, beneficiary in ring_edges
+        target_modes = Counter(
+            row.context_mode
+            for row in segment_rows
+            if row.scenario_phase == "TARGET"
         )
-        if closed_ring_edges != 6:
-            errors.append(f"segment {segment} ring rows do not form two closed cycles")
-
-        reciprocal_edges = {
-            (row.nominator_logical_id, row.beneficiary_logical_id)
-            for row in fraud_rows["RECIPROCAL"]
-        }
-        if not reciprocal_edges or any(
-            (beneficiary, nominator) not in reciprocal_edges
-            for nominator, beneficiary in reciprocal_edges
-        ):
-            errors.append(f"segment {segment} reciprocal rows lack reverse edges")
-
-        concentration = Counter(
-            row.nominator_logical_id for row in fraud_rows["CONCENTRATION"]
+        expected_modes = (
+            Counter({"ACTIVE": 20})
+            if segment == 0
+            else Counter({"ACTIVE": 10, "ESTABLISHED": 10})
         )
-        if max(concentration.values(), default=0) != 4:
-            errors.append(f"segment {segment} concentration rows lack a serial nominator")
+        if target_modes != expected_modes:
+            errors.append(
+                f"segment {segment} context allocation is {dict(target_modes)}"
+            )
 
-        burst_times = [
-            datetime.fromisoformat(row.nomination_time_utc)
-            for row in fraud_rows["BURST"]
+    scenario_rows: dict[str, list[SyntheticNomination]] = {}
+    for row in nominations:
+        if row.scenario_id:
+            scenario_rows.setdefault(row.scenario_id, []).append(row)
+        elif row.scenario_phase != "BACKGROUND" or row.context_mode != "NONE":
+            errors.append(
+                f"{row.logical_id} has scenario metadata without a scenario ID"
+            )
+
+    if len(scenario_rows) != 100:
+        errors.append(f"expected 100 causal scenarios, found {len(scenario_rows)}")
+    for scenario_id, rows in scenario_rows.items():
+        targets = [row for row in rows if row.scenario_phase == "TARGET"]
+        precursors = [row for row in rows if row.scenario_phase == "PRECURSOR"]
+        if len(rows) != 3 or len(targets) != 1 or len(precursors) != 2:
+            errors.append(
+                f"{scenario_id} must contain two precursors and one target"
+            )
+            continue
+        target = targets[0]
+        target_time = datetime.fromisoformat(target.nomination_time_utc)
+        precursor_times = [
+            datetime.fromisoformat(row.nomination_time_utc) for row in precursors
         ]
-        if burst_times and max(burst_times) - min(burst_times) > timedelta(minutes=5):
-            errors.append(f"segment {segment} burst rows are not temporally coordinated")
+        if target.training_disposition != "FRAUD":
+            errors.append(f"{scenario_id} target is not labelled FRAUD")
+        if any(row.training_disposition != "LEGITIMATE" for row in precursors):
+            errors.append(f"{scenario_id} precursor is not labelled LEGITIMATE")
+        if any(value >= target_time for value in precursor_times):
+            errors.append(f"{scenario_id} has a non-causal precursor timestamp")
+        if any(
+            row.scenario_family != target.scenario_family
+            or row.context_mode != target.context_mode
+            for row in precursors
+        ):
+            errors.append(f"{scenario_id} metadata is inconsistent")
+        if target.context_mode == "ACTIVE":
+            if any(row.segment != target.segment for row in precursors):
+                errors.append(f"{scenario_id} active precursor is outside target segment")
+            if max(target_time - value for value in precursor_times) > timedelta(days=2):
+                errors.append(f"{scenario_id} active precursor is not recent")
+            if target.scenario_family == "BURST" and (
+                max([target_time, *precursor_times])
+                - min([target_time, *precursor_times])
+                > timedelta(minutes=5)
+            ):
+                errors.append(f"{scenario_id} burst is not within five minutes")
+        elif target.context_mode == "ESTABLISHED":
+            latest_allowed_segment = max(0, target.segment - 2)
+            if target.segment == 0 or any(
+                row.segment > latest_allowed_segment for row in precursors
+            ):
+                errors.append(
+                    f"{scenario_id} established precursor misses immutable history"
+                )
+        else:
+            errors.append(f"{scenario_id} has invalid context mode")
+
+        precursor_edges = [
+            (row.nominator_logical_id, row.beneficiary_logical_id)
+            for row in precursors
+        ]
+        edges = set(precursor_edges)
+        target_edge = (
+            target.nominator_logical_id,
+            target.beneficiary_logical_id,
+        )
+        if target.scenario_family in {"RING", "MIXED"}:
+            if not any(
+                (target_edge[1], middle) in edges
+                and (middle, target_edge[0]) in edges
+                for middle in user_ids
+            ):
+                errors.append(f"{scenario_id} target does not close a ring")
+        elif target.scenario_family == "RECIPROCAL":
+            if (target_edge[1], target_edge[0]) not in edges:
+                errors.append(f"{scenario_id} target lacks a prior reverse edge")
+        elif target.scenario_family in {"CONCENTRATION", "AMOUNT"}:
+            if sum(edge == target_edge for edge in precursor_edges) != 2:
+                errors.append(f"{scenario_id} target lacks established pair history")
+        elif target.scenario_family == "BURST":
+            if any(edge[1] != target_edge[1] for edge in edges):
+                errors.append(f"{scenario_id} burst does not share a beneficiary")
 
     start = as_of - timedelta(days=365)
     dates = [datetime.fromisoformat(row.nomination_time_utc).date() for row in nominations]
@@ -195,6 +255,19 @@ def validate_corpus(
         ),
         "holdout_fraud_count": sum(
             row.training_disposition == "FRAUD" for row in holdout
+        ),
+        "causal_scenario_count": len(scenario_rows),
+        "causal_precursor_count": sum(
+            row.scenario_phase == "PRECURSOR" for row in nominations
+        ),
+        "active_context_target_count": sum(
+            row.scenario_phase == "TARGET" and row.context_mode == "ACTIVE"
+            for row in nominations
+        ),
+        "established_context_target_count": sum(
+            row.scenario_phase == "TARGET"
+            and row.context_mode == "ESTABLISHED"
+            for row in nominations
         ),
         "fraud_scenarios": dict(sorted(Counter(
             row.scenario_family

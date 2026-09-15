@@ -17,7 +17,7 @@ import re
 import uuid
 
 
-GENERATOR_VERSION = "synthetics-inc-v1.1"
+GENERATOR_VERSION = "synthetics-inc-v2.0"
 GENERATOR_NAMESPACE = uuid.UUID("bbf46d6d-a7c0-4f45-8ba0-2cce41121085")
 UPN_DOMAIN = "synthetics.terian-services.com"
 CORPUS_USER_COUNT = 400
@@ -76,6 +76,28 @@ FRAUD_PER_SEGMENT = {
     "MIXED": 1,
 }
 
+# The v2 corpus distinguishes topology already present in a weekly embedding
+# from topology that forms after that snapshot.  Every supervised fraud target
+# has two earlier, legitimate-looking nominations carrying the same scenario
+# ID.  They are ordinary LEGITIMATE outcomes because the suspicious condition
+# does not exist until the target completes or materially strengthens it.
+ACTIVE_CONTEXT_FAMILIES = {
+    "RING": 3,
+    "RECIPROCAL": 2,
+    "CONCENTRATION": 2,
+    "BURST": 3,
+}
+
+ESTABLISHED_CONTEXT_FAMILIES = {
+    "RING": 3,
+    "RECIPROCAL": 2,
+    "CONCENTRATION": 2,
+    "AMOUNT": 2,
+    "MIXED": 1,
+}
+
+TARGET_POSITIONS = tuple(500 + index * 23 for index in range(20))
+
 HARD_NEGATIVE_VARIANTS = (
     "OPEN_CHAIN",
     "DISTANT_RECIPROCAL",
@@ -117,6 +139,133 @@ class SyntheticNomination:
     training_disposition: str
     scenario_family: str
     scenario_variant: str
+    scenario_id: str | None
+    scenario_phase: str
+    context_mode: str
+
+
+@dataclass(frozen=True)
+class _ScenarioEvent:
+    scenario_id: str
+    family: str
+    family_ordinal: int
+    context_mode: str
+    phase: str
+    phase_ordinal: int
+    target_segment: int
+    target_position: int
+    nominator_logical_id: str
+    beneficiary_logical_id: str
+
+
+def _target_specs(segment: int) -> list[tuple[str, int, str]]:
+    """Return the exact 20 target families and context modes for a segment."""
+    specs: list[tuple[str, int, str]] = []
+    family_ordinals: dict[str, int] = {family: 0 for family in FRAUD_PER_SEGMENT}
+    for context_mode, allocation in (
+        ("ACTIVE", ACTIVE_CONTEXT_FAMILIES),
+        ("ESTABLISHED", ESTABLISHED_CONTEXT_FAMILIES),
+    ):
+        for family, count in allocation.items():
+            for _ in range(count):
+                specs.append((family, family_ordinals[family], context_mode))
+                family_ordinals[family] += 1
+
+    if segment == 0:
+        # S0 is graph-history warm-up rather than a supervised rolling target.
+        # Its target rows still have causal precursors, but no earlier segment
+        # exists from which an established weekly context could be drawn.
+        specs = [(family, ordinal, "ACTIVE") for family, ordinal, _ in specs]
+    return specs
+
+
+def _scenario_parties(
+    active: list[SyntheticUser], segment: int, target_index: int, family: str
+) -> tuple[list[tuple[SyntheticUser, SyntheticUser]], tuple[SyntheticUser, SyntheticUser]]:
+    """Return two precursor edges and one target edge for one scenario."""
+    cohort = segment * 70
+    base = cohort + target_index * 3
+    a = active[base % len(active)]
+    b = active[(base + 1) % len(active)]
+    c = active[(base + 2) % len(active)]
+    d = active[(base + 3) % len(active)]
+
+    if family in {"RING", "MIXED"}:
+        return [(a, b), (b, c)], (c, a)
+    if family == "RECIPROCAL":
+        return [(a, b), (a, c)], (b, a)
+    if family == "CONCENTRATION":
+        return [(a, b), (a, b)], (a, b)
+    if family == "BURST":
+        return [(a, d), (b, d)], (c, d)
+    # Amount abuse remains independently visible in nomination attributes, but
+    # its target also follows a stable pair history so it satisfies the common
+    # causal scenario contract.
+    return [(a, b), (a, b)], (a, b)
+
+
+def _scenario_plan(active: list[SyntheticUser]) -> dict[tuple[int, int], _ScenarioEvent]:
+    """Build a collision-free schedule of causal precursors and fraud targets."""
+    plan: dict[tuple[int, int], _ScenarioEvent] = {}
+    established_next_position = [40 for _ in range(SEGMENT_COUNT)]
+
+    for segment in range(SEGMENT_COUNT):
+        for target_index, ((family, family_ordinal, context_mode), target_position) in enumerate(
+            zip(_target_specs(segment), TARGET_POSITIONS)
+        ):
+            scenario_id = (
+                f"S{segment}-{context_mode}-{family}-{family_ordinal + 1:02d}"
+            )
+            precursor_edges, target_edge = _scenario_parties(
+                active, segment, target_index, family
+            )
+            if context_mode == "ACTIVE":
+                precursor_segment = segment
+                precursor_positions = (target_position - 2, target_position - 1)
+            else:
+                # For S4, the final evaluation graph ends before S3.  Placing
+                # established precursors two segments earlier keeps them inside
+                # the immutable weekly-style graph for every rolling fold.
+                precursor_segment = max(0, segment - 2)
+                start = established_next_position[precursor_segment]
+                precursor_positions = (start, start + 1)
+                established_next_position[precursor_segment] += 2
+
+            for phase_ordinal, (position, edge) in enumerate(
+                zip(precursor_positions, precursor_edges), start=1
+            ):
+                key = (precursor_segment, position)
+                if key in plan:
+                    raise ValueError(f"Causal scenario schedule collision at {key}")
+                plan[key] = _ScenarioEvent(
+                    scenario_id=scenario_id,
+                    family=family,
+                    family_ordinal=family_ordinal,
+                    context_mode=context_mode,
+                    phase="PRECURSOR",
+                    phase_ordinal=phase_ordinal,
+                    target_segment=segment,
+                    target_position=target_position,
+                    nominator_logical_id=edge[0].logical_id,
+                    beneficiary_logical_id=edge[1].logical_id,
+                )
+
+            key = (segment, target_position)
+            if key in plan:
+                raise ValueError(f"Causal scenario target collision at {key}")
+            plan[key] = _ScenarioEvent(
+                scenario_id=scenario_id,
+                family=family,
+                family_ordinal=family_ordinal,
+                context_mode=context_mode,
+                phase="TARGET",
+                phase_ordinal=3,
+                target_segment=segment,
+                target_position=target_position,
+                nominator_logical_id=target_edge[0].logical_id,
+                beneficiary_logical_id=target_edge[1].logical_id,
+            )
+    return plan
 
 
 def _load_names() -> tuple[list[str], list[str]]:
@@ -197,30 +346,6 @@ def _description(category: str, variant: int) -> str:
     )
 
 
-def _fraud_parties(
-    active: list[SyntheticUser], segment: int, ordinal: int, family: str
-) -> tuple[SyntheticUser, SyntheticUser]:
-    # Segment-specific cohorts reduce actor memorization between train and holdout.
-    cohort = segment * 70
-    if family == "RING":
-        cycle_base = cohort + (ordinal // 3) * 3
-        ring = [active[(cycle_base + offset) % len(active)] for offset in range(3)]
-        step = ordinal % 3
-        return ring[step], ring[(step + 1) % 3]
-    if family == "RECIPROCAL":
-        pair_base = cohort + 10 + (ordinal // 2) * 2
-        pair_a = active[pair_base % len(active)]
-        pair_b = active[(pair_base + 1) % len(active)]
-        return (pair_a, pair_b) if ordinal % 2 == 0 else (pair_b, pair_a)
-    if family == "CONCENTRATION":
-        return active[(cohort + 20) % len(active)], active[(cohort + 21 + ordinal % 2) % len(active)]
-    if family == "BURST":
-        return active[(cohort + 30 + ordinal) % len(active)], active[(cohort + 34) % len(active)]
-    if family == "MIXED":
-        return active[(cohort + 40) % len(active)], active[(cohort + 41) % len(active)]
-    return active[(cohort + 50 + ordinal) % len(active)], active[(cohort + 55) % len(active)]
-
-
 def _legitimate_parties(
     active: list[SyntheticUser], global_index: int, variant: str
 ) -> tuple[SyntheticUser, SyntheticUser]:
@@ -249,51 +374,35 @@ def _legitimate_parties(
 def generate_nominations(
     users: list[SyntheticUser], seed: int, as_of: date
 ) -> list[SyntheticNomination]:
-    """Generate exactly 5,000 nominations in five balanced temporal segments."""
-    rng = random.Random(seed ^ 0x5A17)
+    """Generate the v2 corpus with causal context before every fraud target."""
     active = users[:ACTIVE_USER_COUNT]
     by_id = {user.logical_id: user for user in users}
     start = as_of - timedelta(days=365)
     nominations: list[SyntheticNomination] = []
+    scenario_plan = _scenario_plan(active)
 
     for segment in range(SEGMENT_COUNT):
-        burst_positions = [500, 501, 502]
-        available_positions = [
-            value
-            for value in range(NOMINATIONS_PER_SEGMENT)
-            if value not in burst_positions
-        ]
-        other_positions = rng.sample(available_positions, 17)
-        assignments = [
-            (family, family_ordinal)
-            for family, count in FRAUD_PER_SEGMENT.items()
-            if family != "BURST"
-            for family_ordinal in range(count)
-        ]
-        rng.shuffle(assignments)
-        fraud_by_position = dict(zip(other_positions, assignments))
-        fraud_by_position.update({
-            position: ("BURST", family_ordinal)
-            for family_ordinal, position in enumerate(burst_positions)
-        })
-
         for ordinal in range(NOMINATIONS_PER_SEGMENT):
             global_index = segment * NOMINATIONS_PER_SEGMENT + ordinal
-            assignment = fraud_by_position.get(ordinal)
-            family = None
-            if assignment:
-                family, family_ordinal = assignment
-                nominator, beneficiary = _fraud_parties(
-                    active, segment, family_ordinal, family
-                )
+            scenario_event = scenario_plan.get((segment, ordinal))
+            family = scenario_event.family if scenario_event else None
+            if scenario_event:
+                nominator = by_id[scenario_event.nominator_logical_id]
+                beneficiary = by_id[scenario_event.beneficiary_logical_id]
+            if scenario_event and scenario_event.phase == "TARGET":
                 disposition = "FRAUD"
                 variant = family
             else:
                 disposition = "LEGITIMATE"
-                variant = HARD_NEGATIVE_VARIANTS[global_index % len(HARD_NEGATIVE_VARIANTS)]
-                nominator, beneficiary = _legitimate_parties(
-                    active, global_index, variant
-                )
+                if scenario_event:
+                    variant = f"{family}_PRECURSOR"
+                else:
+                    variant = HARD_NEGATIVE_VARIANTS[
+                        global_index % len(HARD_NEGATIVE_VARIANTS)
+                    ]
+                    nominator, beneficiary = _legitimate_parties(
+                        active, global_index, variant
+                    )
 
             # Three is coprime to the five category count, yielding an even
             # category mix inside every temporal segment instead of coupling a
@@ -303,7 +412,15 @@ def generate_nominations(
             day_in_segment = ordinal * 73 // NOMINATIONS_PER_SEGMENT
             nomination_date = start + timedelta(days=segment * 73 + day_in_segment)
             minute = 8 * 60 + ((global_index * 37) % (11 * 60))
-            if family == "BURST" or variant == "PROJECT_LAUNCH_BURST":
+            if scenario_event and scenario_event.context_mode == "ACTIVE":
+                if family == "BURST":
+                    # All three events in one active burst land within two minutes.
+                    minute = 10 * 60 + scenario_event.phase_ordinal - 1
+                else:
+                    # Same-day causal order without turning every active pattern
+                    # into a burst shortcut.
+                    minute = 8 * 60 + scenario_event.phase_ordinal * 150
+            elif variant == "PROJECT_LAUNCH_BURST":
                 minute = 10 * 60 + (ordinal % 6)
             timestamp = datetime.combine(
                 nomination_date,
@@ -311,7 +428,11 @@ def generate_nominations(
                 tzinfo=timezone.utc,
             )
             minimum_amount, maximum_amount = CATEGORY_AMOUNT_BOUNDS[category]
-            if family in {"AMOUNT", "MIXED"}:
+            if (
+                scenario_event
+                and scenario_event.phase == "TARGET"
+                and family in {"AMOUNT", "MIXED"}
+            ):
                 amount = maximum_amount
             elif variant == "JUSTIFIED_MAXIMUM_AMOUNT":
                 amount = maximum_amount
@@ -345,6 +466,11 @@ def generate_nominations(
                 training_disposition=disposition,
                 scenario_family=family or "LEGITIMATE",
                 scenario_variant=variant,
+                scenario_id=(scenario_event.scenario_id if scenario_event else None),
+                scenario_phase=(scenario_event.phase if scenario_event else "BACKGROUND"),
+                context_mode=(
+                    scenario_event.context_mode if scenario_event else "NONE"
+                ),
             ))
     return nominations
 

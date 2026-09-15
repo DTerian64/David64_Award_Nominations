@@ -236,6 +236,13 @@ def handle(message_id: str, payload: dict) -> None:
             "risk_level": gnn_result.get("risk_level"),
             "model_version": gnn_result.get("model_version"),
             "architecture": gnn_result.get("architecture"),
+            "feature_schema_version": gnn_result.get("feature_schema_version"),
+            "causal_context_edge_count": gnn_result.get(
+                "causal_context_edge_count"
+            ),
+            "causal_context_window_days": gnn_result.get(
+                "causal_context_window_days"
+            ),
             "training_policy_version": gnn_result.get("training_policy_version"),
             "scoring_policy_version": gnn_result.get("scoring_policy_version"),
         },

@@ -637,6 +637,8 @@ def _provision_sql_users(
     cursor,
     tenant_id: int,
     users: list[SyntheticUser],
+    *,
+    require_existing: bool = False,
 ) -> tuple[dict[str, int], int]:
     admin_upn = "david64.terian@synthetics.terian-services.com"
     expected_upns = {user.upn for user in users} | {admin_upn}
@@ -657,6 +659,12 @@ def _provision_sql_users(
     if extras:
         raise RuntimeError(
             f"Destination has {len(extras)} SQL users outside the approved roster"
+        )
+    missing = expected_upns - set(existing_by_upn)
+    if require_existing and missing:
+        raise RuntimeError(
+            "Corpus-only apply requires all 401 SQL users to exist; "
+            f"{len(missing)} approved roster users are missing"
         )
 
     user_id_by_logical: dict[str, int] = {}
@@ -773,6 +781,7 @@ def _corpus_stage_values(
     )
     rejection_actor = "Synthetic Ground Truth" if row.status == "Rejected" else None
     metadata = json.dumps({
+        "schema_version": 2,
         "generator_version": GENERATOR_VERSION,
         "generation_run_id": generation_run_id,
         "corpus_sha256": corpus_sha256,
@@ -782,6 +791,10 @@ def _corpus_stage_values(
         "temporal_segment": row.segment,
         "scenario_family": row.scenario_family,
         "scenario_variant": row.scenario_variant,
+        "scenario_id": row.scenario_id,
+        "scenario_phase": row.scenario_phase,
+        "context_mode": row.context_mode,
+        "ground_truth": row.training_disposition,
     }, separators=(",", ":"), sort_keys=True)
     return (
         f"synthetic:{row.stable_id}",
@@ -834,6 +847,7 @@ def provision_corpus(
     corpus_sha256: str,
     seed: int,
     generation_run_id: str,
+    require_existing_sql_users: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> CorpusResult:
     """Reconcile SQL users and atomically load nominations plus truth envelopes."""
@@ -857,7 +871,12 @@ def provision_corpus(
         ):
             raise RuntimeError("Destination tenant failed the synthetic identity preflight")
 
-        user_ids, admin_user_id = _provision_sql_users(cursor, tenant_id, users)
+        user_ids, admin_user_id = _provision_sql_users(
+            cursor,
+            tenant_id,
+            users,
+            require_existing=require_existing_sql_users,
+        )
         report("SQL users reconciled: 401/401")
         categories = _categories_by_name(cursor, tenant_id)
         missing_categories = {

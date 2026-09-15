@@ -19,7 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY integrity-check-extension/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+COPY integrity-engine-core /tmp/integrity-engine-core
+RUN pip install --no-cache-dir /tmp/integrity-engine-core
 COPY integrity-check-extension/ .
 
 CMD ["python", "main.py"]
-

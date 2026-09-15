@@ -6,10 +6,16 @@ Usage (from repository root)::
 """
 
 import json
+from datetime import date
 from pathlib import Path
 
 from scripts.synthetic_tenant import database
-from scripts.synthetic_tenant.database import _gnn_configuration, _sha256
+from scripts.synthetic_tenant.database import (
+    _corpus_stage_values,
+    _gnn_configuration,
+    _sha256,
+)
+from scripts.synthetic_tenant.scenarios import generate_nominations, generate_users
 
 
 def test_gnn_clone_changes_only_training_window():
@@ -38,3 +44,39 @@ def test_rejected_imports_use_and_reconcile_the_hrbp_fraud_route():
     assert "THEN 'HRBP_REVIEW' ELSE 'MANAGER_APPROVAL' END" in source
     assert "CASE WHEN nomination.Status = 'Rejected'" in source
     assert "THEN 'FRAUD' ELSE NULL END" in source
+
+
+def test_corpus_stage_metadata_preserves_causal_scenario_contract():
+    users = generate_users(20260912)
+    nomination = next(
+        row
+        for row in generate_nominations(users, 20260912, date(2026, 9, 12))
+        if row.scenario_id is not None
+    )
+    user_ids = {
+        logical_id: index
+        for index, logical_id in enumerate(
+            {
+                nomination.nominator_logical_id,
+                nomination.beneficiary_logical_id,
+                nomination.approver_logical_id,
+            },
+            start=1,
+        )
+    }
+
+    values = _corpus_stage_values(
+        row=nomination,
+        user_ids=user_ids,
+        category_id=1,
+        generation_run_id="test-run",
+        corpus_sha256="test-hash",
+        seed=20260912,
+    )
+    metadata = json.loads(values[18])
+
+    assert metadata["schema_version"] == 2
+    assert metadata["scenario_id"] == nomination.scenario_id
+    assert metadata["scenario_phase"] == nomination.scenario_phase
+    assert metadata["context_mode"] == nomination.context_mode
+    assert metadata["ground_truth"] == nomination.training_disposition

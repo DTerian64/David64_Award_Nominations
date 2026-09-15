@@ -32,6 +32,7 @@ Focused subset of queries needed by inference/handler.py and its checks:
 
   GNN model support (called by gnn_check.py):
     get_gnn_user_embeddings()       — version-matched node embeddings for a user set
+    get_gnn_causal_context_rows()   — prior raw edges for live causal features
 """
 
 import json
@@ -332,6 +333,73 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
         "explanation_enabled": bool(row[5]),
         "explanation_minimum_risk": str(row[6]).upper(),
     }
+
+
+def get_gnn_causal_context_rows(
+    tenant_id: int,
+    *,
+    target_nomination_id: int,
+    target_time: datetime,
+    nominator_id: int,
+    beneficiary_id: int,
+    window_days: int,
+) -> list[dict]:
+    """Load behavior edges strictly before one GNN target.
+
+    Timestamp plus NominationId is the shared causal ordering contract. The
+    target cannot enter its own features even if it has already been committed
+    when the Service Bus message is handled.
+    """
+    if window_days < 1:
+        raise ValueError("GNN causal context window must be at least one day")
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
+                   n.NominationDate AS CreatedAt,
+                   CAST(1 AS BIT) AS IsBehaviorEligible
+            FROM dbo.Nominations n
+            JOIN dbo.Users nominator ON nominator.UserId = n.NominatorId
+            LEFT JOIN dbo.IntegrityDecisionResults idr
+                   ON idr.NominationId = n.NominationId
+            WHERE nominator.TenantId = ?
+              AND n.NominationDate >= DATEADD(DAY, -?, ?)
+              AND (
+                    n.NominationDate < ?
+                    OR (
+                        n.NominationDate = ?
+                        AND n.NominationId < ?
+                    )
+              )
+              AND (
+                    n.NominatorId IN (?, ?)
+                    OR n.BeneficiaryId IN (?, ?)
+              )
+              AND (
+                    n.Status IN ('Pending', 'Approved', 'Paid')
+                    OR (
+                        n.Status = 'Rejected'
+                        AND idr.FinalRoute = 'HRBP_REVIEW'
+                        AND idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')
+                        AND idr.TrainingDisposition = 'FRAUD'
+                    )
+              )
+            ORDER BY n.NominationDate, n.NominationId
+            """,
+            tenant_id,
+            window_days,
+            target_time,
+            target_time,
+            target_time,
+            target_nomination_id,
+            nominator_id,
+            beneficiary_id,
+            nominator_id,
+            beneficiary_id,
+        )
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 # ── Producer-owned component availability ────────────────────────────────────
 

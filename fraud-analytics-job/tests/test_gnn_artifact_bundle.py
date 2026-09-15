@@ -23,7 +23,8 @@ def test_snapshot_round_trip_contains_only_one_tenant_and_exact_graph(tmp_path):
     bundle.write_snapshot(path, snapshot)
 
     assert snapshot["tenant_id"] == 1
-    assert snapshot["feature_schema_version"] == "gnn-v2"
+    assert snapshot["feature_schema_version"] == "gnn-v2-causal-v1"
+    assert snapshot["causal_context_window_days"] == 365
     assert snapshot["graph_snapshot_id"] == "gnn-graph-v2-test"
     assert snapshot["mappings"]["user_ids"] == sorted(u["UserId"] for u in users)
     assert len(snapshot["mappings"]["nomination_ids"]) == graph["data"]["nomination"].num_nodes

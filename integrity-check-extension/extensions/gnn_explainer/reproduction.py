@@ -8,6 +8,10 @@ from datetime import date, datetime, timezone
 
 import numpy as np
 import torch
+from integrity_engine.gnn import (
+    CAUSAL_CONTEXT_FEATURE_COLUMNS,
+    CAUSAL_FEATURE_SCHEMA_VERSION,
+)
 
 from .artifacts import ArtifactBundle
 from .errors import PermanentExtensionError
@@ -44,7 +48,11 @@ def _standardise(row: np.ndarray, mean, std) -> np.ndarray:
     return ((row - mean_array) / std_array).astype(np.float32)
 
 
-def nomination_features(details: dict, decoder: dict) -> np.ndarray:
+def nomination_features(
+    details: dict,
+    decoder: dict,
+    causal_context: dict | None = None,
+) -> np.ndarray:
     amount = float(details.get("amount") or 0.0)
     when = details.get("nomination_date") or datetime.now(timezone.utc)
     if isinstance(when, datetime):
@@ -52,7 +60,8 @@ def nomination_features(details: dict, decoder: dict) -> np.ndarray:
     if not isinstance(when, date):
         when = date.fromisoformat(str(when)[:10])
 
-    if decoder.get("feature_schema_version") != "gnn-v2":
+    feature_schema = decoder.get("feature_schema_version")
+    if feature_schema not in {"gnn-v2", CAUSAL_FEATURE_SCHEMA_VERSION}:
         raise PermanentExtensionError("UNSUPPORTED_FEATURE_SCHEMA")
     category_stats = decoder.get("category_amount_stats") or {}
     robust = (category_stats.get("categories") or {}).get(
@@ -74,6 +83,16 @@ def nomination_features(details: dict, decoder: dict) -> np.ndarray:
         "MonthCos": math.cos(month_angle),
         "HistoricalStatus": 0.0,
     }
+    if feature_schema == CAUSAL_FEATURE_SCHEMA_VERSION:
+        causal_values = (causal_context or {}).get("features")
+        if not isinstance(causal_values, dict) or any(
+            name not in causal_values for name in CAUSAL_CONTEXT_FEATURE_COLUMNS
+        ):
+            raise PermanentExtensionError("STORED_CAUSAL_CONTEXT_MISSING")
+        values.update({
+            name: float(causal_values[name])
+            for name in CAUSAL_CONTEXT_FEATURE_COLUMNS
+        })
     row = np.array(
         [[values.get(column, 0.0) for column in decoder["nomination_feature_columns"]]],
         dtype=np.float32,
@@ -112,7 +131,11 @@ def reproduce(
     policy: ReproductionPolicy,
 ) -> ReproductionResult:
     decoder_module = build_decoder(bundle.decoder)
-    x_nom = nomination_features(details, bundle.decoder)
+    x_nom = nomination_features(
+        details,
+        bundle.decoder,
+        gnn_result.get("causal_context"),
+    )
     nominator_id = int(details["nominator_id"])
     beneficiary_id = int(details["beneficiary_id"])
     try:

@@ -503,7 +503,19 @@ The GNN result should include at least:
   "scoring_policy_version": 4,
   "graph_snapshot_id": "gnn-graph-v2-20260909-t1",
   "graph_snapshot_as_of": "2026-09-09T00:00:00Z",
-  "feature_schema_version": "gnn-v2",
+  "feature_schema_version": "gnn-v2-causal-v1",
+  "causal_context": {
+    "schema_version": 1,
+    "ordering": "CreatedAt,NominationId",
+    "target_cutoff": "2026-09-09T18:00:00Z",
+    "window_days": 180,
+    "eligible_edge_count": 742,
+    "features": {
+      "LogPriorReversePairCount": 0.693147,
+      "LogReverseTwoHopPathCount": 1.098612,
+      "LogBeneficiaryIncomingCount1h": 0.0
+    }
+  },
   "explanation": {
     "method": "GNNEXPLAINER",
     "status": "REQUESTED",
@@ -514,9 +526,12 @@ The GNN result should include at least:
 ```
 
 The decoder, architecture-specific user embeddings, preprocessing state, model
-version, and graph snapshot are one serving unit. `integrity-check` resolves the
-unit from `dbo.IntegrityComponentStatus.ServingVersion`; it must not activate a
-decoder filename independently of its matching embeddings.
+version, graph snapshot, and causal-context feature contract are one serving
+unit. `integrity-check` resolves the unit from
+`dbo.IntegrityComponentStatus.ServingVersion`; it must not activate a decoder
+filename independently of its matching embeddings. Old `gnn-v2` artifacts
+remain readable, but only `gnn-v2-causal-v1` can evaluate topology that forms
+after the weekly snapshot.
 
 When unavailable, the result must retain the existing availability contract, including a stable reason code and human-readable detail. A missing model, missing snapshot, schema mismatch, or cold-start condition must not be represented as a legitimate score of zero.
 

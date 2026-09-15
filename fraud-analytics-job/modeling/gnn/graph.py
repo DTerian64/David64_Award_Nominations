@@ -57,6 +57,11 @@ from typing import Any, Sequence
 import numpy as np
 import torch
 from torch_geometric.data import HeteroData
+from integrity_engine.gnn import (
+    CAUSAL_CONTEXT_FEATURE_COLUMNS,
+    CAUSAL_FEATURE_SCHEMA_VERSION,
+    causal_context_matrix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +70,7 @@ logger = logging.getLogger(__name__)
 # Declared as module constants so modeling/train_gnn_model.py can persist them into the
 # artifact and gnn_check.py can assert the inference-time layout matches.
 
-FEATURE_SCHEMA_VERSION = "gnn-v2"
+FEATURE_SCHEMA_VERSION = CAUSAL_FEATURE_SCHEMA_VERSION
 
 # Rejected rows are eligible only under the canonical HRBP-confirmed FRAUD
 # predicate in fetch_tenant_rows(); status alone never admits them.
@@ -77,7 +82,7 @@ USER_FEATURE_COLUMNS = [
     "LogUniqueCounterparties",
 ]
 
-NOMINATION_FEATURE_COLUMNS = [
+BASE_NOMINATION_FEATURE_COLUMNS = [
     "LogAmount",
     "CategoryRelativeAmountRobustZScore",
     "DaysBeforeGraphCutoff",
@@ -86,6 +91,11 @@ NOMINATION_FEATURE_COLUMNS = [
     "MonthSin",
     "MonthCos",
     "HistoricalStatus",
+]
+
+NOMINATION_FEATURE_COLUMNS = [
+    *BASE_NOMINATION_FEATURE_COLUMNS,
+    *CAUSAL_CONTEXT_FEATURE_COLUMNS,
 ]
 
 EDGE_TYPES = [
@@ -268,6 +278,7 @@ def build_rolling_folds(
     users: Sequence[dict],
     nominations: Sequence[dict],
     n_folds: int = 3,
+    causal_window_days: int = 365,
 ) -> list[dict]:
     """Build graph/train/evaluation snapshots for rolling-origin training."""
     behavior_rows = [
@@ -283,6 +294,7 @@ def build_rolling_folds(
             t_graph=t_graph,
             t_cut=t_cut,
             eval_end=eval_end,
+            causal_window_days=causal_window_days,
         )
         fold["fold_index"] = index
         fold["eval_end"] = eval_end
@@ -293,6 +305,7 @@ def build_rolling_folds(
 def build_serving_graph(
     users: Sequence[dict],
     nominations: Sequence[dict],
+    causal_window_days: int = 365,
 ) -> dict:
     """Build the deployment snapshot from all currently eligible behavior."""
     behavior_rows = [
@@ -308,6 +321,7 @@ def build_serving_graph(
         t_graph=exclusive_cutoff,
         t_cut=date.fromordinal(exclusive_cutoff.toordinal() + 1),
         eval_end=date.fromordinal(exclusive_cutoff.toordinal() + 2),
+        causal_window_days=causal_window_days,
     )
     graph["graph_snapshot_as_of"] = snapshot_as_of
     return graph
@@ -388,9 +402,13 @@ def build_nomination_features(
     graph_cutoff: date,
     *,
     historical: bool,
+    context_rows: Sequence[dict] | None = None,
+    causal_window_days: int = 365,
 ) -> np.ndarray:
     """Build the graph-native v2 nomination attributes without future state."""
-    out = np.zeros((len(rows), len(NOMINATION_FEATURE_COLUMNS)), dtype=np.float32)
+    out = np.zeros(
+        (len(rows), len(BASE_NOMINATION_FEATURE_COLUMNS)), dtype=np.float32
+    )
     status_code = {
         "Pending": 0.0,
         "Approved": 1.0,
@@ -416,7 +434,15 @@ def build_nomination_features(
             math.cos(month_angle),
             status_code.get(str(n.get("Status")), 0.0) if historical else 0.0,
         )
-    return out
+    causal = np.asarray(
+        causal_context_matrix(
+            rows if context_rows is None else context_rows,
+            rows,
+            window_days=causal_window_days,
+        ),
+        dtype=np.float32,
+    ).reshape(len(rows), len(CAUSAL_CONTEXT_FEATURE_COLUMNS))
+    return np.concatenate([out, causal], axis=1)
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
@@ -429,6 +455,7 @@ def build_hetero_data(
     graph_quantile: float = 0.60,
     cut_quantile: float = 0.80,
     eval_end: date | None = None,
+    causal_window_days: int = 365,
 ) -> dict:
     """
     Build the message-passing graph plus the training and evaluation target sets.
@@ -487,7 +514,12 @@ def build_hetero_data(
     user_raw = build_user_features(user_ids, graph_rows)
     user_mean, user_std = _standardiser(user_raw)
     nom_raw_graph = build_nomination_features(
-        graph_rows, category_amount_stats, t_graph, historical=True
+        graph_rows,
+        category_amount_stats,
+        t_graph,
+        historical=True,
+        context_rows=graph_rows,
+        causal_window_days=causal_window_days,
     )
     nom_mean, nom_std = _standardiser(nom_raw_graph)
 
@@ -533,7 +565,12 @@ def build_hetero_data(
                 user_index[n["BeneficiaryId"]],
             ))
         raw = build_nomination_features(
-            rows, category_amount_stats, t_graph, historical=False
+            rows,
+            category_amount_stats,
+            t_graph,
+            historical=False,
+            context_rows=nominations,
+            causal_window_days=causal_window_days,
         )
         return {
             "nom_ids": [n["NominationId"] for n in rows],
@@ -556,6 +593,7 @@ def build_hetero_data(
         "amount_std": amount_std,
         "category_amount_stats": category_amount_stats,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "causal_context_window_days": causal_window_days,
         "user_feature_columns": list(USER_FEATURE_COLUMNS),
         "nomination_feature_columns": list(NOMINATION_FEATURE_COLUMNS),
         # Persisted into gnn_head_tenant_<id>.pt; gnn_check.py must apply these

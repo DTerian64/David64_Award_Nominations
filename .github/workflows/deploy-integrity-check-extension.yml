@@ -8,6 +8,7 @@ on:
       - dev      # → development   (rg_award_nomination_dev)
     paths:
       - 'integrity-check-extension/**'
+      - 'integrity-engine-core/**'
   workflow_dispatch:
 
 # Single image name across all environments — the tag (latest/sandbox/dev)

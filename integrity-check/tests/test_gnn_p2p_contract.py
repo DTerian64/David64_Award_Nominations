@@ -3,7 +3,7 @@
 import os
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,6 +37,11 @@ V2_FEATURES = [
     "MonthSin",
     "MonthCos",
     "HistoricalStatus",
+]
+
+CAUSAL_FEATURES = [
+    *V2_FEATURES,
+    *gnn_check.CAUSAL_CONTEXT_FEATURE_COLUMNS,
 ]
 
 
@@ -215,6 +220,69 @@ class GnnP2PContractTests(unittest.TestCase):
         self.assertAlmostEqual(values[1], 2.0, places=5)
         self.assertEqual(values[2], 0.0)
         self.assertEqual(values[-1], 0.0)
+
+    def test_causal_schema_adds_only_strictly_prior_raw_topology(self):
+        now = datetime(2026, 9, 14, 12, tzinfo=timezone.utc)
+        head = {
+            "feature_schema_version": gnn_check.CAUSAL_FEATURE_SCHEMA_VERSION,
+            "nomination_feature_columns": CAUSAL_FEATURES,
+            "nomination_scaler_mean": [0.0] * len(CAUSAL_FEATURES),
+            "nomination_scaler_std": [1.0] * len(CAUSAL_FEATURES),
+            "amount_mean": 0.0,
+            "amount_std": 0.0,
+            "category_amount_stats": {
+                "global": {"median": 100.0, "scale": 20.0},
+                "categories": {},
+            },
+            "causal_context_window_days": 365,
+        }
+        history = [
+            {
+                "NominationId": 10,
+                "NominatorId": 1,
+                "BeneficiaryId": 2,
+                "CreatedAt": now - timedelta(minutes=2),
+            },
+            {
+                "NominationId": 20,
+                "NominatorId": 2,
+                "BeneficiaryId": 3,
+                "CreatedAt": now - timedelta(minutes=1),
+            },
+            {
+                "NominationId": 40,
+                "NominatorId": 3,
+                "BeneficiaryId": 1,
+                "CreatedAt": now + timedelta(minutes=1),
+            },
+        ]
+
+        values = gnn_check._nomination_features(
+            {
+                "nomination_id": 30,
+                "nominator_id": 3,
+                "beneficiary_id": 1,
+                "amount": 100.0,
+                "category_id": 1,
+                "nomination_date": now,
+            },
+            head,
+            gnn_check.causal_context_values(
+                history,
+                {
+                    "NominationId": 30,
+                    "NominatorId": 3,
+                    "BeneficiaryId": 1,
+                    "CreatedAt": now,
+                },
+                window_days=365,
+            ),
+        )[0]
+
+        path_index = CAUSAL_FEATURES.index("LogReverseTwoHopPathCount")
+        directed_index = CAUSAL_FEATURES.index("LogPriorDirectedPairCount")
+        self.assertGreater(values[path_index], 0.0)
+        self.assertEqual(values[directed_index], 0.0)
 
 
 if __name__ == "__main__":

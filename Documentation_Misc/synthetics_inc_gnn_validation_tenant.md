@@ -33,7 +33,7 @@ tenant. Every generated row remains inside the Synthetics Inc. tenant boundary.
 | Corpus nominations | 5,000 synthetic nominations |
 | Ground-truth prevalence | 98% legitimate / 2% fraud |
 | Synthetic history | 365 days |
-| Generator version | `synthetics-inc-v1` |
+| Generator version | `synthetics-inc-v2.0` |
 | Deterministic seed | `20260912` |
 
 The database `TenantId` must be discovered from the organization identifier;
@@ -53,8 +53,10 @@ the Entra tenant identifier expected by `dbo.Tenants.AzureAdTenantId`.
 4. **No fabricated inference.** Imported historical rows record that engines
    were not run; the loader never invents RF, Graph, GNN, or semantic scores.
 5. **Temporal integrity.** Every feature and graph edge available to a training
-   target must predate that target. The final temporal segment remains an
-   untouched holdout during candidate selection.
+   target must predate that target. Scenarios explicitly distinguish topology
+   already present in a weekly snapshot from topology forming after that
+   snapshot. The final temporal segment remains an untouched holdout during
+   candidate selection.
 6. **Determinism.** The same generator version, seed, configuration snapshot,
    and empty destination tenant produce the same logical users, nominations,
    labels, and temporal allocations.
@@ -106,15 +108,21 @@ Initial allowed sources:
 
 ```json
 {
-  "schema_version": 1,
-  "generator_version": "synthetics-inc-v1.1",
+  "schema_version": 2,
+  "generator_version": "synthetics-inc-v2.0",
   "generation_run_id": "<uuid>",
   "seed": 20260912,
   "scenario_id": "<stable-id>",
   "scenario_family": "LEGITIMATE|RING|RECIPROCAL|CONCENTRATION|BURST|AMOUNT|MIXED",
+  "scenario_phase": "BACKGROUND|PRECURSOR|TARGET",
+  "context_mode": "NONE|ACTIVE|ESTABLISHED",
   "ground_truth": "LEGITIMATE|FRAUD"
 }
 ```
+
+`scenario_id` is populated for the two precursors and target that make up a
+causal scenario. Ordinary background legitimate rows use `null`, with
+`scenario_phase = 'BACKGROUND'` and `context_mode = 'NONE'`.
 
 The integrity-decision constraints must allow a synthetic disposition without
 claiming that a human reviewed it:
@@ -508,9 +516,40 @@ fold from falling below the training gate.
 
 ### 9.2 Temporal scenario construction
 
-The suspicious context needed to score a target must exist before the target's
-fold cutoff. For example, a reciprocal target may be preceded by the opposite
-direction nomination, and a ring target may be preceded by a partial chain.
+Every one of the 100 fraud targets belongs to a stable causal scenario with
+exactly two earlier, legitimate-looking precursor nominations. The target is
+the first row at which the full suspicious condition is created or materially
+strengthened. This prevents the label from describing topology that does not
+yet exist when the target is scored.
+
+The v2 corpus deliberately tests two inference contexts:
+
+| Context | Target count | Precursor placement | Detection contract |
+|---|---:|---|---|
+| `ESTABLISHED` | 40 | Earlier immutable graph segment | Weekly user embeddings must carry the prior relationship signal |
+| `ACTIVE` | 60 | Shortly before the target in its own segment | Live causal delta features must detect topology formed after the weekly snapshot |
+
+S0 is graph-history warm-up and therefore assigns all 20 targets to `ACTIVE`.
+Each of S1 through S4 contains 10 `ACTIVE` and 10 `ESTABLISHED` targets. Active
+burst precursors and their target occur within five minutes; other active
+precursors occur shortly before the target without deliberately introducing a
+burst shortcut. Established precursors are placed far enough back to be inside
+the immutable graph supplied to that rolling target.
+
+Examples of the required causal shape are:
+
+- ring: `A -> B`, then `B -> C`, then target `C -> A`;
+- reciprocal: `A -> B`, then a benign supporting edge, then target `B -> A`;
+- concentration: repeated `A -> B` history before another `A -> B` target;
+- burst: two related nominations to the same beneficiary immediately before
+  the target; and
+- amount or mixed: established pair history before a category-relative amount
+  outlier target.
+
+The current weekly snapshot decoder cannot see `ACTIVE` precursors by itself.
+The training and inference pipelines must add the same strictly-prior live
+delta feature contract before v2 is eligible for deployment. Reseeding alone
+does not provide that capability.
 
 Reserve distinct actors and structures for S4 wherever practical. A model that
 sees the same ring participants during training and holdout may memorize users
@@ -577,8 +616,11 @@ Required commands:
 python scripts/synthetic_tenant/seed_synthetics_inc.py --dry-run
 python scripts/synthetic_tenant/seed_synthetics_inc.py --apply
 python scripts/synthetic_tenant/seed_synthetics_inc.py --validate
-python scripts/synthetic_tenant/seed_synthetics_inc.py --reset --organization-id f74bff31-f42f-4461-a1dd-e1ae978c1abe
 ```
+
+An explicit corpus-replacement/reset command is intentionally not implemented
+yet. The existing v1.1 deployment must remain intact until dependency discovery
+and the guarded reset described in section 15 are complete.
 
 Required directory-provisioning configuration must be supplied through secrets
 or workload identity, never committed configuration:
@@ -608,12 +650,12 @@ The GNN metrics should reference its generation run ID and configuration hash.
 
 ## 12. Build sequence
 
-Implementation status as of 2026-09-12: Phase A and migration `0060` are
-deployed. The Phase B configuration adapter and the Phase D/E Entra, SQL-user,
-nomination, and decision-envelope adapters are implemented under
-`scripts/synthetic_tenant/`, but have not been executed. No tenant, Entra
-identity, SQL user, or nomination has been provisioned by this tool yet. Phase C
-hostname/DNS/authentication work remains an environment deployment step.
+Implementation status as of 2026-09-14: migration `0060`, tenant configuration,
+directory/SQL users, and the v1.1 corpus have been deployed. The v2.0 causal
+scenario generator and offline validation are implemented, but the deployed
+corpus has not been changed. The shared `gnn-v2-causal-v1` training, serving,
+persistence, and explanation path is now implemented. The guarded replacement
+path and deployment evaluation remain prerequisites before v2.0 is applied.
 
 ### Phase A — schema and code safeguards
 
@@ -662,16 +704,18 @@ hostname/DNS/authentication work remains an environment deployment step.
 
 1. Build hidden scenario truth and stable scenario IDs.
 2. Allocate exactly 1,000 nominations and 20 fraud cases to each segment.
-3. Create hard-negative cohorts before generating target rows.
-4. Generate categories, amounts, descriptions, approvers, timestamps, statuses,
+3. Give each fraud target two strictly earlier causal precursor rows.
+4. Allocate 60 targets to active context and 40 to established context.
+5. Create hard-negative cohorts before generating target rows.
+6. Generate categories, amounts, descriptions, approvers, timestamps, statuses,
    and audit actors.
-5. Insert nominations and their synthetic historical decision envelopes.
-6. Commit only after all count, relationship, JSON, and date validations pass.
+7. Insert nominations and their synthetic historical decision envelopes.
+8. Commit only after all count, relationship, JSON, and date validations pass.
 
 ### Phase F — analytics and GNN
 
-1. Run Graph Analytics and RF training normally for Tenant 4; their output does
-   not modify ground truth.
+1. Run Graph Analytics and RF training normally for Synthetics Inc.; their
+   output does not modify ground truth.
 2. Run the GNN training job with candidate architectures from the cloned policy.
 3. Confirm the job reports 60 fraud/2,940 legitimate rolling-train targets and
    20 fraud/980 legitimate final-holdout targets, allowing small differences
@@ -716,6 +760,9 @@ hostname/DNS/authentication work remains an environment deployment step.
 - Exactly 5,000 nominations exist inside the 365-day window.
 - Exactly 4,900 are `LEGITIMATE` and 100 are `FRAUD`.
 - Every chronological segment contains 1,000 nominations and 20 fraud labels.
+- Every fraud target has exactly two strictly earlier legitimate precursors
+  carrying the same stable scenario ID.
+- The corpus contains exactly 60 `ACTIVE` and 40 `ESTABLISHED` fraud targets.
 - Every training label source is `SYNTHETIC_GROUND_TRUTH`.
 - No row claims a human reviewer for synthetic truth.
 - No description or user-facing field exposes scenario or label markers.
@@ -780,29 +827,42 @@ failure when `is_synthetic` or the provenance fields have not yet been deployed.
 
 ## 15. Reset and regeneration
 
-Reset is permitted only because the complete tenant is synthetic. The reset
-implementation must:
+Reset is permitted only because the complete tenant is synthetic. Use the
+one-time `scripts/synthetic_tenant/reset_synthetics_inc_corpus.sql` runbook; a
+permanent replacement mode is intentionally not part of the application or
+seeder.
 
-1. resolve the tenant by the exact organization identifier;
-2. verify `TenantName`, `Domain`, and `is_synthetic = 1`;
-3. print counts for every affected table;
-4. require explicit `--reset` plus the organization identifier;
-5. delete only tenant-owned operational/model data in foreign-key-safe order;
-6. delete only the 400 manifest-owned synthetic Entra accounts when directory
-   reset is explicitly requested; Entra deletion is recoverable through Deleted
-   Users for the platform retention period;
-7. never delete the `David64 Terian` administrator as part of corpus reset;
-8. preserve the tenant row, hostname, and configuration unless
-   `--reset-configuration` is separately requested; and
-9. rerun validation to prove that no rows or Entra identities belonging to
-   another tenant changed.
+The script resolves the tenant from the exact organization identifier and then
+verifies its name, domain, synthetic flag, 401-user count, v1.1 corpus hash,
+generation run ID, and exact 5,000-row ownership envelope. It fails closed if a
+nomination is not manifest-owned, a cross-tenant reference exists, or a later
+migration has introduced an unrecognized foreign-key child.
 
-Do not implement reset as a broad migration downgrade, wildcard deletion, or a
-hardcoded `TenantId = 4` script.
+By default, `@CommitChanges = 0`: the script obtains locks, prints its affected
+table inventory, performs the full operation and post-delete checks, and rolls
+everything back. After reviewing that preview, set `@CommitChanges = 1` and run
+the entire script again. The committed operation:
+
+1. removes the v1.1 nominations, decisions, logs, Service Bus processing rows,
+   graph edges, nomination embeddings, findings, graph flags, tenant GNN user
+   embeddings, and corpus-related Graph change requests;
+2. preserves all 401 SQL and Entra users, including `David64 Terian`;
+3. preserves the tenant, hostname, categories, templates, roles, and active
+   Graph/GNN scoring policies;
+4. marks the RF, Graph, and GNN serving pointers unavailable until rebuilt; and
+5. retains `IntegrityComponentStatus` temporal history as an audit trail.
+
+Immutable blobs are not deleted. Invalidating their serving pointers prevents
+them from being selected, while the next analytics run publishes new versioned
+artifacts. After the committed reset, run the v2.0 seeder `--apply-corpus`
+workflow. This path uses the provider-hosted SQL connection, requires the full
+401-user roster, and deliberately skips Microsoft Graph because the customer
+directory identities were preserved. Then run the analytics job.
 
 ## 16. Implementation boundary
 
-This document approves the design, population, branding, and build sequence. It
-does not itself create Entra users, DNS records, database rows, model artifacts,
-or Azure resources. Implementation should proceed in reviewable phases, starting
-with schema/provenance safeguards and the dry-run generator.
+This document approves the design, population, branding, and build sequence.
+The v2.0 corpus and shared causal contract are implemented and validated
+offline. Applying v2.0 requires the guarded SQL reset above followed by the
+resumable `--apply-corpus` workflow. Do not manually delete individual rows or
+run a corpus apply before the reset transaction commits.
