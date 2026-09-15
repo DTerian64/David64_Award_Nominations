@@ -347,6 +347,7 @@ const GNN_CAUSAL_FEATURES: Array<[string, string]> = [
   ['LogPriorDirectedPairCount', 'Prior same-direction pair nominations'],
   ['LogPriorReversePairCount', 'Prior reverse-direction pair nominations'],
   ['LogReverseTwoHopPathCount', 'Two-hop return paths closed by this nomination'],
+  ['LogReverseThreeHopPathCount', 'Three-hop return paths closed by this nomination'],
   ['LogNominatorOutgoingCount30d', 'Nominator outgoing nominations · 30 days'],
   ['LogNominatorUniqueBeneficiaries30d', 'Nominator unique beneficiaries · 30 days'],
   ['LogBeneficiaryIncomingCount30d', 'Beneficiary incoming nominations · 30 days'],
@@ -392,6 +393,7 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
     'LogPriorDirectedPairCount',
     'LogPriorReversePairCount',
     'LogReverseTwoHopPathCount',
+    'LogReverseThreeHopPathCount',
     'LogDirectedPairCount30d',
     'LogEndpointEdgeCount1h',
   ];

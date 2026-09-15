@@ -540,6 +540,7 @@ The GNN result should include at least:
     "features": {
       "LogPriorReversePairCount": 0.693147,
       "LogReverseTwoHopPathCount": 1.098612,
+      "LogReverseThreeHopPathCount": 0.693147,
       "LogBeneficiaryIncomingCount1h": 0.0
     }
   },

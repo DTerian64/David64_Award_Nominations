@@ -155,7 +155,7 @@ new nomination arrives:
 The weekly snapshot remains the source of the learned user embeddings. A
 shared causal-context builder supplements those embeddings with a compact
 topology vector calculated from prior raw nominations, including directed and
-reverse pair counts, reverse two-hop paths, 30-day concentration, and one-hour
+reverse pair counts, reverse two- and three-hop paths, 30-day concentration, and one-hour
 burst activity. The decoder learns how to combine the weekly representations,
 the live causal vector, and the target's own attributes. The target nomination
 itself remains outside both message passing and its causal context.

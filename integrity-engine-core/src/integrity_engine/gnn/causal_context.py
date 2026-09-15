@@ -21,6 +21,7 @@ CAUSAL_CONTEXT_FEATURE_COLUMNS = (
     "LogPriorDirectedPairCount",
     "LogPriorReversePairCount",
     "LogReverseTwoHopPathCount",
+    "LogReverseThreeHopPathCount",
     "LogNominatorOutgoingCount30d",
     "LogNominatorUniqueBeneficiaries30d",
     "LogBeneficiaryIncomingCount30d",
@@ -200,6 +201,19 @@ def causal_context_matrix(
             & in_neighbors.get(nominator, set())
             - {nominator, beneficiary}
         )
+        reverse_three_hop = 0
+        endpoints = {nominator, beneficiary}
+        for first_hop in out_neighbors.get(beneficiary, set()):
+            if first_hop in endpoints:
+                continue
+            second_hops = (
+                out_neighbors.get(first_hop, set())
+                & in_neighbors.get(nominator, set())
+            )
+            for second_hop in second_hops:
+                if second_hop in endpoints or second_hop == first_hop:
+                    continue
+                reverse_three_hop += 1
         between_endpoints = hour_undirected.get(
             frozenset((nominator, beneficiary)), 0
         )
@@ -207,6 +221,7 @@ def causal_context_matrix(
             full_pairs[nominator, beneficiary],
             full_pairs[beneficiary, nominator],
             reverse_two_hop,
+            reverse_three_hop,
             recent_out[nominator],
             recent_unique_out[nominator],
             recent_in[beneficiary],

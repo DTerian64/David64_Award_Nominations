@@ -18,6 +18,12 @@ POLICY = {
             "parameters": {
                 "amount_reference": 10000, "exposure_weight": 35,
                 "repeat_weight": 15, "compactness_weight": 15,
+                "compactness_decay_span": 5,
+            },
+            "candidate_evaluation": {
+                "max_states": 100_000,
+                "max_ring_size": 4,
+                "limit_strategy": "BEST_EVIDENCE",
             },
         },
         "BipartiteDenseBlock": {
@@ -157,6 +163,25 @@ def test_ring_score_increases_with_financial_exposure():
     assert high["ScoringPolicyVersion"] == 3
     components = json.loads(high["ScoreComponentsJson"])
     assert components["signals"]["exposure"] == 1.0
+
+
+def test_ring_detection_is_limited_to_four_people_and_uses_policy_compactness():
+    users = [{"UserId": value, "FullName": str(value)} for value in range(1, 6)]
+    four_person = graph.detect_rings([
+        _nomination(1, 1, 2), _nomination(2, 2, 3),
+        _nomination(3, 3, 4), _nomination(4, 4, 1),
+    ], users, 7, "four", 4, POLICY)
+    five_person = graph.detect_rings([
+        _nomination(5, 1, 2), _nomination(6, 2, 3),
+        _nomination(7, 3, 4), _nomination(8, 4, 5),
+        _nomination(9, 5, 1),
+    ], users, 7, "five", 4, POLICY)
+
+    assert len(four_person) == 1
+    assert json.loads(four_person[0]["ScoreComponentsJson"])["signals"][
+        "compactness"
+    ] == 0.8
+    assert five_person == []
 
 
 def test_super_beneficiary_requires_broad_support_and_scores_continuously():

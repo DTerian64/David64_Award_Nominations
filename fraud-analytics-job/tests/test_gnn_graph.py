@@ -18,6 +18,14 @@ import pytest
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "integrity-engine-core",
+        "src",
+    ),
+)
 
 from modeling.gnn import graph as G
 from tests.synthetic import make_tenant, make_two_tenants
@@ -276,6 +284,7 @@ def test_causal_v2_adds_category_nodes_and_graph_native_features():
     assert "ConcentrationRatio" not in G.USER_FEATURE_COLUMNS
     assert "ReciprocalPairCount" not in G.USER_FEATURE_COLUMNS
     assert "LogReverseTwoHopPathCount" in G.NOMINATION_FEATURE_COLUMNS
+    assert "LogReverseThreeHopPathCount" in G.NOMINATION_FEATURE_COLUMNS
     assert g["data"]["category"].num_nodes == 3
     assert g["data"]["nomination", "belongs_to", "category"].edge_index.shape[1] == g["data"]["nomination"].num_nodes
 

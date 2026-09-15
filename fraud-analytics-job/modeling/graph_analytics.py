@@ -50,6 +50,7 @@ from dotenv import load_dotenv
 from integrity_engine import GraphInferenceSnapshot, SnapshotNomination
 from integrity_engine.graph.finding_scoring import (
     calculate_graph_finding_score,
+    calculate_ring_compactness,
     derive_graph_finding_severity,
 )
 
@@ -620,9 +621,8 @@ def detect_rings(
       useless.  simple_cycles() with length_bound + frozenset dedup finds
       the genuine tight rings the seeder planted.
 
-    max_cluster_size: largest ring size to report (default 0 = unlimited,
-      capped internally at 8 to prevent DFS explosion on dense graphs).
-      Set via RING_MAX_CLUSTER_SIZE env var.
+    max_cluster_size: largest ring size to report. The caller supplies the
+      tenant's active Ring candidate-evaluation limit (3 or 4).
 
     Severity — nominated amount across the in-scope P2P population:
       TotalAmount ≥ 10 000 → Critical
@@ -630,9 +630,8 @@ def detect_rings(
       TotalAmount ≥  1 000 → Medium
       TotalAmount  <  1 000 → Low
     """
-    # Hard cap: simple_cycles DFS is exponential beyond 8 hops regardless
-    # of what the operator configures.
-    HARD_CAP = 8
+    # Ring membership is deliberately limited to tight 3- or 4-person cycles.
+    HARD_CAP = 4
     upper = min(max_cluster_size, HARD_CAP) if max_cluster_size > 0 else HARD_CAP
 
     G = nx.DiGraph()
@@ -706,7 +705,10 @@ def detect_rings(
                         .get("amount_reference", 10_000)
                     ), 1.0), 1.0),
                     "repeat": min(len(nom_ids) / max(size * 3, 1), 1.0),
-                    "compactness": max(0.0, 1.0 - ((size - 3) / 5.0)),
+                    "compactness": calculate_ring_compactness(
+                        size,
+                        _pattern_config(policy, "Ring").get("parameters", {}),
+                    ),
                 },
             ))
 
@@ -1716,7 +1718,6 @@ def _process_tenant(
     tenant_id: int,
     findings_table: str,
     default_window_days: int,
-    ring_max_cluster: int,
     run_id: str,
 ) -> int:
     """Detect and persist one tenant's graph snapshot and component status."""
@@ -1748,6 +1749,13 @@ def _process_tenant(
         return bool(_pattern_config(policy, pattern_type).get("enabled", False))
 
     if enabled("Ring"):
+        ring_policy = _pattern_config(policy, "Ring")
+        ring_candidate_policy = ring_policy.get("candidate_evaluation") or {}
+        ring_max_cluster = int(ring_candidate_policy.get("max_ring_size", 4))
+        if not 3 <= ring_max_cluster <= 4:
+            raise ValueError(
+                "Ring candidate max_ring_size must be between 3 and 4"
+            )
         detected_findings.extend(detect_rings(
             nominations, users, tenant_id, run_id, ring_max_cluster, policy
         ))
@@ -1840,15 +1848,10 @@ def main(tenants_to_process: list | None = None) -> None:
 
     findings_table      = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
     default_window_days = int(os.getenv("DETECTION_WINDOW_DAYS", "180"))
-    ring_max_cluster    = int(os.getenv("RING_MAX_CLUSTER_SIZE", "0"))
     run_id              = str(uuid.uuid4())
     logger.info("RunId: %s", run_id)
     logger.info("Target table: %s", findings_table)
     logger.info("Default detection window: %d days (DETECTION_WINDOW_DAYS env var)", default_window_days)
-    logger.info(
-        "Ring max cluster size: %s",
-        str(ring_max_cluster) if ring_max_cluster > 0 else "unlimited",
-    )
 
     conn = _get_connection()
 
@@ -1877,7 +1880,7 @@ def main(tenants_to_process: list | None = None) -> None:
         try:
             total_findings += _process_tenant(
                 conn, tenant_id, findings_table, default_window_days,
-                ring_max_cluster, run_id,
+                run_id,
             )
         except Exception as exc:
             logger.error("Tenant %d graph analytics failed: %s", tenant_id, exc, exc_info=True)
