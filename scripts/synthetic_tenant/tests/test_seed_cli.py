@@ -25,7 +25,7 @@ def test_apply_corpus_uses_existing_sql_roster_without_microsoft_graph(
     monkeypatch,
     tmp_path,
 ):
-    manifest_path = tmp_path / "v2-manifest.json"
+    manifest_path = tmp_path / "v3-manifest.json"
     connection = _Connection()
     captured: dict[str, object] = {}
 
@@ -52,9 +52,9 @@ def test_apply_corpus_uses_existing_sql_roster_without_microsoft_graph(
         captured.update(kwargs)
         return SimpleNamespace(
             sql_user_count=401,
-            nomination_count=5000,
-            decision_count=5000,
-            inserted_nomination_count=5000,
+            nomination_count=15000,
+            decision_count=15000,
+            inserted_nomination_count=15000,
             sql_user_ids_by_logical_id={
                 user.logical_id: index
                 for index, user in enumerate(kwargs["users"], start=1)
@@ -78,7 +78,7 @@ def test_apply_corpus_uses_existing_sql_roster_without_microsoft_graph(
             "--seed",
             "20260912",
             "--as-of",
-            "2026-09-12",
+            "2026-09-14",
             "--manifest-out",
             str(manifest_path),
         ],
@@ -96,4 +96,3 @@ def test_apply_corpus_uses_existing_sql_roster_without_microsoft_graph(
     }
     assert len(manifest["sql_identity_map"]) == 401
     assert "identity_map" not in manifest
-

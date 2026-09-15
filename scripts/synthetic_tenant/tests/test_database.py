@@ -50,7 +50,7 @@ def test_corpus_stage_metadata_preserves_causal_scenario_contract():
     users = generate_users(20260912)
     nomination = next(
         row
-        for row in generate_nominations(users, 20260912, date(2026, 9, 12))
+        for row in generate_nominations(users, 20260912, date(2026, 9, 14))
         if row.scenario_id is not None
     )
     user_ids = {

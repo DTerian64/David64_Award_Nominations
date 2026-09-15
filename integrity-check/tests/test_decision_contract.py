@@ -88,6 +88,20 @@ def test_each_engine_preserves_its_own_kind_of_evidence():
             "scoring_policy_version": 4,
             "graph_snapshot_id": "snapshot-test",
             "feature_schema_version": "gnn-v2-causal-v1",
+            "feature_inputs": {
+                "schema_version": 1,
+                "features": [
+                    {
+                        "name": "LogAmount",
+                        "pre_scaler_value": 7.6014,
+                        "model_input_value": 0.42,
+                    }
+                ],
+                "latent_inputs": {
+                    "nominator_embedding_dimensions": 32,
+                    "beneficiary_embedding_dimensions": 32,
+                },
+            },
             "causal_context": {
                 "schema_version": 1,
                 "features": {"LogPriorReversePairCount": 0.693147},
@@ -122,6 +136,10 @@ def test_each_engine_preserves_its_own_kind_of_evidence():
     assert payloads["gnn"]["architecture"] == "gatv2"
     assert payloads["gnn"]["training_policy_version"] == 3
     assert payloads["gnn"]["scoring_policy_version"] == 4
+    assert payloads["gnn"]["feature_inputs"]["features"][0]["name"] == "LogAmount"
+    assert payloads["gnn"]["feature_inputs"]["latent_inputs"][
+        "nominator_embedding_dimensions"
+    ] == 32
     assert payloads["gnn"]["causal_context"]["schema_version"] == 1
     assert payloads["gnn"]["explanation"]["status"] == "REQUESTED"
     assert payloads["semantic"]["llm"]["response"]["category_fit_score"] == 0.35

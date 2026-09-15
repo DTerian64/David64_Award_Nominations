@@ -495,7 +495,14 @@ The GNN result should include at least:
 {
   "available": true,
   "score": 73,
-  "probability": 0.731245,
+  "model_probability": 0.731245,
+  "score_derivation": "round(model_probability * 100)",
+  "score_thresholds": {
+    "low": 25.0,
+    "medium": 45.0,
+    "high": 65.0,
+    "critical": 85.0
+  },
   "risk_level": "HIGH",
   "architecture": "graphsage",
   "model_version": "gnn-v2-20260909-t1",
@@ -504,6 +511,26 @@ The GNN result should include at least:
   "graph_snapshot_id": "gnn-graph-v2-20260909-t1",
   "graph_snapshot_as_of": "2026-09-09T00:00:00Z",
   "feature_schema_version": "gnn-v2-causal-v1",
+  "feature_inputs": {
+    "schema_version": 1,
+    "scaler": "STANDARD_SCALER",
+    "features": [
+      {
+        "name": "LogAmount",
+        "pre_scaler_value": 7.601402,
+        "model_input_value": 0.418735
+      },
+      {
+        "name": "LogPriorReversePairCount",
+        "pre_scaler_value": 0.693147,
+        "model_input_value": 1.274991
+      }
+    ],
+    "latent_inputs": {
+      "nominator_embedding_dimensions": 32,
+      "beneficiary_embedding_dimensions": 32
+    }
+  },
   "causal_context": {
     "schema_version": 1,
     "ordering": "CreatedAt,NominationId",
@@ -524,6 +551,21 @@ The GNN result should include at least:
   }
 }
 ```
+
+`feature_inputs.features` contains every named candidate feature in the exact
+artifact column order, including amount, calendar, status, and causal topology
+features. `pre_scaler_value` is the derived value before the artifact's
+persisted standard scaler; `model_input_value` is the value actually supplied
+to the decoder. The learned user embeddings are identified by role and
+dimension but are not copied into the decision JSON as opaque vectors.
+
+The Nomination Analysis GNN card displays the score derivation and thresholds,
+serving provenance, causal signals, the complete named feature vector, and the
+GNNExplainer state or output. It must state that these values are model inputs,
+not additive contributions, and that Graph Analytics findings are independent
+of the learned GNN probability. Existing decisions created before
+`feature_inputs` was introduced continue to display their persisted
+`causal_context`; only new inference records can show the complete vector.
 
 The decoder, architecture-specific user embeddings, preprocessing state, model
 version, graph snapshot, and causal-context feature contract are one serving

@@ -15,6 +15,10 @@ os.environ.setdefault("AZURE_STORAGE_ACCOUNT", "teststorage")
 os.environ.setdefault("SQL_SERVER", "test.invalid")
 os.environ.setdefault("SQL_DATABASE", "test")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(
+    0,
+    str(Path(__file__).resolve().parents[2] / "integrity-engine-core" / "src"),
+)
 
 from inference import gnn_check
 
@@ -283,6 +287,38 @@ class GnnP2PContractTests(unittest.TestCase):
         directed_index = CAUSAL_FEATURES.index("LogPriorDirectedPairCount")
         self.assertGreater(values[path_index], 0.0)
         self.assertEqual(values[directed_index], 0.0)
+
+    def test_feature_bundle_records_every_named_input_before_and_after_scaling(self):
+        head = {
+            "feature_schema_version": "gnn-v2",
+            "nomination_feature_columns": V2_FEATURES,
+            "nomination_scaler_mean": [1.0] * len(V2_FEATURES),
+            "nomination_scaler_std": [2.0] * len(V2_FEATURES),
+            "amount_mean": 0.0,
+            "amount_std": 0.0,
+            "category_amount_stats": {
+                "global": {"median": 100.0, "scale": 20.0},
+                "categories": {},
+            },
+        }
+
+        model_row, audit = gnn_check._nomination_feature_bundle(
+            {
+                "amount": 300.0,
+                "category_id": 9,
+                "nomination_date": date(2026, 9, 9),
+            },
+            head,
+        )
+
+        assert [item["name"] for item in audit["features"]] == V2_FEATURES
+        assert len(audit["features"]) == model_row.shape[1]
+        self.assertAlmostEqual(
+            audit["features"][0]["pre_scaler_value"], np.log1p(300.0), places=6
+        )
+        self.assertAlmostEqual(
+            audit["features"][0]["model_input_value"], model_row[0, 0]
+        )
 
 
 if __name__ == "__main__":

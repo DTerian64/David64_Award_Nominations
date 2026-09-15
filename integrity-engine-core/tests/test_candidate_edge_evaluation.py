@@ -12,7 +12,10 @@ from integrity_engine import (
     SnapshotNomination,
     evaluate_candidate_edge_for_ring,
 )
-from integrity_engine.graph.finding_scoring import calculate_graph_finding_score
+from integrity_engine.graph.finding_scoring import (
+    calculate_graph_finding_score,
+    calculate_ring_compactness,
+)
 
 
 NOW = datetime(2026, 9, 4, 12, tzinfo=timezone.utc)
@@ -34,7 +37,7 @@ POLICY = {
             },
             "candidate_evaluation": {
                 "max_states": 100_000,
-                "max_ring_size": 8,
+                "max_ring_size": 4,
                 "limit_strategy": "BEST_EVIDENCE",
             },
         }
@@ -143,7 +146,7 @@ def test_candidate_evaluation_settings_are_read_from_the_ring_policy():
                 **POLICY["patterns"]["Ring"],
                 "candidate_evaluation": {
                     "max_states": 1,
-                    "max_ring_size": 8,
+                    "max_ring_size": 4,
                     "limit_strategy": "BEST_EVIDENCE",
                 },
             }
@@ -162,6 +165,24 @@ def test_candidate_evaluation_settings_are_read_from_the_ring_policy():
     assert result is not None
     assert result.configured_max_states == 1
     assert result.search_status == "BOUNDED"
+
+
+def test_five_person_ring_is_outside_the_supported_scope():
+    graph = snapshot(
+        nomination(10, 2, 3),
+        nomination(11, 3, 4),
+        nomination(12, 4, 5),
+        nomination(13, 5, 1),
+    )
+
+    assert evaluate_candidate_edge_for_ring(graph, candidate()) is None
+
+
+def test_ring_compactness_decay_span_is_policy_owned():
+    assert calculate_ring_compactness(3, {"compactness_decay_span": 5}) == 1.0
+    assert calculate_ring_compactness(4, {"compactness_decay_span": 5}) == 0.8
+    with pytest.raises(ValueError, match="must be positive"):
+        calculate_ring_compactness(4, {"compactness_decay_span": 0})
 
 
 def test_result_is_deterministic_when_snapshot_input_order_changes():
@@ -207,7 +228,9 @@ def test_pruned_search_matches_exhaustive_search_on_small_graphs():
                 signals = {
                     "exposure": min(total / 10_000, 1.0),
                     "repeat": min((used_edges + 1) / (len(path) * 3), 1.0),
-                    "compactness": max(0.0, 1.0 - ((len(path) - 3) / 5.0)),
+                    "compactness": calculate_ring_compactness(
+                        len(path), ring["parameters"]
+                    ),
                 }
                 score, _components = calculate_graph_finding_score(
                     base_score=ring["base_score"],
@@ -218,7 +241,7 @@ def test_pruned_search_matches_exhaustive_search_on_small_graphs():
                 )
                 best_score = score if best_score is None else max(best_score, score)
                 return
-            if used_edges >= 7:
+            if used_edges >= 3:
                 return
             for neighbor in range(1, 7):
                 if (node, neighbor) in edge_amount and neighbor not in path:

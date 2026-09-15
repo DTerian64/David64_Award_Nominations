@@ -5,6 +5,17 @@ from __future__ import annotations
 from typing import Mapping
 
 
+def calculate_ring_compactness(
+    ring_size: int,
+    parameters: Mapping[str, float],
+) -> float:
+    """Return the Ring compactness signal using the policy-owned decay span."""
+    decay_span = float(parameters.get("compactness_decay_span", 5.0))
+    if decay_span <= 0:
+        raise ValueError("Ring compactness_decay_span must be positive")
+    return max(0.0, min(1.0, 1.0 - ((float(ring_size) - 3.0) / decay_span)))
+
+
 def derive_graph_finding_severity(
     finding_score: float,
     thresholds: Mapping[str, float],

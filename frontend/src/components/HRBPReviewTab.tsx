@@ -54,8 +54,51 @@ export interface EngineResult {
   unavailable_detail?: string | null;
   score?: number | null;
   model_probability?: number | null;
+  score_derivation?: string | null;
+  score_thresholds?: Record<string, number>;
   risk_level?: string;
+  flagged?: boolean;
   findings?: string[];
+  model_version?: string | null;
+  architecture?: string | null;
+  training_policy_id?: number | null;
+  training_policy_version?: number | null;
+  scoring_policy_id?: number | null;
+  scoring_policy_version?: number | null;
+  embedding_as_of?: string | null;
+  graph_snapshot_id?: string | null;
+  graph_snapshot_as_of?: string | null;
+  feature_schema_version?: string | null;
+  feature_inputs?: {
+    schema_version?: number;
+    feature_schema_version?: string | null;
+    scaler?: string;
+    features?: Array<{
+      name: string;
+      pre_scaler_value: number;
+      model_input_value: number;
+    }>;
+    latent_inputs?: {
+      nominator_embedding_dimensions?: number;
+      beneficiary_embedding_dimensions?: number;
+    };
+  } | null;
+  provenance?: {
+    registry_serving_status?: string | null;
+    last_attempt_status?: string | null;
+    last_attempt_at?: string | null;
+    last_successful_at?: string | null;
+    status_run_id?: string | null;
+    status_updated_at?: string | null;
+  };
+  causal_context?: {
+    schema_version?: number;
+    ordering?: string;
+    target_cutoff?: string;
+    window_days?: number;
+    eligible_edge_count?: number;
+    features?: Record<string, number>;
+  } | null;
   winning_pattern_type?: string | null;
   winning_pattern_count?: number;
   winning_finding?: {
@@ -96,8 +139,29 @@ export interface EngineResult {
   beneficiary_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   shared_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   explanation?: {
+    method?: string | null;
+    status?: string | null;
+    reason?: string | null;
+    detail?: string | null;
+    request_id?: string | null;
+    fidelity?: number | null;
+    stability?: number | null;
+    summary?: string | null;
     llm_text?: string | null;
-    top_features?: ShapContribution[];
+    top_features?: Array<ShapContribution | {
+      scope?: string;
+      name?: string;
+      feature?: string;
+      value?: number;
+      importance?: number;
+      direction?: string;
+    }>;
+    top_relationships?: Array<{
+      relationship?: string;
+      counterparty_user_id?: number;
+      supporting_nomination_count?: number;
+      importance?: number;
+    }>;
     shap_status?: string | null;
     shap_reason?: string | null;
   };
@@ -279,6 +343,177 @@ export const GraphScoreContribution: React.FC<{
   );
 };
 
+const GNN_CAUSAL_FEATURES: Array<[string, string]> = [
+  ['LogPriorDirectedPairCount', 'Prior same-direction pair nominations'],
+  ['LogPriorReversePairCount', 'Prior reverse-direction pair nominations'],
+  ['LogReverseTwoHopPathCount', 'Two-hop return paths closed by this nomination'],
+  ['LogNominatorOutgoingCount30d', 'Nominator outgoing nominations · 30 days'],
+  ['LogNominatorUniqueBeneficiaries30d', 'Nominator unique beneficiaries · 30 days'],
+  ['LogBeneficiaryIncomingCount30d', 'Beneficiary incoming nominations · 30 days'],
+  ['LogBeneficiaryUniqueNominators30d', 'Beneficiary unique nominators · 30 days'],
+  ['LogDirectedPairCount30d', 'Same-direction pair nominations · 30 days'],
+  ['LogBeneficiaryIncomingCount1h', 'Beneficiary incoming nominations · 1 hour'],
+  ['LogEndpointEdgeCount1h', 'Either endpoint nominations · 1 hour'],
+];
+
+const GNN_FEATURE_LABELS: Record<string, string> = {
+  LogAmount: 'Award amount (log1p)',
+  CategoryRelativeAmountRobustZScore: 'Amount relative to category',
+  DaysBeforeGraphCutoff: 'Days before graph cutoff',
+  DayOfWeekSin: 'Day-of-week cycle · sine',
+  DayOfWeekCos: 'Day-of-week cycle · cosine',
+  MonthSin: 'Month cycle · sine',
+  MonthCos: 'Month cycle · cosine',
+  HistoricalStatus: 'Historical status',
+  ...Object.fromEntries(GNN_CAUSAL_FEATURES),
+};
+
+const featureCount = (value: number) => Math.max(0, Math.round(Math.expm1(value)));
+const featureInput = (value: number) => Number.isFinite(value) ? value.toFixed(4) : '—';
+const readableCode = (value?: string | null) => value
+  ? value.replace(/_/g, ' ').toLowerCase().replace(/^./, first => first.toUpperCase())
+  : 'Unavailable';
+
+/** Complete persisted GNN inference context for the data-scientist analysis view. */
+export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine }) => {
+  const context = engine.causal_context;
+  const features = context?.features || {};
+  const knownKeys = new Set(GNN_CAUSAL_FEATURES.map(([key]) => key));
+  const featureRows = [
+    ...GNN_CAUSAL_FEATURES
+      .filter(([key]) => Number.isFinite(features[key]))
+      .map(([key, label]) => ({ key, label, value: features[key] })),
+    ...Object.entries(features)
+      .filter(([key, value]) => !knownKeys.has(key) && Number.isFinite(value))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => ({ key, label: key, value })),
+  ];
+  const signalKeys = [
+    'LogPriorDirectedPairCount',
+    'LogPriorReversePairCount',
+    'LogReverseTwoHopPathCount',
+    'LogDirectedPairCount30d',
+    'LogEndpointEdgeCount1h',
+  ];
+  const explanation = engine.explanation;
+  const topFeatures = explanation?.top_features || [];
+  const topRelationships = explanation?.top_relationships || [];
+  const persistedFeatureRows = engine.feature_inputs?.features || [];
+  const thresholds = engine.score_thresholds || {};
+
+  return (
+    <div className="mt-3 space-y-3 text-xs text-slate-700">
+      <div className="rounded border border-violet-200 bg-violet-50 p-2">
+        <p className="font-semibold text-violet-900">GNN inference summary</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {engine.architecture && <span className="rounded-full border border-violet-200 bg-white px-2 py-0.5">Architecture <strong>{engine.architecture.toUpperCase()}</strong></span>}
+          {engine.model_version && <span className="rounded-full border border-violet-200 bg-white px-2 py-0.5">Model <strong>{engine.model_version}</strong></span>}
+          {engine.feature_schema_version && <span className="rounded-full border border-violet-200 bg-white px-2 py-0.5">Features <strong>{engine.feature_schema_version}</strong></span>}
+          {context?.eligible_edge_count !== undefined && <span className="rounded-full border border-violet-200 bg-white px-2 py-0.5">Eligible historical edges <strong>{context.eligible_edge_count}</strong></span>}
+        </div>
+        <dl className="mt-2 grid gap-x-3 gap-y-1 sm:grid-cols-2">
+          <div><dt className="inline text-slate-500">Embedding as of: </dt><dd className="inline font-medium">{engine.embedding_as_of || '—'}</dd></div>
+          <div><dt className="inline text-slate-500">Graph snapshot as of: </dt><dd className="inline font-medium">{engine.graph_snapshot_as_of || '—'}</dd></div>
+          <div><dt className="inline text-slate-500">Training policy: </dt><dd className="inline font-medium">{engine.training_policy_id ?? '—'} / v{engine.training_policy_version ?? '—'}</dd></div>
+          <div><dt className="inline text-slate-500">Scoring policy: </dt><dd className="inline font-medium">{engine.scoring_policy_id ?? '—'} / v{engine.scoring_policy_version ?? '—'}</dd></div>
+          <div><dt className="inline text-slate-500">Context window: </dt><dd className="inline font-medium">{context?.window_days !== undefined ? `${context.window_days} days` : '—'}</dd></div>
+          <div><dt className="inline text-slate-500">Target cutoff: </dt><dd className="inline font-medium">{context?.target_cutoff || '—'}</dd></div>
+          <div><dt className="inline text-slate-500">Registry status: </dt><dd className="inline font-medium">{engine.provenance?.registry_serving_status || engine.status || '—'}</dd></div>
+          <div><dt className="inline text-slate-500">Latest training attempt: </dt><dd className="inline font-medium">{engine.provenance?.last_attempt_status || '—'}</dd></div>
+        </dl>
+        {engine.graph_snapshot_id && <p className="mt-1 break-all text-[10px] text-slate-500">Snapshot {engine.graph_snapshot_id}</p>}
+        {engine.provenance?.status_run_id && <p className="mt-1 break-all text-[10px] text-slate-500">Training run {engine.provenance.status_run_id}</p>}
+        {engine.score_derivation && <p className="mt-2 text-[10px] text-slate-600">Score derivation: <span className="font-mono">{engine.score_derivation}</span></p>}
+        {Object.keys(thresholds).length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {(['low', 'medium', 'high', 'critical'] as const).filter(level => thresholds[level] !== undefined).map(level => (
+              <span key={level} className="rounded border border-violet-200 bg-white px-2 py-0.5">{level} ≥ <strong>{thresholds[level]}</strong></span>
+            ))}
+          </div>
+        )}
+        <p className="mt-2 rounded bg-white/70 px-2 py-1.5 text-[10px] leading-relaxed text-slate-600">
+          This score is a learned probability from the two user embeddings and the named feature vector below. Graph Analytics pattern scores do not feed the GNN, so an explicit ring finding can coexist with a low GNN score.
+        </p>
+      </div>
+
+      {featureRows.length > 0 && (
+        <div className="rounded border border-slate-200 bg-slate-50 p-2">
+          <p className="font-semibold text-slate-900">Causal graph signals</p>
+          <p className="text-[10px] text-slate-500">Observed counts reconstructed from the stored log1p model inputs.</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {signalKeys.filter(key => Number.isFinite(features[key])).map(key => {
+              const label = GNN_CAUSAL_FEATURES.find(([candidate]) => candidate === key)?.[1] || key;
+              return <span key={key} className="rounded-full border border-indigo-200 bg-white px-2 py-0.5" title={`${key}: ${featureInput(features[key])}`}>{label}: <strong>{featureCount(features[key])}</strong></span>;
+            })}
+          </div>
+          <div className="mt-3 overflow-hidden rounded border border-slate-200 bg-white">
+            {featureRows.map((row, index) => (
+              <div key={row.key} className={`grid grid-cols-[1fr_auto] gap-3 px-2 py-1.5 ${index ? 'border-t border-slate-100' : ''}`} title={row.key}>
+                <span>{row.label}</span>
+                <span className="text-right font-mono text-slate-900">
+                  {row.key.startsWith('Log') ? featureCount(row.value) : featureInput(row.value)}
+                  {row.key.startsWith('Log') && <span className="ml-2 text-[10px] text-slate-400">input {featureInput(row.value)}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] text-slate-500">
+            These are inputs, not additive score contributions. The prediction also uses learned nominator and beneficiary embeddings; attribution requires GNNExplainer.
+          </p>
+        </div>
+      )}
+
+      {persistedFeatureRows.length > 0 && (
+        <div className="rounded border border-slate-200 bg-slate-50 p-2">
+          <p className="font-semibold text-slate-900">Complete GNN feature vector</p>
+          <p className="text-[10px] text-slate-500">Every named candidate feature in artifact column order. “Model input” is the value after the persisted standard scaler.</p>
+          <div className="mt-2 overflow-hidden rounded border border-slate-200 bg-white">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              <span>Feature</span><span>Before scaler</span><span>Model input</span>
+            </div>
+            {persistedFeatureRows.map((feature, index) => (
+              <div key={`${feature.name}-${index}`} className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-t border-slate-100 px-2 py-1.5" title={feature.name}>
+                <span className="min-w-0">{GNN_FEATURE_LABELS[feature.name] || feature.name}</span>
+                <span className="text-right font-mono text-slate-700">{featureInput(feature.pre_scaler_value)}</span>
+                <span className="text-right font-mono text-slate-900">{featureInput(feature.model_input_value)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-slate-600">
+            {engine.feature_inputs?.latent_inputs?.nominator_embedding_dimensions !== undefined && <span className="rounded bg-white px-2 py-0.5">Nominator embedding: <strong>{engine.feature_inputs.latent_inputs.nominator_embedding_dimensions} dimensions</strong></span>}
+            {engine.feature_inputs?.latent_inputs?.beneficiary_embedding_dimensions !== undefined && <span className="rounded bg-white px-2 py-0.5">Beneficiary embedding: <strong>{engine.feature_inputs.latent_inputs.beneficiary_embedding_dimensions} dimensions</strong></span>}
+          </div>
+        </div>
+      )}
+
+      {explanation && (
+        <div className="rounded border border-indigo-200 bg-indigo-50 p-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-semibold text-indigo-900">GNNExplainer</p>
+            <span className="rounded-full border border-indigo-200 bg-white px-2 py-0.5 font-semibold text-indigo-700">{readableCode(explanation.status)}</span>
+          </div>
+          {explanation.reason && <p className="mt-1 text-slate-600">{readableCode(explanation.reason)}</p>}
+          {explanation.detail && <p className="mt-1 text-slate-600">{explanation.detail}</p>}
+          {explanation.summary && <p className="mt-2 leading-relaxed">{explanation.summary}</p>}
+          {(explanation.fidelity !== null && explanation.fidelity !== undefined) && <span className="mr-2 mt-2 inline-block rounded bg-white px-2 py-0.5">Fidelity {(explanation.fidelity * 100).toFixed(1)}%</span>}
+          {(explanation.stability !== null && explanation.stability !== undefined) && <span className="mt-2 inline-block rounded bg-white px-2 py-0.5">Stability {(explanation.stability * 100).toFixed(1)}%</span>}
+          {topRelationships.length > 0 && (
+            <div className="mt-2"><p className="font-semibold">Top relationships</p>{topRelationships.map((relationship, index) => <p key={index} className="mt-1">{relationship.relationship || 'Relationship'}{relationship.counterparty_user_id !== undefined ? ` · user #${relationship.counterparty_user_id}` : ''}{relationship.importance !== undefined ? ` · importance ${(relationship.importance * 100).toFixed(1)}%` : ''}</p>)}</div>
+          )}
+          {topFeatures.length > 0 && (
+            <div className="mt-2"><p className="font-semibold">Top attributed features</p>{topFeatures.map((feature, index) => {
+              const name = 'name' in feature ? feature.name : feature.feature;
+              const importance = 'importance' in feature ? feature.importance : undefined;
+              const value = 'value' in feature ? feature.value : ('raw_value' in feature ? feature.raw_value : undefined);
+              return <p key={index} className="mt-1">{name || 'Feature'}{value !== undefined ? ` · value ${value}` : ''}{importance !== undefined ? ` · importance ${(importance * 100).toFixed(1)}%` : ''}</p>;
+            })}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 type HRBPOutcome =
   | 'CLEARED_NO_CONCERN'
   | 'CLEARED_UNSUBSTANTIATED'
@@ -356,7 +591,10 @@ export const RiskBadge: React.FC<{ level: string | null }> = ({ level }) => {
   );
 };
 
-export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
+export const EngineVerdicts: React.FC<{
+  item: HRBPQueueItem;
+  showTechnicalDetails?: boolean;
+}> = ({ item, showTechnicalDetails = false }) => {
   if (item.decision_source === 'legacy') {
     return (
       <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -392,12 +630,13 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
           </span>
         )}
       </div>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${showTechnicalDetails ? 'xl:grid-cols-3' : 'xl:grid-cols-4'}`}>
         {entries.map(([label, engine]) => {
           if (!engine) return null;
           const isSemantic = label === 'Semantic';
           const isGraph = label === 'Graph Analytics';
           const isRf = label === 'Random Forest';
+          const isGnn = label === 'GNN';
           const action = engine.combined_decision?.action;
           const findings = [
             ...(engine.findings || []),
@@ -407,7 +646,7 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
             ? engine.explanation?.llm_text || item.llm_explanation
             : null;
           return (
-            <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
+            <div key={label} className={`rounded-lg border border-slate-200 bg-white p-3 ${isGnn && showTechnicalDetails ? 'order-last md:col-span-2 xl:col-span-3' : ''}`}>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold text-slate-800">{label}</p>
                 {isSemantic
@@ -469,6 +708,7 @@ export const EngineVerdicts: React.FC<{ item: HRBPQueueItem }> = ({ item }) => {
                 </div>
               )}
               {isRf && <ShapPanel topFeatures={engine.explanation?.top_features || item.top_features} />}
+              {isGnn && showTechnicalDetails && <GnnAnalysisDetails engine={engine} />}
             </div>
           );
         })}

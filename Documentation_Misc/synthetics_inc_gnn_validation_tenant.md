@@ -30,11 +30,12 @@ tenant. Every generated row remains inside the Synthetics Inc. tenant boundary.
 | Operational administrator | `David64 Terian` |
 | Total destination user rows | 401: 400 corpus users plus 1 administrator |
 | User UPN suffix | `@synthetics.terian-services.com` |
-| Corpus nominations | 5,000 synthetic nominations |
+| Corpus nominations | 15,000 synthetic nominations |
 | Ground-truth prevalence | 98% legitimate / 2% fraud |
 | Synthetic history | 365 days |
-| Generator version | `synthetics-inc-v2.0` |
+| Generator version | `synthetics-inc-v3.0` |
 | Deterministic seed | `20260912` |
+| Exclusive as-of boundary | `2026-09-14T00:00:00Z` |
 
 The database `TenantId` must be discovered from the organization identifier;
 scripts and migrations must not assume that it is numerically `4`. Before
@@ -109,7 +110,7 @@ Initial allowed sources:
 ```json
 {
   "schema_version": 2,
-  "generator_version": "synthetics-inc-v2.0",
+  "generator_version": "synthetics-inc-v3.0",
   "generation_run_id": "<uuid>",
   "seed": 20260912,
   "scenario_id": "<stable-id>",
@@ -427,10 +428,11 @@ rows require a design amendment; support-admin impersonation is preferred.
 
 ### 8.1 Volume and time
 
-Generate exactly 5,000 nominations over the most recent complete 365-day window:
+Generate exactly 15,000 nominations from `2025-09-14` through `2026-09-13`.
+The fixed `2026-09-14T00:00:00Z` as-of instant is an exclusive boundary:
 
-- 255 days contain 14 nominations;
-- 110 days contain 13 nominations;
+- 35 days contain 42 nominations;
+- 330 days contain 41 nominations;
 - dates and times are distributed across working hours with a small realistic
   weekend population;
 - all timestamps are UTC and never in the future; and
@@ -443,16 +445,26 @@ The rolling GNN policy uses five chronological segments for three folds:
 Time ---------------------------------------------------------------------->
         S0             S1             S2             S3             S4
    graph history   train fold 1   train fold 2   train fold 3   holdout
-      1,000           1,000          1,000          1,000          1,000
+       3,000           3,000          3,000          3,000          3,000
 ```
 
-Each segment contains exactly 980 legitimate and 20 fraudulent nominations.
+Each 73-day segment contains exactly 2,940 legitimate and 60 fraudulent
+nominations. The exact UTC date ranges are:
+
+| Segment | Inclusive date range | Role |
+|---|---|---|
+| S0 | 2025-09-14–2025-11-25 | Graph history |
+| S1 | 2025-11-26–2026-02-06 | Rolling train fold 1 |
+| S2 | 2026-02-07–2026-04-20 | Rolling train fold 2 |
+| S3 | 2026-04-21–2026-07-02 | Rolling train fold 3 |
+| S4 | 2026-07-03–2026-09-13 | Final untouched holdout |
+
 Expected supervised populations are therefore:
 
 | Population | Legitimate | Fraud |
 |---|---:|---:|
-| Rolling train, S1–S3 | 2,940 | 60 |
-| Final holdout, S4 | 980 | 20 |
+| Rolling train, S1–S3 | 8,820 | 180 |
+| Final holdout, S4 | 2,940 | 60 |
 
 S0 establishes graph history. Its truth remains auditable but does not become a
 rolling training target under the current fold construction.
@@ -463,7 +475,7 @@ rolling training target under the current fold construction.
 - Respect tenant and category minimum/maximum award amounts.
 - Pin the deterministic generator to the cloned Tenant 1 category bounds and
   fail closed during SQL preflight if the live cloned policy no longer accepts
-  an amount. Each temporal segment contains 200 nominations from each of the
+  an amount. Each temporal segment contains 600 nominations from each of the
   five categories so category identity cannot act as a proxy for time/fold.
 - Generate a realistic category-relative amount distribution with legitimate
   high-value and low-value examples.
@@ -477,9 +489,9 @@ rolling training target under the current fold construction.
 
 ### 8.3 Workflow states
 
-This is a historical model-validation import, not a replay of 5,000 live Service
+This is a historical model-validation import, not a replay of 15,000 live Service
 Bus submissions. Do not publish `nomination.submitted` events during the bulk
-load and do not incur 5,000 LLM calls.
+load and do not incur 15,000 LLM calls.
 
 Use plausible historical statuses:
 
@@ -499,38 +511,38 @@ and scenario chronology.
 
 ### 9.1 Fraud allocation
 
-Create exactly 100 unique fraudulent nominations. An initial allocation is:
+Create exactly 300 unique fraudulent nominations. The allocation is:
 
 | Scenario family | Fraud nominations | Primary signal |
 |---|---:|---|
-| Closed nomination rings | 30 | Multi-hop closed-cycle topology |
-| Reciprocal/coordinated exchange | 20 | Counter-direction and repeated-pair history |
-| Concentrated serial nominations | 20 | Unusually narrow beneficiary behavior |
-| Coordinated bursts | 15 | Temporal clustering among related actors |
-| Category-relative amount abuse | 10 | Amount behavior relative to category history |
-| Mixed topology and amount | 5 | Multiple moderate signals |
+| Closed nomination rings | 90 | Multi-hop closed-cycle topology |
+| Reciprocal/coordinated exchange | 60 | Counter-direction and repeated-pair history |
+| Concentrated serial nominations | 60 | Unusually narrow beneficiary behavior |
+| Coordinated bursts | 45 | Temporal clustering among related actors |
+| Category-relative amount abuse | 30 | Amount behavior relative to category history |
+| Mixed topology and amount | 15 | Multiple moderate signals |
 
-Every temporal segment receives 20 fraud targets, with representation from
+Every temporal segment receives 60 fraud targets, with representation from
 multiple families. Do not perform a Bernoulli 2% draw; exact quotas prevent a
 fold from falling below the training gate.
 
 ### 9.2 Temporal scenario construction
 
-Every one of the 100 fraud targets belongs to a stable causal scenario with
+Every one of the 300 fraud targets belongs to a stable causal scenario with
 exactly two earlier, legitimate-looking precursor nominations. The target is
 the first row at which the full suspicious condition is created or materially
 strengthened. This prevents the label from describing topology that does not
 yet exist when the target is scored.
 
-The v2 corpus deliberately tests two inference contexts:
+The v3 corpus deliberately tests two inference contexts:
 
 | Context | Target count | Precursor placement | Detection contract |
 |---|---:|---|---|
-| `ESTABLISHED` | 40 | Earlier immutable graph segment | Weekly user embeddings must carry the prior relationship signal |
-| `ACTIVE` | 60 | Shortly before the target in its own segment | Live causal delta features must detect topology formed after the weekly snapshot |
+| `ESTABLISHED` | 120 | Earlier immutable graph segment | Weekly user embeddings must carry the prior relationship signal |
+| `ACTIVE` | 180 | Shortly before the target in its own segment | Live causal delta features must detect topology formed after the weekly snapshot |
 
-S0 is graph-history warm-up and therefore assigns all 20 targets to `ACTIVE`.
-Each of S1 through S4 contains 10 `ACTIVE` and 10 `ESTABLISHED` targets. Active
+S0 is graph-history warm-up and therefore assigns all 60 targets to `ACTIVE`.
+Each of S1 through S4 contains 30 `ACTIVE` and 30 `ESTABLISHED` targets. Active
 burst precursors and their target occur within five minutes; other active
 precursors occur shortly before the target without deliberately introducing a
 burst shortcut. Established precursors are placed far enough back to be inside
@@ -548,7 +560,7 @@ Examples of the required causal shape are:
 
 The current weekly snapshot decoder cannot see `ACTIVE` precursors by itself.
 The training and inference pipelines must add the same strictly-prior live
-delta feature contract before v2 is eligible for deployment. Reseeding alone
+delta feature contract before v3 is eligible for deployment. Reseeding alone
 does not provide that capability.
 
 Reserve distinct actors and structures for S4 wherever practical. A model that
@@ -618,9 +630,8 @@ python scripts/synthetic_tenant/seed_synthetics_inc.py --apply
 python scripts/synthetic_tenant/seed_synthetics_inc.py --validate
 ```
 
-An explicit corpus-replacement/reset command is intentionally not implemented
-yet. The existing v1.1 deployment must remain intact until dependency discovery
-and the guarded reset described in section 15 are complete.
+Corpus replacement uses the guarded, manifest-pinned SQL runbook described in
+section 15. The seeder itself deliberately has no destructive reset mode.
 
 Required directory-provisioning configuration must be supplied through secrets
 or workload identity, never committed configuration:
@@ -651,11 +662,17 @@ The GNN metrics should reference its generation run ID and configuration hash.
 ## 12. Build sequence
 
 Implementation status as of 2026-09-14: migration `0060`, tenant configuration,
-directory/SQL users, and the v1.1 corpus have been deployed. The v2.0 causal
-scenario generator and offline validation are implemented, but the deployed
-corpus has not been changed. The shared `gnn-v2-causal-v1` training, serving,
-persistence, and explanation path is now implemented. The guarded replacement
-path and deployment evaluation remain prerequisites before v2.0 is applied.
+directory/SQL users, and the 5,000-row v2.0 corpus are deployed. The expanded
+15,000-row v3.0 generator is implemented and validated offline. The shared
+`gnn-v2-causal-v1` training, serving, persistence, and explanation path is
+implemented. The v2.0-to-v3.0 guarded replacement and a new analytics run remain
+to be performed manually.
+
+The fixed v3.0 corpus identity is:
+
+- corpus SHA-256: `3883c2d69397564dc63286c786cd8cda0e2a43af2d5409fe42fb989737f880ed`;
+- generation run ID: `e7d48607-01c2-580f-9c6c-100bf506e190`; and
+- exclusive as-of boundary: `2026-09-14`.
 
 ### Phase A — schema and code safeguards
 
@@ -703,9 +720,9 @@ path and deployment evaluation remain prerequisites before v2.0 is applied.
 ### Phase E — scenario plan and nominations
 
 1. Build hidden scenario truth and stable scenario IDs.
-2. Allocate exactly 1,000 nominations and 20 fraud cases to each segment.
+2. Allocate exactly 3,000 nominations and 60 fraud cases to each segment.
 3. Give each fraud target two strictly earlier causal precursor rows.
-4. Allocate 60 targets to active context and 40 to established context.
+4. Allocate 180 targets to active context and 120 to established context.
 5. Create hard-negative cohorts before generating target rows.
 6. Generate categories, amounts, descriptions, approvers, timestamps, statuses,
    and audit actors.
@@ -717,8 +734,8 @@ path and deployment evaluation remain prerequisites before v2.0 is applied.
 1. Run Graph Analytics and RF training normally for Synthetics Inc.; their
    output does not modify ground truth.
 2. Run the GNN training job with candidate architectures from the cloned policy.
-3. Confirm the job reports 60 fraud/2,940 legitimate rolling-train targets and
-   20 fraud/980 legitimate final-holdout targets, allowing small differences
+3. Confirm the job reports 180 fraud/8,820 legitimate rolling-train targets and
+   60 fraud/2,940 legitimate final-holdout targets, allowing small differences
    only when explained by explicit eligibility rules.
 4. Inspect candidate `metrics.json` files and the selected architecture.
 5. Verify that the serving artifact references the synthetic generation run.
@@ -757,12 +774,13 @@ path and deployment evaluation remain prerequisites before v2.0 is applied.
 
 ### 13.3 Corpus and labels
 
-- Exactly 5,000 nominations exist inside the 365-day window.
-- Exactly 4,900 are `LEGITIMATE` and 100 are `FRAUD`.
-- Every chronological segment contains 1,000 nominations and 20 fraud labels.
+- Exactly 15,000 nominations exist inside the 365-day window ending immediately
+  before the exclusive `2026-09-14` boundary.
+- Exactly 14,700 are `LEGITIMATE` and 300 are `FRAUD`.
+- Every chronological segment contains 3,000 nominations and 60 fraud labels.
 - Every fraud target has exactly two strictly earlier legitimate precursors
   carrying the same stable scenario ID.
-- The corpus contains exactly 60 `ACTIVE` and 40 `ESTABLISHED` fraud targets.
+- The corpus contains exactly 180 `ACTIVE` and 120 `ESTABLISHED` fraud targets.
 - Every training label source is `SYNTHETIC_GROUND_TRUTH`.
 - No row claims a human reviewer for synthetic truth.
 - No description or user-facing field exposes scenario or label markers.
@@ -833,8 +851,8 @@ permanent replacement mode is intentionally not part of the application or
 seeder.
 
 The script resolves the tenant from the exact organization identifier and then
-verifies its name, domain, synthetic flag, 401-user count, v1.1 corpus hash,
-generation run ID, and exact 5,000-row ownership envelope. It fails closed if a
+verifies its name, domain, synthetic flag, 401-user count, deployed v2.0 corpus
+hash, generation run ID, and exact 5,000-row ownership envelope. It fails closed if a
 nomination is not manifest-owned, a cross-tenant reference exists, or a later
 migration has introduced an unrecognized foreign-key child.
 
@@ -843,7 +861,7 @@ table inventory, performs the full operation and post-delete checks, and rolls
 everything back. After reviewing that preview, set `@CommitChanges = 1` and run
 the entire script again. The committed operation:
 
-1. removes the v1.1 nominations, decisions, logs, Service Bus processing rows,
+1. removes the v2.0 nominations, decisions, logs, Service Bus processing rows,
    graph edges, nomination embeddings, findings, graph flags, tenant GNN user
    embeddings, and corpus-related Graph change requests;
 2. preserves all 401 SQL and Entra users, including `David64 Terian`;
@@ -854,7 +872,7 @@ the entire script again. The committed operation:
 
 Immutable blobs are not deleted. Invalidating their serving pointers prevents
 them from being selected, while the next analytics run publishes new versioned
-artifacts. After the committed reset, run the v2.0 seeder `--apply-corpus`
+artifacts. After the committed reset, run the v3.0 seeder `--apply-corpus`
 workflow. This path uses the provider-hosted SQL connection, requires the full
 401-user roster, and deliberately skips Microsoft Graph because the customer
 directory identities were preserved. Then run the analytics job.
@@ -862,7 +880,7 @@ directory identities were preserved. Then run the analytics job.
 ## 16. Implementation boundary
 
 This document approves the design, population, branding, and build sequence.
-The v2.0 corpus and shared causal contract are implemented and validated
-offline. Applying v2.0 requires the guarded SQL reset above followed by the
+The v3.0 corpus and shared causal contract are implemented and validated
+offline. Applying v3.0 requires the guarded SQL reset above followed by the
 resumable `--apply-corpus` workflow. Do not manually delete individual rows or
 run a corpus apply before the reset transaction commits.

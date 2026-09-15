@@ -172,7 +172,7 @@ edge stream with bounded counters; any later caching optimization must reproduce
 the same vector.
 
 The implementation persists weekly embeddings and computes the live causal
-vector under the shared `gnn-v2-causal-v1` contract. The Synthetics Inc. v2.0
+vector under the shared `gnn-v2-causal-v1` contract. The Synthetics Inc. v3.0
 corpus separates `ESTABLISHED` and `ACTIVE` targets so the two behaviors can be
 validated independently rather than hidden inside one aggregate metric. Legacy
 `gnn-v2` artifacts remain readable for rollback but do not receive live causal
@@ -676,9 +676,9 @@ Existing phase 2b automated tests cover:
 - feature-schema and artifact snapshot round trips; and
 - restricted artifact deserialization.
 
-The Synthetics Inc. v2.0 generator additionally verifies that every fraud target
-has exactly two earlier causal precursors, preserves the exact 60-active/
-40-established target allocation, and carries scenario identity, phase, and
+The Synthetics Inc. v3.0 generator additionally verifies that every fraud target
+has exactly two earlier causal precursors, preserves the exact 180-active/
+120-established target allocation, and carries scenario identity, phase, and
 context into training-disposition metadata.
 
 The implementation includes tests for deterministic selection, MLP admission,

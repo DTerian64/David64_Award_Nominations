@@ -84,7 +84,7 @@ const ReadOnlyEvidence: React.FC<{
           {item.description}
         </p>
 
-        <EngineVerdicts item={item} />
+        <EngineVerdicts item={item} showTechnicalDetails />
 
         {item.decision_source === 'legacy' && item.warning_flags.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">

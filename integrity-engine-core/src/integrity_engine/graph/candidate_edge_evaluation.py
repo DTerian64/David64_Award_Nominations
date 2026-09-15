@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from .finding_scoring import (
     calculate_graph_finding_score,
+    calculate_ring_compactness,
     derive_graph_finding_severity,
 )
 
@@ -163,7 +164,7 @@ class RingEvaluation:
     search_complete: bool = True
     score_semantics: str = "EXACT"
     configured_max_states: int = 100_000
-    configured_max_ring_size: int = 8
+    configured_max_ring_size: int = 4
     limit_strategy: str = "BEST_EVIDENCE"
     pruned_unreachable: int = 0
     pruned_by_bound: int = 0
@@ -217,8 +218,8 @@ def evaluate_candidate_edge_for_ring(
 ) -> RingEvaluation | None:
     """Return the best ring completed by the candidate edge.
 
-    A ring of 3..8 users exists when the historical graph contains a simple
-    path beneficiary -> ... -> nominator with 2..7 edges.  Historical edges at
+    A ring of 3..4 users exists when the historical graph contains a simple
+    path beneficiary -> ... -> nominator with 2..3 edges.  Historical edges at
     or after the candidate time and the candidate nomination itself are
     excluded, making retries deterministic and preventing future leakage.
     """
@@ -236,15 +237,15 @@ def evaluate_candidate_edge_for_ring(
     configured_max_ring_size = int(
         max_ring_size
         if max_ring_size is not None
-        else candidate_policy.get("max_ring_size", 8)
+        else candidate_policy.get("max_ring_size", 4)
     )
     limit_strategy = str(
         candidate_policy.get("limit_strategy", "BEST_EVIDENCE")
     ).upper()
     if configured_max_states <= 0:
         raise ValueError("Ring candidate max_states must be positive")
-    if not 3 <= configured_max_ring_size <= 8:
-        raise ValueError("Ring candidate max_ring_size must be between 3 and 8")
+    if not 3 <= configured_max_ring_size <= 4:
+        raise ValueError("Ring candidate max_ring_size must be between 3 and 4")
     if limit_strategy != "BEST_EVIDENCE":
         raise ValueError(f"Unsupported Ring limit strategy: {limit_strategy}")
 
@@ -290,7 +291,7 @@ def evaluate_candidate_edge_for_ring(
         signals = {
             "exposure": min(total_amount / amount_reference, 1.0),
             "repeat": min(nomination_count / max(path_size * 3, 1), 1.0),
-            "compactness": max(0.0, 1.0 - ((path_size - 3) / 5.0)),
+            "compactness": calculate_ring_compactness(path_size, parameters),
         }
         return calculate_graph_finding_score(
             base_score=float(ring.get("base_score", 0.0)),

@@ -17,14 +17,14 @@ import re
 import uuid
 
 
-GENERATOR_VERSION = "synthetics-inc-v2.0"
+GENERATOR_VERSION = "synthetics-inc-v3.0"
 GENERATOR_NAMESPACE = uuid.UUID("bbf46d6d-a7c0-4f45-8ba0-2cce41121085")
 UPN_DOMAIN = "synthetics.terian-services.com"
 CORPUS_USER_COUNT = 400
 ACTIVE_USER_COUNT = 360
-NOMINATION_COUNT = 5_000
+NOMINATION_COUNT = 15_000
 SEGMENT_COUNT = 5
-NOMINATIONS_PER_SEGMENT = 1_000
+NOMINATIONS_PER_SEGMENT = 3_000
 
 DEPARTMENTS = (
     "Sales",
@@ -68,35 +68,35 @@ CATEGORY_AMOUNT_BOUNDS = {
 }
 
 FRAUD_PER_SEGMENT = {
-    "RING": 6,
-    "RECIPROCAL": 4,
-    "CONCENTRATION": 4,
-    "BURST": 3,
-    "AMOUNT": 2,
-    "MIXED": 1,
+    "RING": 18,
+    "RECIPROCAL": 12,
+    "CONCENTRATION": 12,
+    "BURST": 9,
+    "AMOUNT": 6,
+    "MIXED": 3,
 }
 
-# The v2 corpus distinguishes topology already present in a weekly embedding
+# The v3 corpus distinguishes topology already present in a weekly embedding
 # from topology that forms after that snapshot.  Every supervised fraud target
 # has two earlier, legitimate-looking nominations carrying the same scenario
 # ID.  They are ordinary LEGITIMATE outcomes because the suspicious condition
 # does not exist until the target completes or materially strengthens it.
 ACTIVE_CONTEXT_FAMILIES = {
-    "RING": 3,
-    "RECIPROCAL": 2,
-    "CONCENTRATION": 2,
-    "BURST": 3,
+    "RING": 9,
+    "RECIPROCAL": 6,
+    "CONCENTRATION": 6,
+    "BURST": 9,
 }
 
 ESTABLISHED_CONTEXT_FAMILIES = {
-    "RING": 3,
-    "RECIPROCAL": 2,
-    "CONCENTRATION": 2,
-    "AMOUNT": 2,
-    "MIXED": 1,
+    "RING": 9,
+    "RECIPROCAL": 6,
+    "CONCENTRATION": 6,
+    "AMOUNT": 6,
+    "MIXED": 3,
 }
 
-TARGET_POSITIONS = tuple(500 + index * 23 for index in range(20))
+TARGET_POSITIONS = tuple(1_500 + index * 23 for index in range(60))
 
 HARD_NEGATIVE_VARIANTS = (
     "OPEN_CHAIN",
@@ -159,7 +159,7 @@ class _ScenarioEvent:
 
 
 def _target_specs(segment: int) -> list[tuple[str, int, str]]:
-    """Return the exact 20 target families and context modes for a segment."""
+    """Return the exact 60 target families and context modes for a segment."""
     specs: list[tuple[str, int, str]] = []
     family_ordinals: dict[str, int] = {family: 0 for family in FRAUD_PER_SEGMENT}
     for context_mode, allocation in (
@@ -374,7 +374,7 @@ def _legitimate_parties(
 def generate_nominations(
     users: list[SyntheticUser], seed: int, as_of: date
 ) -> list[SyntheticNomination]:
-    """Generate the v2 corpus with causal context before every fraud target."""
+    """Generate the v3 corpus with causal context before every fraud target."""
     active = users[:ACTIVE_USER_COUNT]
     by_id = {user.logical_id: user for user in users}
     start = as_of - timedelta(days=365)

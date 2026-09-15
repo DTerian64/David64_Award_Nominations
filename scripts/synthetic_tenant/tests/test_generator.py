@@ -18,7 +18,7 @@ from scripts.synthetic_tenant.seed_synthetics_inc import build_manifest
 from scripts.synthetic_tenant.validation import validate_corpus
 
 
-AS_OF = date(2026, 9, 12)
+AS_OF = date(2026, 9, 14)
 SEED = 20260912
 
 
@@ -36,27 +36,27 @@ def test_exact_population_labels_segments_and_scenarios():
     assert result["corpus_user_count"] == 400
     assert result["total_directory_and_sql_users"] == 401
     assert result["active_graph_participants"] == 360
-    assert result["nomination_count"] == 5_000
-    assert result["legitimate_count"] == 4_900
-    assert result["fraud_count"] == 100
-    assert result["rolling_train_legitimate_count"] == 2_940
-    assert result["rolling_train_fraud_count"] == 60
-    assert result["holdout_legitimate_count"] == 980
-    assert result["holdout_fraud_count"] == 20
-    assert result["causal_scenario_count"] == 100
-    assert result["causal_precursor_count"] == 200
-    assert result["active_context_target_count"] == 60
-    assert result["established_context_target_count"] == 40
+    assert result["nomination_count"] == 15_000
+    assert result["legitimate_count"] == 14_700
+    assert result["fraud_count"] == 300
+    assert result["rolling_train_legitimate_count"] == 8_820
+    assert result["rolling_train_fraud_count"] == 180
+    assert result["holdout_legitimate_count"] == 2_940
+    assert result["holdout_fraud_count"] == 60
+    assert result["causal_scenario_count"] == 300
+    assert result["causal_precursor_count"] == 600
+    assert result["active_context_target_count"] == 180
+    assert result["established_context_target_count"] == 120
     assert result["fraud_scenarios"] == {
-        "AMOUNT": 10,
-        "BURST": 15,
-        "CONCENTRATION": 20,
-        "MIXED": 5,
-        "RECIPROCAL": 20,
-        "RING": 30,
+        "AMOUNT": 30,
+        "BURST": 45,
+        "CONCENTRATION": 60,
+        "MIXED": 15,
+        "RECIPROCAL": 60,
+        "RING": 90,
     }
     assert result["category_counts"] == {
-        category: 1_000 for category in sorted(CATEGORIES)
+        category: 3_000 for category in sorted(CATEGORIES)
     }
     assert all(
         CATEGORY_AMOUNT_BOUNDS[row.category_name][0]
@@ -82,7 +82,7 @@ def test_every_fraud_target_has_two_earlier_causal_precursors():
         if row.scenario_id:
             by_scenario.setdefault(row.scenario_id, []).append(row)
 
-    assert len(by_scenario) == 100
+    assert len(by_scenario) == 300
     for rows in by_scenario.values():
         target = next(row for row in rows if row.scenario_phase == "TARGET")
         precursors = [

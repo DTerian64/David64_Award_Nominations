@@ -2,23 +2,23 @@
 
 This package generates and provisions the deterministic Synthetics Inc. GNN
 validation tenant. Its default and `--validate` modes create the logical
-400-user and 5,000-nomination plan in memory, validate all exact quotas, and
+400-user and 15,000-nomination plan in memory, validate all exact quotas, and
 print a reproducibility manifest without mutating Microsoft Entra, SQL, Service
 Bus, or model artifacts.
 
-Generator v2.0 gives each of the 100 fraud targets exactly two earlier causal
-precursor nominations. Sixty targets exercise topology actively forming after
-a weekly snapshot; forty exercise relationships already established in an
+Generator v3.0 gives each of the 300 fraud targets exactly two earlier causal
+precursor nominations. One hundred eighty targets exercise topology actively
+forming after a weekly snapshot; 120 exercise relationships established in an
 earlier graph snapshot.
 
 From the repository root:
 
 ```powershell
 python -m scripts.synthetic_tenant.seed_synthetics_inc --dry-run
-python -m scripts.synthetic_tenant.seed_synthetics_inc --validate --as-of 2026-09-12
+python -m scripts.synthetic_tenant.seed_synthetics_inc --validate --as-of 2026-09-14
 python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-configuration
-python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260912 --as-of 2026-09-12 --manifest-out Output/synthetics-inc-v2-manifest.json
-python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260912 --as-of 2026-09-12 --manifest-out Output/synthetics-inc-v2-manifest.json
+python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260912 --as-of 2026-09-14 --manifest-out Output/synthetics-inc-v3-manifest.json
+python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260912 --as-of 2026-09-14 --manifest-out Output/synthetics-inc-v3-manifest.json
 ```
 
 The seed and `as-of` date are part of the corpus identity. The same two inputs
@@ -45,7 +45,7 @@ identity is created and is never printed or written to the manifest. The
 command verifies the custom UPN domain,
 reconciles 400 disabled/unlicensed Entra users and the enabled administrator,
 sets managers, assigns the administrator role, reconciles all 401 SQL users,
-and atomically inserts the 5,000 nominations and their synthetic decision
+and atomically inserts the 15,000 nominations and their synthetic decision
 envelopes. It never publishes Service Bus messages or calls an LLM.
 The required manifest file retains the 401 UPN/Entra-object-ID/SQL-UserId
 mappings; that detailed map is written to disk but omitted from console output.
@@ -56,14 +56,14 @@ directory. It uses only the provider-hosted SQL connection, requires the exact
 Graph token. Its manifest records that the Entra directory was preserved rather
 than reconciled and retains the complete logical-to-SQL identity map.
 
-Do not run `--apply` to replace the currently deployed v1.1 corpus. Stable
+Do not run `--apply` to replace the currently deployed v2.0 corpus. Stable
 nomination identities intentionally cause the apply preflight to reject changed
 generation metadata instead of silently rewriting history. First run
 `reset_synthetics_inc_corpus.sql` as a rollback preview, review its inventory,
 and rerun it with `@CommitChanges = 1`. The script preserves the tenant,
 configuration, policies, all 401 SQL/Entra users, and the administrator. It
-removes only the manifest-owned v1.1 nomination corpus and corpus-derived data,
-then invalidates old serving pointers. After the committed reset, run the v2.0
+removes only the manifest-owned v2.0 nomination corpus and corpus-derived data,
+then invalidates old serving pointers. After the committed reset, run the v3.0
 `--apply-corpus` command above. Keep the fixed seed and `as-of` date and write to
-the new v2 manifest path so the deployed v1.1 manifest remains available as
+the new v3 manifest path so the deployed v2.0 manifest remains available as
 reset provenance. No replacement-specific Python mode is required.

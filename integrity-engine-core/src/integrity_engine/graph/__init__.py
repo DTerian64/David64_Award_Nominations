@@ -10,6 +10,7 @@ from .candidate_edge_evaluation import (
 )
 from .finding_scoring import (
     calculate_graph_finding_score,
+    calculate_ring_compactness,
     derive_graph_finding_severity,
 )
 from .candidate_detector_evaluation import (
@@ -31,6 +32,7 @@ __all__ = [
     "RingEvaluation",
     "SnapshotNomination",
     "calculate_graph_finding_score",
+    "calculate_ring_compactness",
     "derive_graph_finding_severity",
     "evaluate_candidate_edge_for_ring",
     "evaluate_candidate_detectors",

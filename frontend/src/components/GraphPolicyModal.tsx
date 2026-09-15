@@ -127,7 +127,7 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       },
       {
         key: 'compactness', name: 'Compactness',
-        expression: () => 'clamp(1 − ((people in the cycle − 3) ÷ 5), 0, 1)',
+        expression: pattern => `clamp(1 − ((people in the cycle − 3) ÷ ${formatValue(parameter(pattern, 'compactness_decay_span', 5))}), 0, 1)`,
       },
     ],
   },
@@ -292,7 +292,11 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
         },
         compactness: {
           rawEvidence: `${formatValue(people)} people`,
-          normalized: clamp(1 - ((people - 3) / 5)),
+          normalized: clamp(
+            1 - ((people - 3) / Math.max(
+              parameter(pattern, 'compactness_decay_span', 5), 0.001,
+            )),
+          ),
         },
       };
     },
@@ -906,17 +910,17 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
                                 onChange={value => updatePattern(index, {
                                   candidate_evaluation: {
                                     max_states: value,
-                                    max_ring_size: Number(pattern.candidate_evaluation?.max_ring_size ?? 8),
+                                    max_ring_size: Number(pattern.candidate_evaluation?.max_ring_size ?? 4),
                                     limit_strategy: 'BEST_EVIDENCE',
                                   },
                                 })}
                               />
                               <NumberInput
                                 labelText="Maximum Ring size"
-                                value={Number(pattern.candidate_evaluation?.max_ring_size ?? 8)}
+                                value={Number(pattern.candidate_evaluation?.max_ring_size ?? 4)}
                                 disabled={!draft}
                                 min={3}
-                                max={8}
+                                max={4}
                                 step={1}
                                 onChange={value => updatePattern(index, {
                                   candidate_evaluation: {

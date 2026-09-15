@@ -2,14 +2,14 @@
 
 **Status:** Implemented; pending deployment and refreshed Graph snapshots  
 **Applies to:** `integrity-engine-core`, `fraud-analytics-job`, `integrity-check`, and the future ELCE worker  
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-15
 
 ## Purpose
 
 At nomination time, Graph Analytics evaluates whether the candidate nomination
 edge closes a directed Ring. For a nomination `A -> B`, the evaluator searches
 the historical graph for a return path `B -> ... -> A`. A path containing two
-through seven historical edges creates a Ring of three through eight users when
+or three historical edges creates a Ring of three or four users when
 the candidate edge is added.
 
 Dense tenant graphs can contain a combinatorial number of simple paths. The
@@ -42,7 +42,7 @@ Pruning must not change the underlying evidence contract:
 4. Exclude the candidate nomination itself from the historical graph.
 5. Search only for the historical return path from beneficiary to nominator.
 6. Require a simple path: a user cannot occur twice in the historical path.
-7. Permit candidate Rings containing three through eight users.
+7. Permit candidate Rings containing three or four users.
 8. Every returned Ring must include its actual user path and supporting
    nomination IDs. A score bound is never presented as observed evidence.
 
@@ -56,7 +56,7 @@ integrity-check container setting. The Ring detector policy will contain:
   "pattern_type": "Ring",
   "candidate_evaluation": {
     "max_states": 100000,
-    "max_ring_size": 8,
+    "max_ring_size": 4,
     "limit_strategy": "BEST_EVIDENCE"
   }
 }
@@ -68,6 +68,17 @@ integrity-check container setting. The Ring detector policy will contain:
   values.
 - `candidate_evaluation` defines how the engine searches for evidence.
 
+Ring compactness is policy-owned. `parameters.compactness_decay_span` defaults
+to `5`, and the normalized signal is:
+
+```text
+clamp(1 - ((ring_size - 3) / compactness_decay_span), 0, 1)
+```
+
+With the default span, a three-person Ring has compactness `1.0` and a
+four-person Ring has compactness `0.8`. `parameters.compactness_weight` controls
+how many score points that normalized signal can contribute.
+
 The active policy version is embedded in the Graph inference snapshot. Both
 production inference and ELCE therefore evaluate against the same versioned
 search and scoring contract. `GRAPH_RING_MAX_STATES` will not be a Terraform or
@@ -76,7 +87,7 @@ container environment variable.
 Policy validation must require:
 
 - `max_states` to be a positive whole number.
-- `max_ring_size` to be between 3 and the engine hard safety maximum of 8.
+- `max_ring_size` to be between 3 and the engine hard safety maximum of 4.
 - `limit_strategy` to be a supported enum value.
 
 Publishing any of these changes creates a new policy version and requires a new
@@ -277,7 +288,7 @@ The Ring detector's Graph Analytics scoring-policy view will show a separate
 
 ```text
 Maximum search states    100,000
-Maximum Ring size        8
+Maximum Ring size        4
 Limit strategy           Best concrete evidence
 ```
 

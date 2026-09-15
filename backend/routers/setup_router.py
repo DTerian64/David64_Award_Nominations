@@ -359,6 +359,14 @@ def _validate_graph_policy(payload: GraphPolicyDraft) -> None:
                 status_code=422,
                 detail=f"{item.pattern_type} parameters must be non-negative numbers",
             )
+        if (
+            item.pattern_type == "Ring"
+            and item.parameters.get("compactness_decay_span", 5) <= 0
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Ring compactness decay span must be greater than zero",
+            )
         candidate_evaluation = item.candidate_evaluation or {}
         if item.pattern_type != "Ring":
             if candidate_evaluation:
@@ -385,11 +393,11 @@ def _validate_graph_policy(payload: GraphPolicyDraft) -> None:
         if (
             isinstance(max_ring_size, bool)
             or not isinstance(max_ring_size, int)
-            or not 3 <= max_ring_size <= 8
+            or not 3 <= max_ring_size <= 4
         ):
             raise HTTPException(
                 status_code=422,
-                detail="Ring maximum size must be a whole number between 3 and 8",
+                detail="Ring maximum size must be a whole number between 3 and 4",
             )
         if candidate_evaluation["limit_strategy"] != "BEST_EVIDENCE":
             raise HTTPException(

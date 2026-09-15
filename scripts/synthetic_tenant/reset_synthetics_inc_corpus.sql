@@ -1,8 +1,8 @@
 /*
 Purpose
 =======
-One-time, tenant-scoped removal of the deployed Synthetics Inc. v1.1 corpus so
-the v2.0 causal-scenario corpus can be loaded with the existing Python seeder.
+One-time, tenant-scoped removal of the deployed Synthetics Inc. v2.0 corpus so
+the v3.0 expanded causal-scenario corpus can be loaded with the Python seeder.
 
 This script preserves dbo.Tenants, dbo.Users, roles, categories, email
 templates, Graph/GNN scoring policies, Entra identities, DNS, and application
@@ -17,9 +17,9 @@ Safety and usage
    rolls it back.
 4. Review the inventory result sets and all preflight checks.
 5. Change @CommitChanges to 1 and run the entire file again to commit.
-6. Run the existing v2.0 seeder --apply command documented in README.md.
+6. Run the v3.0 seeder --apply-corpus command documented in README.md.
 
-Do not change the organization ID, tenant identity, expected v1.1 corpus hash,
+Do not change the organization ID, tenant identity, expected v2.0 corpus hash,
 generation run ID, or expected row counts merely to bypass a failed preflight.
 Investigate the difference instead.
 */
@@ -33,9 +33,9 @@ DECLARE @OrganizationId VARCHAR(36) =
 DECLARE @ExpectedTenantName NVARCHAR(256) = N'Synthetics Inc';
 DECLARE @ExpectedDomain NVARCHAR(256) = N'synthetic-awards.terianix.ai';
 DECLARE @ExpectedCorpusSha256 VARCHAR(64) =
-    '99d7dec19ee837eddcb8cf4785e98d054183df1c7747e5d872e16d43a07f7f5b';
+    'ec496b2a66b20a4c38a02b8dbcef4fae6d6a584530686f07f1e75ff6b841a0a8';
 DECLARE @ExpectedGenerationRunId VARCHAR(36) =
-    '1b182f36-1d25-5e01-89fd-059aadf4eddc';
+    'b60d4f7e-7f2b-5aa6-89ff-4d6e58f8fbef';
 DECLARE @ExpectedUserCount INT = 401;
 DECLARE @ExpectedNominationCount INT = 5000;
 DECLARE @TenantId INT;
@@ -101,14 +101,14 @@ WHERE decision_result.TenantId = @TenantId
       ) = @ExpectedGenerationRunId;
 
 IF (SELECT COUNT(*) FROM #OwnedNominationIds) <> @ExpectedNominationCount
-    THROW 51000, 'Expected exactly 5,000 manifest-owned v1.1 decisions.', 1;
+    THROW 51000, 'Expected exactly 5,000 manifest-owned v2.0 decisions.', 1;
 
 IF (
     SELECT COUNT(*)
     FROM dbo.IntegrityDecisionResults
     WHERE TenantId = @TenantId
 ) <> @ExpectedNominationCount
-    THROW 51000, 'Tenant contains decisions outside the expected v1.1 corpus.', 1;
+    THROW 51000, 'Tenant contains decisions outside the expected v2.0 corpus.', 1;
 
 IF (
     SELECT COUNT(*)
@@ -129,7 +129,7 @@ IF EXISTS (
     WHERE nominator.TenantId = @TenantId
       AND owned.NominationId IS NULL
 )
-    THROW 51000, 'Tenant contains a nomination not owned by the v1.1 manifest.', 1;
+    THROW 51000, 'Tenant contains a nomination not owned by the v2.0 manifest.', 1;
 
 IF EXISTS (
     SELECT 1
@@ -292,8 +292,8 @@ SET ServingStatus = 'UNAVAILABLE',
     ServingAsOf = NULL,
     LastAttemptStatus = 'SKIPPED',
     ReasonCode = 'SYNTHETIC_CORPUS_RESET',
-    ReasonDetail = N'Awaiting analytics rebuild from synthetics-inc-v2.0',
-    DiagnosticsJson = N'{"reset_reason":"synthetics-inc-v2.0 causal corpus replacement"}',
+    ReasonDetail = N'Awaiting analytics rebuild from synthetics-inc-v3.0',
+    DiagnosticsJson = N'{"reset_reason":"synthetics-inc-v3.0 expanded causal corpus replacement"}',
     LastAttemptAt = SYSUTCDATETIME(),
     LastSuccessfulAt = NULL,
     RunId = NULL,
@@ -338,11 +338,10 @@ SELECT
 IF @CommitChanges = 1
 BEGIN
     COMMIT TRANSACTION;
-    PRINT 'Committed: Synthetics Inc. v1.1 corpus and derived data removed.';
+    PRINT 'Committed: Synthetics Inc. v2.0 corpus and derived data removed.';
 END
 ELSE
 BEGIN
     ROLLBACK TRANSACTION;
     PRINT 'Preview only: all changes rolled back. Set @CommitChanges = 1 to apply.';
 END;
-

@@ -761,7 +761,7 @@ def _assess_graph_inner(
                     candidate_policy.get("max_states", 100_000)
                 ),
                 "configured_max_ring_size": int(
-                    candidate_policy.get("max_ring_size", 8)
+                    candidate_policy.get("max_ring_size", 4)
                 ),
                 "limit_strategy": str(
                     candidate_policy.get("limit_strategy", "BEST_EVIDENCE")

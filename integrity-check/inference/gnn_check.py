@@ -322,11 +322,11 @@ def _standardise(x: np.ndarray, mean, std) -> np.ndarray:
     return ((x - mean) / std).astype(np.float32)
 
 
-def _nomination_features(
+def _nomination_feature_values(
     details: dict,
     head: dict,
     causal_values: dict[str, float] | None = None,
-) -> np.ndarray:
+) -> dict[str, float]:
     """
     Build the nomination feature row, in the exact column order the trainer used.
 
@@ -381,11 +381,44 @@ def _nomination_features(
             "IsHighAmount":  1.0 if amount > a_mean + 2.0 * a_std else 0.0,
         }
 
-    cols = head["nomination_feature_columns"]
+    return {key: float(value) for key, value in values.items()}
+
+
+def _nomination_feature_bundle(
+    details: dict,
+    head: dict,
+    causal_values: dict[str, float] | None = None,
+) -> tuple[np.ndarray, dict]:
+    """Return the decoder row and its ordered, auditable named inputs."""
+    values = _nomination_feature_values(details, head, causal_values)
+    cols = list(head["nomination_feature_columns"])
     row = np.array([[values.get(c, 0.0) for c in cols]], dtype=np.float32)
-    return _standardise(
+    model_row = _standardise(
         row, head["nomination_scaler_mean"], head["nomination_scaler_std"]
     )
+    feature_inputs = {
+        "schema_version": 1,
+        "feature_schema_version": head.get("feature_schema_version"),
+        "scaler": "STANDARD_SCALER",
+        "features": [
+            {
+                "name": name,
+                "pre_scaler_value": float(row[0, index]),
+                "model_input_value": float(model_row[0, index]),
+            }
+            for index, name in enumerate(cols)
+        ],
+    }
+    return model_row, feature_inputs
+
+
+def _nomination_features(
+    details: dict,
+    head: dict,
+    causal_values: dict[str, float] | None = None,
+) -> np.ndarray:
+    """Compatibility wrapper returning only the standardized decoder row."""
+    return _nomination_feature_bundle(details, head, causal_values)[0]
 
 
 # ── Risk mapping ──────────────────────────────────────────────────────────────
@@ -635,10 +668,18 @@ def _assess_gnn_inner(
             window_days=int(head["causal_context_window_days"]),
         )
 
+    nomination_features, feature_inputs = _nomination_feature_bundle(
+        details, head, causal_values
+    )
+    feature_inputs["latent_inputs"] = {
+        "nominator_embedding_dimensions": int(z_nom.size),
+        "beneficiary_embedding_dimensions": int(z_ben.size),
+    }
+
     z = np.concatenate([
         z_nom.reshape(1, -1),
         z_ben.reshape(1, -1),
-        _nomination_features(details, head, causal_values),
+        nomination_features,
     ], axis=1)
 
     with torch.no_grad():
@@ -668,6 +709,7 @@ def _assess_gnn_inner(
         "scoring_policy_version": policy["policy_version"],
         "score_thresholds": thresholds,
         "score_derivation": "round(model_probability * 100)",
+        "feature_inputs": feature_inputs,
         "causal_context_edge_count": len(causal_history_rows),
         "causal_context_window_days": head.get("causal_context_window_days"),
         "causal_context": (

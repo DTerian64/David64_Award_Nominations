@@ -61,9 +61,14 @@ def validate_corpus(
         if any(getattr(row, field) not in user_ids for row in nominations):
             errors.append(f"{field} contains a cross-corpus reference")
 
+    fraud_count = SEGMENT_COUNT * sum(FRAUD_PER_SEGMENT.values())
+    legitimate_count = NOMINATION_COUNT - fraud_count
     class_counts = Counter(row.training_disposition for row in nominations)
-    if class_counts != Counter({"LEGITIMATE": 4_900, "FRAUD": 100}):
-        errors.append(f"expected 4,900/100 class balance, found {dict(class_counts)}")
+    if class_counts != Counter({"LEGITIMATE": legitimate_count, "FRAUD": fraud_count}):
+        errors.append(
+            f"expected {legitimate_count:,}/{fraud_count:,} class balance, "
+            f"found {dict(class_counts)}"
+        )
     if any(
         row.status == "Rejected" and row.training_disposition != "FRAUD"
         for row in nominations
@@ -83,11 +88,22 @@ def validate_corpus(
     segment_counts = Counter(row.segment for row in nominations)
     for segment in range(SEGMENT_COUNT):
         if segment_counts[segment] != NOMINATIONS_PER_SEGMENT:
-            errors.append(f"segment {segment} does not contain 1,000 nominations")
+            errors.append(
+                f"segment {segment} does not contain "
+                f"{NOMINATIONS_PER_SEGMENT:,} nominations"
+            )
         segment_rows = [row for row in nominations if row.segment == segment]
         segment_classes = Counter(row.training_disposition for row in segment_rows)
-        if segment_classes != Counter({"LEGITIMATE": 980, "FRAUD": 20}):
-            errors.append(f"segment {segment} does not contain 980/20 labels")
+        fraud_per_segment = sum(FRAUD_PER_SEGMENT.values())
+        legitimate_per_segment = NOMINATIONS_PER_SEGMENT - fraud_per_segment
+        if segment_classes != Counter({
+            "LEGITIMATE": legitimate_per_segment,
+            "FRAUD": fraud_per_segment,
+        }):
+            errors.append(
+                f"segment {segment} does not contain "
+                f"{legitimate_per_segment:,}/{fraud_per_segment:,} labels"
+            )
         expected_families = Counter(FRAUD_PER_SEGMENT)
         actual_families = Counter(
             row.scenario_family
@@ -105,9 +121,9 @@ def validate_corpus(
             if row.scenario_phase == "TARGET"
         )
         expected_modes = (
-            Counter({"ACTIVE": 20})
+            Counter({"ACTIVE": 60})
             if segment == 0
-            else Counter({"ACTIVE": 10, "ESTABLISHED": 10})
+            else Counter({"ACTIVE": 30, "ESTABLISHED": 30})
         )
         if target_modes != expected_modes:
             errors.append(
@@ -123,8 +139,10 @@ def validate_corpus(
                 f"{row.logical_id} has scenario metadata without a scenario ID"
             )
 
-    if len(scenario_rows) != 100:
-        errors.append(f"expected 100 causal scenarios, found {len(scenario_rows)}")
+    if len(scenario_rows) != fraud_count:
+        errors.append(
+            f"expected {fraud_count:,} causal scenarios, found {len(scenario_rows)}"
+        )
     for scenario_id, rows in scenario_rows.items():
         targets = [row for row in rows if row.scenario_phase == "TARGET"]
         precursors = [row for row in rows if row.scenario_phase == "PRECURSOR"]
@@ -203,8 +221,17 @@ def validate_corpus(
     if dates and (min(dates) != start or max(dates) != as_of - timedelta(days=1)):
         errors.append("nomination dates do not span the complete 365-day window")
     daily_counts = Counter(dates)
-    if Counter(daily_counts.values()) != Counter({14: 255, 13: 110}):
-        errors.append("daily volume is not exactly 255x14 plus 110x13")
+    base_daily_count, higher_volume_days = divmod(NOMINATION_COUNT, 365)
+    expected_daily_distribution = Counter(
+        {
+            base_daily_count + 1: higher_volume_days,
+            base_daily_count: 365 - higher_volume_days,
+        }
+    )
+    if Counter(daily_counts.values()) != expected_daily_distribution:
+        errors.append(
+            "daily volume does not match the deterministic 365-day distribution"
+        )
 
     participants = {
         logical_id
@@ -218,7 +245,10 @@ def validate_corpus(
     if any(row.category_name not in row.description for row in nominations):
         errors.append("one or more descriptions omit the exact category phrase")
     category_counts = Counter(row.category_name for row in nominations)
-    if category_counts != Counter({category: 1_000 for category in CATEGORIES}):
+    expected_category_count = NOMINATION_COUNT // len(CATEGORIES)
+    if category_counts != Counter(
+        {category: expected_category_count for category in CATEGORIES}
+    ):
         errors.append(f"category distribution is not balanced: {dict(category_counts)}")
     if any(
         not (

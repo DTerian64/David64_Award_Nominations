@@ -16,7 +16,13 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from .scenarios import GENERATOR_VERSION, SyntheticNomination, SyntheticUser
+from .scenarios import (
+    CORPUS_USER_COUNT,
+    GENERATOR_VERSION,
+    NOMINATION_COUNT,
+    SyntheticNomination,
+    SyntheticUser,
+)
 
 
 ACTOR = "svc:synthetic-tenant-seeder:v1"
@@ -1112,10 +1118,17 @@ def provision_corpus(
             tenant_id,
         )
         nomination_count = int(cursor.fetchone()[0])
-        if (sql_user_count, nomination_count, decision_count) != (401, 5_000, 5_000):
+        expected_user_count = CORPUS_USER_COUNT + 1
+        if (
+            sql_user_count,
+            nomination_count,
+            decision_count,
+        ) != (expected_user_count, NOMINATION_COUNT, NOMINATION_COUNT):
             raise RuntimeError(
-                "Post-load SQL counts are not 401 users / 5,000 nominations / "
-                f"5,000 decisions: {sql_user_count}/{nomination_count}/{decision_count}"
+                "Post-load SQL counts are not "
+                f"{expected_user_count} users / {NOMINATION_COUNT:,} nominations / "
+                f"{NOMINATION_COUNT:,} decisions: "
+                f"{sql_user_count}/{nomination_count}/{decision_count}"
             )
         conn.commit()
         report("SQL corpus transaction committed")

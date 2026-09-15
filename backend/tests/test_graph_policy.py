@@ -37,7 +37,7 @@ def _patterns():
             candidate_evaluation=(
                 {
                     "max_states": 100_000,
-                    "max_ring_size": 8,
+                    "max_ring_size": 4,
                     "limit_strategy": "BEST_EVIDENCE",
                 }
                 if name == "Ring" else {}
@@ -82,7 +82,19 @@ class GraphPolicyValidationTests(unittest.TestCase):
 
     def test_ring_candidate_evaluation_has_bounded_valid_values(self):
         patterns = _patterns()
-        patterns[0].candidate_evaluation["max_ring_size"] = 9
+        patterns[0].candidate_evaluation["max_ring_size"] = 5
+        with self.assertRaises(HTTPException) as raised:
+            _validate_graph_policy(GraphPolicyDraft(
+                thresholds=GraphThresholds(low=25, medium=50, high=75, critical=90),
+                detection_window_days=365,
+                snapshot_max_age_days=14,
+                patterns=patterns,
+            ))
+        self.assertEqual(raised.exception.status_code, 422)
+
+    def test_ring_compactness_decay_span_must_be_positive(self):
+        patterns = _patterns()
+        patterns[0].parameters["compactness_decay_span"] = 0
         with self.assertRaises(HTTPException) as raised:
             _validate_graph_policy(GraphPolicyDraft(
                 thresholds=GraphThresholds(low=25, medium=50, high=75, critical=90),
@@ -96,7 +108,7 @@ class GraphPolicyValidationTests(unittest.TestCase):
         patterns = _patterns()
         patterns[1].candidate_evaluation = {
             "max_states": 100,
-            "max_ring_size": 8,
+            "max_ring_size": 4,
             "limit_strategy": "BEST_EVIDENCE",
         }
         with self.assertRaises(HTTPException) as raised:
