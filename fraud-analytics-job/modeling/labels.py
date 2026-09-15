@@ -96,6 +96,7 @@ def load_labels(
     ConfirmedBy   str   HRBP actor when reviewed, else None
     ConfirmedAt   datetime | None
     TrainingDisposition str | None
+    ScenarioFamily str | None  explicit synthetic diagnostic metadata
 
     window_days=None loads the tenant's full history, matching load_data(), which
     has no date filter. The GNN passes a window; the Random Forest does not.
@@ -116,6 +117,14 @@ def load_labels(
             idr.ReviewedAt AS ConfirmedAt,
             idr.TrainingDisposition,
             idr.TrainingDispositionSource,
+            CASE WHEN ISJSON(idr.TrainingDispositionMetadataJson) = 1
+                 THEN JSON_VALUE(
+                     idr.TrainingDispositionMetadataJson, '$.scenario_family'
+                 ) END AS ScenarioFamily,
+            CASE WHEN ISJSON(idr.TrainingDispositionMetadataJson) = 1
+                 THEN JSON_VALUE(
+                     idr.TrainingDispositionMetadataJson, '$.scenario_variant'
+                 ) END AS ScenarioVariant,
             CAST(t.is_synthetic AS INT) AS IsSyntheticTenant,
             CASE
                 WHEN idr.TrainingDisposition = 'FRAUD'

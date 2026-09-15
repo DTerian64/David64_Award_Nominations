@@ -11,7 +11,7 @@ import json
 import math
 from dataclasses import asdict, dataclass
 
-from .selection import GRAPH_ARCHITECTURES
+from .evaluators.selection_by_holdout_pr_auc import GRAPH_ARCHITECTURES
 
 
 @dataclass(frozen=True)

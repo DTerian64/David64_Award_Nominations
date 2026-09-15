@@ -1,14 +1,16 @@
-"""Deterministic operational selection for the tenant GNN architecture bake-off."""
+"""Deterministic operational selection for the tenant GNN bake-off."""
 
 from __future__ import annotations
 
 import math
 from typing import Any
 
-
-SELECTION_POLICY_VERSION = "gnn-candidate-selection-v1"
-SELECTION_METRIC = "holdout_pr_auc"
-GRAPH_ARCHITECTURES = ("graphsage", "gcn", "gatv2")
+from .policy import (
+    BASELINE_CANDIDATE,
+    GRAPH_ARCHITECTURES,
+    SELECTION_METRIC,
+    SELECTION_POLICY_VERSION,
+)
 
 
 def _finite_metric(candidate: dict[str, Any]) -> float | None:
@@ -29,8 +31,8 @@ def select_architecture(
 ) -> dict[str, Any]:
     """Select one graph architecture, or explicitly decline activation.
 
-    The MLP is an admission baseline only. It can prevent a graph model from
-    being activated, but can never become the serving GNN engine.
+    This package is the only serving authority. The MLP is an admission
+    baseline: it may block a graph model, but can never serve as the GNN.
     """
     evaluated: dict[str, dict[str, Any]] = {}
     for architecture, raw in candidates.items():
@@ -52,7 +54,7 @@ def select_architecture(
         "incumbent_tie_tolerance": incumbent_tie_tolerance,
         "minimum_eligible_graph_candidates": minimum_eligible_graph_candidates,
     }
-    baseline = evaluated.get("mlp")
+    baseline = evaluated.get(BASELINE_CANDIDATE)
     baseline_value = _finite_metric(baseline or {})
     eligible_graphs = {
         name: row
@@ -61,9 +63,7 @@ def select_architecture(
     }
 
     def result(reason: str, selected: str | None = None) -> dict[str, Any]:
-        selected_value = (
-            _finite_metric(eligible_graphs[selected]) if selected else None
-        )
+        selected_value = _finite_metric(eligible_graphs[selected]) if selected else None
         return {
             **policy,
             "selected_architecture": selected,

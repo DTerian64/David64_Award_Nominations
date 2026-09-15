@@ -344,6 +344,18 @@ If no graph architecture demonstrates sufficient value over the MLP, the MLP
 does not become the GNN. The previous valid GNN remains active, or GNN remains
 unavailable when no previous winner exists.
 
+The serving rule above is implemented by
+`evaluators/selection_by_holdout_pr_auc`. A separate
+`evaluators/graph_value_by_ablation` report answers two different questions:
+
+1. how much engineered causal context improves over the tabular MLP; and
+2. how much graph message passing improves over that causal-feature MLP.
+
+Every diagnostic fold is trained independently at its own temporal origin.
+Scenario-level measurements use explicit adjudication metadata and are marked
+unavailable when that metadata does not exist. This diagnostic report cannot
+promote or reject a serving model.
+
 ### 7.4 Winner refit
 
 After selection, only the winning graph architecture is refitted using all

@@ -382,6 +382,37 @@ The operational winner must provide meaningful improvement beyond the no-graph
 baseline. If no graph candidate does, the run records `NO_GRAPH_VALUE_OVER_MLP`.
 That result must not be hidden by deploying the MLP under a GNN label.
 
+### 8.5 Evaluator boundaries
+
+The implementation packages evaluators by the decision they make, rather than
+under generic `admission` or `diagnostics` folders:
+
+```text
+modeling/gnn/evaluators/
+  contracts.py
+  metrics.py
+  selection_by_holdout_pr_auc/
+    evaluator.py
+    policy.py
+  graph_value_by_ablation/
+    evaluator.py
+    feature_profiles.py
+    rolling_folds.py
+    scenarios.py
+```
+
+`selection_by_holdout_pr_auc` is the sole serving authority. It compares the
+causal-feature MLP admission baseline with the graph candidates on the final
+untouched holdout and applies the configured improvement and incumbent rules.
+
+`graph_value_by_ablation` is diagnostic only. At each temporal origin it trains
+a fresh model, compares a tabular MLP with a causal-feature MLP, then compares
+the causal-feature MLP with the graph architectures. It also reports scenario
+metrics when explicit scenario metadata exists. Its output is written to the
+immutable manifest and component diagnostics but is never passed into serving
+selection. This package boundary leaves room for additional evaluators named by
+their actual evidence and decision method.
+
 ## 9. Artifact and snapshot contract
 
 ### 9.1 Versioned bundle

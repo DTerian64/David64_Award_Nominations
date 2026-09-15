@@ -55,6 +55,7 @@ interface GNNManifest {
   graph_snapshot_id?: string;
   graph_snapshot_as_of?: string;
   selection?: JsonRecord;
+  graph_value_evaluation?: JsonRecord;
   training_policy?: JsonRecord;
   artifacts?: ManifestArtifact[];
 }
@@ -249,6 +250,70 @@ const CandidateComparison: React.FC<{ selection: JsonRecord }> = ({ selection })
   );
 };
 
+const GraphValueEvaluation: React.FC<{ evaluation: JsonRecord }> = ({ evaluation }) => {
+  const ablation = asRecord(evaluation.ablation) || {};
+  const candidates = asRecord(evaluation.candidates) || {};
+  const scenarios = asRecord(asRecord(evaluation.scenario_analysis)?.candidates) || {};
+  const foldRows = Object.entries(candidates).flatMap(([candidateName, raw]) => {
+    const candidate = asRecord(raw) || {};
+    return (Array.isArray(candidate.folds) ? candidate.folds : []).map(rawFold => ({
+      candidateName,
+      candidate,
+      fold: asRecord(rawFold) || {},
+    }));
+  });
+  const scenarioRows = Object.entries(scenarios).flatMap(([candidateName, raw]) => {
+    const candidateScenarios = asRecord(asRecord(raw)?.scenarios) || {};
+    return Object.entries(candidateScenarios).map(([scenarioName, scenario]) => ({
+      candidateName,
+      scenarioName,
+      scenario: asRecord(scenario) || {},
+    }));
+  });
+
+  return (
+    <section className="space-y-3 rounded-lg border border-violet-100 bg-violet-50/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h4 className="font-semibold text-gray-800">Graph value by ablation</h4>
+          <p className="mt-1 text-xs text-gray-500">
+            Leakage-safe rolling diagnostics. This evidence explains model value and never selects or rejects the serving architecture.
+          </p>
+        </div>
+        <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${badgeClass(String(evaluation.status || ''))}`}>
+          {label(evaluation.status)}
+        </span>
+      </div>
+      <dl className="grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-5">
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">Tabular MLP</dt><dd className="font-medium text-gray-700">{percent(ablation.mlp_tabular_value)}</dd></div>
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">Causal-feature MLP</dt><dd className="font-medium text-gray-700">{percent(ablation.mlp_causal_value)}</dd></div>
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">Causal feature gain</dt><dd className="font-medium text-gray-700">{percent(ablation.engineered_causal_feature_gain)}</dd></div>
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">Best graph</dt><dd className="font-medium text-gray-700">{ablation.best_graph_architecture ? String(ablation.best_graph_architecture).toUpperCase() : '—'} · {percent(ablation.best_graph_value)}</dd></div>
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">Message-passing gain</dt><dd className="font-medium text-gray-700">{percent(ablation.graph_message_passing_gain)}</dd></div>
+      </dl>
+      {foldRows.length > 0 && (
+        <details className="rounded-lg border border-gray-200 bg-white">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600">Rolling-origin results ({foldRows.length})</summary>
+          <div className="overflow-x-auto border-t border-gray-200">
+            <table className="min-w-[900px] w-full text-left text-xs">
+              <thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Feature profile</th><th className="px-3 py-2">Fold</th><th className="px-3 py-2">Evaluation end</th><th className="px-3 py-2">PR-AUC</th><th className="px-3 py-2">ROC-AUC</th><th className="px-3 py-2">Brier</th><th className="px-3 py-2">Evaluation labels</th></tr></thead>
+              <tbody className="divide-y divide-gray-100">{foldRows.map(({ candidateName, candidate, fold }) => <tr key={`${candidateName}-${String(fold.fold_index)}`}><td className="px-3 py-2 font-semibold text-gray-700">{candidateName.toUpperCase()}</td><td className="px-3 py-2 text-gray-600">{label(candidate.feature_profile)}</td><td className="px-3 py-2">{integer(fold.fold_index)}</td><td className="px-3 py-2">{String(fold.eval_end || '—')}</td><td className="px-3 py-2 font-mono">{percent(fold.pr_auc)}</td><td className="px-3 py-2 font-mono">{percent(fold.roc_auc)}</td><td className="px-3 py-2 font-mono">{decimal(fold.brier_score, 5)}</td><td className="px-3 py-2">{labelPopulation(fold.count, fold.positive_count)}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </details>
+      )}
+      {scenarioRows.length > 0 && (
+        <details className="rounded-lg border border-gray-200 bg-white">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600">Scenario-level results ({scenarioRows.length})</summary>
+          <div className="overflow-x-auto border-t border-gray-200">
+            <table className="min-w-[760px] w-full text-left text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Scenario</th><th className="px-3 py-2">PR-AUC</th><th className="px-3 py-2">Fraud examples</th><th className="px-3 py-2">Legitimate comparison</th><th className="px-3 py-2">Mean fraud probability</th></tr></thead><tbody className="divide-y divide-gray-100">{scenarioRows.map(({ candidateName, scenarioName, scenario }) => <tr key={`${candidateName}-${scenarioName}`}><td className="px-3 py-2 font-semibold text-gray-700">{candidateName.toUpperCase()}</td><td className="px-3 py-2">{label(scenarioName)}</td><td className="px-3 py-2 font-mono">{percent(scenario.pr_auc)}</td><td className="px-3 py-2">{integer(scenario.fraud_example_count)}</td><td className="px-3 py-2">{integer(scenario.legitimate_comparison_count)}</td><td className="px-3 py-2 font-mono">{percent(scenario.mean_fraud_probability)}</td></tr>)}</tbody></table>
+          </div>
+        </details>
+      )}
+    </section>
+  );
+};
+
 export const GNNTrainingRunsModal: React.FC<Props> = ({ impersonatedUPN, onClose }) => {
   const [response, setResponse] = useState<RunListResponse | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -318,6 +383,8 @@ export const GNNTrainingRunsModal: React.FC<Props> = ({ impersonatedUPN, onClose
   );
   const diagnosticsSelection = latestSelection(detail?.run || selectedRun);
   const selection = asRecord(detail?.manifest?.selection) || diagnosticsSelection;
+  const graphValueEvaluation = asRecord(detail?.manifest?.graph_value_evaluation)
+    || asRecord((detail?.run || selectedRun)?.diagnostics.graph_value_evaluation);
   const artifacts = detail?.manifest?.artifacts || [];
 
   return (
@@ -417,6 +484,10 @@ export const GNNTrainingRunsModal: React.FC<Props> = ({ impersonatedUPN, onClose
 
                     {selection ? <CandidateComparison selection={selection} /> : (
                       <div className="rounded-lg border border-dashed border-gray-200 py-12 text-center text-sm text-gray-500">This attempt ended before candidate evaluation.</div>
+                    )}
+
+                    {graphValueEvaluation && (
+                      <GraphValueEvaluation evaluation={graphValueEvaluation} />
                     )}
 
                     {artifacts.length > 0 && (

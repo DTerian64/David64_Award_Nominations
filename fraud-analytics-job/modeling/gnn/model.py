@@ -31,6 +31,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, GraphConv, HeteroConv, SAGEConv
 
+from .evaluators.metrics import pr_auc, roc_auc
+
 logger = logging.getLogger(__name__)
 
 # Message-passing relations, including the reverse edges added by graph.py.
@@ -207,35 +209,6 @@ def build_candidate(
         n_nom_features=n_nom_features,
         architecture=architecture,
     )
-
-
-# ── Metrics ───────────────────────────────────────────────────────────────────
-
-def pr_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
-    """
-    Average precision. Implemented here rather than pulled from sklearn so this
-    module has no sklearn dependency; train_rf_model.py already owns that.
-    Returns nan when only one class is present.
-    """
-    y_true = np.asarray(y_true).astype(int)
-    if y_true.sum() == 0 or y_true.sum() == len(y_true):
-        return float("nan")
-    order = np.argsort(-np.asarray(y_score))
-    y = y_true[order]
-    tp = np.cumsum(y)
-    precision = tp / np.arange(1, len(y) + 1)
-    return float((precision * y).sum() / y.sum())
-
-
-def roc_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
-    y_true = np.asarray(y_true).astype(int)
-    n_pos, n_neg = int(y_true.sum()), int((1 - y_true).sum())
-    if n_pos == 0 or n_neg == 0:
-        return float("nan")
-    order = np.argsort(np.asarray(y_score))
-    ranks = np.empty(len(y_true), dtype=float)
-    ranks[order] = np.arange(1, len(y_true) + 1)
-    return float((ranks[y_true == 1].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
 
 
 # ── Training ──────────────────────────────────────────────────────────────────

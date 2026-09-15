@@ -69,9 +69,12 @@ from .gnn.model import (  # noqa: E402
     fit_candidate_rolling,
     train_candidate_rolling,
 )
-from .gnn.selection import (  # noqa: E402
+from .gnn.evaluators.selection_by_holdout_pr_auc import (  # noqa: E402
     GRAPH_ARCHITECTURES,
     select_architecture,
+)
+from .gnn.evaluators.graph_value_by_ablation import (  # noqa: E402
+    evaluate_graph_value,
 )
 from .gnn.policy import GNNPolicy, load_active_policy  # noqa: E402
 
@@ -332,6 +335,7 @@ def _write_operational_manifest(
     model_version: str,
     graph_snapshot_id: str,
     selection: dict,
+    graph_value_evaluation: dict,
     artifact_paths: list[tuple[Path, str]],
     manifest_path: Path,
     policy: GNNPolicy,
@@ -351,6 +355,7 @@ def _write_operational_manifest(
         "description": "Tenant-scoped operational GNN architecture bake-off",
         "training_policy": policy.snapshot(),
         "selection": selection,
+        "graph_value_evaluation": graph_value_evaluation,
         "features": {
             "user": list(G.USER_FEATURE_COLUMNS),
             "nomination": list(G.NOMINATION_FEATURE_COLUMNS),
@@ -636,7 +641,10 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     y_train_by_fold = [
         _retain_labelled_targets(fold, "train", label_map) for fold in folds
     ]
-    y_ev = _retain_labelled_targets(folds[-1], "eval", label_map)
+    y_eval_by_fold = [
+        _retain_labelled_targets(fold, "eval", label_map) for fold in folds
+    ]
+    y_ev = y_eval_by_fold[-1]
     y_tr = np.concatenate(y_train_by_fold)
     holdout_graph = folds[-1]
 
@@ -695,6 +703,37 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         minimum_eligible_graph_candidates=policy.minimum_eligible_graph_candidates,
     )
     candidate_metrics = selection["candidates"]
+
+    scenario_by_nomination_id = {
+        int(row.NominationId): str(row.ScenarioFamily).upper()
+        for row in labelled.itertuples()
+        if isinstance(getattr(row, "ScenarioFamily", None), str)
+        and getattr(row, "ScenarioFamily").strip()
+    }
+    try:
+        graph_value_evaluation = evaluate_graph_value(
+            folds=folds,
+            y_train_by_fold=y_train_by_fold,
+            y_eval_by_fold=y_eval_by_fold,
+            graph_architectures=policy.candidate_architectures,
+            scenario_by_nomination_id=scenario_by_nomination_id,
+            hidden_dim=policy.hidden_dim,
+            emb_dim=policy.embed_dim,
+            epochs=policy.epochs,
+        )
+    except Exception as exc:
+        # Diagnostics must remain visible when they fail, but they are not a
+        # serving gate and therefore cannot change the admission decision.
+        logger.exception("GNN graph-value evaluation failed")
+        graph_value_evaluation = {
+            "schema_version": 1,
+            "evaluator": "graph-value-by-ablation-v1",
+            "role": "DIAGNOSTIC_ONLY",
+            "affects_serving_selection": False,
+            "status": "FAILED",
+            "reason": type(exc).__name__,
+            "detail": str(exc)[:500],
+        }
 
     # Candidate evaluation remains tied to the untouched holdout. Only after
     # selection is final do we admit that matured interval to a fresh refit.
@@ -785,6 +824,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         model_version=model_version,
         graph_snapshot_id=graph_snapshot_id,
         selection=selection,
+        graph_value_evaluation=graph_value_evaluation,
         artifact_paths=artifact_paths,
         manifest_path=manifest_path,
         policy=policy,
@@ -818,6 +858,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         "holdout_start": holdout_graph["t_cut"].isoformat(),
         "holdout_end": holdout_graph["eval_end"].isoformat(),
         "selection": selection,
+        "graph_value_evaluation": graph_value_evaluation,
         "feature_schema_version": graph["feature_schema_version"],
         "graph_snapshot_id": graph_snapshot_id,
         "graph_snapshot_as_of": graph.get(
