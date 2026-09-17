@@ -1,0 +1,63 @@
+flowchart LR
+    subgraph Sources[Source systems]
+        AN["Award Nomination<br/>Users + Nominations + Decisions"]
+        PY["Payroll<br/>People + Payroll Events + Outcomes"]
+        OS["Other system"]
+    end
+
+    subgraph Adapters[Source adapter layer]
+        ANA["Award Nomination adapter"]
+        PYA["Payroll adapter"]
+        OSA["System-specific adapter"]
+    end
+
+    subgraph Data[Canonical integrity data layer]
+        MAP[Canonical mapping and validation]
+        ACT[Actors]
+        EVT[Events and participants]
+        REL[Time-valid relationships]
+        LAB[Outcome labels and provenance]
+        SNP[Validated immutable snapshot]
+    end
+
+    subgraph Features[Feature fitting layer]
+        TAB["Tabular feature builder<br/>matrix + fitted preprocessing"]
+        GPH["GNN feature builder<br/>graphs + folds + causal context"]
+    end
+
+    subgraph Models[Modeling layer]
+        TM["Tabular candidates<br/>Random Forest + Tabular MLP"]
+        GM["GNN candidates by behavior<br/>GraphSAGE + GCN + GATv2"]
+        GB["Causal MLP baseline<br/>admission only"]
+    end
+
+    subgraph Publication[Evaluation and publication]
+        EV[Temporal evaluation and guardrails]
+        SEL[Candidate selection]
+        ART[Immutable artifacts and manifests]
+        REG[Serving registry and diagnostics]
+    end
+
+    AN --> ANA
+    PY --> PYA
+    OS --> OSA
+    ANA --> MAP
+    PYA --> MAP
+    OSA --> MAP
+    MAP --> ACT
+    MAP --> EVT
+    MAP --> REL
+    MAP --> LAB
+    ACT --> SNP
+    EVT --> SNP
+    REL --> SNP
+    LAB --> SNP
+    SNP --> TAB
+    SNP --> GPH
+    TAB --> TM
+    GPH --> GM
+    GPH --> GB
+    TM --> EV
+    GM --> EV
+    GB --> EV
+    EV --> SEL --> ART --> REG

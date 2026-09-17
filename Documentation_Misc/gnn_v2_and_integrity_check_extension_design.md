@@ -2,7 +2,7 @@
 
 **Status:** Multi-candidate training and serving implemented; extension worker pending  
 **Applies to:** `fraud-analytics-job`, `integrity-check`, new `integrity-check-extension`, `IntegrityDecisionResults`, administrative integrity UI  
-**Last updated:** 2026-09-11
+**Last updated:** 2026-09-17
 
 ## 1. Purpose
 
@@ -10,6 +10,11 @@ This document defines the next GNN implementation for the Award Nomination Syste
 
 The detailed operational training, evaluation, selection, and activation process is defined
 separately in `Documentation_Misc/gnn_v2_training_strategy.md`.
+
+The proposed next-generation scenario-specialist serving contract is defined in
+`Documentation_Misc/gnn_v3_specialist_serving_design.md`. V3 is a separate
+design and does not change this document's current v2 contract until explicitly
+implemented and activated.
 
 The implementation-level service boundary, message settlement, artifact loading,
 concurrency, and rollout contract for the asynchronous worker is defined in
@@ -27,7 +32,19 @@ The four decision engines are:
 
 RF, Graph Analytics, and GNN are fraud or integrity detection engines. The semantic engine assesses description quality and category alignment; it participates in routing but does not create fraud training labels.
 
+Random Forest is the currently implemented architecture of the learned Tabular
+engine. The future model-neutral Tabular contract and its production-capable MLP
+challenger are defined separately in
+`Documentation_Misc/tabular_integrity_model_design.md`; that design does not
+change this document's implemented v2 runtime contract by itself.
+
 This design covers:
+
+> **MLP naming boundary:** Every no-graph MLP referenced by this GNN design is
+> the non-serving `causal_mlp_baseline`. It is distinct from the
+> production-capable `tabular_mlp` candidate defined in
+> `Documentation_Misc/tabular_integrity_model_design.md`. The GNN baseline can
+> never become a live scorer.
 
 - graph-native GraphSAGE, GCN-family, and GATv2 candidates with an MLP admission baseline;
 - temporal training and evaluation without target leakage;

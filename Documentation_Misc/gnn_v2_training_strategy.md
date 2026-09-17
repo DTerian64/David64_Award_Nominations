@@ -3,7 +3,7 @@
 **Status:** Causal candidate selection and serving implemented; deployment evaluation pending
 **Owner:** Integrity modeling  
 **Applies to:** `fraud-analytics-job`, `dbo.IntegrityDecisionResults`, `dbo.GNN_UserEmbeddings`, GNN artifact storage  
-**Last updated:** 2026-09-14
+**Last updated:** 2026-09-17
 
 ## 1. Purpose
 
@@ -11,6 +11,10 @@ This document defines how GNN v2 is trained, evaluated, compared with alternativ
 architectures, packaged, selected, and atomically activated for live integrity scoring.
 It is the operational companion to
 `Documentation_Misc/gnn_v2_and_integrity_check_extension_design.md`.
+
+The proposed scenario-specialist successor is documented separately in
+`Documentation_Misc/gnn_v3_specialist_serving_design.md`. This v2 strategy
+remains authoritative for the currently implemented single-winner GNN.
 
 The strategy preserves the ELCE premise that GNN is an independent decision
 engine. GNN learns from raw, time-valid nomination topology and explicit human
@@ -21,6 +25,17 @@ Every standard training run compares heterogeneous GraphSAGE, GCN-family, and
 GATv2 architectures and selects one winner for the single GNN engine. A no-graph
 MLP is always evaluated as the admission baseline. Candidate architectures are
 not additional votes in the integrity decision.
+
+In this document, `MLP` means the GNN `causal_mlp_baseline`: a non-serving model
+used only to measure whether graph message passing adds value. It is not the
+production-capable `tabular_mlp` candidate in
+`Documentation_Misc/tabular_integrity_model_design.md`. The two models do not
+share a serving identity, feature contract, artifact, or lifecycle.
+
+The future source-neutral extraction and feature-fitting boundary is defined in
+`Documentation_Misc/integrity_analytics_modeling_workflow.md`. This v2 document
+continues to describe the implemented direct-query workflow until that phased
+refactor preserves and verifies feature parity.
 
 The training job implements the rolling-fold candidate bake-off, deterministic
 winner selection, post-selection refit, versioned candidate/serving artifacts,
