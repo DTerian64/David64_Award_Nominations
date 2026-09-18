@@ -19,6 +19,7 @@ import { ModelInspectionModal, type InspectableModel } from './ModelInspectionMo
 import { GNNTrainingRunsModal } from './GNNTrainingRunsModal';
 import { GraphPolicyModal } from './GraphPolicyModal';
 import { GNNPolicyModal } from './GNNPolicyModal';
+import { EngineEvaluationModal } from './EngineEvaluationModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -103,8 +104,8 @@ interface DetectionEngineStatus {
 
 const ENGINE_NAMES: Record<string, { name: string; description: string; population?: string }> = {
   RF: {
-    name: 'Random Forest',
-    description: 'Independent behavioural and semantic fraud model',
+    name: 'Tabular Models',
+    description: 'Random Forest and Tabular MLP candidate family',
   },
   GRAPH: {
     name: 'Graph Analytics',
@@ -132,6 +133,10 @@ const HIDDEN_DIAGNOSTICS = new Set([
   'inference_snapshot_generated_at',
   'selection',
   'last_candidate_selection',
+  'candidate_evaluations',
+  'graph_value_evaluation',
+  'selected_architecture',
+  'selection_reason',
 ]);
 
 const orderedDiagnostics = (diagnostics: Record<string, unknown>) =>
@@ -185,6 +190,21 @@ const asRecord = (value: unknown): Record<string, any> | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>
     : null;
+
+const architectureLabel = (value: unknown): string => ({
+  random_forest: 'Random Forest',
+  tabular_mlp: 'Tabular MLP',
+  graphsage: 'GraphSAGE',
+  gcn: 'GCN',
+  gatv2: 'GATv2',
+}[String(value)] || diagnosticLabel(String(value || '')));
+
+type EvaluationDialog = {
+  kind: 'tabular-candidates' | 'graph-value';
+  data: Record<string, unknown>;
+  selectedArchitecture?: string | null;
+  selectionReason?: string | null;
+};
 
 const GnnSelectionSummary: React.FC<{ diagnostics: Record<string, unknown> }> = ({ diagnostics }) => {
   const selection = asRecord(diagnostics.last_candidate_selection)
@@ -246,6 +266,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
   const [showGNNTrainingRuns, setShowGNNTrainingRuns] = useState(false);
   const [showGraphPolicy, setShowGraphPolicy] = useState(false);
   const [showGNNPolicy, setShowGNNPolicy] = useState(false);
+  const [evaluationDialog, setEvaluationDialog] = useState<EvaluationDialog | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -323,6 +344,11 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
             const inspectable: InspectableModel | null = row.component === 'RF'
               ? 'rf'
               : row.component === 'GNN' && row.serving_version ? 'gnn' : null;
+            const candidateEvaluations = asRecord(row.diagnostics?.candidate_evaluations);
+            const graphValueEvaluation = asRecord(row.diagnostics?.graph_value_evaluation);
+            const servingArchitecture = row.component === 'RF'
+              ? architectureLabel(row.diagnostics?.selected_architecture)
+              : null;
             return (
               <section key={row.component} className="border border-gray-200 rounded-lg p-4 space-y-4">
                 <div>
@@ -381,6 +407,12 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                     <dt className="text-gray-400">Serving version</dt>
                     <dd className="mt-0.5 text-gray-700 font-mono break-all">{row.serving_version || '—'}</dd>
                   </div>
+                  {servingArchitecture && (
+                    <div>
+                      <dt className="text-gray-400">Serving model</dt>
+                      <dd className="mt-0.5 font-medium text-gray-700">{servingArchitecture}</dd>
+                    </div>
+                  )}
                   <div>
                     <dt className="text-gray-400">Serving as of</dt>
                     <dd className="mt-0.5 text-gray-700">{fmtTime(row.serving_as_of)}</dd>
@@ -416,6 +448,37 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
 
                 {row.component === 'GNN' && (
                   <GnnSelectionSummary diagnostics={row.diagnostics || {}} />
+                )}
+
+                {(candidateEvaluations || graphValueEvaluation) && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
+                    {candidateEvaluations && (
+                      <button
+                        type="button"
+                        onClick={() => setEvaluationDialog({
+                          kind: 'tabular-candidates',
+                          data: candidateEvaluations,
+                          selectedArchitecture: String(row.diagnostics?.selected_architecture || ''),
+                          selectionReason: String(row.diagnostics?.selection_reason || ''),
+                        })}
+                        className="inline-flex items-center gap-1 font-medium text-indigo-600 hover:underline"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Candidate Evaluation
+                      </button>
+                    )}
+                    {graphValueEvaluation && (
+                      <button
+                        type="button"
+                        onClick={() => setEvaluationDialog({
+                          kind: 'graph-value',
+                          data: graphValueEvaluation,
+                        })}
+                        className="inline-flex items-center gap-1 font-medium text-indigo-600 hover:underline"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Graph Value Evaluation
+                      </button>
+                    )}
+                  </div>
                 )}
 
                 {diagnostics.length > 0 && (
@@ -474,6 +537,15 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
         <GNNTrainingRunsModal
           impersonatedUPN={impersonatedUPN}
           onClose={() => setShowGNNTrainingRuns(false)}
+        />
+      )}
+      {evaluationDialog && (
+        <EngineEvaluationModal
+          kind={evaluationDialog.kind}
+          data={evaluationDialog.data}
+          selectedArchitecture={evaluationDialog.selectedArchitecture}
+          selectionReason={evaluationDialog.selectionReason}
+          onClose={() => setEvaluationDialog(null)}
         />
       )}
     </div>
