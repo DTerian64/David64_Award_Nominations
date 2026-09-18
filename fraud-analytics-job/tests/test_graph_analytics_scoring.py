@@ -72,9 +72,9 @@ POLICY = {
 }
 
 
-def test_graph_run_groups_all_tenant_snapshots_under_one_run_folder():
+def test_graph_run_places_snapshot_below_tenant_boundary():
     assert graph._graph_snapshot_blob_name(2, "run-abc") == (
-        "graph/runs/run-abc/inference-snapshot-tenant-2.json.gz"
+        "tenant_2/graph/run-abc/inference-snapshot.json.gz"
     )
 
 

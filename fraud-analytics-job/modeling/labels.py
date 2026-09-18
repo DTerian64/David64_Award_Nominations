@@ -26,24 +26,11 @@ Training behavior
 -----------------
 Eligible human labels and explicitly isolated synthetic ground truth are the
 only supervised targets. Explicitly excluded reviews and unreviewed rows remain
-NULL in this shared contract. RF may create in-memory Isolation Forest
-pseudo-labels until it has at least 50 model-neutral labels with at least five
-examples of each class. RF preserves human and eligible synthetic labels and
-never bootstraps explicitly excluded reviews. GNN never consumes RF
-pseudo-labels.
+NULL in this shared contract. Neither the Tabular family nor GNN turns model
+output into training ground truth.
 
-Scope
------
-Bootstrap labels are NOT produced here. bootstrap_fraud_labels() runs an
-IsolationForest over P2P_FEATURE_COLUMNS, so it needs the Random Forest's
-engineered feature matrix, which this module has no business computing. It stays
-in train_rf_model.py as an RF-only cold-start path.
-
-The GNN does not inherit it. Training a GNN on labels produced by an anomaly
-detector fitted to the Random Forest's feature space would be a particularly
-circular way to violate model independence — so the GNN
-requires eligible model-neutral labels or skips the tenant, which the sample
-gate already handles.
+GNN and both Tabular candidates require eligible model-neutral labels or skip
+the tenant under their respective sample gates.
 """
 
 from __future__ import annotations
@@ -62,8 +49,7 @@ SOURCE_EXCLUDED   = "excluded"
 SOURCE_MODEL      = "model"
 SOURCE_UNLABELLED = "unlabelled"
 
-# Inclusion rules — lifted verbatim from train_rf_model.load_data() so the two
-# paths select the same population. Any change here changes the Random Forest.
+# Shared inclusion rules for model-neutral supervised outcomes.
 #
 #   PendingHRBPReview                     excluded — no confirmed label yet
 #   Rejected by 'Fraud Detection (Description)'
@@ -300,95 +286,3 @@ def attach_training_labels(
         ].head(10).tolist()
         raise ValueError(f"Shared label contract missing nominations: {missing_ids}")
     return result
-
-
-def compare_with_legacy(
-    labels_df: pd.DataFrame,
-    legacy_df: pd.DataFrame,
-    tenant_id: int,
-) -> dict:
-    """
-    Read-only parity check against train_rf_model.load_data()'s own IsFraud.
-
-    This is the safety net for the strangler rollout: while the legacy CASE stays
-    authoritative, the job runs both and reports divergence. A clean run across
-    every tenant for several weeks is the evidence that switching the Random
-    Forest over is safe — evidence from the real production label distribution,
-    which no fixture can supply.
-
-    Rows where a human has overridden the legacy CASE (LabelSource='hrbp') are
-    reported separately as hrbp_overrides and do NOT fail parity — see the module
-    docstring. Everything else must be zero.
-
-    legacy_df needs NominationId and IsFraud. Returns a dict; never raises, so a
-    problem in the check can never take down the training stage it is watching.
-    """
-    try:
-        merged = labels_df[["NominationId", "IsFraud", "LabelSource"]].merge(
-            legacy_df[["NominationId", "IsFraud"]],
-            on="NominationId", how="outer", suffixes=("_new", "_legacy"), indicator=True,
-        )
-
-        only_new    = merged[merged["_merge"] == "left_only"]
-        only_legacy = merged[merged["_merge"] == "right_only"]
-        both        = merged[merged["_merge"] == "both"]
-        differing = both[
-            both["IsFraud_new"].fillna(-1) != both["IsFraud_legacy"].fillna(-1)
-        ]
-
-        # A divergence on an hrbp-sourced row is the module working as designed:
-        # a human said something the RiskLevel CASE disagrees with. Counting it
-        # as a parity failure would mean the safety net goes red exactly when the
-        # data gets good, and would be switched off. Only model/unlabelled
-        # divergence indicates a genuine defect in this module.
-        expected = differing[
-            differing["LabelSource"].isin(
-                (SOURCE_HRBP, SOURCE_SYNTHETIC, SOURCE_EXCLUDED)
-            )
-        ]
-        unexpected = differing[
-            ~differing["LabelSource"].isin(
-                (SOURCE_HRBP, SOURCE_SYNTHETIC, SOURCE_EXCLUDED)
-            )
-        ]
-
-        result = {
-            "rows_new":         int(len(labels_df)),
-            "rows_legacy":      int(len(legacy_df)),
-            "only_in_new":      int(len(only_new)),
-            "only_in_legacy":   int(len(only_legacy)),
-            "label_mismatch":   int(len(unexpected)),
-            "hrbp_overrides":   int(len(expected)),
-            "identical":        bool(len(only_new) == 0 and len(only_legacy) == 0
-                                     and len(unexpected) == 0),
-        }
-
-        if result["identical"]:
-            logger.info(
-                "[Tenant %d] label parity OK — %d rows, %d human overrides of the "
-                "legacy CASE (expected, not a failure).",
-                tenant_id, result["rows_new"], result["hrbp_overrides"],
-            )
-        else:
-            logger.error(
-                "[Tenant %d] LABEL PARITY FAILED — %d mismatched, %d only in labels.py, "
-                "%d only in load_data(). The Random Forest must NOT be switched over "
-                "until this is zero.",
-                tenant_id, result["label_mismatch"],
-                result["only_in_new"], result["only_in_legacy"],
-            )
-            if len(unexpected):
-                by_source = unexpected["LabelSource"].value_counts().to_dict()
-                logger.error("[Tenant %d]   mismatches by LabelSource: %s", tenant_id, by_source)
-                logger.error(
-                    "[Tenant %d]   sample NominationIds: %s",
-                    tenant_id, unexpected["NominationId"].head(10).tolist(),
-                )
-        return result
-
-    except Exception as exc:
-        logger.error(
-            "[Tenant %d] label parity check itself failed (non-fatal): %s",
-            tenant_id, exc, exc_info=True,
-        )
-        return {"identical": False, "error": str(exc)}

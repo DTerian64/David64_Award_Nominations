@@ -48,6 +48,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from integrity_engine import GraphInferenceSnapshot, SnapshotNomination
+from integrity_engine.artifact_paths import graph_inference_snapshot_blob
 from integrity_engine.graph.finding_scoring import (
     calculate_graph_finding_score,
     calculate_ring_compactness,
@@ -56,7 +57,7 @@ from integrity_engine.graph.finding_scoring import (
 
 from utils.component_status import upsert_component_status
 
-# Same .env loading as train_rf_model.py / forecast_models.py so this stage
+# Same .env loading as the other modeling jobs so this stage
 # can be run standalone locally. No-op in Container Apps (env injected).
 JOB_DIR = Path(__file__).resolve().parents[1]
 env_path = JOB_DIR.parent / ".env"
@@ -197,11 +198,8 @@ def _get_connection() -> pyodbc.Connection:
 
 
 def _graph_snapshot_blob_name(tenant_id: int, run_id: str) -> str:
-    """Return the immutable Blob path shared by one multi-tenant Graph run."""
-    return (
-        f"graph/runs/{run_id}/"
-        f"inference-snapshot-tenant-{tenant_id}.json.gz"
-    )
+    """Return the tenant-scoped immutable Graph inference snapshot path."""
+    return graph_inference_snapshot_blob(tenant_id, run_id)
 
 
 def _publish_graph_inference_snapshot(

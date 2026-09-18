@@ -1,15 +1,15 @@
 """
-random_forest_check.py — Random Forest nomination inference.
+random_forest_check.py — compatibility entry point for Tabular inference.
 =========================================================================
 
 Owns the full fraud detection pipeline:
-  • Per-tenant RF model cache (blob-direct, lazy-loaded, idle eviction)
-  • Per-tenant SHAP TreeExplainer cache (lazy-created alongside model)
+  • Per-tenant selected Tabular model cache (RF or Tabular MLP)
+  • Per-tenant Tree SHAP cache when Random Forest is selected
   • Sentence-transformer embedding cache (module singleton)
-  • Feature engineering — behavioural + semantic, mirrors modeling/train_rf_model.py
-  • RF inference — predict_proba → fraud_score / risk_level / warning_flags
-  • SHAP attribution — top-5 feature contributions for flagged nominations
-  • LLM explanation — human-readable rationale for every flagged RF assessment
+  • Feature engineering — behavioural + semantic, follows Tabular-v1 contract
+  • Tabular inference — predict_proba → fraud_score / risk_level / warning_flags
+  • RF SHAP attribution — top-5 feature contributions when RF is selected
+  • LLM explanation — human-readable rationale when RF SHAP is available
 
 Public API
 ----------
@@ -43,6 +43,8 @@ import time
 from datetime import datetime, timezone
 
 import numpy as np
+import pandas as pd
+from integrity_engine.artifact_paths import tabular_serving_model_blob
 
 from . import component_availability
 from utils import db
@@ -91,6 +93,17 @@ def _is_independent_rf_artifact(model_data: object) -> bool:
     """Reject legacy RF artifacts that consume Graph Analytics outputs."""
     if not isinstance(model_data, dict):
         return False
+    if model_data.get("artifact_type") == "tabular_integrity_model":
+        feature_columns = model_data.get("feature_columns")
+        return bool(
+            isinstance(feature_columns, (list, tuple))
+            and _LEGACY_GRAPH_DERIVED_FEATURES.isdisjoint(feature_columns)
+            and model_data.get("architecture") in {"random_forest", "tabular_mlp"}
+            and model_data.get("feature_schema_id")
+            == "award-nomination-tabular:tabular-v1"
+            and model_data.get("model") is not None
+            and isinstance(model_data.get("preprocessing"), dict)
+        )
     feature_columns = model_data.get("p2p_feature_columns")
     if not isinstance(feature_columns, (list, tuple)):
         return False
@@ -109,7 +122,7 @@ def _is_independent_rf_artifact(model_data: object) -> bool:
 # cleanup, while this bound prevents a busy multi-tenant replica accumulating
 # every tenant model indefinitely.
 
-_model_cache: dict[int, tuple[dict | None, float]] = {}
+_model_cache: dict[int, tuple[dict | None, float, str]] = {}
 _model_cache_lock = threading.Lock()
 
 
@@ -120,7 +133,7 @@ def _evict_idle_models(now: float | None = None) -> int:
     with _model_cache_lock:
         expired = [
             tenant_id
-            for tenant_id, (_model, last_used) in _model_cache.items()
+            for tenant_id, (_model, last_used, _version) in _model_cache.items()
             if now - last_used > idle_ttl
         ]
         for tenant_id in expired:
@@ -172,34 +185,46 @@ def _score_routing_thresholds(tenant_id: int) -> dict:
     }
 
 
-def _get_model(tenant_id: int) -> dict | None:
+def _get_model(tenant_id: int, serving_version: str | None) -> dict | None:
     """Return cached model, streaming from blob on first access."""
+    if not serving_version:
+        return None
     now = time.monotonic()
     _evict_idle_models(now)
     with _model_cache_lock:
         if tenant_id in _model_cache:
-            model_data, _last_used = _model_cache[tenant_id]
-            _model_cache[tenant_id] = (model_data, now)
-            return model_data
+            model_data, _last_used, cached_version = _model_cache[tenant_id]
+            if cached_version == serving_version:
+                _model_cache[tenant_id] = (model_data, now, cached_version)
+                return model_data
+            del _model_cache[tenant_id]
 
     # Stream outside the lock so other tenants aren't blocked.
-    model_data = _stream_from_blob(tenant_id)
+    model_data = _stream_from_blob(tenant_id, serving_version)
 
     with _model_cache_lock:
         existing = _model_cache.get(tenant_id)
-        if existing is None:
-            _model_cache[tenant_id] = (model_data, time.monotonic())
+        if existing is None or existing[2] != serving_version:
+            _model_cache[tenant_id] = (
+                model_data,
+                time.monotonic(),
+                serving_version,
+            )
             if model_data is not None:
                 logger.info("Fraud model cached for tenant %d", tenant_id)
             return model_data
-        existing_model, _last_used = existing
-        _model_cache[tenant_id] = (existing_model, time.monotonic())
+        existing_model, _last_used, existing_version = existing
+        _model_cache[tenant_id] = (
+            existing_model,
+            time.monotonic(),
+            existing_version,
+        )
         return existing_model
 
 
-def _stream_from_blob(tenant_id: int) -> dict | None:
+def _stream_from_blob(tenant_id: int, serving_version: str) -> dict | None:
     from azure.storage.blob import BlobServiceClient
-    blob_name = f"random_forest/random_forest_tenant_{tenant_id}.pkl"
+    blob_name = tabular_serving_model_blob(tenant_id, serving_version)
 
     if _STORAGE_KEY:
         conn_str = (
@@ -274,8 +299,8 @@ def _get_embed_model(model_name: str = "all-MiniLM-L6-v2"):
 def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, float]:
     """
     Build and scale the feature vector from nomination details + DB lookups.
-    Mirrors modeling/train_rf_model.py extract_features() so training and inference
-    stay aligned.
+    Reproduces the persisted Tabular-v1 transform so training and inference stay
+    aligned.
 
     Returns (X_scaled, feature_vals, desc_cosine_sim).
       X_scaled     — scaler-transformed array fed to the RF model
@@ -285,7 +310,7 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
     nominator_id    = details["nominator_id"]
     beneficiary_id  = details["beneficiary_id"]
     amount          = details["amount"]
-    nomination_date = datetime.now(timezone.utc)
+    nomination_date = details.get("nomination_date") or datetime.now(timezone.utc)
 
     # ── Nominator behaviour ───────────────────────────────────────────────────
     nom_hist = db.get_nominator_history(nominator_id)
@@ -315,6 +340,11 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
     day_of_week = nomination_date.weekday()
     month       = nomination_date.month
     is_weekend  = 1 if day_of_week in (5, 6) else 0
+    day_of_week_sin = float(np.sin(2 * np.pi * day_of_week / 7))
+    day_of_week_cos = float(np.cos(2 * np.pi * day_of_week / 7))
+    zero_based_month = month - 1
+    month_sin = float(np.sin(2 * np.pi * zero_based_month / 12))
+    month_cos = float(np.cos(2 * np.pi * zero_based_month / 12))
 
     # ── Amount z-score (tenant-scoped from training) ──────────────────────────
     amt_mean = model_data.get("amount_mean")
@@ -329,8 +359,17 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
 
     # ── Category target encoding ──────────────────────────────────────────────
     category_id        = details.get("category_id")
-    cat_map            = model_data.get("category_fraud_rate", {})
-    global_fraud_rate  = model_data.get("global_fraud_rate", 0.0)
+    preprocessing = model_data.get("preprocessing")
+    cat_map = (
+        preprocessing.get("category_fraud_rate", {})
+        if preprocessing is not None
+        else model_data.get("category_fraud_rate", {})
+    )
+    global_fraud_rate = (
+        preprocessing.get("global_fraud_rate", 0.0)
+        if preprocessing is not None
+        else model_data.get("global_fraud_rate", 0.0)
+    )
     category_fraud_rate = (
         cat_map.get(category_id, global_fraud_rate)
         if category_id is not None else 0.0
@@ -355,11 +394,15 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
     phrase_score = transactional_phrase_score(nom_description)
 
     # ── Assemble + scale ──────────────────────────────────────────────────────
-    feature_cols = model_data["p2p_feature_columns"]
+    feature_cols = model_data.get("feature_columns") or model_data["p2p_feature_columns"]
     feature_vals = {
         "Amount":                       amount,
         "DayOfWeek":                    day_of_week,
+        "DayOfWeekSin":                 day_of_week_sin,
+        "DayOfWeekCos":                 day_of_week_cos,
         "Month":                        month,
+        "MonthSin":                     month_sin,
+        "MonthCos":                     month_cos,
         "IsWeekend":                    is_weekend,
         "NominatorTotalNominations":    nom_total,
         "NominatorAvgAmount":           nom_avg_amt,
@@ -378,7 +421,17 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
         "TransactionalPhraseScore":     phrase_score,
     }
 
-    X = np.array([[feature_vals.get(c, 0.0) for c in feature_cols]], dtype=float)
+    if preprocessing is not None:
+        frame = pd.DataFrame(
+            [[feature_vals.get(column, 0.0) for column in feature_cols]],
+            columns=feature_cols,
+        )
+        numeric = frame.apply(pd.to_numeric, errors="raise").to_numpy(dtype=float)
+        imputed = preprocessing["imputer"].transform(numeric)
+        X_scaled = preprocessing["scaler"].transform(imputed)
+    else:
+        X = np.array([[feature_vals.get(c, 0.0) for c in feature_cols]], dtype=float)
+        X_scaled = model_data["p2p_scaler"].transform(X)
 
     logger.info(
         "Fraud feature vector",
@@ -397,7 +450,7 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
         },
     )
 
-    return model_data["p2p_scaler"].transform(X), feature_vals, desc_cosine_sim
+    return X_scaled, feature_vals, desc_cosine_sim
 
 
 # ── Scoring helpers ───────────────────────────────────────────────────────────
@@ -473,7 +526,8 @@ def _get_explainer(model_data: dict):
     if "shap_explainer" not in model_data:
         import shap
         logger.info("Building SHAP TreeExplainer for RF model …")
-        model_data["shap_explainer"] = shap.TreeExplainer(model_data["p2p_model"])
+        model = model_data.get("model") or model_data["p2p_model"]
+        model_data["shap_explainer"] = shap.TreeExplainer(model)
         logger.info("SHAP TreeExplainer ready.")
     return model_data["shap_explainer"]
 
@@ -495,7 +549,7 @@ def _compute_shap(
     meaningful numbers ("nominated 7 times") rather than scaled floats.
     """
     explainer    = _get_explainer(model_data)
-    feature_cols = model_data["p2p_feature_columns"]
+    feature_cols = model_data.get("feature_columns") or model_data["p2p_feature_columns"]
 
     shap_vals = explainer.shap_values(X_scaled)
     # SHAP output shape varies by version:
@@ -643,7 +697,10 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
     SHAP / LLM errors are caught internally; the result always has both keys.
     """
     nomination_id = details.get("nomination_id")
-    model_data = _get_model(tenant_id)
+    serving_version = (
+        component_status.get("serving_version") if component_status else None
+    )
+    model_data = _get_model(tenant_id, serving_version)
 
     if model_data is None:
         result = {
@@ -677,8 +734,9 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
 
     X_scaled, feature_vals, desc_cosine_sim = _build_features(details, model_data)
 
-    rf    = model_data["p2p_model"]
-    proba = rf.predict_proba(X_scaled)
+    architecture = model_data.get("architecture", "random_forest")
+    model = model_data.get("model") or model_data["p2p_model"]
+    proba = model.predict_proba(X_scaled)
     fraud_prob  = float(proba[0][1]) if proba.shape[1] >= 2 else 0.0
     fraud_score = int(fraud_prob * 100)
     thresholds  = _score_routing_thresholds(tenant_id)
@@ -690,7 +748,7 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
     shap_explanations: list[dict] = []
     shap_status = "SKIPPED"
     shap_reason: str | None = "risk_below_medium"
-    if flagged:
+    if flagged and architecture == "random_forest":
         logger.info(
             "RF SHAP assessment starting",
             extra={
@@ -729,6 +787,8 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
                 exc_info=True,
             )
     else:
+        if flagged and architecture != "random_forest":
+            shap_reason = "architecture_explainer_unavailable"
         logger.info(
             "RF SHAP assessment skipped",
             extra={
@@ -819,6 +879,7 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
         "llm_explanation_status": llm_explanation_status,
         "llm_explanation_reason": llm_explanation_reason,
         "model_version":     model_data.get("model_version"),
+        "architecture":      architecture,
         "score_thresholds":  thresholds,
         "score_derivation":  "floor(model_probability * 100)",
     }

@@ -67,26 +67,41 @@ interface ModelManifest {
   tenant_id: number;
   model_version: string;
   generated_at: string;
-  description: string;
+  description?: string;
   artifacts: ArtifactInfo[];
   training?: Record<string, unknown>;
   data_profile?: Record<string, unknown>;
   models?: Record<string, ForestSummary>;
+  feature_columns?: string[];
+  training_policy?: Record<string, unknown>;
+  candidates?: Record<string, {
+    status: string;
+    eligible: boolean;
+    metrics: Record<string, unknown>;
+    artifact_prefix: string;
+  }>;
+  serving?: {
+    architecture: string;
+    model_path: string;
+    visualization_path: string;
+    refit_training_rows: number;
+    refit_fraud_rows: number;
+  };
   architecture?: {
     encoder: ArchitecturePart;
     decoder: ArchitecturePart;
   };
   selection?: {
-    policy_version: string;
+    policy_version?: string;
     selection_metric: string;
     selected_architecture: string | null;
-    selected_metric_value: number | null;
-    mlp_baseline_value: number | null;
-    improvement_over_mlp: number | null;
+    selected_metric_value?: number | null;
+    mlp_baseline_value?: number | null;
+    improvement_over_mlp?: number | null;
     selection_reason: string;
     incumbent_architecture?: string | null;
     selected_at?: string;
-    candidates: Record<string, Record<string, any>>;
+    candidates?: Record<string, Record<string, any>>;
   };
   features?: {
     user: string[];
@@ -207,23 +222,76 @@ const ForestModel: React.FC<{ name: string; summary: ForestSummary }> = ({ name,
   );
 };
 
-const RandomForestView: React.FC<{ manifest: ModelManifest; imageUrl: string | null }> = ({ manifest, imageUrl }) => (
-  <div className="space-y-5">
-    {imageUrl && (
-      <section className="overflow-hidden rounded-lg border border-gray-200 bg-white p-3">
-        <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700"><BarChart3 className="h-4 w-4 text-indigo-500" />Fraud score distribution</h4>
-        <img src={imageUrl} alt="Tenant Random Forest fraud-score distribution" className="w-full rounded" />
+const TabularModelView: React.FC<{ manifest: ModelManifest; imageUrl: string | null }> = ({ manifest, imageUrl }) => {
+  if (manifest.artifact_type !== 'tabular_integrity_model') {
+    return (
+      <div className="space-y-5">
+        {imageUrl && (
+          <section className="overflow-hidden rounded-lg border border-gray-200 bg-white p-3">
+            <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700"><BarChart3 className="h-4 w-4 text-indigo-500" />Fraud score distribution</h4>
+            <img src={imageUrl} alt="Tenant Random Forest fraud-score distribution" className="w-full rounded" />
+          </section>
+        )}
+        <div className="grid gap-4">
+          {Object.entries(manifest.models || {}).map(([name, summary]) => (
+            <ForestModel key={name} name={name} summary={summary} />
+          ))}
+        </div>
+        <MetricsGrid values={manifest.training} title="Training results" />
+        <MetricsGrid values={manifest.data_profile} title="Training data profile" />
+      </div>
+    );
+  }
+
+  const selected = manifest.selection?.selected_architecture;
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-semibold text-gray-800">Tabular architecture selection</h4>
+            <p className="mt-1 text-xs text-gray-500">Random Forest and Tabular MLP were evaluated on the same out-of-time holdout.</p>
+          </div>
+          {selected && <span className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold text-indigo-700">Serving {prettyLabel(selected)}</span>}
+        </div>
+        <dl className="mt-4 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+          <div className="rounded bg-white p-2"><dt className="text-gray-400">Selection metric</dt><dd className="font-medium text-gray-700">{prettyLabel(manifest.selection?.selection_metric || '—')}</dd></div>
+          <div className="rounded bg-white p-2 md:col-span-2"><dt className="text-gray-400">Selection reason</dt><dd className="font-medium text-gray-700">{prettyLabel(manifest.selection?.selection_reason || '—')}</dd></div>
+          <div className="rounded bg-white p-2"><dt className="text-gray-400">Serving refit rows</dt><dd className="font-medium text-gray-700">{displayValue(manifest.serving?.refit_training_rows)}</dd></div>
+        </dl>
       </section>
-    )}
-    <div className="grid gap-4">
-      {Object.entries(manifest.models || {}).map(([name, summary]) => (
-        <ForestModel key={name} name={name} summary={summary} />
-      ))}
+
+      <section>
+        <h4 className="mb-2 text-sm font-semibold text-gray-700">Candidate comparison</h4>
+        <div className="overflow-x-auto rounded-lg border border-gray-200">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Architecture</th><th className="px-3 py-2">PR-AUC</th><th className="px-3 py-2">ROC-AUC</th><th className="px-3 py-2">Brier</th><th className="px-3 py-2">Status</th></tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {Object.entries(manifest.candidates || {}).map(([name, candidate]) => (
+                <tr key={name} className={name === selected ? 'bg-indigo-50/50' : ''}>
+                  <td className="px-3 py-2 font-medium text-gray-700">{prettyLabel(name)}{name === selected ? ' · Serving' : ''}</td>
+                  <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.metrics.holdout_pr_auc)}</td>
+                  <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.metrics.holdout_roc_auc)}</td>
+                  <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.metrics.holdout_brier_score)}</td>
+                  <td className="px-3 py-2 text-gray-600">{candidate.eligible ? 'Eligible' : prettyLabel(candidate.status)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {imageUrl && (
+        <section className="overflow-hidden rounded-lg border border-gray-200 bg-white p-3">
+          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700"><BarChart3 className="h-4 w-4 text-indigo-500" />Selected model score distribution</h4>
+          <img src={imageUrl} alt="Selected tenant Tabular model score distribution" className="w-full rounded" />
+        </section>
+      )}
+      {manifest.feature_columns && <FeatureList title="Tabular features" features={manifest.feature_columns} />}
+      <MetricsGrid values={manifest.training_policy} title="Training policy" />
     </div>
-    <MetricsGrid values={manifest.training} title="Training results" />
-    <MetricsGrid values={manifest.data_profile} title="Training data profile" />
-  </div>
-);
+  );
+};
 
 const TensorTable: React.FC<{ part: ArchitecturePart }> = ({ part }) => (
   <details className="mt-3 rounded-md bg-gray-50 p-3 text-xs">
@@ -406,7 +474,7 @@ export const ModelInspectionModal: React.FC<Props> = ({ component, impersonatedU
   }, [component, impersonatedUPN]);
 
   const manifest = response?.manifest;
-  const title = component === 'rf' ? 'Random Forest model' : 'Graph Neural Network model';
+  const title = component === 'rf' ? 'Tabular integrity model' : 'Graph Neural Network model';
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-3 sm:p-6" role="dialog" aria-modal="true" aria-label={title}>
@@ -442,10 +510,10 @@ export const ModelInspectionModal: React.FC<Props> = ({ component, impersonatedU
                   <div><div className="text-xs text-gray-400">Tenant</div><div className="mt-1 text-sm font-medium text-gray-700">{manifest.tenant_id}</div></div>
                   <div><div className="text-xs text-gray-400">Manifest schema</div><div className="mt-1 text-sm font-medium text-gray-700">Version {manifest.schema_version}</div></div>
                 </div>
-                <p className="mt-3 text-sm text-gray-600">{manifest.description}</p>
+                {manifest.description && <p className="mt-3 text-sm text-gray-600">{manifest.description}</p>}
               </section>
 
-              {component === 'rf' ? <RandomForestView manifest={manifest} imageUrl={imageUrl} /> : <GnnView manifest={manifest} />}
+              {component === 'rf' ? <TabularModelView manifest={manifest} imageUrl={imageUrl} /> : <GnnView manifest={manifest} />}
               <Artifacts artifacts={manifest.artifacts} />
             </>
           )}

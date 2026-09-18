@@ -58,6 +58,23 @@ class ResultFusionTests(unittest.TestCase):
         self.assertFalse(decision["decision_available"])
         self.assertEqual(decision["risk_level"], "UNKNOWN")
 
+    def test_tabular_mlp_is_not_mislabeled_as_random_forest(self):
+        tabular = component("HIGH", 70, flags=["Elevated pair activity"])
+        tabular["architecture"] = "tabular_mlp"
+
+        decision = result_fusion.combine(
+            tabular,
+            component(available=False),
+            component(available=False),
+        )
+
+        self.assertEqual(decision["participating_models"], ["TABULAR_MLP"])
+        self.assertEqual(decision["decisive_models"], ["TABULAR_MLP"])
+        self.assertEqual(
+            decision["warning_flags"],
+            ["[TABULAR_MLP] Elevated pair activity"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

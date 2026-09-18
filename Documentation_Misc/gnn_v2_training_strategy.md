@@ -453,7 +453,7 @@ preserves the incumbent winner.
 Every successful selection run creates an immutable tenant-specific bundle:
 
 ```text
-gnn/tenant_<tenant_id>/<model_version>/
+tenant_<tenant_id>/gnn/<model_version>/
   graph_snapshot.pt
   manifest.json
   candidates/

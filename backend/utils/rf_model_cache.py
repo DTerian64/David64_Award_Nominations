@@ -2,11 +2,11 @@
 Random Forest Model Cache — Multi-Tenant Blob-Direct Edition
 =============================================================
 
-One Random Forest model per tenant is trained by modeling/train_rf_model.py and
-stored in Azure Blob Storage as:
-    ml-models/random_forest/random_forest_tenant_1.pkl
-    ml-models/random_forest/random_forest_tenant_2.pkl
-    ...
+One selected Tabular model per tenant is trained by
+modeling/train_tabular_model.py and stored in Azure Blob Storage as immutable
+tenant-first bundles:
+    ml-models/tenant_1/tabular/<ServingVersion>/serving/model.pkl
+    ml-models/tenant_2/tabular/<ServingVersion>/serving/model.pkl
 
 Models are loaded ON DEMAND: the first get_model() call for a given tenant
 streams the pkl DIRECTLY from blob into memory (pickle.loads(bytes)) — no local
@@ -16,7 +16,8 @@ background loop started in main.py's lifespan handler.
 
 Freshness — how weekly retraining propagates automatically
 ----------------------------------------------------------
-The fraud-analytics-job uploads a new pkl to blob storage every Monday.
+The fraud-analytics-job uploads a versioned bundle and changes the registered
+serving version only after that upload completes.
 Because there is no local copy:
   • The cached model is evicted after MODEL_IDLE_TTL_SECONDS of inactivity.
   • The next predict_fraud() call after eviction streams the fresh blob.
@@ -56,6 +57,7 @@ logger = logging.getLogger(__name__)
 class _ModelEntry:
     """One slot in the lazy-load cache for a single tenant."""
     model: Optional[dict]               # None = load attempted but blob missing
+    model_version: Optional[str] = None
     last_used: float = field(default_factory=time.monotonic)
 
 
@@ -95,9 +97,23 @@ class RandomForestModelCache:
     # ── Blob name helper ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _blob_name(tenant_id: int) -> str:
-        """Canonical Random Forest artifact name."""
-        return f"random_forest/random_forest_tenant_{tenant_id}.pkl"
+    def _blob_name(tenant_id: int, model_version: str) -> str:
+        """Tenant-scoped immutable Tabular serving artifact name."""
+        return f"tenant_{tenant_id}/tabular/{model_version}/serving/model.pkl"
+
+    @staticmethod
+    def _serving_version(tenant_id: int) -> Optional[str]:
+        """Resolve the active RF version from the producer-owned registry."""
+        from utils.sqlhelper2 import get_integrity_component_statuses
+
+        status = next(
+            (
+                row for row in get_integrity_component_statuses(tenant_id)
+                if row["component"] == "RF"
+            ),
+            None,
+        )
+        return status["serving_version"] if status else None
 
     # ── Blob client factory ──────────────────────────────────────────────────
 
@@ -134,7 +150,9 @@ class RandomForestModelCache:
 
     # ── Blob-direct model streaming ──────────────────────────────────────────
 
-    def _stream_from_blob(self, tenant_id: int) -> Optional[dict]:
+    def _stream_from_blob(
+        self, tenant_id: int, model_version: str
+    ) -> Optional[dict]:
         """
         Download the pkl for *tenant_id* directly from blob storage into memory
         and deserialise it with pickle.loads().  No file is written to disk.
@@ -147,7 +165,7 @@ class RandomForestModelCache:
             from azure.core.exceptions import ResourceNotFoundError
 
             blob_service = self._blob_service_client()
-            blob_name = self._blob_name(tenant_id)
+            blob_name = self._blob_name(tenant_id, model_version)
             blob_client = blob_service.get_blob_client(
                 container=container_name, blob=blob_name
             )
@@ -173,8 +191,9 @@ class RandomForestModelCache:
             if isinstance(exc, ResourceNotFoundError):
                 logger.warning(
                     "[Tenant %d] RF model blob not found: %s/%s. "
-                    "Run modeling/train_rf_model.py to generate it.",
-                    tenant_id, container_name, self._blob_name(tenant_id),
+                    "Run modeling/train_tabular_model.py to generate it.",
+                    tenant_id, container_name,
+                    self._blob_name(tenant_id, model_version),
                 )
             else:
                 import traceback
@@ -201,12 +220,19 @@ class RandomForestModelCache:
 
         Returns None if no model is available (not trained yet / blob missing).
         """
+        model_version = self._serving_version(tenant_id)
+        if not model_version:
+            logger.warning("[Tenant %d] No RF serving version is registered.", tenant_id)
+            return None
+
         # ── Fast path: already in cache ──
         with self._cache_lock:
             entry = self._cache.get(tenant_id)
-            if entry is not None:
+            if entry is not None and entry.model_version == model_version:
                 entry.last_used = time.monotonic()
                 return entry.model
+            if entry is not None:
+                del self._cache[tenant_id]
 
         # ── Slow path: stream from blob — per-tenant lock prevents thundering herd ──
         load_lock = self._get_load_lock(tenant_id)
@@ -215,22 +241,24 @@ class RandomForestModelCache:
             # while we were waiting on load_lock.
             with self._cache_lock:
                 entry = self._cache.get(tenant_id)
-                if entry is not None:
+                if entry is not None and entry.model_version == model_version:
                     entry.last_used = time.monotonic()
                     return entry.model
 
             logger.info("[Tenant %d] Cache miss — streaming model from blob…", tenant_id)
-            model = self._stream_from_blob(tenant_id)
+            model = self._stream_from_blob(tenant_id, model_version)
 
             with self._cache_lock:
-                self._cache[tenant_id] = _ModelEntry(model=model)
+                self._cache[tenant_id] = _ModelEntry(
+                    model=model, model_version=model_version
+                )
 
             if model is not None:
                 logger.info("[Tenant %d] ✅ Model loaded and cached.", tenant_id)
             else:
                 logger.warning(
                     "[Tenant %d] ⚠️  Model unavailable — returning None. "
-                    "Run modeling/train_rf_model.py to generate a per-tenant model.",
+                    "Run modeling/train_tabular_model.py to generate a per-tenant model.",
                     tenant_id,
                 )
             return model
@@ -299,14 +327,21 @@ class RandomForestModelCache:
         updated_any = False
         for tid in tids:
             logger.info("[Tenant %d] Forcing re-stream from blob…", tid)
-            model_data = self._stream_from_blob(tid)
+            model_version = self._serving_version(tid)
+            if not model_version:
+                logger.warning("[Tenant %d] No RF serving version is registered.", tid)
+                continue
+            model_data = self._stream_from_blob(tid, model_version)
             if model_data is not None:
                 with self._cache_lock:
                     if tid in self._cache:
                         self._cache[tid].model     = model_data
+                        self._cache[tid].model_version = model_version
                         self._cache[tid].last_used = time.monotonic()
                     else:
-                        self._cache[tid] = _ModelEntry(model=model_data)
+                        self._cache[tid] = _ModelEntry(
+                            model=model_data, model_version=model_version
+                        )
                 logger.info(
                     "[Tenant %d] ✅ Model refreshed (%s)",
                     tid, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),

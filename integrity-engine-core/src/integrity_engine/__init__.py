@@ -1,6 +1,6 @@
 """Deterministic integrity scoring shared by production and ELCE."""
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"
 
 from .graph import (
     CandidateNomination,

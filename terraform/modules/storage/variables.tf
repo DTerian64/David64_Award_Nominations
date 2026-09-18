@@ -49,10 +49,10 @@ variable "private_dns_zone_id" {
 
 variable "blob_versioning_enabled" {
   description = <<-EOT
-    Keep prior versions of overwritten blobs. Required for ML model rollback:
-    both pipelines write with overwrite=True, so without this an overwrite is
-    destructive and a bad model cannot be reverted. Disabling this also disables
-    the version-expiry management policy, since it has nothing to act on.
+    Keep prior versions of accidentally overwritten blobs. Normal model rollback
+    selects an older immutable bundle through IntegrityComponentStatus; blob
+    versioning is the second line of defense when a path is overwritten in error.
+    Disabling this also disables the version-expiry management policy.
   EOT
   type        = bool
   default     = true
@@ -82,10 +82,9 @@ variable "container_soft_delete_retention_days" {
 
 variable "model_version_retention_days" {
   description = <<-EOT
-    Days to keep superseded versions of ML model artifacts in ml-models.
-    Must outlive the interval over which a model regression would be noticed —
-    the weekly job means several retrains, not several days. 90 covers roughly a
-    quarter of weekly runs.
+    Days to keep superseded Azure blob versions of ML artifacts in ml-models.
+    This does not delete immutable run prefixes; those require status-aware
+    pruning that protects every currently registered serving version.
   EOT
   type        = number
   default     = 90

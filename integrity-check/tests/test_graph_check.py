@@ -469,7 +469,7 @@ class GraphInferenceArtifactTests(unittest.TestCase):
             "snapshot_run_id": "graph-run-1",
             "scoring_policy_version": 2,
             "inference_snapshot_blob": (
-                "graph/runs/graph-run-1/inference-snapshot-tenant-7.json.gz"
+                "tenant_7/graph/graph-run-1/inference-snapshot.json.gz"
             ),
             "inference_snapshot_sha256": hashlib.sha256(compressed).hexdigest(),
             "inference_snapshot_size_bytes": len(compressed),

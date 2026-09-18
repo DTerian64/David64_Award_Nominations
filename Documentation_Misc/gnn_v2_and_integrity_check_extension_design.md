@@ -437,7 +437,7 @@ their actual evidence and decision method.
 Training publishes an immutable, tenant-specific bundle:
 
 ```text
-gnn/tenant_<tenant_id>/<model_version>/
+tenant_<tenant_id>/gnn/<model_version>/
   graph_snapshot.pt
   manifest.json
   candidates/

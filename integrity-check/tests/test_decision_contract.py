@@ -56,6 +56,7 @@ def test_each_engine_preserves_its_own_kind_of_evidence():
             "fraud_score": 48,
             "fraud_prob": 0.487,
             "risk_level": "MEDIUM",
+            "architecture": "random_forest",
             "warning_flags": ["Reciprocal nomination detected"],
             "shap_explanations": [{"feature": "pair_count"}],
         },
@@ -116,6 +117,8 @@ def test_each_engine_preserves_its_own_kind_of_evidence():
     )
 
     assert payloads["rf"]["model_probability"] == 0.487
+    assert payloads["rf"]["engine"] == "TABULAR"
+    assert payloads["rf"]["architecture"] == "random_forest"
     assert payloads["rf"]["explanation"]["top_features"] == [
         {"feature": "pair_count"}
     ]

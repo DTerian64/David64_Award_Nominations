@@ -146,21 +146,20 @@ async def get_model_manifest(
     tenant_id = user_context["effective_user"]["TenantId"]
     try:
         model_version = None
-        if component == "gnn":
-            gnn_status = next(
+        if component in {"rf", "gnn"}:
+            status_component = component.upper()
+            component_status = next(
                 (
                     row for row in sqlhelper.get_integrity_component_statuses(tenant_id)
-                    if row["component"] == "GNN"
+                    if row["component"] == status_component
                 ),
                 None,
             )
-            model_version = gnn_status["serving_version"] if gnn_status else None
-        manifest = (
-            model_artifacts.get_manifest(
-                tenant_id, component, model_version=model_version
+            model_version = (
+                component_status["serving_version"] if component_status else None
             )
-            if component == "gnn"
-            else model_artifacts.get_manifest(tenant_id, component)
+        manifest = model_artifacts.get_manifest(
+            tenant_id, component, model_version=model_version
         )
     except (UnicodeDecodeError, ValueError) as exc:
         raise HTTPException(
@@ -243,7 +242,15 @@ async def get_rf_model_visualization(
 ):
     """Proxy the tenant RF chart without exposing Blob Storage credentials."""
     tenant_id = user_context["effective_user"]["TenantId"]
-    image = model_artifacts.get_rf_visualization(tenant_id)
+    rf_status = next(
+        (
+            row for row in sqlhelper.get_integrity_component_statuses(tenant_id)
+            if row["component"] == "RF"
+        ),
+        None,
+    )
+    model_version = rf_status["serving_version"] if rf_status else None
+    image = model_artifacts.get_rf_visualization(tenant_id, model_version)
     if image is None:
         raise HTTPException(status_code=404, detail="RF visualization is not available")
     return Response(

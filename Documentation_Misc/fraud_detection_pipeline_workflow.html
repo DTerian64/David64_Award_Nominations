@@ -252,13 +252,12 @@
       <!-- Stage 2 -->
       <div class="box box-blue" style="max-width:185px;">
         <div class="tag tag-cron">STAGE 2</div>
-        <div class="box-title">modeling.train_rf_model</div>
+        <div class="box-title">modeling.train_tabular_model</div>
         <div class="box-sub">
-          RF-native nomination features only<br>
-          Peer-to-Peer RF (19 features, including TransactionalPhraseScore)<br>
-          → StandardScaler fit<br>
-          → SHAP explainer<br>
-          → .pkl → Azure Blob
+          Canonical Tabular-v1 features<br>
+          Random Forest + Tabular MLP candidates<br>
+          → temporal evaluation and selection<br>
+          → immutable serving bundle → Azure Blob
         </div>
       </div>
       <span class="arr">→</span>

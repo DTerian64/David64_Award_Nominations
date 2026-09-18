@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,6 +43,11 @@ class _Scaler:
         return values
 
 
+class _IdentityTransform:
+    def transform(self, values):
+        return values
+
+
 class RfFeatureIndependenceTests(unittest.TestCase):
     def test_transactional_phrase_score_matches_training_contract(self):
         score = random_forest_check.transactional_phrase_score
@@ -71,6 +77,73 @@ class RfFeatureIndependenceTests(unittest.TestCase):
             "p2p_feature_columns": RF_FEATURE_COLUMNS[:-1],
             "feature_contract": "rf-native-v2",
         }))
+
+    def test_tabular_v1_artifact_is_accepted_without_training_package_types(self):
+        self.assertTrue(random_forest_check._is_independent_rf_artifact({
+            "artifact_type": "tabular_integrity_model",
+            "architecture": "random_forest",
+            "feature_schema_id": "award-nomination-tabular:tabular-v1",
+            "feature_columns": [
+                "Amount", "DayOfWeekSin", "DayOfWeekCos",
+                "MonthSin", "MonthCos", "TransactionalPhraseScore",
+            ],
+            "model": object(),
+            "preprocessing": {
+                "imputer": object(),
+                "scaler": object(),
+                "category_fraud_rate": {},
+                "global_fraud_rate": 0.0,
+            },
+        }))
+
+    @patch.object(random_forest_check, "_get_embed_model")
+    @patch.object(random_forest_check.db, "get_beneficiary_descriptions", return_value=[])
+    @patch.object(random_forest_check.db, "get_pair_nomination_count", return_value=0)
+    @patch.object(random_forest_check.db, "check_reciprocal_nomination", return_value=False)
+    @patch.object(random_forest_check.db, "get_beneficiary_history", return_value=[])
+    @patch.object(random_forest_check.db, "get_nominator_history", return_value=[])
+    def test_tabular_v1_feature_builder_uses_cyclic_calendar_inputs(
+        self,
+        _nominator_history,
+        _beneficiary_history,
+        _reciprocal,
+        _pair_count,
+        _descriptions,
+        _embed_model,
+    ):
+        feature_columns = [
+            "Amount", "DayOfWeekSin", "DayOfWeekCos",
+            "MonthSin", "MonthCos", "TransactionalPhraseScore",
+        ]
+        model_data = {
+            "feature_columns": feature_columns,
+            "preprocessing": {
+                "imputer": _IdentityTransform(),
+                "scaler": _IdentityTransform(),
+                "category_fraud_rate": {},
+                "global_fraud_rate": 0.0,
+            },
+            "amount_mean": 100.0,
+            "amount_std": 20.0,
+        }
+        details = {
+            "nomination_id": 11,
+            "tenant_id": 3,
+            "nominator_id": 21,
+            "beneficiary_id": 31,
+            "amount": 120.0,
+            "description": "Solid delivery.",
+            "category_id": 2,
+            "nomination_date": datetime(2026, 9, 14),
+        }
+
+        transformed, values, _similarity = random_forest_check._build_features(
+            details, model_data
+        )
+
+        self.assertEqual(transformed.shape, (1, len(feature_columns)))
+        self.assertAlmostEqual(values["DayOfWeekSin"], 0.0, places=7)
+        self.assertAlmostEqual(values["DayOfWeekCos"], 1.0, places=7)
 
     @patch.object(random_forest_check, "_get_embed_model")
     @patch.object(random_forest_check.db, "get_beneficiary_descriptions", return_value=[])

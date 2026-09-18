@@ -7,7 +7,7 @@ Structural twin of random_forest_check.py, for the third fraud model.
 What runs here is only the DECODER. The weekly fraud-analytics-job trains a
 the selected heterogeneous graph encoder, publishes per-user node embeddings to
 dbo.GNN_UserEmbeddings, and uploads the decoder as
-gnn/tenant_<N>/<ServingVersion>/serving/decoder.pt.
+tenant_<N>/gnn/<ServingVersion>/serving/decoder.pt.
 Inference combines two keyed embedding lookups with a bounded query for raw
 nomination edges strictly before the target, then runs a small MLP forward
 pass. The shared causal-context builder converts those edges into the same
@@ -62,6 +62,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
+from integrity_engine.artifact_paths import gnn_serving_decoder_blob
 import torch
 from integrity_engine.gnn import (
     CAUSAL_CONTEXT_FEATURE_COLUMNS,
@@ -142,16 +143,16 @@ def _get_head(tenant_id: int, serving_version: str | None = None) -> dict | None
 
 
 def _head_blob_name(tenant_id: int, serving_version: str | None = None) -> str:
-    if serving_version:
-        return f"gnn/tenant_{tenant_id}/{serving_version}/serving/decoder.pt"
-    return f"gnn/gnn_head_tenant_{tenant_id}.pt"
+    if not serving_version:
+        raise ValueError("GNN serving version is required")
+    return gnn_serving_decoder_blob(tenant_id, serving_version)
 
 
 def _stream_head_from_blob(
     tenant_id: int, serving_version: str | None = None
 ) -> dict | None:
     """
-    Download the versioned serving decoder (or the legacy decoder during transition).
+    Download the versioned tenant-scoped serving decoder.
 
     weights_only=True is deliberate and load-bearing. torch.save uses pickle
     underneath, so a .pt file is as executable as a .pkl unless restricted. The

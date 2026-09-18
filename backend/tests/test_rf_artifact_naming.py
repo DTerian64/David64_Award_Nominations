@@ -12,10 +12,10 @@ from utils.rf_model_cache import RandomForestModelCache
 
 
 class RfArtifactNamingTests(unittest.TestCase):
-    def test_canonical_name_is_random_forest(self):
+    def test_canonical_name_is_tenant_scoped_tabular_serving_model(self):
         self.assertEqual(
-            RandomForestModelCache._blob_name(3),
-            "random_forest/random_forest_tenant_3.pkl",
+            RandomForestModelCache._blob_name(3, "tabular-v1-run"),
+            "tenant_3/tabular/tabular-v1-run/serving/model.pkl",
         )
 
 if __name__ == "__main__":

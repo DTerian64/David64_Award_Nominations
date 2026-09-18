@@ -13,11 +13,10 @@ below (STAGES) is the single source of truth; this list documents it.
       Materialises per-user graph flag snapshots into dbo.UserGraphFlags
       for nomination-time graph analysis and audit use cases.
 
-  Stage 2: modeling/train_rf_model.py
-      Per-tenant Random Forest retrain on Nominations and the shared human-label contract.
-      Uses nomination, relationship, amount, category, and semantic-description
-      features only; Graph Analytics findings remain an independent opinion.
-      Uploads the retrained .pkl model to Azure Blob Storage.
+  Stage 2: modeling/train_tabular_model.py
+      Per-tenant RF and Tabular MLP comparison on one shared feature/label
+      contract. Publishes the immutable candidate bundle, refits the selected
+      architecture, then activates its versioned serving artifact.
 
   Stage 3: modeling/train_gnn_model.py
       Per-tenant operational bake-off of GraphSAGE, GCN-family, and GATv2 over
@@ -79,7 +78,19 @@ Exit codes:
 Logging:
   Structured stdout — picked up by the Container Apps Environment log stream
   and forwarded to the Log Analytics workspace defined in the CAE.
+
+Individual stages can be run in isolation for local analysis, e.g.:
+    python run_job.py --only train_gnn_model --tenant 5 
+    
+    or on Azure Container Apps with: 
+    
+    az containerapp job start `
+    --name award-fraud-analytics-sandbox `
+    --resource-group rg_award_nomination_sandbox `
+    --command "python" \
+    --args "run_job.py --only train_gnn_model --tenant 5"
 """
+
 
 import argparse
 import logging
@@ -271,11 +282,10 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
 # `post` is an optional hook run only if the stage succeeded.
 STAGES = [
     {"key": "graph_analytics", "label": "Graph Analytics",   "module": "modeling.graph_analytics", "post": None},
-    {"key": "train_rf_model",  "label": "RF model training", "module": "modeling.train_rf_model",  "post": notify_api_refresh},
-    # GNN training. Placed after train_rf_model for two reasons: it
-    # consumes the label view the RF has just refreshed, and a GNN failure can then
-    # never block the RF retrain — run_stage()'s per-stage try/except gives that
-    # isolation for free. No post-hook: the backend does not consume the GNN, so
+    {"key": "train_tabular_model", "label": "Tabular model training", "module": "modeling.train_tabular_model", "post": notify_api_refresh},
+    # GNN training follows the independent Tabular stage so a failure in either
+    # model family cannot block the other — run_stage()'s per-stage try/except
+    # gives that isolation. No post-hook: the backend does not consume the GNN, so
     # /api/internal/refresh-fraud-model is irrelevant to it; integrity-check streams
     # the decoder itself on first use per tenant.
     {"key": "train_gnn_model",        "label": "GNN model training",       "module": "modeling.train_gnn_model", "post": None},

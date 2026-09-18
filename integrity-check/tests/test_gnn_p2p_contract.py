@@ -119,13 +119,11 @@ class GnnP2PContractTests(unittest.TestCase):
         self.assertNotIn("approver", " ".join(result["warning_flags"]).lower())
 
     def test_decoder_uses_the_gnn_folder(self):
-        self.assertEqual(
-            gnn_check._head_blob_name(7),
-            "gnn/gnn_head_tenant_7.pt",
-        )
+        with self.assertRaisesRegex(ValueError, "serving version"):
+            gnn_check._head_blob_name(7)
         self.assertEqual(
             gnn_check._head_blob_name(7, "gnn-v2-selected"),
-            "gnn/tenant_7/gnn-v2-selected/serving/decoder.pt",
+            "tenant_7/gnn/gnn-v2-selected/serving/decoder.pt",
         )
 
     def test_behavior_population_accepts_new_and_legacy_artifacts(self):

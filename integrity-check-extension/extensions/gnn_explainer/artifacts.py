@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import torch
+from integrity_engine.artifact_paths import gnn_bundle_prefix
 
 from .contracts import ExplanationRequest
 from .errors import PermanentExtensionError, TransientExtensionError
@@ -34,7 +35,7 @@ class BundleLoader:
         self.max_artifact_bytes = max_artifact_bytes
 
     def load(self, request: ExplanationRequest) -> ArtifactBundle:
-        prefix = f"gnn/tenant_{request.tenant_id}/{request.model_version}"
+        prefix = gnn_bundle_prefix(request.tenant_id, request.model_version)
         manifest_raw = self.reader.read(
             f"{prefix}/manifest.json", min(self.max_artifact_bytes, 10_000_000)
         )

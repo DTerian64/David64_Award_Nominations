@@ -1,6 +1,6 @@
 # Tabular Integrity Model Design
 
-**Status:** Design draft; no Tabular MLP production implementation started  
+**Status:** T5 tenant-first candidate publication and versioned serving cutover implemented
 **Owner:** Integrity modeling  
 **Applies to:** `fraud-analytics-job`, `integrity-check`, `dbo.IntegrityComponentStatus`, `dbo.IntegrityDecisionResults`, administrative integrity UI  
 **Last updated:** 2026-09-17
@@ -68,21 +68,40 @@ must remain separate.
 
 ## 3. Canonical tabular feature contract
 
-Both tabular candidates receive the same canonical information from a versioned
-Tabular feature builder; they do not query Award Nomination tables directly:
+Both tabular candidates receive the same ordered canonical information from the
+versioned `award_nomination_tabular_v1` feature builder; they do not query Award
+Nomination tables directly:
 
-1. `PairNominationCount`
-2. `DescriptionCosineSim`
-3. `DescriptionEmbDistance`
-4. `HasReciprocalNomination`
-5. `BeneficiaryTotalReceived`
-6. `NominatorTotalNominations`
-7. `NominatorUniqueBeneficiaries`
-8. `NominatorConcentrationRatio`
-9. `Month`
-10. `NominatorAvgAmount`
-11. `AmountZScore`
-12. `Amount`
+1. `Amount`
+2. `DayOfWeekSin`
+3. `DayOfWeekCos`
+4. `MonthSin`
+5. `MonthCos`
+6. `IsWeekend`
+7. `NominatorTotalNominations`
+8. `NominatorAvgAmount`
+9. `NominatorStdAmount`
+10. `NominatorUniqueBeneficiaries`
+11. `BeneficiaryTotalReceived`
+12. `BeneficiaryAvgAmountReceived`
+13. `HasReciprocalNomination`
+14. `PairNominationCount`
+15. `AmountZScore`
+16. `IsHighAmount`
+17. `NominatorConcentrationRatio`
+18. `CategoryFraudRate`
+19. `DescriptionCosineSim`
+20. `DescriptionEmbDistance`
+21. `TransactionalPhraseScore`
+
+This promotes the current RF-v3 information contract to a model-neutral
+Tabular-v1 contract while replacing ordinal weekday and month inputs with
+sine/cosine pairs. Both coordinates are required: sine alone maps distinct
+points on the cycle to the same value. Raw `DayOfWeek` and `Month` remain in the
+audit/parity frame but are not model inputs. T2 first proves that canonical
+input reproduces the deployed Random Forest calculations. Random Forest and
+`tabular_mlp` then consume the same ordered Tabular-v1 matrix; neither candidate
+may add private features.
 
 The feature builder must use the same tenant boundary and nomination-time
 cutoff for both candidates. No post-decision outcome, future nomination, Graph
@@ -106,8 +125,8 @@ uses:
 - bounded numeric handling for similarity and concentration values;
 - `log1p` where approved for non-negative count or amount distributions;
 - fitted scaling for continuous inputs; and
-- cyclic or one-hot encoding for `Month`, rather than treating December and
-  January as maximally distant ordinal values.
+- the shared Tabular-v1 sine/cosine weekday and month coordinates without a
+  candidate-private calendar recoding.
 
 Random Forest may retain tree-appropriate representations. Every manifest must
 record canonical feature order, derived input order, transformations, fitted
@@ -200,6 +219,31 @@ not call an MLP attribution an RF SHAP explanation.
 
 ## 9. Artifacts and operational status
 
+Every successful run is stored below the tenant boundary:
+
+```text
+ml-models/tenant_<tenant_id>/tabular/<model_version>/
+├── manifest.json
+├── candidates/
+│   ├── random_forest/
+│   │   ├── model.pkl
+│   │   ├── metrics.json
+│   │   └── score_distribution.png
+│   └── tabular_mlp/
+│       ├── model.pkl
+│       ├── metrics.json
+│       └── score_distribution.png
+└── serving/
+    ├── model.pkl
+    └── score_distribution.png
+```
+
+Candidate artifacts preserve the exact holdout models used for comparison.
+The serving artifact is a separate full matured-label refit of the selected
+architecture. `manifest.json` is authoritative for the selection and artifact
+hashes. The database serving version is changed only after every blob in the
+bundle has uploaded successfully.
+
 Each immutable training run records:
 
 - both candidate metrics and eligibility decisions;
@@ -222,23 +266,48 @@ non-decisive and are not shown as additional integrity-engine verdicts.
 
 ## 10. Proposed code boundary
 
-The target package boundary is:
+The T4 package boundary is:
 
 ```text
-fraud-analytics-job/modeling/tabular/
-├── features.py
-├── policy.py
-├── preprocessing.py
-├── random_forest.py
-├── mlp.py
-├── artifacts.py
-└── evaluators/
-    └── selection_by_holdout_pr_auc/
+fraud-analytics-job/
+├── feature_builders/tabular/
+│   ├── award_nomination_tabular_v1.py
+│   └── category_encoding.py
+└── modeling/tabular/
+    ├── contracts.py
+    ├── metrics.py
+    ├── preprocessing.py
+    ├── splits.py
+    ├── training_data.py
+    ├── random_forest.py
+    ├── tabular_mlp.py
+    └── selection.py
 ```
 
-The exact migration of the existing Random Forest trainer is an implementation
-step. The package must not import GNN's `causal_mlp_baseline`, and GNN must not
-import the production `tabular_mlp`.
+T4 established the in-memory candidate comparison without changing serving
+state. T5 adds immutable candidate and serving bundles, makes
+`train_tabular_model.py` the scheduled stage, and lets live inference load the
+selected Random Forest or Tabular MLP by registered serving version. The
+database component key remains `RF` temporarily for API compatibility; the
+manifest and result provenance carry the selected architecture explicitly.
+The package must not import GNN's `causal_mlp_baseline`, and GNN must not import
+the production `tabular_mlp`.
+
+### 9.1 Deployment and legacy-prefix retirement
+
+The producer and consumers must be deployed as one coordinated cutover because
+runtime fallback to old prefixes is deliberately disabled. After deployment:
+
+1. run `fraud-analytics-job` and confirm each available component's registered
+   serving version has a complete tenant-first bundle;
+2. score a nomination and inspect the Tabular, GNN, and Graph provenance;
+3. open the read-only model inspection view and confirm its manifest and
+   visualization resolve from that serving version; and
+4. only then delete the retired `random_forest/`, `gnn/tenant_*`, and legacy
+   Graph prefixes from `ml-models`.
+
+Legacy blobs are rollback material until these checks pass. Removing them is an
+explicit post-deployment storage operation, not part of model training.
 
 ## 11. Required tests
 
@@ -260,7 +329,8 @@ At minimum, automated tests must prove:
 The following remain implementation-design decisions:
 
 1. Tabular policy persistence and initial selection thresholds;
-2. final MLP architecture, regularization, and training budget;
+2. production validation and policy persistence for the initial MLP
+   architecture, regularization, and training budget;
 3. probability calibration method;
 4. model-neutral database and API migration from `RfResultJson`;
 5. model-neutral component-status migration from the current RF identity;

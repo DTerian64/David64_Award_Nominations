@@ -68,13 +68,12 @@ def get_manifest(
     """Return a validated JSON manifest for exactly one authenticated tenant."""
     if model_version and not _MODEL_VERSION.fullmatch(model_version):
         raise ValueError("Model version is invalid")
+    if not model_version:
+        return None
+    family = "tabular" if component == "rf" else "gnn"
     names = {
-        "rf": f"random_forest/random_forest_tenant_{tenant_id}.manifest.json",
-        "gnn": (
-            f"gnn/tenant_{tenant_id}/{model_version}/manifest.json"
-            if model_version
-            else f"gnn/gnn_tenant_{tenant_id}.manifest.json"
-        ),
+        "rf": f"tenant_{tenant_id}/{family}/{model_version}/manifest.json",
+        "gnn": f"tenant_{tenant_id}/{family}/{model_version}/manifest.json",
     }
     payload = _download(names[component], _MAX_MANIFEST_BYTES)
     if payload is None:
@@ -87,7 +86,9 @@ def get_manifest(
         raise ValueError("Model manifest tenant does not match the authenticated tenant")
     if model_version and manifest.get("model_version") != model_version:
         raise ValueError("Model manifest version does not match the requested run")
-    expected_type = "random_forest" if component == "rf" else "graph_neural_network"
+    expected_type = (
+        "tabular_integrity_model" if component == "rf" else "graph_neural_network"
+    )
     if manifest.get("artifact_type") != expected_type:
         raise ValueError("Model manifest type is invalid")
     if manifest.get("schema_version") != 1:
@@ -108,14 +109,16 @@ def get_manifest(
     return manifest
 
 
-def get_rf_visualization(tenant_id: int) -> Optional[bytes]:
+def get_rf_visualization(
+    tenant_id: int, model_version: str | None = None
+) -> Optional[bytes]:
     """Return the tenant's generated RF score-distribution PNG."""
-    manifest = get_manifest(tenant_id, "rf")
+    manifest = get_manifest(tenant_id, "rf", model_version=model_version)
     if manifest is None or "approver" in manifest.get("retired_components", []):
         # The old two-panel image contains an Approver score distribution. Do
         # not show it after retirement; the next RF run publishes a P2P-only PNG.
         return None
     return _download(
-        f"random_forest/random_forest_tenant_{tenant_id}.png",
+        f"tenant_{tenant_id}/tabular/{model_version}/serving/score_distribution.png",
         _MAX_VISUALIZATION_BYTES,
     )

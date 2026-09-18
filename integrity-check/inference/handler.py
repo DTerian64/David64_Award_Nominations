@@ -95,7 +95,12 @@ def _select_route(desc_result, decision: dict) -> dict:
 
 def _decisive_engines(desc_result, decision: dict, route: dict) -> list[str]:
     """Return the engines whose evidence materially selected the final route."""
-    model_names = {"RF": "RF", "Graph": "GRAPH", "GNN": "GNN"}
+    model_names = {
+        "RF": "RF",
+        "TABULAR_MLP": "TABULAR_MLP",
+        "Graph": "GRAPH",
+        "GNN": "GNN",
+    }
     decisive = [
         model_names[name]
         for name in decision.get("decisive_models", [])
@@ -192,12 +197,12 @@ def handle(message_id: str, payload: dict) -> None:
         component_statuses = {}
 
     logger.info(
-        "RF assessment starting",
+        "Tabular assessment starting",
         extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
     )
     rf_result = random_forest_check.assess(details, tenant_id, component_statuses.get("RF"))
     logger.info(
-        "RF assessment completed",
+        "Tabular assessment completed",
         extra={
             "nomination_id": nomination_id,
             "model_available": rf_result["model_available"],
@@ -206,6 +211,7 @@ def handle(message_id: str, payload: dict) -> None:
             "last_attempt_status": rf_result.get("last_attempt_status"),
             "fraud_score": rf_result.get("fraud_score"),
             "risk_level": rf_result.get("risk_level"),
+            "architecture": rf_result.get("architecture"),
             "shap_status": rf_result.get("shap_status"),
             "shap_reason": rf_result.get("shap_reason"),
             "shap_attempted": rf_result.get("shap_status") in ("COMPLETED", "FAILED"),

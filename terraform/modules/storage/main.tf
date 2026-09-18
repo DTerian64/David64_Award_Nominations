@@ -23,13 +23,10 @@ resource "azurerm_storage_account" "storage" {
   allow_nested_items_to_be_public = false
 
   # ── Artifact recovery ───────────────────────────────────────────────────────
-  # Both ML pipelines overwrite their model artifacts in place:
-  #   modeling.train_rf_model._upload_artefact() -> upload_blob(..., overwrite=True)
-  #     random_forest/random_forest_tenant_<N>.pkl (Random Forest)
-  #     gnn/gnn_encoder_tenant_<N>.pt              (GNN encoder — audit/retrain)
-  #     gnn/gnn_head_tenant_<N>.pt                 (GNN decoder — read by inference)
-  # Graph snapshots are immutable and grouped by analytics execution:
-  #     graph/runs/<run-id>/inference-snapshot-tenant-<N>.json.gz
+  # Integrity artifacts are immutable and tenant-first:
+  #     tenant_<N>/tabular/<version>/...            (RF + Tabular MLP)
+  #     tenant_<N>/gnn/<version>/...                (GNN candidates + serving)
+  #     tenant_<N>/graph/<run-id>/inference-snapshot.json.gz
   #
   # Without versioning that overwrite is destructive: a bad weekly run replaces
   # the last known-good model and there is no way back except retraining, which
@@ -61,10 +58,11 @@ resource "azurerm_storage_account" "storage" {
 }
 
 # ── Version lifecycle ─────────────────────────────────────────────────────────
-# Versioning without expiry grows without bound. The weekly job rewrites one
-# .pkl plus two .pt files per tenant per run, so ml-models accrues
-# (3 x tenants) versions a week and needs a shorter, explicit retention than the
-# write-once containers.
+# Blob versioning protects an immutable path from an accidental overwrite. The
+# tenant-first contract normally publishes a new prefix for every run, so this
+# policy expires only superseded Azure blob versions; it deliberately does not
+# delete base blobs for old runs because a still-registered serving version must
+# never disappear on age alone. Status-aware run pruning is a separate operation.
 #
 # Retention has to outlive the detection loop it protects: a model regression is
 # usually noticed over several weekly cycles, not immediately, so the default
@@ -117,7 +115,7 @@ resource "azurerm_storage_management_policy" "blob_versions" {
 
 # ── Blob containers ───────────────────────────────────────────────────────────
 
-# ML models — fraud_detection_model.pkl etc.
+# Tenant-scoped integrity model bundles.
 resource "azurerm_storage_container" "ml_models" {
   name                  = "ml-models"
   storage_account_name  = azurerm_storage_account.storage.name

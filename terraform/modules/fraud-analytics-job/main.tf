@@ -3,7 +3,7 @@
 # Fraud Analytics Container Apps Job
 #
 # Runs two scripts in sequence on a weekly cron schedule:
-#   1. modeling/train_rf_model.py — per-tenant Random Forest retrain; upserts scores
+#   1. modeling/train_tabular_model.py — per-tenant RF/MLP evaluation and serving refit
 #                               into dbo.FraudScores; uploads .pkl to Blob Storage.
 #   2. modeling/graph_analytics.py — Azure SQL Graph MATCH queries + networkx + NLP;
 #                               writes behavioural pattern findings to

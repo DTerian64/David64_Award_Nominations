@@ -519,7 +519,7 @@ The numeric values above are examples, not approved production defaults.
 One immutable tenant bundle records all specialist decisions:
 
 ```text
-gnn/tenant_<tenant_id>/<bundle_version>/
+tenant_<tenant_id>/gnn/<bundle_version>/
   manifest.json
   graph_snapshot.pt
   specialists/

@@ -25,7 +25,12 @@ def combine(rf: dict, graph: dict, gnn: dict) -> dict:
     be misleading.  The categorical maximum is conservative, deterministic,
     and preserves every component's tenant-specific score-to-risk mapping.
     """
-    candidates = [("RF", rf), ("Graph", graph), ("GNN", gnn)]
+    tabular_name = (
+        "TABULAR_MLP"
+        if rf.get("architecture") == "tabular_mlp"
+        else "RF"
+    )
+    candidates = [(tabular_name, rf), ("Graph", graph), ("GNN", gnn)]
     available = [(name, result) for name, result in candidates
                  if bool(result.get("model_available"))]
 

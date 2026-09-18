@@ -59,7 +59,7 @@ def _blobs():
             )
         ],
     }
-    prefix = "gnn/tenant_1/v1/"
+    prefix = "tenant_1/gnn/v1/"
     return {prefix + "manifest.json": json.dumps(manifest).encode(),
             **{prefix + path: content for path, content in raw.items()}}
 
@@ -71,6 +71,6 @@ def test_bundle_loads_only_hash_validated_versioned_artifacts():
 
 def test_hash_mismatch_is_permanent():
     blobs = _blobs()
-    blobs["gnn/tenant_1/v1/snapshot.pt"] += b"tampered"
+    blobs["tenant_1/gnn/v1/snapshot.pt"] += b"tampered"
     with pytest.raises(PermanentExtensionError, match="ARTIFACT_SIZE_MISMATCH"):
         BundleLoader(MemoryReader(blobs), 1_000_000).load(_request())

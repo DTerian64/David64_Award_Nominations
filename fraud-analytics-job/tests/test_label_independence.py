@@ -124,7 +124,7 @@ class HumanConfirmedLabelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not marked is_synthetic"):
             labels.load_labels(object(), tenant_id=3)
 
-    def test_rf_feature_frame_receives_same_shared_labels(self):
+    def test_tabular_feature_frame_receives_same_shared_labels(self):
         features = pd.DataFrame([
             {"NominationId": 1, "Amount": 1000},
             {"NominationId": 2, "Amount": 2000},

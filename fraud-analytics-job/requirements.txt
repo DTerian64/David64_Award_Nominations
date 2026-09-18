@@ -1,7 +1,7 @@
 # fraud-analytics-job/requirements.txt
 # ─────────────────────────────────────────────────────────────────────────────
 # Combined dependencies for:
-#   modeling/train_rf_model.py                      (Random Forest pipeline)
+#   modeling/train_tabular_model.py                 (RF + Tabular MLP pipeline)
 #   modeling/graph_analytics.py                     (Graph + NLP pipeline)
 # ─────────────────────────────────────────────────────────────────────────────
 

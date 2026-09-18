@@ -2,7 +2,7 @@
 train_gnn_model.py — GNN training stage
 =========================================
 Stage 3 of the fraud-analytics-job pipeline, registered in run_job.py STAGES
-after train_rf_model.
+after train_tabular_model.
 
 Per tenant:
     1. Load labels via labels.py (shared with the Random Forest).
@@ -15,7 +15,7 @@ Per tenant:
 
 Ordering rationale
 ------------------
-Runs after train_rf_model for stable operations. Both models independently read
+Runs after train_tabular_model for stable operations. Both models independently read
 the same human label contract, and a GNN failure cannot block the RF retrain — the
 per-stage try/except in run_job.run_stage() provides that isolation. The cost is
 that sync_holidays and forecast_models run later in the weekly window.
@@ -37,6 +37,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from integrity_engine.artifact_paths import gnn_bundle_prefix
 
 # Unix-only stdlib. Absent on Windows, where developers run this stage against
 # the sandbox database by hand. A hard import here made the whole module
@@ -80,7 +81,7 @@ from .gnn.policy import GNNPolicy, load_active_policy  # noqa: E402
 
 # Reuse the Random Forest's blob upload helper rather than duplicating the auth
 # and error handling. Both stages run in the same process under run_job.py.
-from .train_rf_model import _upload_artefact  # noqa: E402
+from utils.model_artifacts import upload_artifact  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -832,7 +833,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     artifact_paths.append((manifest_path, "operational_manifest"))
 
     # Upload the whole immutable run before the SQL serving pointer changes.
-    versioned_folder = f"gnn/tenant_{tenant_id}/{model_version}"
+    versioned_folder = gnn_bundle_prefix(tenant_id, model_version)
     bundle_uploads = []
     for artifact, _role in artifact_paths:
         relative_parent = artifact.relative_to(bundle_dir).parent.as_posix()
@@ -842,7 +843,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             else f"{versioned_folder}/{relative_parent}"
         )
         bundle_uploads.append(
-            _upload_artefact(artifact, blob_folder=blob_folder)
+            upload_artifact(artifact, blob_folder=blob_folder)
         )
     if os.getenv("AZURE_STORAGE_ACCOUNT") and not all(bundle_uploads):
         raise RuntimeError(

@@ -178,8 +178,8 @@ class CompleteAssessmentTests(unittest.TestCase):
 
         messages = [record.getMessage() for record in logs.records]
         for expected in (
-            "RF assessment starting",
-            "RF assessment completed",
+            "Tabular assessment starting",
+            "Tabular assessment completed",
             "GNN assessment starting",
             "GNN assessment completed",
             "IntegrityDecisionResults persisted",

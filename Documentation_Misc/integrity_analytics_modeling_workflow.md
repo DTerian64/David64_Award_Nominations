@@ -1,17 +1,17 @@
 # Integrity Analytics Modeling Workflow
 
-**Status:** Architecture design; phased refactor not started  
+**Status:** T1-T5 implemented through tenant-first Tabular candidate publication and versioned serving cutover
 **Owner:** Integrity modeling  
 **Applies to:** `fraud-analytics-job`, source-system adapters, feature builders, model-family trainers, artifact publication, and live inference integration  
 **Last updated:** 2026-09-17
 
 ## 1. Purpose
 
-The current analytics job reads Award Nomination database tables directly from
-multiple model implementations. Random Forest extraction is embedded in
-`modeling/train_rf_model.py`, while GNN extraction is embedded in
-`modeling/gnn/graph.py`. This couples source storage, feature construction, and
-modeling and makes another business system difficult to integrate safely.
+Before the Tabular-v1 cutover, model implementations read Award Nomination
+tables directly and Random Forest extraction lived inside
+`modeling/train_rf_model.py`. Tabular extraction now flows through the Award
+Nomination adapter and canonical feature builder; GNN extraction remains in
+`modeling/gnn/graph.py` pending its corresponding migration.
 
 This design introduces an explicit workflow:
 
@@ -414,25 +414,191 @@ fraud-analytics-job/
 ```
 
 This is a target boundary, not a requirement for a single large file move. The
-refactor should proceed behind contracts while retaining compatibility entry
-points until each model family has moved.
+refactor proceeds behind contracts; a compatibility entry point is removed once
+its model family has completed serving cutover.
 
 ## 11. Phased refactor
 
 ### Phase A: contracts and Award adapter
 
-- define canonical records, adapter interface, feature-builder interface, and
-  snapshot manifest;
-- implement the Award Nomination adapter around current queries;
-- validate output against current RF and GNN row populations; and
-- preserve current serving behavior.
+- [x] Define canonical actor, event, participant, relationship, label, and
+  snapshot records.
+- [x] Define the source-adapter interface and capability contract.
+- [x] Implement the Award Nomination adapter as a non-serving path.
+- [x] Add tenant, time, provenance, referential-integrity, count, and snapshot-
+  hash validation.
+- [x] Run the read-only adapter against sandbox tenants 5 and 1 with real Azure
+  SQL data.
+- [x] Define the feature-builder interface in T2.
+- [ ] Validate canonical output against current RF and GNN row populations.
+- [x] Preserve current serving behavior; the adapter is not registered as a job
+  stage.
+
+The explicit read-only sandbox smoke command is:
+
+```powershell
+python -m source_adapters.award_nominations.live_smoke `
+  --tenant 5 --tenant 1 --window-days 365
+```
+
+It performs only `SELECT` operations, validates each canonical snapshot, and
+prints non-PII aggregate counts, capabilities, provenance, snapshot identity,
+and hash. It is not invoked by `run_job.py` or the ordinary unit-test suite.
+
+The latest live run completed successfully on 2026-09-17 with exclusive cutoff
+`2026-09-17T20:33:56.151056Z` and a 365-day window:
+
+| Tenant | Actors | Events | Participants | Labels | Result |
+|---|---:|---:|---:|---:|---|
+| 5, Synthetics Inc | 401 | 14,836 | 44,508 | 14,836 | Passed |
+| 1 | 291 | 5,236 | 15,708 | 50 | Passed |
+
+Tenant 5 contained 300 `FRAUD`, 14,535 `LEGITIMATE`, and one `EXCLUDED`
+disposition. Tenant 1 contained 47 `FRAUD`, one `LEGITIMATE`, and two
+`EXCLUDED` dispositions. All tenant, source, timestamp, participant,
+provenance, count, and snapshot-hash validation passed.
+
+The canonical source snapshot includes all source events in the window except
+rows marked `DO_NOT_USE`. That value is a source-level tombstone and is removed
+before canonicalization for every model family. Other statuses, including
+`PendingHRBPReview` and `Submitted`, remain canonical source events.
+Model-family eligibility remains a feature-builder responsibility; T2 must
+reproduce the current RF exclusions without pushing RF-specific policy back
+into the source adapter.
+
+The post-policy smoke run removed exactly 38 Tenant 1 `DO_NOT_USE` events and
+their 114 participant records. Tenant 5 had no such rows and was unchanged.
 
 ### Phase B: feature extraction separation
 
-- move RF source queries out of `train_rf_model.py`;
+- [x] add the non-serving `award_nomination_tabular_v1` builder over canonical
+  records;
+- [x] verify the canonical transform against the deployed 19-feature RF-v3
+  functions, then replace the two ordinal calendar inputs with four shared
+  sine/cosine coordinates in the 21-column Tabular-v1 model matrix;
+- [x] keep Random Forest and `tabular_mlp` on one shared Tabular-v1 information
+  contract with architecture-specific preprocessing only;
+- [x] add and run an explicit read-only legacy/canonical population parity
+  command during the migration;
+- [x] remove the legacy RF source query and trainer after parity acceptance;
 - split GNN row fetching from graph construction in `modeling/gnn/graph.py`;
-- make Tabular and GNN feature builders consume canonical records; and
-- add old-versus-new feature parity tests.
+- make the GNN feature builder consume canonical records; and
+- add old-versus-new GNN feature parity tests.
+
+The T2 Tabular parity command was a temporary, read-only migration check. It was
+retired with the legacy RF trainer after the canonical path became the serving
+producer.
+
+The comparison deliberately removes legacy-only `DO_NOT_USE` rows before the
+assertion because T1 established that status as a source-level tombstone. All
+remaining event identity, amount, category, text, time, status, and label fields
+must match. Unit parity separately asserts that the canonical Tabular-v1
+transform reproduces the deployed RF-v3 feature values and ordering.
+
+The read-only sandbox parity run completed successfully on 2026-09-17:
+
+| Tenant | Comparable rows | Legacy rows | Migration-only exclusions | Result |
+|---|---:|---:|---|---|
+| 5, Synthetics Inc | 15,001 | 15,001 | none | Passed |
+| 1 | 10,758 | 10,808 | 50 source tombstones | Passed |
+
+Tenant 1 also contained 488 historical `Rejected` rows without the required
+`RejectionActor`. The deployed SQL already omits those rows through null
+comparison behavior. The parity tool reports and ignores them as historical
+migration noise; they are not added to the Tabular-v1 business contract.
+
+### T3: database-free Tabular Random Forest candidate
+
+T3 added the database-free `modeling/tabular` boundary while the legacy serving
+path was still active:
+
+- [x] accept only a validated `TabularFeatureDataset` with no database query;
+- [x] use a deterministic out-of-time train/evaluation split;
+- [x] fit imputation and scaling on the training window only;
+- [x] replace the RF-v3 full-dataset category rate with leakage-safe fitting:
+  leave-one-out values for training rows and persisted training-only category
+  rates for evaluation and future inference;
+- [x] report holdout PR-AUC, ROC-AUC, Brier score, population counts, and model
+  complexity;
+- [x] return an in-memory candidate result with no upload, publication, routing,
+  or activation capability; and
+- [x] run the candidate against synthetic Tenant 5 without changing serving
+  state.
+
+The explicit read-only/non-serving integration command is:
+
+```powershell
+python -m tests.integration.tabular_candidate_evaluation --tenant 5
+```
+
+The 2026-09-17 Tenant 5 run used 12,000 training and 3,000 evaluation rows,
+with 240 and 60 fraud labels respectively. The candidate completed with
+PR-AUC `0.359699`, ROC-AUC `0.941783`, and Brier score `0.016499`. These are
+candidate diagnostics only; they do not replace the current serving RF result.
+
+### T4: Tabular MLP candidate evaluation and selection
+
+T4 adds the second Tabular-v1 architecture and a model-family selection layer
+without changing the production serving path:
+
+- [x] prepare one shared temporal holdout, label vector, category encoding, and
+  source snapshot for both architectures;
+- [x] train `random_forest` and `tabular_mlp` as in-memory candidates;
+- [x] apply architecture-specific preprocessing after the shared information
+  boundary;
+- [x] calculate PR-AUC, PR-AUC lift, ROC-AUC, Brier score, row counts, and
+  model complexity through one metric contract;
+- [x] require completed candidates with finite PR-AUC and the configured
+  minimum lift before selection;
+- [x] select the highest eligible PR-AUC, using the configured tie tolerance
+  and Random Forest preference only for operationally equivalent results; and
+- [x] prohibit artifact publication, activation, and serving-state mutation.
+
+The same read-only integration command now evaluates both candidates:
+
+```powershell
+python -m tests.integration.tabular_candidate_evaluation --tenant 5
+```
+
+The 2026-09-17 Tenant 5 comparison used exactly the same 12,000 training rows,
+3,000 evaluation rows, 240 training fraud labels, and 60 evaluation fraud
+labels for both candidates:
+
+| Candidate | PR-AUC | PR-AUC lift | ROC-AUC | Brier | Eligible |
+|---|---:|---:|---:|---:|---|
+| Random Forest | 0.359699 | 17.984955x | 0.941783 | 0.016499 | Yes |
+| Tabular MLP | 0.113970 | 5.698481x | 0.813515 | 0.032955 | Yes |
+
+Random Forest was selected with reason `HIGHEST_ELIGIBLE_PR_AUC`. The result is
+evaluation evidence only: `serving_state_changed` remained `false`, and the
+deployed RF-v3 serving bundle was not modified.
+
+### T5: tenant-first artifacts and Tabular serving
+
+The scheduled job now runs `modeling.train_tabular_model` instead of the legacy
+RF-only trainer. For each tenant it extracts one canonical snapshot, builds one
+Tabular-v1 dataset, evaluates both candidates, refits the selected architecture
+over all eligible supervised rows, and uploads the complete immutable bundle
+before changing `dbo.IntegrityComponentStatus.ServingVersion`.
+
+After the T5 cutover was verified, `modeling/train_rf_model.py`, its RF-only
+bootstrap path, and the temporary old-versus-new parity harness were removed.
+Shared blob publication and tenant model configuration now live in `utils`;
+Random Forest remains a candidate implementation under `modeling/tabular`.
+
+All integrity artifacts use one tenant-first root:
+
+```text
+ml-models/
+└── tenant_<tenant_id>/
+    ├── tabular/<model_version>/
+    ├── gnn/<model_version>/
+    └── graph/<run_id>/
+```
+
+There is no runtime fallback to the retired `random_forest/`, `gnn/tenant_*`,
+or `graph/runs/` prefixes. This makes missing or stale registry state fail as
+unavailable instead of silently crossing into a legacy storage contract.
 
 ### Phase C: workflow orchestration
 
@@ -486,7 +652,8 @@ At minimum, automated tests must prove:
 - registry resolution is tenant-, source-, and model-family-specific;
 - a payroll artifact cannot score an Award Nomination event and vice versa;
 - a candidate failure cannot partially activate a bundle; and
-- compatibility entry points remain valid during phased migration.
+- compatibility entry points remain valid only until their model family has
+  completed and verified its serving migration.
 
 ## 14. Decisions before implementation
 

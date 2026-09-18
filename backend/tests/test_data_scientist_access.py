@@ -50,8 +50,14 @@ class DataScientistAuthorizationTests(unittest.TestCase):
 
 
 class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
+    @patch(
+        "routers.model_analysis_router.sqlhelper.get_integrity_component_statuses",
+        return_value=[{"component": "RF", "serving_version": "tabular-v1-test"}],
+    )
     @patch("routers.model_analysis_router.model_artifacts.get_manifest")
-    async def test_model_manifest_is_read_from_effective_tenant(self, get_manifest):
+    async def test_model_manifest_is_read_from_effective_tenant(
+        self, get_manifest, _get_statuses
+    ):
         get_manifest.return_value = {
             "schema_version": 1,
             "artifact_type": "random_forest",
@@ -62,7 +68,9 @@ class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
             "effective_user": {"UserId": 19, "TenantId": 4},
         }
         result = await get_model_manifest("rf", context)
-        get_manifest.assert_called_once_with(4, "rf")
+        get_manifest.assert_called_once_with(
+            4, "rf", model_version="tabular-v1-test"
+        )
         self.assertTrue(result["available"])
 
     @patch(
@@ -155,15 +163,21 @@ class ModelAnalysisEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.status_code, 404)
         get_manifest.assert_not_called()
 
+    @patch(
+        "routers.model_analysis_router.sqlhelper.get_integrity_component_statuses",
+        return_value=[{"component": "RF", "serving_version": "tabular-v1-test"}],
+    )
     @patch("routers.model_analysis_router.model_artifacts.get_rf_visualization")
-    async def test_rf_visualization_is_read_from_effective_tenant(self, get_image):
+    async def test_rf_visualization_is_read_from_effective_tenant(
+        self, get_image, _get_statuses
+    ):
         get_image.return_value = b"\x89PNG\r\n"
         context = {
             "actual_user": {"roles": []},
             "effective_user": {"UserId": 19, "TenantId": 4},
         }
         response = await get_rf_model_visualization(context)
-        get_image.assert_called_once_with(4)
+        get_image.assert_called_once_with(4, "tabular-v1-test")
         self.assertEqual(response.media_type, "image/png")
         self.assertEqual(response.body, b"\x89PNG\r\n")
 

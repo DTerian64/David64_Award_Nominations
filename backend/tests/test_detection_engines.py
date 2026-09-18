@@ -79,7 +79,7 @@ class DetectionEnginesSqlTests(unittest.TestCase):
 
     def test_gnn_run_history_uses_temporal_rows_and_latest_candidate_selection(self):
         diagnostics = (
-            '{"artifact_bundle_prefix":"gnn/tenant_5/gnn-v2-run-1",'
+            '{"artifact_bundle_prefix":"tenant_5/gnn/gnn-v2-run-1",'
             '"selection":{"selected_architecture":"graphsage"},'
             '"last_candidate_selection":{"model_version":"gnn-v2-run-1",'
             '"selected_architecture":null,'
@@ -108,7 +108,7 @@ class DetectionEnginesSqlTests(unittest.TestCase):
         self.assertEqual(rows[0]["selection_reason"], "NO_GRAPH_VALUE_OVER_MLP")
         self.assertEqual(
             rows[0]["artifact_bundle_prefix"],
-            "gnn/tenant_5/gnn-v2-run-1",
+            "tenant_5/gnn/gnn-v2-run-1",
         )
         self.assertTrue(rows[0]["is_current"])
 

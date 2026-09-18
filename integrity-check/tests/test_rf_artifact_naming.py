@@ -72,19 +72,21 @@ class RfArtifactNamingTests(unittest.TestCase):
             "azure.storage.blob.BlobServiceClient.from_connection_string",
             return_value=fake_service,
         ):
-            result = random_forest_check._stream_from_blob(3)
+            result = random_forest_check._stream_from_blob(3, "rf-test")
 
         self.assertEqual(result["model_version"], "rf-test")
         self.assertEqual(
             attempts,
-            ["random_forest/random_forest_tenant_3.pkl"],
+            ["tenant_3/tabular/rf-test/serving/model.pkl"],
         )
 
     def test_idle_models_are_evicted_with_their_embedded_explainers(self):
         random_forest_check._model_cache[1] = (
-            {"shap_explainer": object()}, 10.0,
+            {"shap_explainer": object()}, 10.0, "rf-old",
         )
-        random_forest_check._model_cache[2] = ({"model_version": "recent"}, 95.0)
+        random_forest_check._model_cache[2] = (
+            {"model_version": "recent"}, 95.0, "rf-recent",
+        )
 
         with patch.dict(os.environ, {"MODEL_IDLE_TTL_SECONDS": "30"}):
             evicted = random_forest_check._evict_idle_models(now=100.0)
@@ -92,6 +94,27 @@ class RfArtifactNamingTests(unittest.TestCase):
         self.assertEqual(evicted, 1)
         self.assertNotIn(1, random_forest_check._model_cache)
         self.assertIn(2, random_forest_check._model_cache)
+
+    def test_new_serving_version_wins_a_concurrent_cache_refresh(self):
+        new_model = {"model_version": "tabular-new"}
+
+        def stream_new_version(_tenant_id, _serving_version):
+            random_forest_check._model_cache[3] = (
+                {"model_version": "tabular-old"},
+                10.0,
+                "tabular-old",
+            )
+            return new_model
+
+        with patch.object(
+            random_forest_check,
+            "_stream_from_blob",
+            side_effect=stream_new_version,
+        ):
+            result = random_forest_check._get_model(3, "tabular-new")
+
+        self.assertIs(result, new_model)
+        self.assertEqual(random_forest_check._model_cache[3][2], "tabular-new")
 
 
 if __name__ == "__main__":

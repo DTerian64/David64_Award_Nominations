@@ -55,9 +55,10 @@ def _common(engine: str, result: dict) -> dict:
 
 
 def rf_result(result: dict) -> dict:
-    payload = _common("RF", result)
+    payload = _common("TABULAR", result)
     payload.update({
         "model_version": result.get("model_version"),
+        "architecture": result.get("architecture"),
         "explanation": {
             "shap_status": result.get("shap_status"),
             "shap_reason": result.get("shap_reason"),

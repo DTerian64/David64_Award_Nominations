@@ -39,7 +39,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-# Same .env loading as train_rf_model.py / graph_analytics.py so this
+# Same .env loading as the other modeling jobs so this
 # stage can be run standalone locally. No-op in Container Apps (env injected).
 JOB_DIR = Path(__file__).resolve().parents[1]
 env_path = JOB_DIR.parent / ".env"
