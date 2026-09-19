@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 import torch
@@ -46,13 +48,16 @@ def test_supported_architecture_score_reproduction(architecture):
                     "feature_schema_version": "gnn-v2", "emb_dim": 3,
                     "nomination_feature_columns": columns, "nomination_scaler_mean": [0.] * 8,
                     "nomination_scaler_std": [1.] * 8,
+                    "calibration": {"method": "PLATT", "slope": 0.5, "intercept": 0.25},
                     "category_amount_stats": {"global": {"median": 100., "scale": 20.}, "categories": {}}}
     details = {"amount": 125., "category_id": 4, "nomination_date": "2026-09-11",
                "nominator_id": 10, "beneficiary_id": 11}
     features = nomination_features(details, decoder_head)
     inputs = np.concatenate([encoded[0].numpy()[None, :], encoded[1].numpy()[None, :], features], axis=1)
     with torch.no_grad():
-        probability = float(torch.sigmoid(decoder(torch.from_numpy(inputs)).squeeze()))
+        raw_probability = float(torch.sigmoid(decoder(torch.from_numpy(inputs)).squeeze()))
+    raw_logit = math.log(raw_probability / (1.0 - raw_probability))
+    probability = 1.0 / (1.0 + math.exp(-(0.5 * raw_logit + 0.25)))
     result = reproduce(bundle=ArtifactBundle({}, snapshot, encoder_head, decoder_head), details=details,
                        gnn_result={"fraud_prob": round(probability, 4)},
                        sql_embeddings={10: encoded[0].numpy(), 11: encoded[1].numpy()},

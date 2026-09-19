@@ -17,6 +17,7 @@ from typing import Any
 
 EVENT_TYPE = "gnn.explanation.requested"
 SCHEMA_VERSION = 1
+SPECIALIST_SCHEMA_VERSION = 2
 METHOD = "GNNEXPLAINER"
 
 RISK_ORDER = {
@@ -90,19 +91,47 @@ def plan(
     if RISK_ORDER[risk] < RISK_ORDER[minimum_risk]:
         return _not_requested("BELOW_TRIGGER_RISK")
 
+    bundle_version = gnn_result.get("bundle_version") or gnn_result.get(
+        "model_version"
+    )
     model_version = gnn_result.get("model_version")
+    specialist_key = None
+    artifact_bundle_version = bundle_version
+    if isinstance(gnn_result.get("specialists"), dict):
+        decisive = (
+            (gnn_result.get("aggregate") or {}).get("decisive_specialists")
+            or []
+        )
+        if not decisive:
+            return _not_requested("DECISIVE_SPECIALIST_UNAVAILABLE")
+        specialist_key = str(decisive[0])
+        specialist = gnn_result["specialists"].get(specialist_key) or {}
+        if not specialist.get("available") or not specialist.get("model_version"):
+            return _not_requested("DECISIVE_SPECIALIST_UNAVAILABLE")
+        model_version = specialist["model_version"]
+        artifact_bundle_version = specialist.get(
+            "artifact_bundle_version", bundle_version
+        )
     graph_snapshot_id = gnn_result.get("graph_snapshot_id")
-    if not model_version or not graph_snapshot_id:
+    if not model_version or not bundle_version or not graph_snapshot_id:
         return _not_requested("REPRODUCIBILITY_METADATA_UNAVAILABLE")
 
     requested_at = _iso(now or datetime.now(timezone.utc))
-    request_id = (
-        f"gnnexp:t{int(tenant_id)}:n{int(nomination_id)}:{model_version}"
-    )
+    if specialist_key:
+        request_id = (
+            f"gnnexp:t{int(tenant_id)}:n{int(nomination_id)}:"
+            f"{bundle_version}:{specialist_key}:{model_version}"
+        )
+    else:
+        request_id = (
+            f"gnnexp:t{int(tenant_id)}:n{int(nomination_id)}:{model_version}"
+        )
     reason = f"{minimum_risk}_OR_HIGHER"
     event = {
         "event_type": EVENT_TYPE,
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": (
+            SPECIALIST_SCHEMA_VERSION if specialist_key else SCHEMA_VERSION
+        ),
         "request_id": request_id,
         "nomination_id": int(nomination_id),
         "tenant_id": int(tenant_id),
@@ -114,13 +143,25 @@ def plan(
         "source_message_id": str(source_message_id),
         "requested_at": requested_at,
     }
+    if specialist_key:
+        event.update({
+            "gnn_bundle_version": str(bundle_version),
+            "gnn_artifact_bundle_version": str(artifact_bundle_version),
+            "specialist_key": specialist_key,
+        })
+    explanation = {
+        "method": METHOD,
+        "status": "REQUESTED",
+        "request_id": request_id,
+        "requested_at": requested_at,
+    }
+    if specialist_key:
+        explanation.update({
+            "specialist_key": specialist_key,
+            "specialist_model_version": str(model_version),
+        })
     return ExplanationPlan(
-        explanation={
-            "method": METHOD,
-            "status": "REQUESTED",
-            "request_id": request_id,
-            "requested_at": requested_at,
-        },
+        explanation=explanation,
         event=event,
     )
 

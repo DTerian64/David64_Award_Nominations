@@ -4,6 +4,7 @@ import pytest
 
 from integrity_engine.artifact_paths import (
     gnn_manifest_blob,
+    gnn_specialist_decoder_blob,
     gnn_serving_decoder_blob,
     graph_inference_snapshot_blob,
     tabular_manifest_blob,
@@ -27,6 +28,9 @@ def test_all_model_families_are_nested_below_tenant_boundary():
     )
     assert gnn_serving_decoder_blob(5, "gnn-v2-run") == (
         "tenant_5/gnn/gnn-v2-run/serving/decoder.pt"
+    )
+    assert gnn_specialist_decoder_blob(5, "gnn-v3-run", "ring") == (
+        "tenant_5/gnn/gnn-v3-run/specialists/ring/serving/decoder.pt"
     )
     assert graph_inference_snapshot_blob(5, "run-123") == (
         "tenant_5/graph/run-123/inference-snapshot.json.gz"

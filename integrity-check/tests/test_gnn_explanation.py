@@ -103,3 +103,29 @@ def test_publish_failure_is_bounded_and_retains_request_identity():
     assert failed["reason"] == "PUBLISH_FAILED"
     assert failed["detail"] == "boom"
     assert failed["request_id"] == planned.explanation["request_id"]
+
+
+def test_specialist_result_requests_explanation_for_decisive_model():
+    result = {
+        **BASE_RESULT,
+        "model_version": "gnn-v3-bundle",
+        "bundle_version": "gnn-v3-bundle",
+        "specialists": {
+            "RING": {
+                "available": True,
+                "model_version": "gnn-v3-ring",
+                "probability": 0.72,
+            }
+        },
+        "aggregate": {"decisive_specialists": ["RING"]},
+    }
+    planned = _plan(result=result, config={
+        "explanation_enabled": True, "explanation_minimum_risk": "MEDIUM"
+    })
+
+    assert planned.event["schema_version"] == 2
+    assert planned.event["gnn_bundle_version"] == "gnn-v3-bundle"
+    assert planned.event["gnn_artifact_bundle_version"] == "gnn-v3-bundle"
+    assert planned.event["gnn_model_version"] == "gnn-v3-ring"
+    assert planned.event["specialist_key"] == "RING"
+    assert planned.explanation["specialist_key"] == "RING"

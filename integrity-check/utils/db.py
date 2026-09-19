@@ -283,8 +283,9 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
         configuration = json.loads(row[4])
     except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError("GNN ConfigurationJson is invalid") from exc
-    if not isinstance(configuration, dict) or configuration.get("schema_version") != 1:
-        raise ValueError("GNN ConfigurationJson must use schema_version 1")
+    schema_version = configuration.get("schema_version") if isinstance(configuration, dict) else None
+    if schema_version not in {1, 3}:
+        raise ValueError("GNN ConfigurationJson must use schema_version 1 or 3")
     try:
         model = configuration["model"]
         training = configuration["training"]
@@ -332,6 +333,14 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
         },
         "explanation_enabled": bool(row[5]),
         "explanation_minimum_risk": str(row[6]).upper(),
+        "serving_mode": str(
+            configuration.get("serving_mode", "single_winner_v2")
+        ).lower(),
+        "behavior_tracks": configuration.get("behavior_tracks") or {},
+        "aggregation": configuration.get("aggregation") or {
+            "method": "maximum_calibrated_probability",
+            "mixed_minimum_specialists": 2,
+        },
     }
 
 

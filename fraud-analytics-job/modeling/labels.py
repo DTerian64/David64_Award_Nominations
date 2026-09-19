@@ -35,6 +35,7 @@ the tenant under their respective sample gates.
 
 from __future__ import annotations
 
+import json
 import logging
 
 import pandas as pd
@@ -103,6 +104,7 @@ def load_labels(
             idr.ReviewedAt AS ConfirmedAt,
             idr.TrainingDisposition,
             idr.TrainingDispositionSource,
+            idr.TrainingDispositionMetadataJson,
             CASE WHEN ISJSON(idr.TrainingDispositionMetadataJson) = 1
                  THEN JSON_VALUE(
                      idr.TrainingDispositionMetadataJson, '$.scenario_family'
@@ -174,7 +176,54 @@ def load_labels(
             "marked is_synthetic; refusing to train."
         )
     df["IsFraud"] = pd.to_numeric(df["IsFraud"], errors="coerce").astype("Int64")
+    df["ConfirmedPatterns"] = df.apply(_confirmed_patterns, axis=1)
     return df
+
+
+_SYNTHETIC_SCENARIO_PATTERN_MAP = {
+    "RING": ("RING",),
+    "RECIPROCAL": ("RECIPROCAL",),
+    "BURST": ("TEMPORAL_BURST",),
+}
+
+
+def _confirmed_patterns(row) -> tuple[str, ...]:
+    """Return independently adjudicated v3 behavior labels.
+
+    Older synthetic corpora predate ``confirmed_patterns``.  Their explicit
+    scenario family is translated through this deliberately narrow, versioned
+    compatibility map.  Broad ``CONCENTRATION``, ``MIXED``, and amount cases
+    are not silently relabelled as specialist ground truth.
+    """
+    raw = row.get("TrainingDispositionMetadataJson")
+    metadata = {}
+    if isinstance(raw, str) and raw.strip():
+        try:
+            metadata = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("TrainingDispositionMetadataJson is invalid") from exc
+        if not isinstance(metadata, dict):
+            raise ValueError("TrainingDispositionMetadataJson must be an object")
+    elif isinstance(raw, dict):
+        metadata = raw
+
+    values = metadata.get("confirmed_patterns")
+    if values is not None:
+        if not isinstance(values, list) or not all(
+            isinstance(value, str) for value in values
+        ):
+            raise ValueError("confirmed_patterns must be an array of strings")
+        return tuple(sorted({
+            value.strip().upper() for value in values if value.strip()
+        }))
+
+    if row.get("LabelSource") == SOURCE_SYNTHETIC:
+        scenario = row.get("ScenarioFamily")
+        if isinstance(scenario, str):
+            return _SYNTHETIC_SCENARIO_PATTERN_MAP.get(
+                scenario.strip().upper(), ()
+            )
+    return ()
 
 
 def summarise(df: pd.DataFrame, tenant_id: int) -> dict:

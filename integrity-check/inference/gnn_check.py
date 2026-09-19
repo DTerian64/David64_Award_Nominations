@@ -62,7 +62,12 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
-from integrity_engine.artifact_paths import gnn_serving_decoder_blob
+from integrity_engine.artifact_paths import (
+    gnn_manifest_blob,
+    gnn_serving_decoder_blob,
+    gnn_specialist_decoder_blob,
+)
+import json
 import torch
 from integrity_engine.gnn import (
     CAUSAL_CONTEXT_FEATURE_COLUMNS,
@@ -94,6 +99,7 @@ _SUPPORTED_BEHAVIOR_STATUS_CONTRACTS = {
 # inactivity. KEDA scale-to-zero remains the final whole-process cleanup.
 
 _head_cache: dict[tuple[int, str | None], tuple[dict | None, float]] = {}
+_specialist_head_cache: dict[tuple[int, str, str], tuple[dict | None, float]] = {}
 _head_cache_lock = threading.Lock()
 
 
@@ -109,6 +115,14 @@ def _evict_idle_heads(now: float | None = None) -> int:
         ]
         for cache_key in expired:
             del _head_cache[cache_key]
+        specialist_expired = [
+            cache_key
+            for cache_key, (_head, last_used) in _specialist_head_cache.items()
+            if now - last_used > idle_ttl
+        ]
+        for cache_key in specialist_expired:
+            del _specialist_head_cache[cache_key]
+        expired.extend(specialist_expired)
     if expired:
         logger.info("Evicted %d idle GNN decoder(s): %s", len(expired), expired)
     return len(expired)
@@ -148,8 +162,32 @@ def _head_blob_name(tenant_id: int, serving_version: str | None = None) -> str:
     return gnn_serving_decoder_blob(tenant_id, serving_version)
 
 
+def _get_specialist_head(
+    tenant_id: int, bundle_version: str, specialist_key: str
+) -> dict | None:
+    now = time.monotonic()
+    cache_key = (tenant_id, bundle_version, specialist_key)
+    with _head_cache_lock:
+        cached = _specialist_head_cache.get(cache_key)
+        if cached is not None:
+            head, _last_used = cached
+            _specialist_head_cache[cache_key] = (head, now)
+            return head
+    head = _stream_head_from_blob(
+        tenant_id,
+        bundle_version,
+        specialist_key=specialist_key,
+    )
+    with _head_cache_lock:
+        _specialist_head_cache[cache_key] = (head, time.monotonic())
+    return head
+
+
 def _stream_head_from_blob(
-    tenant_id: int, serving_version: str | None = None
+    tenant_id: int,
+    serving_version: str | None = None,
+    *,
+    specialist_key: str | None = None,
 ) -> dict | None:
     """
     Download the versioned tenant-scoped serving decoder.
@@ -166,7 +204,13 @@ def _stream_head_from_blob(
     """
     from azure.storage.blob import BlobServiceClient
 
-    blob_name = _head_blob_name(tenant_id, serving_version)
+    blob_name = (
+        gnn_specialist_decoder_blob(
+            tenant_id, serving_version, specialist_key.lower()
+        )
+        if specialist_key
+        else _head_blob_name(tenant_id, serving_version)
+    )
 
     if _STORAGE_KEY:
         conn_str = (
@@ -245,8 +289,11 @@ def _stream_head_from_blob(
                 tenant_id,
             )
             return None
-        missing_causal = set(CAUSAL_CONTEXT_FEATURE_COLUMNS) - set(
-            head["nomination_feature_columns"]
+        configured = set(head["nomination_feature_columns"])
+        missing_causal = (
+            set()
+            if specialist_key and configured <= set(CAUSAL_CONTEXT_FEATURE_COLUMNS)
+            else set(CAUSAL_CONTEXT_FEATURE_COLUMNS) - configured
         )
         if missing_causal:
             logger.error(
@@ -277,6 +324,47 @@ def _stream_head_from_blob(
         )
         return None
     return head
+
+
+def _stream_specialist_manifest(
+    tenant_id: int, bundle_version: str
+) -> dict | None:
+    """Load the immutable bundle roster used to resolve specialist decoders."""
+    from azure.storage.blob import BlobServiceClient
+
+    if _STORAGE_KEY:
+        conn_str = (
+            f"DefaultEndpointsProtocol=https;AccountName={_STORAGE_ACCOUNT};"
+            f"AccountKey={_STORAGE_KEY};EndpointSuffix=core.windows.net"
+        )
+        client = BlobServiceClient.from_connection_string(conn_str)
+    else:
+        from utils.azure_credential import credential
+        client = BlobServiceClient(
+            f"https://{_STORAGE_ACCOUNT}.blob.core.windows.net",
+            credential=credential,
+        )
+    try:
+        raw = client.get_blob_client(
+            container=_MODEL_CONTAINER,
+            blob=gnn_manifest_blob(tenant_id, bundle_version),
+        ).download_blob().readall()
+        manifest = json.loads(raw)
+    except Exception as exc:
+        logger.error(
+            "GNN specialist manifest unavailable for tenant %d bundle %s: %s",
+            tenant_id,
+            bundle_version,
+            exc,
+        )
+        return None
+    if not isinstance(manifest, dict) or manifest.get("model_version") != bundle_version:
+        logger.error("GNN specialist manifest identity mismatch for tenant %d", tenant_id)
+        return None
+    if not isinstance(manifest.get("specialists"), dict):
+        logger.error("GNN specialist manifest has no specialist roster")
+        return None
+    return manifest
 
 
 def _build_decoder(head: dict):
@@ -488,6 +576,264 @@ def _unavailable(
     return result
 
 
+def _score_specialist_head(
+    *,
+    details: dict,
+    tenant_id: int,
+    policy: dict,
+    head: dict,
+    expected_model_version: str,
+    causal_cache: dict[int, tuple[list[dict], dict[str, float]]],
+) -> dict:
+    """Score one already-resolved specialist decoder."""
+    key = str(head.get("specialist_key") or "UNKNOWN").upper()
+    model_version = head.get("model_version")
+    if model_version != expected_model_version:
+        return {
+            "available": False,
+            "status": "VERSION_UNAVAILABLE",
+            "reason": "DECODER_MANIFEST_VERSION_MISMATCH",
+        }
+    wanted = [int(details["nominator_id"]), int(details["beneficiary_id"])]
+    embeddings = db.get_gnn_user_embeddings(
+        tenant_id=tenant_id,
+        user_ids=wanted,
+        model_version=model_version,
+    )
+    if any(user_id not in embeddings for user_id in wanted):
+        return {
+            "available": False,
+            "status": "COLD_START_USER",
+            "reason": "SPECIALIST_EMBEDDING_UNAVAILABLE",
+            "model_version": model_version,
+        }
+
+    emb_dim = int(head["emb_dim"])
+    vectors = []
+    as_of_dates = []
+    for user_id in wanted:
+        vector, as_of, version = embeddings[user_id]
+        if version != model_version or vector.shape[0] != emb_dim:
+            return {
+                "available": False,
+                "status": "VERSION_UNAVAILABLE",
+                "reason": "SPECIALIST_EMBEDDING_VERSION_MISMATCH",
+                "model_version": model_version,
+            }
+        vectors.append(vector)
+        if as_of is not None:
+            as_of_dates.append(as_of)
+
+    window_days = int(head.get("causal_context_window_days") or 365)
+    if window_days not in causal_cache:
+        rows = db.get_gnn_causal_context_rows(
+            tenant_id,
+            target_nomination_id=int(details["nomination_id"]),
+            target_time=details["nomination_date"],
+            nominator_id=wanted[0],
+            beneficiary_id=wanted[1],
+            window_days=window_days,
+        )
+        values = causal_context_values(
+            rows,
+            {
+                "NominationId": details["nomination_id"],
+                "NominatorId": wanted[0],
+                "BeneficiaryId": wanted[1],
+                "CreatedAt": details["nomination_date"],
+                "IsBehaviorEligible": False,
+            },
+            window_days=window_days,
+        )
+        causal_cache[window_days] = (rows, values)
+    rows, causal_values = causal_cache[window_days]
+    nomination_features, feature_inputs = _nomination_feature_bundle(
+        details, head, causal_values
+    )
+    model_input = np.concatenate([
+        vectors[0].reshape(1, -1),
+        vectors[1].reshape(1, -1),
+        nomination_features,
+    ], axis=1)
+    with torch.no_grad():
+        logit = head["_module"](torch.from_numpy(model_input)).squeeze()
+        raw_probability = float(torch.sigmoid(logit))
+    calibration = head.get("calibration") or {
+        "method": "IDENTITY", "slope": 1.0, "intercept": 0.0,
+    }
+    raw_logit = math.log(
+        max(raw_probability, 1e-6) / max(1.0 - raw_probability, 1e-6)
+    )
+    calibrated_logit = (
+        float(calibration.get("slope", 1.0)) * raw_logit
+        + float(calibration.get("intercept", 0.0))
+    )
+    probability = 1.0 / (1.0 + math.exp(-max(min(calibrated_logit, 60), -60)))
+    score = int(round(probability * 100))
+    thresholds = _thresholds(policy)
+    risk = _risk_level(score, thresholds)
+    embedding_as_of = min(as_of_dates) if as_of_dates else None
+    flags = []
+    if embedding_as_of and embedding_as_of < date.today() - timedelta(
+        days=int(policy["stale_embedding_days"])
+    ):
+        flags.append(f"[GNN:{key}] stale embeddings")
+    return {
+        "available": True,
+        "status": "AVAILABLE",
+        "specialist": key,
+        "architecture": head.get("architecture"),
+        "model_version": model_version,
+        "feature_contract": head.get("specialist_feature_contract"),
+        "probability": round(probability, 4),
+        "raw_probability": round(raw_probability, 4),
+        "calibration": calibration,
+        "score": score,
+        "risk_level": risk,
+        "flagged": risk in ("MEDIUM", "HIGH", "CRITICAL"),
+        "embedding_as_of": embedding_as_of,
+        "graph_snapshot_id": head.get("graph_snapshot_id"),
+        "graph_snapshot_as_of": head.get("graph_snapshot_as_of"),
+        "feature_inputs": feature_inputs,
+        "causal_context": {
+            "schema_version": 1,
+            "ordering": "CreatedAt,NominationId",
+            "target_cutoff": details["nomination_date"],
+            "window_days": window_days,
+            "eligible_edge_count": len(rows),
+            "features": causal_values,
+        },
+        "warning_flags": flags,
+    }
+
+
+def _assess_specialists_inner(
+    details: dict,
+    tenant_id: int,
+    component_status: dict | None,
+    policy: dict,
+) -> dict:
+    bundle_version = (
+        component_status.get("serving_version") if component_status else None
+    )
+    if not bundle_version:
+        return _unavailable(
+            "NO_MODEL", component_status=component_status, policy=policy
+        )
+    manifest = _stream_specialist_manifest(tenant_id, bundle_version)
+    if manifest is None:
+        return _unavailable(
+            "VERSION_UNAVAILABLE", component_status=component_status, policy=policy
+        )
+
+    results: dict[str, dict] = {}
+    causal_cache: dict[int, tuple[list[dict], dict[str, float]]] = {}
+    for key, roster in manifest["specialists"].items():
+        if roster.get("state") not in {"ACTIVE", "CARRIED_FORWARD"}:
+            results[key] = {
+                "available": False,
+                "status": roster.get("state", "NOT_ADMITTED"),
+                "reason": roster.get("reason"),
+            }
+            continue
+        artifact_bundle_version = roster.get(
+            "artifact_bundle_version", bundle_version
+        )
+        head = _get_specialist_head(
+            tenant_id, artifact_bundle_version, key
+        )
+        if head is None:
+            results[key] = {
+                "available": False,
+                "status": "UNAVAILABLE",
+                "reason": "DECODER_UNAVAILABLE",
+            }
+            continue
+        results[key] = _score_specialist_head(
+            details=details,
+            tenant_id=tenant_id,
+            policy=policy,
+            head=head,
+            expected_model_version=roster["model_version"],
+            causal_cache=causal_cache,
+        )
+        results[key]["artifact_bundle_version"] = artifact_bundle_version
+
+    available = {
+        key: row for key, row in results.items() if row.get("available")
+    }
+    if not available:
+        result = _unavailable(
+            "NO_ACTIVE_SPECIALIST_MODEL",
+            component_status=component_status,
+            policy=policy,
+        )
+        result["specialists"] = results
+        return result
+
+    decisive_key = max(
+        available,
+        key=lambda key: (float(available[key]["probability"]), key),
+    )
+    decisive = available[decisive_key]
+    low = _thresholds(policy)["low"]
+    material = [
+        key for key, row in available.items() if int(row["score"]) >= low
+    ]
+    mixed_minimum = int(
+        (policy.get("aggregation") or {}).get("mixed_minimum_specialists", 2)
+    )
+    warnings = [
+        flag
+        for row in available.values()
+        for flag in row.get("warning_flags", [])
+    ]
+    result = {
+        "model_available": True,
+        "fraud_score": decisive["score"],
+        "fraud_prob": decisive["probability"],
+        "risk_level": decisive["risk_level"],
+        "warning_flags": warnings,
+        "flagged": decisive["flagged"],
+        "model_version": bundle_version,
+        "bundle_version": bundle_version,
+        "architecture": "scenario_specialists",
+        "embedding_as_of": decisive.get("embedding_as_of"),
+        "graph_snapshot_id": decisive.get("graph_snapshot_id"),
+        "graph_snapshot_as_of": decisive.get("graph_snapshot_as_of"),
+        "feature_schema_version": manifest.get("feature_schema_version"),
+        "training_policy_id": manifest.get("training_policy", {}).get("policy_id"),
+        "training_policy_version": manifest.get("training_policy", {}).get(
+            "policy_version"
+        ),
+        "scoring_policy_id": policy["policy_id"],
+        "scoring_policy_version": policy["policy_version"],
+        "score_thresholds": _thresholds(policy),
+        "score_derivation": "maximum specialist probability",
+        "feature_inputs": None,
+        "causal_context": decisive.get("causal_context"),
+        "causal_context_edge_count": (
+            decisive.get("causal_context") or {}
+        ).get("eligible_edge_count"),
+        "causal_context_window_days": (
+            decisive.get("causal_context") or {}
+        ).get("window_days"),
+        "specialists": results,
+        "aggregate": {
+            "method": "maximum_calibrated_probability",
+            "probability": decisive["probability"],
+            "score": decisive["score"],
+            "risk_level": decisive["risk_level"],
+            "decisive_specialists": [decisive_key],
+            "mixed_evidence": len(material) >= mixed_minimum,
+            "material_specialists": material,
+        },
+        "_policy": policy,
+    }
+    result.update(component_availability.available_metadata(component_status))
+    return result
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def assess_gnn(
@@ -525,10 +871,21 @@ def _assess_gnn_inner(
             "DISABLED_BY_POLICY", component_status=component_status,
             policy=policy,
         )
-
     serving_version = (
         component_status.get("serving_version") if component_status else None
     )
+    # Policy activation and artifact publication are separate transactions.  A
+    # tenant may therefore have a v3 policy while its last healthy pointer is
+    # still a v2 bundle.  Keep serving that immutable v2 bundle until training
+    # atomically advances the component pointer to a published v3 bundle.
+    if (
+        policy.get("serving_mode") == "scenario_specialists"
+        and str(serving_version or "").startswith("gnn-v3-")
+    ):
+        return _assess_specialists_inner(
+            details, tenant_id, component_status, policy
+        )
+
     head = _get_head(tenant_id, serving_version)
     if head is None:
         return _unavailable(

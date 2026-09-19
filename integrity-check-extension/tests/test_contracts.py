@@ -37,3 +37,19 @@ def test_request_id_must_be_deterministic():
     value["request_id"] = "random"
     with pytest.raises(PermanentExtensionError, match="REQUEST_ID_MISMATCH"):
         ExplanationRequest.parse(value)
+
+
+def test_specialist_request_carries_bundle_and_model_identity():
+    value = payload()
+    value.update({
+        "schema_version": 2,
+        "gnn_bundle_version": "gnn-v3-bundle",
+        "gnn_model_version": "gnn-v3-ring",
+        "specialist_key": "RING",
+        "request_id": "gnnexp:t3:n13879:gnn-v3-bundle:RING:gnn-v3-ring",
+    })
+    request = ExplanationRequest.parse(value)
+    assert request.bundle_version == "gnn-v3-bundle"
+    assert request.artifact_bundle_version == "gnn-v3-bundle"
+    assert request.model_version == "gnn-v3-ring"
+    assert request.specialist_key == "RING"

@@ -135,6 +135,8 @@ const HIDDEN_DIAGNOSTICS = new Set([
   'last_candidate_selection',
   'candidate_evaluations',
   'graph_value_evaluation',
+  'specialist_evaluation',
+  'specialists',
   'selected_architecture',
   'selection_reason',
 ]);
@@ -207,6 +209,41 @@ type EvaluationDialog = {
 };
 
 const GnnSelectionSummary: React.FC<{ diagnostics: Record<string, unknown> }> = ({ diagnostics }) => {
+  const specialists = asRecord(diagnostics.specialists);
+  if (specialists && Object.keys(specialists).length > 0) {
+    const active = Object.values(specialists).filter(raw => {
+      const row = asRecord(raw);
+      return row?.state === 'ACTIVE' || row?.state === 'CARRIED_FORWARD';
+    }).length;
+    return (
+      <section className="rounded-lg border border-violet-100 bg-violet-50/40 p-3 text-xs">
+        <div>
+          <h4 className="font-semibold text-violet-900">Serving specialists</h4>
+          <p className="mt-1 text-violet-700">
+            {active} behavior {active === 1 ? 'track has' : 'tracks have'} an active graph model. Unadmitted tracks abstain.
+          </p>
+        </div>
+        <div className="mt-3 space-y-1.5">
+          {Object.entries(specialists).map(([name, raw]) => {
+            const specialist = asRecord(raw) || {};
+            const serving = specialist.state === 'ACTIVE' || specialist.state === 'CARRIED_FORWARD';
+            return (
+              <div key={name} className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 rounded bg-white px-2.5 py-2">
+                <span className="font-medium text-gray-700">{diagnosticLabel(name)}</span>
+                <span className={serving ? 'text-green-700' : 'text-amber-700'}>{diagnosticLabel(String(specialist.state || 'NOT_ADMITTED'))}</span>
+                <span className="text-gray-500">
+                  {specialist.architecture ? architectureLabel(specialist.architecture) : diagnosticLabel(String(specialist.reason || specialist.carry_forward_reason || 'No serving model'))}
+                </span>
+                {typeof specialist.final_holdout_pr_auc === 'number' && (
+                  <span className="font-mono text-gray-600">PR-AUC {Number(specialist.final_holdout_pr_auc).toFixed(4)}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
   const selection = asRecord(diagnostics.last_candidate_selection)
     || asRecord(diagnostics.selection);
   if (!selection) return null;

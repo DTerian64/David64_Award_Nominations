@@ -61,6 +61,16 @@ def gnn_serving_decoder_blob(tenant_id: int, model_version: str) -> str:
     return f"{gnn_bundle_prefix(tenant_id, model_version)}/serving/decoder.pt"
 
 
+def gnn_specialist_decoder_blob(
+    tenant_id: int, bundle_version: str, specialist_key: str
+) -> str:
+    key = _safe(specialist_key.lower(), _VERSION, "specialist_key")
+    return (
+        f"{gnn_bundle_prefix(tenant_id, bundle_version)}"
+        f"/specialists/{key}/serving/decoder.pt"
+    )
+
+
 def graph_bundle_prefix(tenant_id: int, run_id: str) -> str:
     run = _safe(run_id, _RUN_ID, "run_id")
     return f"{_tenant(tenant_id)}/graph/{run}"

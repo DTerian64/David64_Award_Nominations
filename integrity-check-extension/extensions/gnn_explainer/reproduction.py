@@ -122,6 +122,19 @@ def _score(decoder_module, z_nom: np.ndarray, z_ben: np.ndarray, x_nom: np.ndarr
         return float(torch.sigmoid(decoder_module(torch.from_numpy(combined)).squeeze()))
 
 
+def _calibrate(probability: float, decoder: dict) -> float:
+    calibration = decoder.get("calibration") or {
+        "method": "IDENTITY", "slope": 1.0, "intercept": 0.0,
+    }
+    clipped = min(max(float(probability), 1e-6), 1.0 - 1e-6)
+    logit = math.log(clipped / (1.0 - clipped))
+    calibrated = (
+        float(calibration.get("slope", 1.0)) * logit
+        + float(calibration.get("intercept", 0.0))
+    )
+    return 1.0 / (1.0 + math.exp(-max(min(calibrated, 60.0), -60.0)))
+
+
 def reproduce(
     *,
     bundle: ArtifactBundle,
@@ -143,7 +156,9 @@ def reproduce(
         sql_ben = np.asarray(sql_embeddings[beneficiary_id], dtype=np.float32)
     except KeyError as exc:
         raise PermanentExtensionError("VERSIONED_SERVING_EMBEDDING_MISSING") from exc
-    serving_probability = _score(decoder_module, sql_nom, sql_ben, x_nom)
+    serving_probability = _calibrate(
+        _score(decoder_module, sql_nom, sql_ben, x_nom), bundle.decoder
+    )
     try:
         stored_probability = float(gnn_result["fraud_prob"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -164,7 +179,9 @@ def reproduce(
         float(np.max(np.abs(graph_nom - sql_nom))),
         float(np.max(np.abs(graph_ben - sql_ben))),
     )
-    reconstructed_probability = _score(decoder_module, graph_nom, graph_ben, x_nom)
+    reconstructed_probability = _calibrate(
+        _score(decoder_module, graph_nom, graph_ben, x_nom), bundle.decoder
+    )
     graph_difference = abs(reconstructed_probability - serving_probability)
 
     if (

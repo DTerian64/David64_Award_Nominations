@@ -62,9 +62,105 @@ class _RecordingModule(torch.nn.Module):
 class GnnP2PContractTests(unittest.TestCase):
     def setUp(self):
         gnn_check._head_cache.clear()
+        gnn_check._specialist_head_cache.clear()
 
     def tearDown(self):
         gnn_check._head_cache.clear()
+        gnn_check._specialist_head_cache.clear()
+
+    def test_specialist_mode_aggregates_the_highest_available_probability(self):
+        policy = {
+            "policy_id": 8,
+            "policy_version": 4,
+            "inference_enabled": True,
+            "serving_mode": "scenario_specialists",
+            "stale_embedding_days": 14,
+            "thresholds": {
+                "low": 25, "medium": 45, "high": 65, "critical": 85,
+            },
+            "aggregation": {"mixed_minimum_specialists": 2},
+        }
+        manifest = {
+            "model_version": "gnn-v3-bundle",
+            "feature_schema_version": "gnn-v2-causal-v1",
+            "training_policy": {"policy_id": 8, "policy_version": 4},
+            "specialists": {
+                "RING": {"state": "ACTIVE", "model_version": "ring-v1"},
+                "RECIPROCAL": {
+                    "state": "CARRIED_FORWARD",
+                    "model_version": "reciprocal-v1",
+                    "artifact_bundle_version": "gnn-v3-previous",
+                },
+            },
+        }
+        scores = {
+            "RING": {
+                "available": True, "probability": 0.72, "score": 72,
+                "risk_level": "HIGH", "flagged": True,
+                "warning_flags": [],
+            },
+            "RECIPROCAL": {
+                "available": True, "probability": 0.48, "score": 48,
+                "risk_level": "MEDIUM", "flagged": True,
+                "warning_flags": [],
+            },
+        }
+        loaded_bundles = []
+
+        def head_for(_tenant, bundle_version, key):
+            loaded_bundles.append((bundle_version, key))
+            return {"specialist_key": key}
+
+        with (
+            patch.object(gnn_check, "_stream_specialist_manifest", return_value=manifest),
+            patch.object(gnn_check, "_get_specialist_head", side_effect=head_for),
+            patch.object(gnn_check, "_score_specialist_head", side_effect=lambda **kw: scores[kw["head"]["specialist_key"]]),
+        ):
+            result = gnn_check._assess_specialists_inner(
+                {"nomination_id": 10},
+                5,
+                {"serving_version": "gnn-v3-bundle"},
+                policy,
+            )
+
+        self.assertTrue(result["model_available"])
+        self.assertEqual(result["fraud_score"], 72)
+        self.assertEqual(result["aggregate"]["decisive_specialists"], ["RING"])
+        self.assertTrue(result["aggregate"]["mixed_evidence"])
+        self.assertIn(("gnn-v3-previous", "RECIPROCAL"), loaded_bundles)
+        self.assertEqual(
+            result["specialists"]["RECIPROCAL"]["artifact_bundle_version"],
+            "gnn-v3-previous",
+        )
+
+    def test_specialist_policy_keeps_v2_bundle_until_v3_is_published(self):
+        policy = {
+            "policy_id": 8,
+            "policy_version": 4,
+            "inference_enabled": True,
+            "serving_mode": "scenario_specialists",
+            "stale_embedding_days": 14,
+            "thresholds": {
+                "low": 25, "medium": 45, "high": 65, "critical": 85,
+            },
+        }
+        with (
+            patch.object(
+                gnn_check.db, "get_active_gnn_scoring_policy",
+                return_value=policy,
+            ),
+            patch.object(gnn_check, "_assess_specialists_inner") as specialists,
+            patch.object(gnn_check, "_get_head", return_value=None) as get_head,
+        ):
+            result = gnn_check._assess_gnn_inner(
+                {"nomination_id": 10},
+                5,
+                {"serving_version": "gnn-v2-current"},
+            )
+
+        specialists.assert_not_called()
+        get_head.assert_called_once_with(5, "gnn-v2-current")
+        self.assertFalse(result["model_available"])
 
     def test_serving_uses_only_nominator_and_beneficiary_embeddings(self):
         module = _RecordingModule()

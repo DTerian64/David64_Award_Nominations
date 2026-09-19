@@ -251,6 +251,17 @@ def handle(message_id: str, payload: dict) -> None:
             ),
             "training_policy_version": gnn_result.get("training_policy_version"),
             "scoring_policy_version": gnn_result.get("scoring_policy_version"),
+            "specialist_count": len(gnn_result.get("specialists") or {}),
+            "decisive_specialists": ", ".join(
+                (gnn_result.get("aggregate") or {}).get(
+                    "decisive_specialists", []
+                )
+            ) or None,
+            "specialist_scores": "; ".join(
+                f"{name}={row.get('score', 'unavailable')}"
+                for name, row in (gnn_result.get("specialists") or {}).items()
+                if isinstance(row, dict)
+            ) or None,
         },
     )
     explanation_plan = gnn_explanation.plan(

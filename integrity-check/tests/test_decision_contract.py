@@ -34,6 +34,28 @@ def test_unavailable_model_has_no_synthetic_score_or_probability():
     assert payload["unavailable_reason"] == "BELOW_MINIMUM_VOLUME"
 
 
+def test_specialist_bundle_uses_gnn_schema_version_three():
+    payload = decision_contract.gnn_result({
+        "model_available": True,
+        "fraud_score": 72,
+        "fraud_prob": 0.72,
+        "risk_level": "HIGH",
+        "model_version": "gnn-v3-bundle",
+        "bundle_version": "gnn-v3-bundle",
+        "specialists": {
+            "RING": {"available": True, "score": 72, "probability": 0.72}
+        },
+        "aggregate": {
+            "method": "maximum_calibrated_probability",
+            "decisive_specialists": ["RING"],
+        },
+    })
+
+    assert payload["schema_version"] == 3
+    assert payload["bundle_version"] == "gnn-v3-bundle"
+    assert payload["aggregate"]["decisive_specialists"] == ["RING"]
+
+
 def test_each_engine_preserves_its_own_kind_of_evidence():
     semantic = CheckResult(
         action="flag",

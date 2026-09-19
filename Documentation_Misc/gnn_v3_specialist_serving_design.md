@@ -1,9 +1,9 @@
 # GNN v3 Scenario-Specialist Serving Design
 
-**Status:** Design draft; no v3 production implementation started  
+**Status:** Implemented for tenant-scoped activation through `scenario_specialists`; production expansion remains policy-controlled
 **Owner:** Integrity modeling  
 **Applies to:** `fraud-analytics-job`, `integrity-check`, `integrity-check-extension`, `dbo.GNNScoringPolicies`, `dbo.GNN_UserEmbeddings`, `dbo.IntegrityComponentStatus`, `dbo.IntegrityDecisionResults`, administrative integrity UI  
-**Last updated:** 2026-09-17
+**Last updated:** 2026-09-18
 
 ## 1. Purpose
 
@@ -482,7 +482,7 @@ Illustrative shape:
 ```json
 {
   "schema_version": 3,
-  "serving_mode": "scenario_specialists_v3",
+  "serving_mode": "scenario_specialists",
   "behavior_tracks": {
     "RECIPROCAL": {
       "enabled": true,
@@ -730,7 +730,7 @@ specialist, architecture, fold, and result code.
 - emit per-fold scenario metrics rather than pooled-only scenario metrics;
 - enforce sample-size gates;
 - select provisionally on earlier folds and verify on the newest holdout;
-- produce recommendations without changing serving; and
+- produce deterministic per-track admission decisions; and
 - expand the synthetic corpus with specialist scenarios and legitimate decoys.
 
 ### Phase V3-T1 — Training and artifacts
@@ -739,19 +739,19 @@ specialist, architecture, fold, and result code.
 - write specialist artifacts and calibrators;
 - support independent incumbent retention and refresh;
 - publish a v3 bundle manifest; and
-- retain v2 serving activation.
+- atomically activate the admitted specialist bundle.
 
-### Phase V3-I1 — Shadow inference
+### Phase V3-I1 — Serving integration
 
-- run every admitted v3 specialist without routing impact;
-- persist v3 shadow results separately in diagnostics;
+- run every admitted specialist for each live nomination;
+- aggregate calibrated specialist probabilities into one routed GNN verdict;
 - verify latency, artifact loading, embedding versioning, and score stability;
 - compare predictions only with model-neutral outcomes; and
 - confirm no cross-engine data dependency.
 
 ### Phase V3-S1 — Tenant-scoped activation
 
-- activate `scenario_specialists_v3` for the synthetic validation tenant;
+- activate `scenario_specialists` for the synthetic validation tenant;
 - keep v2 rollback artifacts and embeddings;
 - validate live nomination results and explanations; and
 - expand to additional tenants only after explicit approval.
@@ -792,9 +792,9 @@ At minimum, automated tests must prove:
 - explanation updates are specialist-scoped and idempotent; and
 - v2 rollback remains functional.
 
-## 22. Decisions to finalize before implementation
+## 22. Decisions finalized for the initial implementation
 
-The following require explicit approval before v3 serving implementation:
+The initial v3 serving implementation uses the following approved boundaries:
 
 1. final behavior-track taxonomy and normalized keys;
 2. human pattern-adjudication UI and permissions;
@@ -803,5 +803,6 @@ The following require explicit approval before v3 serving implementation:
 5. calibration method and per-specialist risk thresholds;
 6. exact incumbent refresh and architecture-switch tolerances;
 7. artifact/model-version naming within the 64-character database limit;
-8. v3 shadow-result persistence during rollout; and
+8. direct v3 activation after atomic bundle publication, with v2 serving retained
+   until the v3 component pointer is advanced; and
 9. production eligibility criteria after synthetic-tenant validation.

@@ -31,6 +31,9 @@ interface GNNPolicy {
   thresholds: { low: number; medium: number; high: number; critical: number };
   explanation_enabled: boolean;
   explanation_minimum_risk: Risk;
+  serving_mode: 'single_winner_v2' | 'scenario_specialists';
+  behavior_tracks: Record<string, Record<string, unknown>>;
+  aggregation: Record<string, unknown>;
   published_at: string | null;
   published_by: string | null;
 }
@@ -169,6 +172,9 @@ export const GNNPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) =>
     thresholds: draft.thresholds,
     explanation_enabled: draft.explanation_enabled,
     explanation_minimum_risk: draft.explanation_minimum_risk,
+    serving_mode: draft.serving_mode,
+    behavior_tracks: draft.behavior_tracks,
+    aggregation: draft.aggregation,
   };
 
   return (

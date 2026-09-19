@@ -78,6 +78,15 @@ from .gnn.evaluators.graph_value_by_ablation import (  # noqa: E402
     evaluate_graph_value,
 )
 from .gnn.policy import GNNPolicy, load_active_policy  # noqa: E402
+from .gnn.specialists.contracts import SERVING_MODE_SPECIALISTS  # noqa: E402
+from .gnn.specialists.evaluator import (  # noqa: E402
+    evaluate_specialists,
+    specialist_fold_views,
+)
+from .gnn.specialists.feature_contracts import (  # noqa: E402
+    apply_specialist_feature_contract,
+)
+from .gnn.specialists.labels import build_specialist_label_maps  # noqa: E402
 
 # Reuse the Random Forest's blob upload helper rather than duplicating the auth
 # and error handling. Both stages run in the same process under run_job.py.
@@ -247,6 +256,8 @@ def _write_head(
     metrics: dict,
     path: Path,
     policy: GNNPolicy,
+    specialist_key: str | None = None,
+    calibration: dict | None = None,
 ) -> None:
     """
     Serialise the decoder — the only artifact integrity-check downloads.
@@ -272,7 +283,7 @@ def _write_head(
         ).isoformat(),
         "participant_roles":          ["nominator", "beneficiary"],
         "behavior_statuses":          list(G.BEHAVIOR_STATUSES),
-        "nomination_feature_columns": list(G.NOMINATION_FEATURE_COLUMNS),
+        "nomination_feature_columns": list(graph["nomination_feature_columns"]),
         "causal_context_window_days": int(graph["causal_context_window_days"]),
         "nomination_scaler_mean":     [float(v) for v in graph["nomination_scaler"]["mean"]],
         "nomination_scaler_std":      [float(v) for v in graph["nomination_scaler"]["std"]],
@@ -292,6 +303,14 @@ def _write_head(
             if k not in {"history", "folds", "selection", "candidates"}
         },
     }
+    if graph.get("specialist_feature_contract"):
+        head["specialist_feature_contract"] = graph[
+            "specialist_feature_contract"
+        ]
+    if specialist_key:
+        head["specialist_key"] = specialist_key
+    if calibration:
+        head["calibration"] = calibration
     torch.save(head, path)
 
     # Fail here rather than in production: prove the artifact we just wrote can
@@ -337,6 +356,8 @@ def _write_operational_manifest(
     graph_snapshot_id: str,
     selection: dict,
     graph_value_evaluation: dict,
+    specialist_evaluation: dict | None,
+    specialist_serving: dict | None,
     artifact_paths: list[tuple[Path, str]],
     manifest_path: Path,
     policy: GNNPolicy,
@@ -357,6 +378,8 @@ def _write_operational_manifest(
         "training_policy": policy.snapshot(),
         "selection": selection,
         "graph_value_evaluation": graph_value_evaluation,
+        "specialist_evaluation": specialist_evaluation,
+        "specialists": specialist_serving,
         "features": {
             "user": list(G.USER_FEATURE_COLUMNS),
             "nomination": list(G.NOMINATION_FEATURE_COLUMNS),
@@ -448,6 +471,43 @@ def _incumbent_selection(conn, tenant_id: int) -> dict | None:
         return None
 
 
+def _incumbent_specialists(conn, tenant_id: int) -> dict[str, dict]:
+    """Read the active specialist roster for refresh or carry-forward."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT ServingVersion, DiagnosticsJson
+        FROM dbo.IntegrityComponentStatus
+        WHERE TenantId = ? AND Component = 'GNN'
+    """, tenant_id)
+    row = cur.fetchone()
+    if not row or not row[1]:
+        return {}
+    try:
+        import json
+
+        diagnostics = json.loads(row[1])
+        roster = diagnostics.get("specialists") or {}
+        if not isinstance(roster, dict):
+            return {}
+        result = {}
+        for key, value in roster.items():
+            if not isinstance(value, dict) or value.get("state") not in {
+                "ACTIVE", "CARRIED_FORWARD"
+            }:
+                continue
+            result[str(key).upper()] = {
+                **value,
+                "artifact_bundle_version": value.get(
+                    "artifact_bundle_version", row[0]
+                ),
+            }
+        return result
+    except (TypeError, ValueError):
+        logger.warning(
+            "Tenant %d has invalid GNN specialist diagnostics; ignoring incumbents",
+            tenant_id,
+        )
+        return {}
 def _candidate_training_set(
     folds: list[dict], y_train_by_fold: list[np.ndarray], y_holdout: np.ndarray
 ) -> tuple[list[dict], list[np.ndarray]]:
@@ -504,6 +564,134 @@ def _train_candidates(
             }
     return models, candidates
 
+
+def _fit_admitted_specialists(
+    *,
+    policy: GNNPolicy,
+    folds: list[dict],
+    label_maps: dict[str, dict[int, int]],
+    evaluation: dict,
+    serving_graph: dict,
+    tenant_id: int,
+    bundle_version: str,
+    graph_snapshot_id: str,
+    run_suffix: str,
+    bundle_dir: Path,
+    incumbents: dict[str, dict],
+) -> tuple[dict[str, tuple[object, str]], dict, list[tuple[Path, str]]]:
+    """Refit admitted tracks and write their immutable serving artifacts."""
+    policies = {track.key: track for track in policy.specialist_tracks}
+    models: dict[str, tuple[object, str]] = {}
+    serving: dict[str, dict] = {}
+    artifacts: list[tuple[Path, str]] = []
+    for key, result in evaluation["tracks"].items():
+        if result.get("status") != "ADMITTED":
+            incumbent = incumbents.get(key)
+            if incumbent:
+                serving[key] = {
+                    **incumbent,
+                    "state": "CARRIED_FORWARD",
+                    "carry_forward_reason": result.get("reason"),
+                }
+                continue
+            serving[key] = {
+                "state": "DISABLED" if result.get("status") == "DISABLED" else "NOT_ADMITTED",
+                "reason": result.get("reason"),
+                "feature_contract": result.get("feature_contract"),
+            }
+            continue
+        track = policies[key]
+        architecture = result["provisional_architecture"]
+        views, y_train, y_eval = specialist_fold_views(
+            folds, label_maps[key], track.feature_contract
+        )
+        refit_folds, refit_labels = _candidate_training_set(
+            views, y_train, y_eval[-1]
+        )
+        model, refit_metrics = fit_candidate_rolling(
+            refit_folds,
+            refit_labels,
+            architecture=architecture,
+            hidden_dim=policy.hidden_dim,
+            emb_dim=policy.embed_dim,
+            epochs=policy.epochs,
+        )
+        slug = key.lower().replace("_", "-")
+        specialist_version = (
+            f"g3-t{tenant_id}-{slug}-{architecture}-{run_suffix}"
+        )
+        profiled_graph = apply_specialist_feature_contract(
+            serving_graph, track.feature_contract
+        )
+        serving_dir = bundle_dir / "specialists" / key.lower() / "serving"
+        serving_dir.mkdir(parents=True, exist_ok=True)
+        encoder_path = serving_dir / "encoder.pt"
+        decoder_path = serving_dir / "decoder.pt"
+        metrics_path = serving_dir / "metrics.json"
+        _write_encoder(
+            model,
+            profiled_graph,
+            specialist_version,
+            graph_snapshot_id,
+            encoder_path,
+            policy,
+        )
+        _write_head(
+            model,
+            profiled_graph,
+            specialist_version,
+            graph_snapshot_id,
+            {
+                "admission": result,
+                "refit": refit_metrics,
+                "bundle_version": bundle_version,
+            },
+            decoder_path,
+            policy,
+            specialist_key=key,
+            calibration=(
+                result["candidates"][architecture].get("calibration")
+            ),
+        )
+        metrics = {
+            "schema_version": 1,
+            "track": key,
+            "state": "ACTIVE",
+            "architecture": architecture,
+            "model_version": specialist_version,
+            "artifact_bundle_version": bundle_version,
+            "bundle_version": bundle_version,
+            "feature_contract": track.feature_contract,
+            "admission": result,
+            "refit": refit_metrics,
+        }
+        write_manifest(metrics_path, metrics)
+        artifacts.extend([
+            (encoder_path, f"specialist_{key.lower()}_serving_encoder"),
+            (decoder_path, f"specialist_{key.lower()}_serving_decoder"),
+            (metrics_path, f"specialist_{key.lower()}_serving_metrics"),
+        ])
+        models[key] = (model, specialist_version)
+        serving[key] = {
+            "state": "ACTIVE",
+            "architecture": architecture,
+            "model_version": specialist_version,
+            "feature_contract": track.feature_contract,
+            "decoder_relative_path": (
+                f"specialists/{key.lower()}/serving/decoder.pt"
+            ),
+            "encoder_relative_path": (
+                f"specialists/{key.lower()}/serving/encoder.pt"
+            ),
+            "admission_reason": result["reason"],
+            "final_holdout_pr_auc": result.get("final_holdout_pr_auc"),
+            "final_holdout_mlp_pr_auc": result.get(
+                "final_holdout_mlp_pr_auc"
+            ),
+        }
+    return models, serving, artifacts
+
+
 def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     t0 = time.monotonic()
     run_id = run_id or str(uuid.uuid4())
@@ -544,6 +732,7 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         policy.epochs, policy.embedding_retention_days,
     )
     incumbent_selection = _incumbent_selection(conn, tenant_id)
+    incumbent_specialists = _incumbent_specialists(conn, tenant_id)
     incumbent = (
         incumbent_selection.get("selected_architecture")
         if incumbent_selection else None
@@ -653,8 +842,9 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     eval_pos = int(y_ev.sum())
     train_neg = int(len(y_tr) - train_pos)
     eval_neg = int(len(y_ev) - eval_pos)
-    if (train_pos < policy.minimum_positives_per_split
-            or eval_pos < policy.minimum_positives_per_split):
+    if (policy.serving_mode != SERVING_MODE_SPECIALISTS
+            and (train_pos < policy.minimum_positives_per_split
+                 or eval_pos < policy.minimum_positives_per_split)):
         detail = (
             f"rolling-train fraud labels {train_pos}, final-holdout fraud labels "
             f"{eval_pos}; requires {policy.minimum_positives_per_split} in each population"
@@ -674,7 +864,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         )
         return (f"SKIPPED (too few supervised fraud labels: train {train_pos}, "
                 f"eval {eval_pos}, need {policy.minimum_positives_per_split} each)")
-    if train_neg == 0 or eval_neg == 0:
+    if (policy.serving_mode != SERVING_MODE_SPECIALISTS
+            and (train_neg == 0 or eval_neg == 0)):
         detail = (f"train {train_pos} fraud/{train_neg} legitimate; "
                   f"eval {eval_pos} fraud/{eval_neg} legitimate")
         upsert_component_status(
@@ -693,17 +884,26 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
                 f"train {train_pos} fraud/{train_neg} legitimate, "
                 f"eval {eval_pos} fraud/{eval_neg} legitimate)")
 
-    candidate_models, candidate_metrics = _train_candidates(
-        folds, y_train_by_fold, y_ev, policy
-    )
-    selection = select_architecture(
-        candidate_metrics,
-        incumbent_architecture=incumbent,
-        minimum_improvement_over_mlp=policy.minimum_improvement_over_mlp,
-        incumbent_tie_tolerance=policy.incumbent_tie_tolerance,
-        minimum_eligible_graph_candidates=policy.minimum_eligible_graph_candidates,
-    )
-    candidate_metrics = selection["candidates"]
+    candidate_models: dict[str, object] = {}
+    candidate_metrics: dict[str, dict] = {}
+    selection: dict = {
+        "serving_mode": policy.serving_mode,
+        "selected_architecture": None,
+        "selection_reason": "SPECIALIST_SELECTION_BY_TRACK",
+        "candidates": {},
+    }
+    if policy.serving_mode != SERVING_MODE_SPECIALISTS:
+        candidate_models, candidate_metrics = _train_candidates(
+            folds, y_train_by_fold, y_ev, policy
+        )
+        selection = select_architecture(
+            candidate_metrics,
+            incumbent_architecture=incumbent,
+            minimum_improvement_over_mlp=policy.minimum_improvement_over_mlp,
+            incumbent_tie_tolerance=policy.incumbent_tie_tolerance,
+            minimum_eligible_graph_candidates=policy.minimum_eligible_graph_candidates,
+        )
+        candidate_metrics = selection["candidates"]
 
     scenario_by_nomination_id = {
         int(row.NominationId): str(row.ScenarioFamily).upper()
@@ -736,6 +936,21 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             "detail": str(exc)[:500],
         }
 
+    specialist_evaluation = None
+    specialist_label_maps: dict[str, dict[int, int]] = {}
+    if policy.serving_mode == SERVING_MODE_SPECIALISTS:
+        specialist_label_maps = build_specialist_label_maps(labelled)
+        specialist_evaluation = evaluate_specialists(
+            tracks=policy.specialist_tracks,
+            folds=folds,
+            label_maps=specialist_label_maps,
+            hidden_dim=policy.hidden_dim,
+            emb_dim=policy.embed_dim,
+            epochs=policy.epochs,
+            incumbent_specialists=incumbent_specialists,
+        )
+        specialist_evaluation["serving_mode"] = policy.serving_mode
+
     # Candidate evaluation remains tied to the untouched holdout. Only after
     # selection is final do we admit that matured interval to a fresh refit.
     graph = G.build_serving_graph(
@@ -745,8 +960,11 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     )
     as_of = date.today()
     run_suffix = run_id.replace("-", "")[:8]
-    model_version = f"gnn-v2-{as_of:%Y%m%d}-t{tenant_id}-{run_suffix}"
-    graph_snapshot_id = f"gnn-graph-v2-{as_of:%Y%m%d}-t{tenant_id}-{run_suffix}"
+    generation = "v3" if policy.serving_mode == SERVING_MODE_SPECIALISTS else "v2"
+    model_version = f"gnn-{generation}-{as_of:%Y%m%d}-t{tenant_id}-{run_suffix}"
+    graph_snapshot_id = (
+        f"gnn-graph-{generation}-{as_of:%Y%m%d}-t{tenant_id}-{run_suffix}"
+    )
     selection["model_version"] = model_version
     selection["selected_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -764,6 +982,36 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     artifact_paths: list[tuple[Path, str]] = [
         (snapshot_path, "explanation_graph_snapshot")
     ]
+    if specialist_evaluation is not None:
+        specialist_root = bundle_dir / "specialists"
+        specialist_root.mkdir(parents=True, exist_ok=True)
+        for track, evaluation in specialist_evaluation["tracks"].items():
+            track_dir = specialist_root / track.lower()
+            track_dir.mkdir(parents=True, exist_ok=True)
+            evaluation_path = track_dir / "evaluation.json"
+            write_manifest(evaluation_path, evaluation)
+            artifact_paths.append(
+                (evaluation_path, f"specialist_{track.lower()}_evaluation")
+            )
+    specialist_models: dict[str, tuple[object, str]] = {}
+    specialist_serving: dict | None = None
+    if specialist_evaluation is not None:
+        specialist_models, specialist_serving, specialist_artifacts = (
+            _fit_admitted_specialists(
+                policy=policy,
+                folds=folds,
+                label_maps=specialist_label_maps,
+                evaluation=specialist_evaluation,
+                serving_graph=graph,
+                tenant_id=tenant_id,
+                bundle_version=model_version,
+                graph_snapshot_id=graph_snapshot_id,
+                run_suffix=run_suffix,
+                bundle_dir=bundle_dir,
+                incumbents=incumbent_specialists,
+            )
+        )
+        artifact_paths.extend(specialist_artifacts)
     for architecture, model in candidate_models.items():
         candidate_dir = bundle_dir / "candidates" / architecture
         candidate_dir.mkdir(parents=True, exist_ok=True)
@@ -826,6 +1074,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         graph_snapshot_id=graph_snapshot_id,
         selection=selection,
         graph_value_evaluation=graph_value_evaluation,
+        specialist_evaluation=specialist_evaluation,
+        specialist_serving=specialist_serving,
         artifact_paths=artifact_paths,
         manifest_path=manifest_path,
         policy=policy,
@@ -860,6 +1110,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         "holdout_end": holdout_graph["eval_end"].isoformat(),
         "selection": selection,
         "graph_value_evaluation": graph_value_evaluation,
+        "specialist_evaluation": specialist_evaluation,
+        "specialists": specialist_serving,
         "feature_schema_version": graph["feature_schema_version"],
         "graph_snapshot_id": graph_snapshot_id,
         "graph_snapshot_as_of": graph.get(
@@ -867,7 +1119,33 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         ).isoformat(),
         "artifact_bundle_prefix": versioned_folder,
     }
-    if serving_model is None:
+    active_specialist_count = sum(
+        row.get("state") in {"ACTIVE", "CARRIED_FORWARD"}
+        for row in (specialist_serving or {}).values()
+    )
+    if (
+        policy.serving_mode == SERVING_MODE_SPECIALISTS
+        and active_specialist_count == 0
+    ):
+        reason = "NO_ACTIVE_SPECIALIST_MODEL"
+        upsert_component_status(
+            conn,
+            tenant_id=tenant_id,
+            component="GNN",
+            attempt_status="SKIPPED",
+            reason_code=reason,
+            reason_detail=(
+                "No behavior track admitted a graph model; the current serving "
+                "bundle was preserved."
+            ),
+            diagnostics=common_diagnostics,
+            run_id=run_id,
+        )
+        return (
+            f"SKIPPED ({reason}; incumbent bundle preserved; "
+            f"{time.monotonic() - t0:.1f}s)"
+        )
+    if policy.serving_mode != SERVING_MODE_SPECIALISTS and serving_model is None:
         reason = selection["selection_reason"]
         skipped_diagnostics = {
             **common_diagnostics,
@@ -889,14 +1167,23 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             f"{time.monotonic() - t0:.1f}s)"
         )
 
-    with torch.no_grad():
-        z = serving_model.embed_users(graph["data"]).numpy().astype(np.float32)
-        user_ids = sorted(
-            graph["user_index"], key=lambda user_id: graph["user_index"][user_id]
-        )
-    n_emb = _publish_embeddings(
-        conn, tenant_id, user_ids, z, as_of, model_version
+    user_ids = sorted(
+        graph["user_index"], key=lambda user_id: graph["user_index"][user_id]
     )
+    n_emb = 0
+    if policy.serving_mode == SERVING_MODE_SPECIALISTS:
+        for _key, (model, specialist_version) in specialist_models.items():
+            with torch.no_grad():
+                z = model.embed_users(graph["data"]).numpy().astype(np.float32)
+            n_emb += _publish_embeddings(
+                conn, tenant_id, user_ids, z, as_of, specialist_version
+            )
+    else:
+        with torch.no_grad():
+            z = serving_model.embed_users(graph["data"]).numpy().astype(np.float32)
+        n_emb = _publish_embeddings(
+            conn, tenant_id, user_ids, z, as_of, model_version
+        )
     n_evicted = _evict_stale_embeddings(
         conn, tenant_id, policy.embedding_retention_days
     )
@@ -912,11 +1199,24 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             **common_diagnostics,
             "embedding_count": n_emb,
             "evicted_embedding_count": n_evicted,
-            "holdout_pr_auc": selection["selected_metric_value"],
-            "serving_refit_training_count": serving_metrics["n_train"],
+            "active_specialist_count": active_specialist_count,
+            **(
+                {
+                    "holdout_pr_auc": selection["selected_metric_value"],
+                    "serving_refit_training_count": serving_metrics["n_train"],
+                }
+                if policy.serving_mode != SERVING_MODE_SPECIALISTS
+                else {}
+            ),
         },
     )
 
+    if policy.serving_mode == SERVING_MODE_SPECIALISTS:
+        return (
+            f"OK ({model_version}, {active_specialist_count} specialists, "
+            f"{n_emb} embeddings, {n_evicted} evicted, "
+            f"{time.monotonic() - t0:.1f}s)"
+        )
     return (f"OK ({model_version}, {selected_architecture}, {n_emb} embeddings, "
             f"{n_evicted} evicted, supervised holdout PR-AUC "
             f"{selection['selected_metric_value']:.4f}, "

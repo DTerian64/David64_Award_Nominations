@@ -3883,8 +3883,9 @@ def publish_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
 
 def _gnn_configuration_from_payload(payload: dict) -> dict:
     thresholds = payload["thresholds"]
-    return {
-        "schema_version": 1,
+    serving_mode = payload.get("serving_mode", "single_winner_v2")
+    configuration = {
+        "schema_version": 3 if serving_mode == "scenario_specialists" else 1,
         "model": {
             "hidden_dimension": payload["hidden_dim"],
             "embedding_dimension": payload["embed_dim"],
@@ -3924,12 +3925,23 @@ def _gnn_configuration_from_payload(payload: dict) -> dict:
             "critical_threshold": thresholds["critical"],
         },
     }
+    if serving_mode == "scenario_specialists":
+        configuration.update({
+            "serving_mode": serving_mode,
+            "behavior_tracks": payload.get("behavior_tracks") or {},
+            "aggregation": payload.get("aggregation") or {
+                "method": "maximum_calibrated_probability",
+                "mixed_minimum_specialists": 2,
+            },
+        })
+    return configuration
 
 
 def _gnn_policy_row(row) -> dict:
     configuration = _json_value(row[5], {})
-    if not isinstance(configuration, dict) or configuration.get("schema_version") != 1:
-        raise ValueError("GNN ConfigurationJson must use schema_version 1")
+    schema_version = configuration.get("schema_version") if isinstance(configuration, dict) else None
+    if schema_version not in {1, 3}:
+        raise ValueError("GNN ConfigurationJson must use schema_version 1 or 3")
     try:
         model = configuration["model"]
         training = configuration["training"]
@@ -3973,6 +3985,12 @@ def _gnn_policy_row(row) -> dict:
         },
         "explanation_enabled": bool(row[6]),
         "explanation_minimum_risk": str(row[7]).upper(),
+        "serving_mode": configuration.get("serving_mode", "single_winner_v2"),
+        "behavior_tracks": configuration.get("behavior_tracks") or {},
+        "aggregation": configuration.get("aggregation") or {
+            "method": "maximum_calibrated_probability",
+            "mixed_minimum_specialists": 2,
+        },
         "created_at": _iso_utc(row[8]), "created_by": row[9],
         "updated_at": _iso_utc(row[10]), "updated_by": row[11],
         "published_at": _iso_utc(row[12]), "published_by": row[13],

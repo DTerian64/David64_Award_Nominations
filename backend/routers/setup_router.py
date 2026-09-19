@@ -303,6 +303,12 @@ class GNNPolicyDraft(BaseModel):
     thresholds: GraphThresholds
     explanation_enabled: bool
     explanation_minimum_risk: str
+    serving_mode: str = "single_winner_v2"
+    behavior_tracks: dict[str, dict] = Field(default_factory=dict)
+    aggregation: dict = Field(default_factory=lambda: {
+        "method": "maximum_calibrated_probability",
+        "mixed_minimum_specialists": 2,
+    })
 
 
 _GRAPH_PATTERNS = {
@@ -491,6 +497,13 @@ def _validate_gnn_policy(payload: GNNPolicyDraft) -> None:
         raise HTTPException(
             status_code=422,
             detail="GNN explanation risk must be NONE, LOW, MEDIUM, HIGH, or CRITICAL.",
+        )
+    if payload.serving_mode not in {"single_winner_v2", "scenario_specialists"}:
+        raise HTTPException(status_code=422, detail="Unsupported GNN serving mode.")
+    if payload.serving_mode == "scenario_specialists" and not payload.behavior_tracks:
+        raise HTTPException(
+            status_code=422,
+            detail="Scenario-specialist mode requires behavior-track policies.",
         )
 
 

@@ -99,10 +99,45 @@ def test_rejects_unsupported_candidate_architecture():
 
 def test_rejects_unknown_configuration_schema():
     configuration = _configuration()
-    configuration["schema_version"] = 2
+    configuration["schema_version"] = 99
     try:
         load_active_policy(Connection(_row(configuration=configuration)), 7)
     except ValueError as exc:
-        assert "schema_version 1" in str(exc)
+        assert "schema_version 1 or 3" in str(exc)
     else:
         raise AssertionError("unknown configuration schema was accepted")
+
+
+def test_loads_direct_specialist_policy():
+    configuration = _configuration()
+    configuration.update({
+        "schema_version": 3,
+        "serving_mode": "scenario_specialists",
+        "behavior_tracks": {
+            "RING": {
+                "enabled": True,
+                "candidate_architectures": ["graphsage", "gatv2"],
+                "feature_contract": "ring-v1",
+                "minimum_train_positives": 15,
+                "minimum_train_negatives": 100,
+                "minimum_holdout_positives": 5,
+                "minimum_holdout_negatives": 100,
+                "minimum_evaluable_temporal_folds": 2,
+                "maximum_fold_pr_auc_range": 0.4,
+                "minimum_improvement_over_mlp": 0.02,
+                "maximum_holdout_brier_score": 0.25,
+                "maximum_holdout_inference_ms": 1000,
+                "incumbent_refresh_tolerance": 0.01,
+                "architecture_switch_tolerance": 0.01,
+            }
+        },
+        "aggregation": {
+            "method": "maximum_calibrated_probability",
+            "mixed_minimum_specialists": 2,
+        },
+    })
+
+    policy = load_active_policy(Connection(_row(configuration=configuration)), 7)
+
+    assert policy.serving_mode == "scenario_specialists"
+    assert policy.specialist_tracks[0].key == "RING"

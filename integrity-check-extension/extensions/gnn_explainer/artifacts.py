@@ -28,14 +28,14 @@ class ArtifactBundle:
 
 
 class BundleLoader:
-    REQUIRED_ROLES = ("explanation_graph_snapshot", "serving_encoder", "serving_decoder")
-
     def __init__(self, reader: BlobReader, max_artifact_bytes: int):
         self.reader = reader
         self.max_artifact_bytes = max_artifact_bytes
 
     def load(self, request: ExplanationRequest) -> ArtifactBundle:
-        prefix = gnn_bundle_prefix(request.tenant_id, request.model_version)
+        prefix = gnn_bundle_prefix(
+            request.tenant_id, request.artifact_bundle_version
+        )
         manifest_raw = self.reader.read(
             f"{prefix}/manifest.json", min(self.max_artifact_bytes, 10_000_000)
         )
@@ -47,11 +47,15 @@ class BundleLoader:
         descriptors = {row.get("role"): row for row in manifest["artifacts"]}
         if len(descriptors) != len(manifest["artifacts"]):
             raise PermanentExtensionError("DUPLICATE_ARTIFACT_ROLE")
-        missing = [role for role in self.REQUIRED_ROLES if role not in descriptors]
+        encoder_role, decoder_role = self._serving_roles(request)
+        required_roles = (
+            "explanation_graph_snapshot", encoder_role, decoder_role
+        )
+        missing = [role for role in required_roles if role not in descriptors]
         if missing:
             raise PermanentExtensionError("MISSING_ARTIFACT_ROLES:" + ",".join(missing))
         loaded = {}
-        for role in self.REQUIRED_ROLES:
+        for role in required_roles:
             descriptor = descriptors[role]
             path = descriptor.get("relative_path")
             if (
@@ -73,9 +77,16 @@ class BundleLoader:
         return ArtifactBundle(
             manifest=manifest,
             snapshot=loaded["explanation_graph_snapshot"],
-            encoder=loaded["serving_encoder"],
-            decoder=loaded["serving_decoder"],
+            encoder=loaded[encoder_role],
+            decoder=loaded[decoder_role],
         )
+
+    @staticmethod
+    def _serving_roles(request: ExplanationRequest) -> tuple[str, str]:
+        if not request.specialist_key:
+            return "serving_encoder", "serving_decoder"
+        prefix = f"specialist_{request.specialist_key.lower()}"
+        return f"{prefix}_serving_encoder", f"{prefix}_serving_decoder"
 
     @staticmethod
     def _validate_manifest(manifest: dict, request: ExplanationRequest) -> None:
@@ -85,38 +96,59 @@ class BundleLoader:
             raise PermanentExtensionError("INVALID_ARTIFACT_TYPE")
         if manifest.get("tenant_id") != request.tenant_id:
             raise PermanentExtensionError("MANIFEST_TENANT_MISMATCH")
-        if manifest.get("model_version") != request.model_version:
+        if manifest.get("model_version") != request.artifact_bundle_version:
             raise PermanentExtensionError("MANIFEST_MODEL_MISMATCH")
         if manifest.get("graph_snapshot_id") != request.graph_snapshot_id:
             raise PermanentExtensionError("MANIFEST_SNAPSHOT_MISMATCH")
         if not isinstance(manifest.get("artifacts"), list):
             raise PermanentExtensionError("INVALID_ARTIFACT_INDEX")
-        selected = (manifest.get("selection") or {}).get("selected_architecture")
+        if request.specialist_key:
+            specialist = (manifest.get("specialists") or {}).get(
+                request.specialist_key
+            ) or {}
+            if specialist.get("model_version") != request.model_version:
+                raise PermanentExtensionError("SPECIALIST_MODEL_MISMATCH")
+            selected = specialist.get("architecture")
+        else:
+            selected = (manifest.get("selection") or {}).get(
+                "selected_architecture"
+            )
         if selected not in {"graphsage", "gcn", "gatv2"}:
             raise PermanentExtensionError("NO_SUPPORTED_SELECTED_ARCHITECTURE")
 
     @staticmethod
     def _validate_identity(manifest: dict, loaded: dict, request: ExplanationRequest) -> None:
-        selected = manifest["selection"]["selected_architecture"]
+        if request.specialist_key:
+            selected = manifest["specialists"][request.specialist_key][
+                "architecture"
+            ]
+        else:
+            selected = manifest["selection"]["selected_architecture"]
+        encoder_role, decoder_role = BundleLoader._serving_roles(request)
         for role, artifact in loaded.items():
             if artifact.get("tenant_id", request.tenant_id) != request.tenant_id:
                 raise PermanentExtensionError(f"ARTIFACT_TENANT_MISMATCH:{role}")
-            if artifact.get("model_version") != request.model_version:
+            expected_version = (
+                request.artifact_bundle_version
+                if role == "explanation_graph_snapshot"
+                else request.model_version
+            )
+            if artifact.get("model_version") != expected_version:
                 raise PermanentExtensionError(f"ARTIFACT_MODEL_MISMATCH:{role}")
             if artifact.get("graph_snapshot_id") != request.graph_snapshot_id:
                 raise PermanentExtensionError(f"ARTIFACT_SNAPSHOT_MISMATCH:{role}")
             if artifact.get("feature_schema_version") != manifest.get("feature_schema_version"):
                 raise PermanentExtensionError(f"FEATURE_SCHEMA_MISMATCH:{role}")
-        if loaded["serving_encoder"].get("architecture") != selected:
+        if loaded[encoder_role].get("architecture") != selected:
             raise PermanentExtensionError("ENCODER_ARCHITECTURE_MISMATCH")
-        if loaded["serving_decoder"].get("architecture") != selected:
+        if loaded[decoder_role].get("architecture") != selected:
             raise PermanentExtensionError("DECODER_ARCHITECTURE_MISMATCH")
         snapshot = loaded["explanation_graph_snapshot"]
         if snapshot.get("snapshot_schema_version") != 1:
             raise PermanentExtensionError("UNSUPPORTED_SNAPSHOT_SCHEMA")
         declared_relations = {
             tuple(relation)
-            for relation in loaded["serving_encoder"].get("relations", [])
+            for relation in loaded[encoder_role].get("relations", [])
         }
         actual_relations = {
             (row.get("source"), row.get("relationship"), row.get("target"))

@@ -9,7 +9,7 @@ from typing import Any
 from .errors import PermanentExtensionError
 
 EVENT_TYPE = "gnn.explanation.requested"
-SCHEMA_VERSION = 1
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
 
 
 @dataclass(frozen=True)
@@ -18,12 +18,15 @@ class ExplanationRequest:
     nomination_id: int
     tenant_id: int
     model_version: str
+    bundle_version: str
+    artifact_bundle_version: str
     graph_snapshot_id: str
     source_message_id: str
     requested_at: str
     request_reason: str | None = None
     embedding_as_of: str | None = None
     scoring_policy_version: int | None = None
+    specialist_key: str | None = None
 
     @classmethod
     def parse(cls, payload: Any) -> "ExplanationRequest":
@@ -31,7 +34,8 @@ class ExplanationRequest:
             raise PermanentExtensionError("MESSAGE_BODY_NOT_OBJECT")
         if payload.get("event_type") != EVENT_TYPE:
             raise PermanentExtensionError("UNSUPPORTED_EVENT_TYPE")
-        if payload.get("schema_version") != SCHEMA_VERSION:
+        schema_version = payload.get("schema_version")
+        if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
             raise PermanentExtensionError("UNSUPPORTED_SCHEMA_VERSION")
         required = (
             "request_id", "nomination_id", "tenant_id", "gnn_model_version",
@@ -48,7 +52,24 @@ class ExplanationRequest:
         if tenant_id < 1 or nomination_id < 1:
             raise PermanentExtensionError("INVALID_ENTITY_ID")
         model_version = str(payload["gnn_model_version"])
-        expected_id = f"gnnexp:t{tenant_id}:n{nomination_id}:{model_version}"
+        bundle_version = str(payload.get("gnn_bundle_version") or model_version)
+        artifact_bundle_version = str(
+            payload.get("gnn_artifact_bundle_version") or bundle_version
+        )
+        specialist_key = payload.get("specialist_key")
+        if schema_version == 2:
+            if not specialist_key or not payload.get("gnn_bundle_version"):
+                raise PermanentExtensionError(
+                    "MISSING_REQUIRED_FIELDS:gnn_bundle_version,specialist_key"
+                )
+            specialist_key = str(specialist_key)
+            expected_id = (
+                f"gnnexp:t{tenant_id}:n{nomination_id}:{bundle_version}:"
+                f"{specialist_key}:{model_version}"
+            )
+        else:
+            specialist_key = None
+            expected_id = f"gnnexp:t{tenant_id}:n{nomination_id}:{model_version}"
         if payload["request_id"] != expected_id:
             raise PermanentExtensionError("REQUEST_ID_MISMATCH")
         try:
@@ -61,10 +82,13 @@ class ExplanationRequest:
             nomination_id=nomination_id,
             tenant_id=tenant_id,
             model_version=model_version,
+            bundle_version=bundle_version,
+            artifact_bundle_version=artifact_bundle_version,
             graph_snapshot_id=str(payload["graph_snapshot_id"]),
             source_message_id=str(payload["source_message_id"]),
             requested_at=str(payload["requested_at"]),
             request_reason=payload.get("request_reason"),
             embedding_as_of=payload.get("embedding_as_of"),
             scoring_policy_version=int(policy_version) if policy_version is not None else None,
+            specialist_key=specialist_key,
         )

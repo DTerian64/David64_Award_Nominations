@@ -74,8 +74,14 @@ def load_request_context(request: ExplanationRequest) -> RequestContext:
         configuration = json.loads(row[6])
     except (TypeError, json.JSONDecodeError) as exc:
         raise PermanentExtensionError("INVALID_CANONICAL_JSON") from exc
-    if gnn_result.get("model_version") != request.model_version:
+    if gnn_result.get("model_version") != request.bundle_version:
         raise PermanentExtensionError("DECISION_MODEL_MISMATCH")
+    if request.specialist_key:
+        specialist = (gnn_result.get("specialists") or {}).get(
+            request.specialist_key
+        ) or {}
+        if specialist.get("model_version") != request.model_version:
+            raise PermanentExtensionError("DECISION_SPECIALIST_MODEL_MISMATCH")
     if gnn_result.get("graph_snapshot_id") != request.graph_snapshot_id:
         raise PermanentExtensionError("DECISION_SNAPSHOT_MISMATCH")
     explanation = gnn_result.get("explanation") or {}
@@ -132,7 +138,7 @@ def claim_request(request: ExplanationRequest, delivery_count: int) -> bool:
                  )
               )
         """, running, request.nomination_id, request.tenant_id,
-             request.model_version, request.graph_snapshot_id, request.request_id)
+             request.bundle_version, request.graph_snapshot_id, request.request_id)
         changed = cursor.rowcount == 1
         connection.commit()
         return changed
@@ -180,7 +186,7 @@ def finish_request(request: ExplanationRequest, explanation: dict) -> bool:
               AND JSON_VALUE(GnnResultJson, '$.explanation.request_id') = ?
               AND JSON_VALUE(GnnResultJson, '$.explanation.status') = 'RUNNING'
         """, serialized, request.nomination_id, request.tenant_id,
-             request.model_version, request.graph_snapshot_id, request.request_id)
+             request.bundle_version, request.graph_snapshot_id, request.request_id)
         changed = cursor.rowcount == 1
         connection.commit()
         return changed

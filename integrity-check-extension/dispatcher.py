@@ -62,6 +62,8 @@ def dispatch(
             "request_id": request.request_id,
             "attempt": delivery_count,
             "model_version": request.model_version,
+            "bundle_version": request.bundle_version,
+            "specialist_key": request.specialist_key,
             "graph_snapshot_id": request.graph_snapshot_id,
         })
         bundle = loader.load(request)
@@ -69,10 +71,18 @@ def dispatch(
         embeddings = db.get_versioned_embeddings(
             request, [details["nominator_id"], details["beneficiary_id"]]
         )
+        scored_result = context.gnn_result
+        if request.specialist_key:
+            specialist = context.gnn_result["specialists"][request.specialist_key]
+            scored_result = {
+                **context.gnn_result,
+                **specialist,
+                "fraud_prob": specialist.get("probability"),
+            }
         result = reproduce(
             bundle=bundle,
             details=details,
-            gnn_result=context.gnn_result,
+            gnn_result=scored_result,
             sql_embeddings=embeddings,
             policy=ReproductionPolicy.from_configuration(context.policy_configuration),
         )
@@ -115,6 +125,8 @@ def _persist_failure(
         "request_id": request.request_id,
         "attempt": delivery_count,
         "reason": reason,
-        "model_version": request.model_version,
+            "model_version": request.model_version,
+            "bundle_version": request.bundle_version,
+            "specialist_key": request.specialist_key,
         "graph_snapshot_id": request.graph_snapshot_id,
     }, exception=bounded)

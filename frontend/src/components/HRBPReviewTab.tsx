@@ -99,6 +99,31 @@ export interface EngineResult {
     eligible_edge_count?: number;
     features?: Record<string, number>;
   } | null;
+  specialists?: Record<string, {
+    available?: boolean;
+    status?: string;
+    reason?: string | null;
+    architecture?: string | null;
+    model_version?: string | null;
+    artifact_bundle_version?: string | null;
+    feature_contract?: string | null;
+    probability?: number | null;
+    raw_probability?: number | null;
+    score?: number | null;
+    risk_level?: string | null;
+    embedding_as_of?: string | null;
+    causal_context?: EngineResult['causal_context'];
+    feature_inputs?: EngineResult['feature_inputs'];
+  }> | null;
+  aggregate?: {
+    method?: string;
+    probability?: number;
+    score?: number;
+    risk_level?: string;
+    decisive_specialists?: string[];
+    mixed_evidence?: boolean;
+    material_specialists?: string[];
+  } | null;
   winning_pattern_type?: string | null;
   winning_pattern_count?: number;
   winning_finding?: {
@@ -394,6 +419,8 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
   const topRelationships = explanation?.top_relationships || [];
   const persistedFeatureRows = engine.feature_inputs?.features || [];
   const thresholds = engine.score_thresholds || {};
+  const specialists = Object.entries(engine.specialists || {});
+  const decisiveSpecialists = new Set(engine.aggregate?.decisive_specialists || []);
 
   return (
     <div className="mt-3 space-y-3 text-xs text-slate-700">
@@ -429,6 +456,59 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
           This score is a learned probability from the two user embeddings and the named feature vector below. Graph Analytics pattern scores do not feed the GNN, so an explicit ring finding can coexist with a low GNN score.
         </p>
       </div>
+
+      {specialists.length > 0 && (
+        <div className="overflow-x-auto rounded border border-violet-200 bg-white">
+          <div className="border-b border-violet-100 bg-violet-50 px-2 py-1.5">
+            <p className="font-semibold text-violet-900">Scenario specialist verdicts</p>
+            <p className="text-[10px] text-violet-700">
+              Each behavior track selects and serves independently. The aggregate uses the highest calibrated specialist probability.
+            </p>
+          </div>
+          <table className="w-full border-collapse text-left">
+            <thead className="bg-slate-100 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-2 py-1.5">Behavior track</th>
+                <th className="px-2 py-1.5">Serving model</th>
+                <th className="px-2 py-1.5">Feature contract</th>
+                <th className="px-2 py-1.5 text-right">Probability</th>
+                <th className="px-2 py-1.5 text-right">Score</th>
+                <th className="px-2 py-1.5">Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              {specialists.map(([name, specialist]) => {
+                const decisive = decisiveSpecialists.has(name);
+                return (
+                  <tr key={name} className={`border-t border-slate-100 ${decisive ? 'bg-violet-50/70' : ''}`}>
+                    <td className="whitespace-nowrap px-2 py-1.5 font-medium text-slate-900">
+                      {readableCode(name)}
+                      {decisive && <span className="ml-1.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-800">Decisive</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5">
+                      {specialist.architecture?.toUpperCase() || '—'}
+                      {specialist.status === 'CARRIED_FORWARD' && <span className="ml-1 text-[9px] text-amber-700">carried forward</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5 font-mono text-[10px]">{specialist.feature_contract || '—'}</td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono">
+                      {specialist.probability !== null && specialist.probability !== undefined ? `${(specialist.probability * 100).toFixed(1)}%` : '—'}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono">{specialist.score ?? '—'}</td>
+                    <td className="whitespace-nowrap px-2 py-1.5">
+                      {specialist.available ? <RiskBadge level={specialist.risk_level || 'NONE'} /> : <span className="text-slate-500">{readableCode(specialist.reason || specialist.status)}</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {engine.aggregate?.mixed_evidence && (
+            <p className="border-t border-violet-100 bg-violet-50 px-2 py-1.5 text-[10px] font-medium text-violet-800">
+              Mixed evidence: {(engine.aggregate.material_specialists || []).map(readableCode).join(', ')}
+            </p>
+          )}
+        </div>
+      )}
 
       {featureRows.length > 0 && (
         <div className="rounded border border-slate-200 bg-slate-50 p-2">
