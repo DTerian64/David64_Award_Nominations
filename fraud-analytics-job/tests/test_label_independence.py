@@ -151,5 +151,59 @@ class HumanConfirmedLabelTests(unittest.TestCase):
         self.assertEqual(result.loc[1, "TrainingDisposition"], "EXCLUDED")
 
 
+class ConfirmedPatternContractTests(unittest.TestCase):
+    def _row(self, metadata: dict, *, is_fraud: int = 1) -> dict:
+        return {
+            "LabelSource": labels.SOURCE_SYNTHETIC,
+            "IsFraud": is_fraud,
+            "TrainingDispositionMetadataJson": metadata,
+        }
+
+    def test_v4_fraud_uses_exact_directly_persisted_pattern(self):
+        row = self._row({
+            "generator_version": "synthetics-inc-v4.0",
+            "scenario_family": "RING",
+            "confirmed_patterns": ["RING"],
+        })
+
+        self.assertEqual(labels._confirmed_patterns(row), ("RING",))
+
+    def test_v4_requires_confirmed_patterns(self):
+        row = self._row({
+            "generator_version": "synthetics-inc-v4.0",
+            "scenario_family": "RING",
+        })
+
+        with self.assertRaisesRegex(ValueError, "require confirmed_patterns"):
+            labels._confirmed_patterns(row)
+
+    def test_scenario_family_is_never_used_as_a_legacy_fallback(self):
+        row = self._row({
+            "generator_version": "synthetics-inc-v3.0",
+            "scenario_family": "BIPARTITE_DENSE_BLOCK",
+        })
+
+        self.assertEqual(labels._confirmed_patterns(row), ())
+
+    def test_v4_rejects_pattern_that_differs_from_scenario_family(self):
+        row = self._row({
+            "generator_version": "synthetics-inc-v4.0",
+            "scenario_family": "RING",
+            "confirmed_patterns": ["RECIPROCAL"],
+        })
+
+        with self.assertRaisesRegex(ValueError, "equal to scenario_family"):
+            labels._confirmed_patterns(row)
+
+    def test_v4_legitimate_requires_empty_patterns(self):
+        row = self._row({
+            "generator_version": "synthetics-inc-v4.0",
+            "scenario_family": "LEGITIMATE",
+            "confirmed_patterns": [],
+        }, is_fraud=0)
+
+        self.assertEqual(labels._confirmed_patterns(row), ())
+
+
 if __name__ == "__main__":
     unittest.main()

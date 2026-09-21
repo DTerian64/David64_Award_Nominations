@@ -18,8 +18,10 @@ from typing import Any
 
 from .scenarios import (
     CORPUS_USER_COUNT,
+    DIRECTORY_SEED,
     GENERATOR_VERSION,
     NOMINATION_COUNT,
+    PATTERN_TAXONOMY_VERSION,
     SyntheticNomination,
     SyntheticUser,
 )
@@ -639,6 +641,124 @@ def provision_configuration(conn) -> ConfigurationResult:
     )
 
 
+def inspect_existing_configuration(conn) -> ConfigurationResult:
+    """Validate an existing synthetic tenant without reconciling its policies."""
+    cursor = conn.cursor()
+    assert_schema(cursor)
+    cursor.execute(
+        """
+        SELECT TenantId, TenantName, AzureAdTenantId, Domain, is_synthetic
+        FROM dbo.Tenants
+        WHERE AzureAdTenantId=?
+        """,
+        ORGANIZATION_ID,
+    )
+    tenant = _row(cursor)
+    if not tenant or (
+        tenant["TenantName"] != TENANT_NAME
+        or tenant["Domain"] != DOMAIN
+        or not bool(tenant["is_synthetic"])
+    ):
+        raise RuntimeError(
+            "Existing destination failed the synthetic tenant identity preflight"
+        )
+    tenant_id = int(tenant["TenantId"])
+
+    cursor.execute(
+        """
+        SELECT id, category_description, min_amount, max_amount, is_active
+        FROM dbo.nomination_categories
+        WHERE tenant_id=?
+        ORDER BY category_description
+        """,
+        tenant_id,
+    )
+    categories = _rows(cursor)
+    cursor.execute(
+        """
+        SELECT TemplateKey, Lang, Subject, BodyTemplate, Version
+        FROM dbo.EmailTemplates
+        WHERE TenantId=?
+        ORDER BY TemplateKey, Lang
+        """,
+        tenant_id,
+    )
+    templates = _rows(cursor)
+    cursor.execute(
+        """
+        SELECT PolicyId, ScoringStrategy, LowThreshold, MediumThreshold,
+               HighThreshold, CriticalThreshold, DetectionWindowDays,
+               SnapshotMaxAgeDays
+        FROM dbo.GraphScoringPolicies
+        WHERE TenantId=? AND Status='ACTIVE'
+        """,
+        tenant_id,
+    )
+    graph_policy = _row(cursor)
+    if graph_policy is None:
+        raise RuntimeError("Existing destination has no active Graph policy")
+    cursor.execute(
+        """
+        SELECT x.PatternType, x.DisplayOrder, x.Enabled, x.EnabledForRouting,
+               x.ApplicableRolesJson, x.BaseScore, x.MinimumScore,
+               x.MaximumScore, x.ParametersJson, x.CandidateEvaluationJson
+        FROM dbo.GraphScoringPatternParameters AS x
+        WHERE x.PolicyId=?
+        ORDER BY x.PatternType
+        """,
+        graph_policy["PolicyId"],
+    )
+    graph_patterns = _rows(cursor)
+    cursor.execute(
+        """
+        SELECT PolicyId, TrainingEnabled, InferenceEnabled, ConfigurationJson,
+               ExplanationEnabled, ExplanationMinimumRisk
+        FROM dbo.GNNScoringPolicies
+        WHERE TenantId=? AND Status='ACTIVE'
+        """,
+        tenant_id,
+    )
+    gnn_policy = _row(cursor)
+    if gnn_policy is None:
+        raise RuntimeError("Existing destination has no active GNN policy")
+    try:
+        gnn_configuration = json.loads(gnn_policy["ConfigurationJson"])
+        window_days = gnn_configuration["training"]["window_days"]
+    except (TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "Existing destination GNN policy has an invalid training configuration"
+        ) from exc
+    try:
+        valid_window = int(window_days) == 365
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Existing destination GNN policy has an invalid training window"
+        ) from exc
+    if not valid_window:
+        raise RuntimeError(
+            "Existing destination GNN policy must use a 365-day training window"
+        )
+
+    return ConfigurationResult(
+        tenant_id=tenant_id,
+        created_tenant=False,
+        category_id_map={},
+        category_count=len(categories),
+        email_template_count=len(templates),
+        graph_pattern_count=len(graph_patterns),
+        hashes={
+            "destination_categories": _sha256(categories),
+            "destination_email_templates": _sha256(templates),
+            "destination_graph_policy": _sha256(graph_policy),
+            "destination_graph_pattern_parameters": _sha256(graph_patterns),
+            "destination_gnn_policy": _sha256({
+                **gnn_policy,
+                "ConfigurationJson": gnn_configuration,
+            }),
+        },
+    )
+
+
 def _provision_sql_users(
     cursor,
     tenant_id: int,
@@ -787,11 +907,13 @@ def _corpus_stage_values(
     )
     rejection_actor = "Synthetic Ground Truth" if row.status == "Rejected" else None
     metadata = json.dumps({
-        "schema_version": 2,
+        "schema_version": 3,
         "generator_version": GENERATOR_VERSION,
+        "pattern_taxonomy_version": PATTERN_TAXONOMY_VERSION,
         "generation_run_id": generation_run_id,
         "corpus_sha256": corpus_sha256,
         "seed": seed,
+        "directory_seed": DIRECTORY_SEED,
         "logical_nomination_id": row.logical_id,
         "stable_nomination_id": row.stable_id,
         "temporal_segment": row.segment,
@@ -801,6 +923,7 @@ def _corpus_stage_values(
         "scenario_phase": row.scenario_phase,
         "context_mode": row.context_mode,
         "ground_truth": row.training_disposition,
+        "confirmed_patterns": list(row.confirmed_patterns),
     }, separators=(",", ":"), sort_keys=True)
     return (
         f"synthetic:{row.stable_id}",

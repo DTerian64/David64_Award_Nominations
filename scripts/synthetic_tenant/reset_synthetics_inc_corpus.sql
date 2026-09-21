@@ -1,13 +1,14 @@
 /*
 Purpose
 =======
-One-time, tenant-scoped removal of the deployed Synthetics Inc. v2.0 corpus so
-the v3.0 expanded causal-scenario corpus can be loaded with the Python seeder.
+Tenant-scoped removal of all Synthetics Inc. nomination data so the v4.0 direct
+specialist-label corpus can be loaded with the Python seeder.
 
 This script preserves dbo.Tenants, dbo.Users, roles, categories, email
 templates, Graph/GNN scoring policies, Entra identities, DNS, and application
-configuration. It removes only the manifest-owned nomination corpus and data
-derived from that corpus.
+configuration. It removes every nomination owned by TenantId 5 and all
+nomination-derived data for that tenant, including test nominations created
+after the deployed v3 corpus.
 
 Safety and usage
 ================
@@ -17,11 +18,11 @@ Safety and usage
    rolls it back.
 4. Review the inventory result sets and all preflight checks.
 5. Change @CommitChanges to 1 and run the entire file again to commit.
-6. Run the v3.0 seeder --apply-corpus command documented in README.md.
+6. Run the v4.0 seeder --apply-corpus command documented in README.md.
 
-Do not change the organization ID, tenant identity, expected v2.0 corpus hash,
-generation run ID, or expected row counts merely to bypass a failed preflight.
-Investigate the difference instead.
+Do not change TenantId 5, the organization ID, tenant name, domain, or expected
+user count merely to bypass a failed preflight. Investigate the difference
+instead.
 */
 
 SET NOCOUNT ON;
@@ -32,14 +33,8 @@ DECLARE @OrganizationId VARCHAR(36) =
     'f74bff31-f42f-4461-a1dd-e1ae978c1abe';
 DECLARE @ExpectedTenantName NVARCHAR(256) = N'Synthetics Inc';
 DECLARE @ExpectedDomain NVARCHAR(256) = N'synthetic-awards.terianix.ai';
-DECLARE @ExpectedCorpusSha256 VARCHAR(64) =
-    'ec496b2a66b20a4c38a02b8dbcef4fae6d6a584530686f07f1e75ff6b841a0a8';
-DECLARE @ExpectedGenerationRunId VARCHAR(36) =
-    'b60d4f7e-7f2b-5aa6-89ff-4d6e58f8fbef';
 DECLARE @ExpectedUserCount INT = 401;
-DECLARE @ExpectedNominationCount INT = 5000;
-DECLARE @TenantId INT;
-DECLARE @ErrorMessage NVARCHAR(2048);
+DECLARE @TenantId INT = 5;
 DECLARE @LockResult INT;
 
 BEGIN TRANSACTION;
@@ -53,26 +48,16 @@ EXEC @LockResult = sys.sp_getapplock
 IF @LockResult < 0
     THROW 51000, 'Could not acquire the Synthetics Inc. corpus reset lock.', 1;
 
-IF (
-    SELECT COUNT(*)
-    FROM dbo.Tenants WITH (UPDLOCK, HOLDLOCK)
-    WHERE AzureAdTenantId = @OrganizationId
-) <> 1
-    THROW 51000, 'Organization ID must resolve to exactly one SQL tenant.', 1;
-
-SELECT @TenantId = TenantId
-FROM dbo.Tenants WITH (UPDLOCK, HOLDLOCK)
-WHERE AzureAdTenantId = @OrganizationId;
-
 IF NOT EXISTS (
     SELECT 1
-    FROM dbo.Tenants
+    FROM dbo.Tenants WITH (UPDLOCK, HOLDLOCK)
     WHERE TenantId = @TenantId
+      AND AzureAdTenantId = @OrganizationId
       AND TenantName = @ExpectedTenantName
       AND Domain = @ExpectedDomain
       AND is_synthetic = 1
 )
-    THROW 51000, 'Tenant identity or is_synthetic preflight failed.', 1;
+    THROW 51000, 'TenantId 5 identity or is_synthetic preflight failed.', 1;
 
 IF (
     SELECT COUNT(*) FROM dbo.Users WITH (UPDLOCK, HOLDLOCK)
@@ -80,56 +65,19 @@ IF (
 ) <> @ExpectedUserCount
     THROW 51000, 'Expected exactly 401 Synthetics Inc. SQL users.', 1;
 
-CREATE TABLE #OwnedNominationIds (
+CREATE TABLE #TenantNominationIds (
     NominationId INT NOT NULL PRIMARY KEY
 );
 
-INSERT INTO #OwnedNominationIds (NominationId)
-SELECT decision_result.NominationId
-FROM dbo.IntegrityDecisionResults AS decision_result WITH (UPDLOCK, HOLDLOCK)
-WHERE decision_result.TenantId = @TenantId
-  AND decision_result.SourceMessageId LIKE N'synthetic:%'
-  AND decision_result.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
-  AND ISJSON(decision_result.TrainingDispositionMetadataJson) = 1
-  AND JSON_VALUE(
-        decision_result.TrainingDispositionMetadataJson,
-        '$.corpus_sha256'
-      ) = @ExpectedCorpusSha256
-  AND JSON_VALUE(
-        decision_result.TrainingDispositionMetadataJson,
-        '$.generation_run_id'
-      ) = @ExpectedGenerationRunId;
+INSERT INTO #TenantNominationIds (NominationId)
+SELECT nomination.NominationId
+FROM dbo.Nominations AS nomination WITH (UPDLOCK, HOLDLOCK)
+INNER JOIN dbo.Users AS nominator
+    ON nominator.UserId = nomination.NominatorId
+WHERE nominator.TenantId = @TenantId;
 
-IF (SELECT COUNT(*) FROM #OwnedNominationIds) <> @ExpectedNominationCount
-    THROW 51000, 'Expected exactly 5,000 manifest-owned v2.0 decisions.', 1;
-
-IF (
-    SELECT COUNT(*)
-    FROM dbo.IntegrityDecisionResults
-    WHERE TenantId = @TenantId
-) <> @ExpectedNominationCount
-    THROW 51000, 'Tenant contains decisions outside the expected v2.0 corpus.', 1;
-
-IF (
-    SELECT COUNT(*)
-    FROM dbo.Nominations AS nomination WITH (UPDLOCK, HOLDLOCK)
-    INNER JOIN dbo.Users AS nominator
-        ON nominator.UserId = nomination.NominatorId
-    WHERE nominator.TenantId = @TenantId
-) <> @ExpectedNominationCount
-    THROW 51000, 'Tenant nomination count is not exactly 5,000.', 1;
-
-IF EXISTS (
-    SELECT 1
-    FROM dbo.Nominations AS nomination
-    INNER JOIN dbo.Users AS nominator
-        ON nominator.UserId = nomination.NominatorId
-    LEFT JOIN #OwnedNominationIds AS owned
-        ON owned.NominationId = nomination.NominationId
-    WHERE nominator.TenantId = @TenantId
-      AND owned.NominationId IS NULL
-)
-    THROW 51000, 'Tenant contains a nomination not owned by the v2.0 manifest.', 1;
+IF NOT EXISTS (SELECT 1 FROM #TenantNominationIds)
+    THROW 51000, 'TenantId 5 contains no nominations to reset.', 1;
 
 IF EXISTS (
     SELECT 1
@@ -141,7 +89,7 @@ IF EXISTS (
     INNER JOIN dbo.Users AS approver
         ON approver.UserId = nomination.ApproverId
     WHERE nomination.NominationId IN (
-        SELECT NominationId FROM #OwnedNominationIds
+        SELECT NominationId FROM #TenantNominationIds
     )
       AND (
           nominator.TenantId <> @TenantId
@@ -149,7 +97,7 @@ IF EXISTS (
           OR approver.TenantId <> @TenantId
       )
 )
-    THROW 51000, 'The owned corpus contains a cross-tenant user reference.', 1;
+    THROW 51000, 'A TenantId 5 nomination contains a cross-tenant user reference.', 1;
 
 /*
 Fail closed if a later migration introduces a new direct nomination child.
@@ -194,32 +142,31 @@ END;
 /* Before inventory. Optional tables return zero when absent. */
 SELECT N'dbo.Nominations' AS TableName, COUNT_BIG(*) AS RowsToRemove
 FROM dbo.Nominations AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId
 UNION ALL
 SELECT N'dbo.IntegrityDecisionResults', COUNT_BIG(*)
 FROM dbo.IntegrityDecisionResults AS item
-INNER JOIN #OwnedNominationIds AS owned
-    ON owned.NominationId = item.NominationId
+WHERE item.TenantId = @TenantId
 UNION ALL
 SELECT N'dbo.Nomination_Logs', COUNT_BIG(*)
 FROM dbo.Nomination_Logs AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.nomination_id
 UNION ALL
 SELECT N'dbo.ProcessedEvents', COUNT_BIG(*)
 FROM dbo.ProcessedEvents AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId
 UNION ALL
 SELECT N'dbo.NomGraph_Nominated', COUNT_BIG(*)
 FROM dbo.NomGraph_Nominated AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId
 UNION ALL
 SELECT N'dbo.NomGraph_NominationEmbedding', COUNT_BIG(*)
 FROM dbo.NomGraph_NominationEmbedding AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId
 UNION ALL
 SELECT N'dbo.GraphPatternFindings', COUNT_BIG(*)
@@ -242,27 +189,27 @@ ORDER BY TableName;
 IF OBJECT_ID(N'dbo.payroll_submissions', N'U') IS NOT NULL
     DELETE submission
     FROM dbo.payroll_submissions AS submission
-    INNER JOIN #OwnedNominationIds AS owned
+    INNER JOIN #TenantNominationIds AS owned
         ON owned.NominationId = submission.nomination_id;
 
 DELETE item
 FROM dbo.Nomination_Logs AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.nomination_id;
 
 DELETE item
 FROM dbo.ProcessedEvents AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId;
 
 DELETE item
 FROM dbo.NomGraph_NominationEmbedding AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId;
 
 DELETE item
 FROM dbo.NomGraph_Nominated AS item
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId;
 
 DELETE FROM dbo.GraphScoringChangeRequests WHERE TenantId = @TenantId;
@@ -271,14 +218,11 @@ DELETE FROM dbo.UserGraphFlags WHERE TenantId = @TenantId;
 DELETE FROM dbo.ApproverPairFlags WHERE TenantId = @TenantId;
 DELETE FROM dbo.GNN_UserEmbeddings WHERE TenantId = @TenantId;
 
-DELETE decision_result
-FROM dbo.IntegrityDecisionResults AS decision_result
-INNER JOIN #OwnedNominationIds AS owned
-    ON owned.NominationId = decision_result.NominationId;
+DELETE FROM dbo.IntegrityDecisionResults WHERE TenantId = @TenantId;
 
 DELETE nomination
 FROM dbo.Nominations AS nomination
-INNER JOIN #OwnedNominationIds AS owned
+INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = nomination.NominationId;
 
 /*
@@ -292,8 +236,8 @@ SET ServingStatus = 'UNAVAILABLE',
     ServingAsOf = NULL,
     LastAttemptStatus = 'SKIPPED',
     ReasonCode = 'SYNTHETIC_CORPUS_RESET',
-    ReasonDetail = N'Awaiting analytics rebuild from synthetics-inc-v3.0',
-    DiagnosticsJson = N'{"reset_reason":"synthetics-inc-v3.0 expanded causal corpus replacement"}',
+    ReasonDetail = N'Awaiting analytics rebuild from synthetics-inc-v4.0',
+    DiagnosticsJson = N'{"reset_reason":"synthetics-inc-v4.0 direct specialist-label corpus replacement"}',
     LastAttemptAt = SYSUTCDATETIME(),
     LastSuccessfulAt = NULL,
     RunId = NULL,
@@ -338,7 +282,7 @@ SELECT
 IF @CommitChanges = 1
 BEGIN
     COMMIT TRANSACTION;
-    PRINT 'Committed: Synthetics Inc. v2.0 corpus and derived data removed.';
+    PRINT 'Committed: all TenantId 5 nominations, decisions, and derived data removed.';
 END
 ELSE
 BEGIN

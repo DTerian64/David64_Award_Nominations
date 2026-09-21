@@ -1,5 +1,10 @@
 # Synthetics Inc. — GNN Validation Tenant Design and Build Runbook
 
+> **Replacement note (2026-09-21):** This document describes the deployed v3
+> corpus. The proposed clean replacement, with direct one-to-one GNN specialist
+> labels and no scenario compatibility mapping, is defined in
+> `Documentation_Misc/synthetics_inc_specialist_corpus_v4.md`.
+
 ## 1. Purpose
 
 Synthetics Inc. is a dedicated, isolated tenant for developing and validating

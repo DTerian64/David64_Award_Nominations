@@ -16,6 +16,7 @@ from scripts.synthetic_tenant.database import (
     _sha256,
 )
 from scripts.synthetic_tenant.scenarios import generate_nominations, generate_users
+from scripts.synthetic_tenant.scenarios import DIRECTORY_SEED
 
 
 def test_gnn_clone_changes_only_training_window():
@@ -47,10 +48,10 @@ def test_rejected_imports_use_and_reconcile_the_hrbp_fraud_route():
 
 
 def test_corpus_stage_metadata_preserves_causal_scenario_contract():
-    users = generate_users(20260912)
+    users = generate_users(DIRECTORY_SEED)
     nomination = next(
         row
-        for row in generate_nominations(users, 20260912, date(2026, 9, 14))
+        for row in generate_nominations(users, 20260921, date(2026, 9, 22))
         if row.scenario_id is not None
     )
     user_ids = {
@@ -71,12 +72,15 @@ def test_corpus_stage_metadata_preserves_causal_scenario_contract():
         category_id=1,
         generation_run_id="test-run",
         corpus_sha256="test-hash",
-        seed=20260912,
+        seed=20260921,
     )
     metadata = json.loads(values[18])
 
-    assert metadata["schema_version"] == 2
+    assert metadata["schema_version"] == 3
+    assert metadata["pattern_taxonomy_version"] == "gnn-v3-patterns-v1"
+    assert metadata["directory_seed"] == 20260912
     assert metadata["scenario_id"] == nomination.scenario_id
     assert metadata["scenario_phase"] == nomination.scenario_phase
     assert metadata["context_mode"] == nomination.context_mode
     assert metadata["ground_truth"] == nomination.training_disposition
+    assert metadata["confirmed_patterns"] == list(nomination.confirmed_patterns)

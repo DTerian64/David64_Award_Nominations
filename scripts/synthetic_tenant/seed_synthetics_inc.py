@@ -4,10 +4,10 @@ Usage (from the repository root)::
 
     python -m scripts.synthetic_tenant.seed_synthetics_inc --dry-run
     python -m scripts.synthetic_tenant.seed_synthetics_inc --validate
-    python -m scripts.synthetic_tenant.seed_synthetics_inc --as-of 2026-09-14 --seed 20260912
+    python -m scripts.synthetic_tenant.seed_synthetics_inc --as-of 2026-09-22 --seed 20260921
     python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-configuration
-    python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260912 --as-of 2026-09-14 --manifest-out Output/synthetics-inc-v3-manifest.json
-    python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260912 --as-of 2026-09-14 --manifest-out Output/synthetics-inc-v3-manifest.json
+    python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260921 --as-of 2026-09-22 --manifest-out Output/synthetics-inc-v4-manifest.json
+    python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260921 --as-of 2026-09-22 --manifest-out Output/synthetics-inc-v4-manifest.json
 
 The default is a dry run. ``--apply-configuration`` performs Phase B only: it
 clones the approved Tenant 1 settings into the destination SQL tenant. It does
@@ -26,8 +26,10 @@ from pathlib import Path
 import uuid
 
 from .scenarios import (
+    DIRECTORY_SEED,
     GENERATOR_NAMESPACE,
     GENERATOR_VERSION,
+    PATTERN_TAXONOMY_VERSION,
     corpus_hash,
     generate_nominations,
     generate_users,
@@ -35,7 +37,8 @@ from .scenarios import (
 from .validation import validate_corpus
 
 
-DEFAULT_SEED = 20260912
+DEFAULT_SEED = 20260921
+DEFAULT_AS_OF = date(2026, 9, 22)
 
 
 def _progress(message: str) -> None:
@@ -54,7 +57,7 @@ def _load_environment() -> None:
 
 
 def build_manifest(seed: int, as_of: date) -> dict:
-    users = generate_users(seed)
+    users = generate_users(DIRECTORY_SEED)
     nominations = generate_nominations(users, seed, as_of)
     validation = validate_corpus(users, nominations, as_of)
     digest = corpus_hash(users, nominations)
@@ -63,6 +66,8 @@ def build_manifest(seed: int, as_of: date) -> dict:
     ))
     return {
         "generator_version": GENERATOR_VERSION,
+        "pattern_taxonomy_version": PATTERN_TAXONOMY_VERSION,
+        "directory_seed": DIRECTORY_SEED,
         "seed": seed,
         "as_of": as_of.isoformat(),
         "corpus_sha256": digest,
@@ -102,15 +107,15 @@ def _parser() -> argparse.ArgumentParser:
         "--apply-corpus",
         action="store_true",
         help=(
-            "Provision configuration and corpus data using an existing complete "
-            "SQL user roster; do not call Microsoft Graph."
+            "Validate and preserve existing configuration, then provision corpus "
+            "data using the complete SQL user roster; do not call Microsoft Graph."
         ),
     )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument(
         "--as-of",
         type=date.fromisoformat,
-        default=date.today(),
+        default=DEFAULT_AS_OF,
         help="Exclusive end of the 365-day window (YYYY-MM-DD).",
     )
     parser.add_argument(
@@ -132,18 +137,23 @@ def main() -> int:
             f"Manifest directory does not exist: {args.manifest_out.parent}"
         )
     manifest = build_manifest(args.seed, args.as_of)
-    users = generate_users(args.seed)
+    users = generate_users(DIRECTORY_SEED)
     nominations = generate_nominations(users, args.seed, args.as_of)
     if args.apply_configuration or args.apply or args.apply_corpus:
         from .database import (
             connect_from_environment,
+            inspect_existing_configuration,
             provision_configuration,
             provision_corpus,
         )
 
         connection = connect_from_environment()
         try:
-            result = provision_configuration(connection)
+            result = (
+                inspect_existing_configuration(connection)
+                if args.apply_corpus
+                else provision_configuration(connection)
+            )
             corpus_result = None
             directory_result = None
             if args.apply:
@@ -172,6 +182,10 @@ def main() -> int:
             else "CONFIGURATION_APPLIED"
         )
         manifest["configuration"] = {
+            "status": (
+                "PRESERVED_VALIDATED"
+                if args.apply_corpus else "RECONCILED"
+            ),
             "tenant_id": result.tenant_id,
             "created_tenant": result.created_tenant,
             "category_count": result.category_count,

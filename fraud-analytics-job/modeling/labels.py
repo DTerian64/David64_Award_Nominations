@@ -180,21 +180,8 @@ def load_labels(
     return df
 
 
-_SYNTHETIC_SCENARIO_PATTERN_MAP = {
-    "RING": ("RING",),
-    "RECIPROCAL": ("RECIPROCAL",),
-    "BURST": ("TEMPORAL_BURST",),
-}
-
-
 def _confirmed_patterns(row) -> tuple[str, ...]:
-    """Return independently adjudicated v3 behavior labels.
-
-    Older synthetic corpora predate ``confirmed_patterns``.  Their explicit
-    scenario family is translated through this deliberately narrow, versioned
-    compatibility map.  Broad ``CONCENTRATION``, ``MIXED``, and amount cases
-    are not silently relabelled as specialist ground truth.
-    """
+    """Return only directly persisted, independently adjudicated labels."""
     raw = row.get("TrainingDispositionMetadataJson")
     metadata = {}
     if isinstance(raw, str) and raw.strip():
@@ -213,16 +200,32 @@ def _confirmed_patterns(row) -> tuple[str, ...]:
             isinstance(value, str) for value in values
         ):
             raise ValueError("confirmed_patterns must be an array of strings")
-        return tuple(sorted({
+        normalized = tuple(sorted({
             value.strip().upper() for value in values if value.strip()
         }))
+        if (
+            row.get("LabelSource") == SOURCE_SYNTHETIC
+            and metadata.get("generator_version") == "synthetics-inc-v4.0"
+        ):
+            scenario = str(metadata.get("scenario_family") or "").upper()
+            is_fraud = row.get("IsFraud") == 1
+            if is_fraud and normalized != (scenario,):
+                raise ValueError(
+                    "v4 synthetic fraud requires one confirmed pattern equal "
+                    "to scenario_family"
+                )
+            if not is_fraud and (normalized or scenario != "LEGITIMATE"):
+                raise ValueError(
+                    "v4 synthetic legitimate labels require scenario_family "
+                    "LEGITIMATE and no confirmed patterns"
+                )
+        return normalized
+    if (
+        row.get("LabelSource") == SOURCE_SYNTHETIC
+        and metadata.get("generator_version") == "synthetics-inc-v4.0"
+    ):
+        raise ValueError("v4 synthetic labels require confirmed_patterns")
 
-    if row.get("LabelSource") == SOURCE_SYNTHETIC:
-        scenario = row.get("ScenarioFamily")
-        if isinstance(scenario, str):
-            return _SYNTHETIC_SCENARIO_PATTERN_MAP.get(
-                scenario.strip().upper(), ()
-            )
     return ()
 
 

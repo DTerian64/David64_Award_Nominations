@@ -6,24 +6,35 @@ validation tenant. Its default and `--validate` modes create the logical
 print a reproducibility manifest without mutating Microsoft Entra, SQL, Service
 Bus, or model artifacts.
 
-Generator v3.0 gives each of the 300 fraud targets exactly two earlier causal
-precursor nominations. One hundred eighty targets exercise topology actively
-forming after a weekly snapshot; 120 exercise relationships established in an
-earlier graph snapshot.
+Generator v4.0 creates 50 directly labelled fraud targets for each of the six
+GNN specialist families: ring, reciprocal, temporal burst, super nominator,
+super beneficiary, and bipartite dense block. Every fraud target persists
+exactly one matching `confirmed_patterns` value. Legitimate rows persist an
+empty array. The training loader does not infer or translate labels from a
+scenario name.
+
+Each behavior has its own causal topology rather than a shared shortcut.
+Feature-matched legitimate controls are distributed across the same five
+temporal segments. This supplies every specialist with 30 training positives,
+10 positives in each of two selection folds, and 10 positives in the final
+holdout. The inclusive 365-day observation window ends on September 21, 2026,
+so the generator uses the exclusive `--as-of 2026-09-22` boundary.
 
 From the repository root:
 
 ```powershell
 python -m scripts.synthetic_tenant.seed_synthetics_inc --dry-run
-python -m scripts.synthetic_tenant.seed_synthetics_inc --validate --as-of 2026-09-14
+python -m scripts.synthetic_tenant.seed_synthetics_inc --validate --seed 20260921 --as-of 2026-09-22
 python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-configuration
-python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260912 --as-of 2026-09-14 --manifest-out Output/synthetics-inc-v3-manifest.json
-python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260912 --as-of 2026-09-14 --manifest-out Output/synthetics-inc-v3-manifest.json
+python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260921 --as-of 2026-09-22 --manifest-out Output/synthetics-inc-v4-manifest.json
+python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260921 --as-of 2026-09-22 --manifest-out Output/synthetics-inc-v4-manifest.json
 ```
 
 The seed and `as-of` date are part of the corpus identity. The same two inputs
 must produce the same SHA-256 hash. Persistence is isolated behind the explicit
 apply modes and the fail-closed preflight described in the design document.
+The existing directory roster has its own fixed seed, `20260912`; changing the
+v4 corpus seed never regenerates or replaces those 400 user identities.
 
 `--apply-configuration` is the Phase-B boundary. It requires the normal
 `SQL_SERVER`, `SQL_DATABASE`, `SQL_USER`, and `SQL_PASSWORD` environment
@@ -53,17 +64,22 @@ mappings; that detailed map is written to disk but omitted from console output.
 `--apply-corpus` is the repeat-corpus path for an already provisioned customer
 directory. It uses only the provider-hosted SQL connection, requires the exact
 401-user SQL roster to exist, and does not request a customer-tenant Microsoft
-Graph token. Its manifest records that the Entra directory was preserved rather
-than reconciled and retains the complete logical-to-SQL identity map.
+Graph token. It validates the existing tenant identity, active Graph policy,
+active GNN policy, and 365-day GNN training window without cloning or replacing
+configuration from Tenant 1. Its manifest records that the Entra directory and
+tenant configuration were preserved rather than reconciled and retains the
+complete logical-to-SQL identity map.
 
-Do not run `--apply` to replace the currently deployed v2.0 corpus. Stable
+Do not run `--apply` to replace the currently deployed v3.0 corpus. Stable
 nomination identities intentionally cause the apply preflight to reject changed
 generation metadata instead of silently rewriting history. First run
 `reset_synthetics_inc_corpus.sql` as a rollback preview, review its inventory,
 and rerun it with `@CommitChanges = 1`. The script preserves the tenant,
 configuration, policies, all 401 SQL/Entra users, and the administrator. It
-removes only the manifest-owned v2.0 nomination corpus and corpus-derived data,
-then invalidates old serving pointers. After the committed reset, run the v3.0
+validates that TenantId 5 is the expected synthetic tenant, then removes every
+TenantId 5 nomination, decision, and corpus-derived record, including later
+test nominations. It then invalidates old serving pointers. After the committed
+reset, run the v4.0
 `--apply-corpus` command above. Keep the fixed seed and `as-of` date and write to
-the new v3 manifest path so the deployed v2.0 manifest remains available as
+the new v4 manifest path so the deployed v3.0 manifest remains available as
 reset provenance. No replacement-specific Python mode is required.

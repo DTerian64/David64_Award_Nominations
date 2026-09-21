@@ -9,12 +9,15 @@ from .scenarios import (
     ACTIVE_USER_COUNT,
     CATEGORIES,
     CATEGORY_AMOUNT_BOUNDS,
+    CONTROL_FAMILY_BY_VARIANT,
     CORPUS_USER_COUNT,
     DEPARTMENTS,
     FRAUD_PER_SEGMENT,
     NOMINATION_COUNT,
     NOMINATIONS_PER_SEGMENT,
+    PATTERN_TAXONOMY_VERSION,
     SEGMENT_COUNT,
+    SPECIALIST_FAMILIES,
     UPN_DOMAIN,
     SyntheticNomination,
     SyntheticUser,
@@ -84,6 +87,22 @@ def validate_corpus(
         for row in nominations
     ):
         errors.append("the corpus has no retrospectively discovered fraud outcomes")
+    for row in nominations:
+        patterns = tuple(row.confirmed_patterns)
+        if row.training_disposition == "FRAUD":
+            if row.scenario_family not in SPECIALIST_FAMILIES:
+                errors.append(
+                    f"{row.logical_id} has unsupported fraud family "
+                    f"{row.scenario_family}"
+                )
+            if patterns != (row.scenario_family,):
+                errors.append(
+                    f"{row.logical_id} pattern does not exactly match its family"
+                )
+        elif row.scenario_family != "LEGITIMATE" or patterns:
+            errors.append(
+                f"{row.logical_id} legitimate metadata contains a specialist label"
+            )
 
     segment_counts = Counter(row.segment for row in nominations)
     for segment in range(SEGMENT_COUNT):
@@ -119,6 +138,7 @@ def validate_corpus(
             row.context_mode
             for row in segment_rows
             if row.scenario_phase == "TARGET"
+            and row.training_disposition == "FRAUD"
         )
         expected_modes = (
             Counter({"ACTIVE": 60})
@@ -130,6 +150,19 @@ def validate_corpus(
                 f"segment {segment} context allocation is {dict(target_modes)}"
             )
 
+        control_families = Counter(
+            CONTROL_FAMILY_BY_VARIANT[row.scenario_variant]
+            for row in segment_rows
+            if row.scenario_phase == "TARGET"
+            and row.training_disposition == "LEGITIMATE"
+            and row.scenario_variant in CONTROL_FAMILY_BY_VARIANT
+        )
+        if control_families != Counter(FRAUD_PER_SEGMENT):
+            errors.append(
+                f"segment {segment} legitimate controls are "
+                f"{dict(control_families)}"
+            )
+
     scenario_rows: dict[str, list[SyntheticNomination]] = {}
     for row in nominations:
         if row.scenario_id:
@@ -139,32 +172,42 @@ def validate_corpus(
                 f"{row.logical_id} has scenario metadata without a scenario ID"
             )
 
-    if len(scenario_rows) != fraud_count:
+    if len(scenario_rows) != fraud_count * 2:
         errors.append(
-            f"expected {fraud_count:,} causal scenarios, found {len(scenario_rows)}"
+            f"expected {fraud_count * 2:,} fraud/control scenarios, "
+            f"found {len(scenario_rows)}"
         )
     for scenario_id, rows in scenario_rows.items():
         targets = [row for row in rows if row.scenario_phase == "TARGET"]
         precursors = [row for row in rows if row.scenario_phase == "PRECURSOR"]
-        if len(rows) != 3 or len(targets) != 1 or len(precursors) != 2:
+        if len(targets) != 1 or len(precursors) < 2:
             errors.append(
-                f"{scenario_id} must contain two precursors and one target"
+                f"{scenario_id} must contain at least two precursors and one target"
             )
             continue
         target = targets[0]
+        behavior = target.scenario_family
+        if target.training_disposition == "LEGITIMATE":
+            behavior = CONTROL_FAMILY_BY_VARIANT.get(target.scenario_variant)
+            if behavior is None:
+                errors.append(f"{scenario_id} has an invalid control variant")
+                continue
+        if behavior not in SPECIALIST_FAMILIES:
+            errors.append(f"{scenario_id} has unknown behavior {behavior}")
+            continue
         target_time = datetime.fromisoformat(target.nomination_time_utc)
         precursor_times = [
             datetime.fromisoformat(row.nomination_time_utc) for row in precursors
         ]
-        if target.training_disposition != "FRAUD":
-            errors.append(f"{scenario_id} target is not labelled FRAUD")
         if any(row.training_disposition != "LEGITIMATE" for row in precursors):
             errors.append(f"{scenario_id} precursor is not labelled LEGITIMATE")
+        if any(row.confirmed_patterns for row in precursors):
+            errors.append(f"{scenario_id} precursor has a confirmed pattern")
         if any(value >= target_time for value in precursor_times):
             errors.append(f"{scenario_id} has a non-causal precursor timestamp")
         if any(
-            row.scenario_family != target.scenario_family
-            or row.context_mode != target.context_mode
+            row.context_mode != target.context_mode
+            or row.scenario_variant != target.scenario_variant
             for row in precursors
         ):
             errors.append(f"{scenario_id} metadata is inconsistent")
@@ -173,19 +216,24 @@ def validate_corpus(
                 errors.append(f"{scenario_id} active precursor is outside target segment")
             if max(target_time - value for value in precursor_times) > timedelta(days=2):
                 errors.append(f"{scenario_id} active precursor is not recent")
-            if target.scenario_family == "BURST" and (
-                max([target_time, *precursor_times])
-                - min([target_time, *precursor_times])
-                > timedelta(minutes=5)
-            ):
-                errors.append(f"{scenario_id} burst is not within five minutes")
         elif target.context_mode == "ESTABLISHED":
             latest_allowed_segment = max(0, target.segment - 2)
-            if target.segment == 0 or any(
-                row.segment > latest_allowed_segment for row in precursors
-            ):
+            established = [
+                row for row in precursors
+                if row.segment <= latest_allowed_segment
+            ]
+            active = [row for row in precursors if row.segment == target.segment]
+            if target.segment == 0 or not established:
                 errors.append(
                     f"{scenario_id} established precursor misses immutable history"
+                )
+            if behavior == "TEMPORAL_BURST" and len(active) < 3:
+                errors.append(
+                    f"{scenario_id} established burst lacks live causal events"
+                )
+            if behavior != "TEMPORAL_BURST" and active:
+                errors.append(
+                    f"{scenario_id} established scenario has active precursors"
                 )
         else:
             errors.append(f"{scenario_id} has invalid context mode")
@@ -199,38 +247,85 @@ def validate_corpus(
             target.nominator_logical_id,
             target.beneficiary_logical_id,
         )
-        if target.scenario_family in {"RING", "MIXED"}:
-            if not any(
+        if behavior == "RING":
+            closes_three_user_ring = any(
                 (target_edge[1], middle) in edges
                 and (middle, target_edge[0]) in edges
                 for middle in user_ids
-            ):
+            )
+            closes_four_user_ring = any(
+                (target_edge[1], first) in edges
+                and (first, second) in edges
+                and (second, target_edge[0]) in edges
+                for first in user_ids
+                for second in user_ids
+            )
+            if not (closes_three_user_ring or closes_four_user_ring):
                 errors.append(f"{scenario_id} target does not close a ring")
-        elif target.scenario_family == "RECIPROCAL":
+        elif behavior == "RECIPROCAL":
             if (target_edge[1], target_edge[0]) not in edges:
                 errors.append(f"{scenario_id} target lacks a prior reverse edge")
-        elif target.scenario_family in {"CONCENTRATION", "AMOUNT"}:
-            if sum(edge == target_edge for edge in precursor_edges) != 2:
-                errors.append(f"{scenario_id} target lacks established pair history")
-        elif target.scenario_family == "BURST":
-            if any(edge[1] != target_edge[1] for edge in edges):
-                errors.append(f"{scenario_id} burst does not share a beneficiary")
+        elif behavior == "TEMPORAL_BURST":
+            recent = [
+                row for row in precursors
+                if timedelta(0) < (
+                    target_time - datetime.fromisoformat(row.nomination_time_utc)
+                ) <= timedelta(hours=1)
+                and row.beneficiary_logical_id == target_edge[1]
+            ]
+            if len(recent) < 3:
+                errors.append(
+                    f"{scenario_id} burst lacks three recent beneficiary events"
+                )
+        elif behavior == "SUPER_NOMINATOR":
+            relevant = [
+                edge for edge in precursor_edges if edge[0] == target_edge[0]
+            ]
+            if len(relevant) < 8 or len({edge[1] for edge in relevant}) < 8:
+                errors.append(
+                    f"{scenario_id} lacks super-nominator breadth"
+                )
+        elif behavior == "SUPER_BENEFICIARY":
+            relevant = [
+                edge for edge in precursor_edges if edge[1] == target_edge[1]
+            ]
+            if len(relevant) < 8 or len({edge[0] for edge in relevant}) < 8:
+                errors.append(
+                    f"{scenario_id} lacks super-beneficiary breadth"
+                )
+        elif behavior == "BIPARTITE_DENSE_BLOCK":
+            all_edges = edges | {target_edge}
+            left_candidates = {
+                edge[0] for edge in all_edges if edge[1] == target_edge[1]
+            }
+            right_candidates = {
+                edge[1] for edge in all_edges if edge[0] == target_edge[0]
+            }
+            completes_block = any(
+                all(
+                    (left, right) in all_edges
+                    for left in (target_edge[0], left_a, left_b)
+                    for right in (target_edge[1], right_a, right_b)
+                )
+                for left_a in left_candidates
+                for left_b in left_candidates
+                for right_a in right_candidates
+                for right_b in right_candidates
+                if left_a != left_b and right_a != right_b
+            )
+            if not completes_block:
+                errors.append(f"{scenario_id} is not a complete 3x3 block")
 
     start = as_of - timedelta(days=365)
     dates = [datetime.fromisoformat(row.nomination_time_utc).date() for row in nominations]
     if dates and (min(dates) != start or max(dates) != as_of - timedelta(days=1)):
         errors.append("nomination dates do not span the complete 365-day window")
     daily_counts = Counter(dates)
-    base_daily_count, higher_volume_days = divmod(NOMINATION_COUNT, 365)
-    expected_daily_distribution = Counter(
-        {
-            base_daily_count + 1: higher_volume_days,
-            base_daily_count: 365 - higher_volume_days,
-        }
-    )
-    if Counter(daily_counts.values()) != expected_daily_distribution:
+    if len(daily_counts) != 365 or not (
+        30 <= min(daily_counts.values()) <= max(daily_counts.values()) <= 50
+    ):
         errors.append(
-            "daily volume does not match the deterministic 365-day distribution"
+            "daily volume is missing dates or exceeds the 30..50 event bound"
         )
 
     participants = {
@@ -260,13 +355,68 @@ def validate_corpus(
     ):
         errors.append("one or more amounts fall outside their category limits")
 
+    train = [row for row in nominations if row.segment in (1, 2, 3)]
+    holdout = [row for row in nominations if row.segment == 4]
+    confirmed_pattern_counts = Counter(
+        pattern
+        for row in nominations
+        for pattern in row.confirmed_patterns
+    )
+    legitimate_control_counts = Counter(
+        CONTROL_FAMILY_BY_VARIANT[row.scenario_variant]
+        for row in nominations
+        if row.scenario_phase == "TARGET"
+        and row.training_disposition == "LEGITIMATE"
+        and row.scenario_variant in CONTROL_FAMILY_BY_VARIANT
+    )
+    expected_specialist_counts = Counter({family: 50 for family in SPECIALIST_FAMILIES})
+    if confirmed_pattern_counts != expected_specialist_counts:
+        errors.append(
+            f"confirmed pattern counts are {dict(confirmed_pattern_counts)}"
+        )
+    if legitimate_control_counts != expected_specialist_counts:
+        errors.append(
+            f"legitimate control counts are {dict(legitimate_control_counts)}"
+        )
+    fold_label_evidence = {
+        family: {
+            "training_positive_count": sum(
+                family in row.confirmed_patterns
+                for row in train
+            ),
+            "selection_fold_positive_counts": [
+                sum(
+                    family in row.confirmed_patterns
+                    for row in nominations
+                    if row.segment == segment
+                )
+                for segment in (2, 3)
+            ],
+            "final_holdout_positive_count": sum(
+                family in row.confirmed_patterns for row in holdout
+            ),
+        }
+        for family in SPECIALIST_FAMILIES
+    }
+    expected_evidence = {
+        "training_positive_count": 30,
+        "selection_fold_positive_counts": [10, 10],
+        "final_holdout_positive_count": 10,
+    }
+    if any(
+        evidence != expected_evidence
+        for evidence in fold_label_evidence.values()
+    ):
+        errors.append(
+            f"specialist fold evidence is {fold_label_evidence}"
+        )
+
     if errors:
         raise ValueError("Synthetic corpus validation failed:\n- " + "\n- ".join(errors))
 
-    train = [row for row in nominations if row.segment in (1, 2, 3)]
-    holdout = [row for row in nominations if row.segment == 4]
     return {
         "valid": True,
+        "pattern_taxonomy_version": PATTERN_TAXONOMY_VERSION,
         "corpus_user_count": len(users),
         "operational_admin_count": 1,
         "total_directory_and_sql_users": len(users) + 1,
@@ -291,12 +441,15 @@ def validate_corpus(
             row.scenario_phase == "PRECURSOR" for row in nominations
         ),
         "active_context_target_count": sum(
-            row.scenario_phase == "TARGET" and row.context_mode == "ACTIVE"
+            row.scenario_phase == "TARGET"
+            and row.context_mode == "ACTIVE"
+            and row.training_disposition == "FRAUD"
             for row in nominations
         ),
         "established_context_target_count": sum(
             row.scenario_phase == "TARGET"
             and row.context_mode == "ESTABLISHED"
+            and row.training_disposition == "FRAUD"
             for row in nominations
         ),
         "fraud_scenarios": dict(sorted(Counter(
@@ -304,6 +457,9 @@ def validate_corpus(
             for row in nominations
             if row.training_disposition == "FRAUD"
         ).items())),
+        "confirmed_pattern_counts": dict(sorted(confirmed_pattern_counts.items())),
+        "legitimate_control_counts": dict(sorted(legitimate_control_counts.items())),
+        "fold_label_evidence": fold_label_evidence,
         "category_counts": dict(sorted(category_counts.items())),
         "window_start": start.isoformat(),
         "window_end": (as_of - timedelta(days=1)).isoformat(),
