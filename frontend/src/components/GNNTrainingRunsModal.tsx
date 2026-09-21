@@ -56,6 +56,8 @@ interface GNNManifest {
   graph_snapshot_as_of?: string;
   selection?: JsonRecord;
   graph_value_evaluation?: JsonRecord;
+  specialist_evaluation?: JsonRecord;
+  specialists?: JsonRecord;
   training_policy?: JsonRecord;
   artifacts?: ManifestArtifact[];
 }
@@ -87,6 +89,16 @@ const label = (value: unknown): string => {
   if (value === null || value === undefined || value === '') return '—';
   return String(value).replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
 };
+
+const candidateLabel = (value: string): string => ({
+  mlp: 'MLP admission baseline',
+  mlp_tabular: 'GNN base-feature MLP',
+  mlp_causal: 'Causal-feature MLP',
+  causal_mlp_baseline: 'Causal MLP baseline',
+  graphsage: 'GraphSAGE',
+  gcn: 'GCN',
+  gatv2: 'GATv2',
+}[value] || label(value));
 
 const dateTime = (value: string | null | undefined): string => {
   if (!value) return '—';
@@ -250,6 +262,83 @@ const CandidateComparison: React.FC<{ selection: JsonRecord }> = ({ selection })
   );
 };
 
+const SpecialistComparison: React.FC<{
+  evaluation: JsonRecord;
+  serving?: JsonRecord | null;
+}> = ({ evaluation, serving }) => {
+  const tracks = asRecord(evaluation.tracks) || {};
+  const summary = asRecord(evaluation.summary) || {};
+  return (
+    <section className="space-y-3">
+      <div>
+        <h4 className="font-semibold text-gray-800">Scenario specialist comparison</h4>
+        <p className="mt-1 text-xs text-gray-500">
+          Each integrity behavior runs its own architecture competition against a non-serving causal MLP baseline. There is no single global GNN winner in this serving mode.
+        </p>
+      </div>
+      <dl className="grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-4">
+        {(['configured', 'admitted', 'not_admitted', 'failed'] as const).map(key => (
+          <div key={key} className="rounded bg-gray-50 p-2">
+            <dt className="text-gray-400">{label(key)}</dt>
+            <dd className="font-medium text-gray-700">{integer(summary[key])}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="grid gap-3 xl:grid-cols-2">
+        {Object.entries(tracks).map(([trackName, raw]) => {
+          const track = asRecord(raw) || {};
+          const candidates = asRecord(track.candidates) || {};
+          const servingTrack = asRecord(serving?.[trackName]);
+          return (
+            <section key={trackName} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+              <header className="flex flex-wrap items-start justify-between gap-2 bg-gray-50 px-3 py-2">
+                <div>
+                  <h5 className="font-semibold text-gray-800">{label(trackName)}</h5>
+                  <p className="mt-0.5 text-[10px] text-gray-500">{label(track.feature_contract)}</p>
+                </div>
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${badgeClass(String(track.status || servingTrack?.state || ''))}`}>
+                  {label(track.status || servingTrack?.state)}
+                </span>
+              </header>
+              <dl className="grid grid-cols-2 gap-2 border-t border-gray-100 p-3 text-xs sm:grid-cols-4">
+                <div><dt className="text-gray-400">Serving architecture</dt><dd className="font-medium text-gray-700">{candidateLabel(String(servingTrack?.architecture || track.provisional_architecture || ''))}</dd></div>
+                <div><dt className="text-gray-400">Final holdout</dt><dd className="font-mono text-gray-700">{percent(track.final_holdout_pr_auc)}</dd></div>
+                <div><dt className="text-gray-400">Causal MLP baseline</dt><dd className="font-mono text-gray-700">{percent(track.final_holdout_mlp_pr_auc)}</dd></div>
+                <div><dt className="text-gray-400">Improvement</dt><dd className="font-mono text-gray-700">{percent(track.improvement_over_mlp)}</dd></div>
+              </dl>
+              <div className="border-t border-gray-100 px-3 py-2 text-xs text-gray-600">
+                <span className="text-gray-400">Decision: </span>{label(track.reason)}
+              </div>
+              {Object.keys(candidates).length > 0 && (
+                <div className="overflow-x-auto border-t border-gray-100">
+                  <table className="w-full min-w-[520px] text-left text-xs">
+                    <thead className="bg-gray-50/70 text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Selection-fold PR-AUC</th><th className="px-3 py-2">Final-holdout PR-AUC</th><th className="px-3 py-2">Fold range</th></tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {Object.entries(candidates).map(([name, candidateRaw]) => {
+                        const candidate = asRecord(candidateRaw) || {};
+                        const finalHoldout = asRecord(candidate.final_holdout) || {};
+                        const selected = name === track.provisional_architecture;
+                        return (
+                          <tr key={name} className={selected ? 'bg-indigo-50/60' : ''}>
+                            <td className="px-3 py-2 font-medium text-gray-700">{candidateLabel(name)}{selected ? ' · Selected' : ''}</td>
+                            <td className="px-3 py-2 font-mono text-gray-600">{percent(candidate.selection_macro_pr_auc)}</td>
+                            <td className="px-3 py-2 font-mono text-gray-600">{percent(finalHoldout.pr_auc)}</td>
+                            <td className="px-3 py-2 font-mono text-gray-600">{percent(candidate.selection_pr_auc_range)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    </section>
+  );
+};
+
 const GraphValueEvaluation: React.FC<{ evaluation: JsonRecord }> = ({ evaluation }) => {
   const ablation = asRecord(evaluation.ablation) || {};
   const candidates = asRecord(evaluation.candidates) || {};
@@ -270,6 +359,15 @@ const GraphValueEvaluation: React.FC<{ evaluation: JsonRecord }> = ({ evaluation
       scenario: asRecord(scenario) || {},
     }));
   });
+  const foldGroups = Array.from(foldRows.reduce((groups, row) => {
+    const key = String(row.fold.fold_index ?? 'unknown');
+    groups.set(key, [...(groups.get(key) || []), row]);
+    return groups;
+  }, new Map<string, typeof foldRows>())).sort(([left], [right]) => Number(left) - Number(right));
+  const scenarioGroups = Array.from(scenarioRows.reduce((groups, row) => {
+    groups.set(row.scenarioName, [...(groups.get(row.scenarioName) || []), row]);
+    return groups;
+  }, new Map<string, typeof scenarioRows>())).sort(([left], [right]) => left.localeCompare(right));
 
   return (
     <section className="space-y-3 rounded-lg border border-violet-100 bg-violet-50/20 p-4">
@@ -285,8 +383,8 @@ const GraphValueEvaluation: React.FC<{ evaluation: JsonRecord }> = ({ evaluation
         </span>
       </div>
       <dl className="grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded bg-white p-2"><dt className="text-gray-400">Tabular MLP</dt><dd className="font-medium text-gray-700">{percent(ablation.mlp_tabular_value)}</dd></div>
-        <div className="rounded bg-white p-2"><dt className="text-gray-400">Causal-feature MLP</dt><dd className="font-medium text-gray-700">{percent(ablation.mlp_causal_value)}</dd></div>
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">GNN base-feature MLP · diagnostic</dt><dd className="font-medium text-gray-700">{percent(ablation.mlp_tabular_value)}</dd></div>
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">Causal-feature MLP · diagnostic</dt><dd className="font-medium text-gray-700">{percent(ablation.mlp_causal_value)}</dd></div>
         <div className="rounded bg-white p-2"><dt className="text-gray-400">Causal feature gain</dt><dd className="font-medium text-gray-700">{percent(ablation.engineered_causal_feature_gain)}</dd></div>
         <div className="rounded bg-white p-2"><dt className="text-gray-400">Best graph</dt><dd className="font-medium text-gray-700">{ablation.best_graph_architecture ? String(ablation.best_graph_architecture).toUpperCase() : '—'} · {percent(ablation.best_graph_value)}</dd></div>
         <div className="rounded bg-white p-2"><dt className="text-gray-400">Message-passing gain</dt><dd className="font-medium text-gray-700">{percent(ablation.graph_message_passing_gain)}</dd></div>
@@ -294,19 +392,41 @@ const GraphValueEvaluation: React.FC<{ evaluation: JsonRecord }> = ({ evaluation
       {foldRows.length > 0 && (
         <details className="rounded-lg border border-gray-200 bg-white">
           <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600">Rolling-origin results ({foldRows.length})</summary>
-          <div className="overflow-x-auto border-t border-gray-200">
-            <table className="min-w-[900px] w-full text-left text-xs">
-              <thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Feature profile</th><th className="px-3 py-2">Fold</th><th className="px-3 py-2">Evaluation end</th><th className="px-3 py-2">PR-AUC</th><th className="px-3 py-2">ROC-AUC</th><th className="px-3 py-2">Brier</th><th className="px-3 py-2">Evaluation labels</th></tr></thead>
-              <tbody className="divide-y divide-gray-100">{foldRows.map(({ candidateName, candidate, fold }) => <tr key={`${candidateName}-${String(fold.fold_index)}`}><td className="px-3 py-2 font-semibold text-gray-700">{candidateName.toUpperCase()}</td><td className="px-3 py-2 text-gray-600">{label(candidate.feature_profile)}</td><td className="px-3 py-2">{integer(fold.fold_index)}</td><td className="px-3 py-2">{String(fold.eval_end || '—')}</td><td className="px-3 py-2 font-mono">{percent(fold.pr_auc)}</td><td className="px-3 py-2 font-mono">{percent(fold.roc_auc)}</td><td className="px-3 py-2 font-mono">{decimal(fold.brier_score, 5)}</td><td className="px-3 py-2">{labelPopulation(fold.count, fold.positive_count)}</td></tr>)}</tbody>
-            </table>
+          <div className="space-y-3 border-t border-gray-200 p-3">
+            {foldGroups.map(([foldName, rows]) => (
+              <section key={foldName} className="overflow-hidden rounded-lg border border-gray-200">
+                <header className="flex flex-wrap items-center gap-2 bg-gray-50 px-3 py-2">
+                  <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">Fold {foldName}</span>
+                  <span className="text-[10px] text-gray-500">Evaluation end {String(rows[0]?.fold.eval_end || '—')}</span>
+                </header>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px] text-left text-xs">
+                    <thead className="bg-white text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Feature profile</th><th className="px-3 py-2">PR-AUC</th><th className="px-3 py-2">ROC-AUC</th><th className="px-3 py-2">Brier</th><th className="px-3 py-2">Evaluation labels</th></tr></thead>
+                    <tbody className="divide-y divide-gray-100">{rows.map(({ candidateName, candidate, fold }) => <tr key={candidateName}><td className="px-3 py-2 font-semibold text-gray-700">{candidateLabel(candidateName)}</td><td className="px-3 py-2 text-gray-600">{label(candidate.feature_profile)}</td><td className="px-3 py-2 font-mono">{percent(fold.pr_auc)}</td><td className="px-3 py-2 font-mono">{percent(fold.roc_auc)}</td><td className="px-3 py-2 font-mono">{decimal(fold.brier_score, 5)}</td><td className="px-3 py-2">{labelPopulation(fold.count, fold.positive_count)}</td></tr>)}</tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
           </div>
         </details>
       )}
       {scenarioRows.length > 0 && (
         <details className="rounded-lg border border-gray-200 bg-white">
           <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600">Scenario-level results ({scenarioRows.length})</summary>
-          <div className="overflow-x-auto border-t border-gray-200">
-            <table className="min-w-[760px] w-full text-left text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Scenario</th><th className="px-3 py-2">PR-AUC</th><th className="px-3 py-2">Fraud examples</th><th className="px-3 py-2">Legitimate comparison</th><th className="px-3 py-2">Mean fraud probability</th></tr></thead><tbody className="divide-y divide-gray-100">{scenarioRows.map(({ candidateName, scenarioName, scenario }) => <tr key={`${candidateName}-${scenarioName}`}><td className="px-3 py-2 font-semibold text-gray-700">{candidateName.toUpperCase()}</td><td className="px-3 py-2">{label(scenarioName)}</td><td className="px-3 py-2 font-mono">{percent(scenario.pr_auc)}</td><td className="px-3 py-2">{integer(scenario.fraud_example_count)}</td><td className="px-3 py-2">{integer(scenario.legitimate_comparison_count)}</td><td className="px-3 py-2 font-mono">{percent(scenario.mean_fraud_probability)}</td></tr>)}</tbody></table>
+          <div className="space-y-3 border-t border-gray-200 p-3">
+            {scenarioGroups.map(([scenarioName, rows]) => (
+              <section key={scenarioName} className="overflow-hidden rounded-lg border border-gray-200">
+                <header className="bg-gray-50 px-3 py-2">
+                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-semibold text-violet-700">{label(scenarioName)}</span>
+                </header>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-left text-xs">
+                    <thead className="bg-white text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">PR-AUC</th><th className="px-3 py-2">Fraud examples</th><th className="px-3 py-2">Legitimate comparison</th><th className="px-3 py-2">Mean fraud probability</th></tr></thead>
+                    <tbody className="divide-y divide-gray-100">{rows.map(({ candidateName, scenario }) => <tr key={candidateName}><td className="px-3 py-2 font-semibold text-gray-700">{candidateLabel(candidateName)}</td><td className="px-3 py-2 font-mono">{percent(scenario.pr_auc)}</td><td className="px-3 py-2">{integer(scenario.fraud_example_count)}</td><td className="px-3 py-2">{integer(scenario.legitimate_comparison_count)}</td><td className="px-3 py-2 font-mono">{percent(scenario.mean_fraud_probability)}</td></tr>)}</tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
           </div>
         </details>
       )}
@@ -385,6 +505,12 @@ export const GNNTrainingRunsModal: React.FC<Props> = ({ impersonatedUPN, onClose
   const selection = asRecord(detail?.manifest?.selection) || diagnosticsSelection;
   const graphValueEvaluation = asRecord(detail?.manifest?.graph_value_evaluation)
     || asRecord((detail?.run || selectedRun)?.diagnostics.graph_value_evaluation);
+  const specialistEvaluation = asRecord(detail?.manifest?.specialist_evaluation)
+    || asRecord((detail?.run || selectedRun)?.diagnostics.specialist_evaluation);
+  const servingSpecialists = asRecord(detail?.manifest?.specialists)
+    || asRecord((detail?.run || selectedRun)?.diagnostics.specialists);
+  const specialistMode = selection?.serving_mode === 'scenario_specialists'
+    || specialistEvaluation !== null;
   const artifacts = detail?.manifest?.artifacts || [];
 
   return (
@@ -473,7 +599,7 @@ export const GNNTrainingRunsModal: React.FC<Props> = ({ impersonatedUPN, onClose
                         <div className="rounded bg-white p-2"><dt className="text-gray-400">Attempted</dt><dd className="font-medium text-gray-700">{dateTime(selectedRun.last_attempt_at)}</dd></div>
                         <div className="rounded bg-white p-2"><dt className="text-gray-400">Run ID</dt><dd className="break-all font-mono text-gray-700">{selectedRun.run_id}</dd></div>
                         <div className="rounded bg-white p-2"><dt className="text-gray-400">Selection reason</dt><dd className="font-medium text-gray-700">{label(selection?.selection_reason || selectedRun.reason_code)}</dd></div>
-                        <div className="rounded bg-white p-2"><dt className="text-gray-400">Selected architecture</dt><dd className="font-medium text-gray-700">{selection?.selected_architecture ? String(selection.selected_architecture).toUpperCase() : 'None'}</dd></div>
+                        <div className="rounded bg-white p-2"><dt className="text-gray-400">{specialistMode ? 'Serving strategy' : 'Selected architecture'}</dt><dd className="font-medium text-gray-700">{specialistMode ? 'Per-scenario specialists' : selection?.selected_architecture ? String(selection.selected_architecture).toUpperCase() : 'None'}</dd></div>
                         <div className="rounded bg-white p-2"><dt className="text-gray-400">Graph snapshot as of</dt><dd className="font-medium text-gray-700">{String(detail?.manifest?.graph_snapshot_as_of || selectedRun.diagnostics.graph_snapshot_as_of || '—')}</dd></div>
                         <div className="rounded bg-white p-2"><dt className="text-gray-400">Policy version</dt><dd className="font-medium text-gray-700">{String(detail?.manifest?.training_policy?.policy_version ?? selectedRun.diagnostics.gnn_policy_version ?? '—')}</dd></div>
                         <div className="rounded bg-white p-2"><dt className="text-gray-400">Training targets</dt><dd className="font-medium text-gray-700">{integer(selectedRun.diagnostics.supervised_train_count)}</dd></div>
@@ -482,7 +608,11 @@ export const GNNTrainingRunsModal: React.FC<Props> = ({ impersonatedUPN, onClose
                       {(selectedRun.reason_detail || detail?.message) && <p className="mt-3 text-xs text-gray-600">{selectedRun.reason_detail || detail?.message}</p>}
                     </section>
 
-                    {selection ? <CandidateComparison selection={selection} /> : (
+                    {specialistEvaluation ? (
+                      <SpecialistComparison evaluation={specialistEvaluation} serving={servingSpecialists} />
+                    ) : selection && Object.keys(asRecord(selection.candidates) || {}).length > 0 ? (
+                      <CandidateComparison selection={selection} />
+                    ) : (
                       <div className="rounded-lg border border-dashed border-gray-200 py-12 text-center text-sm text-gray-500">This attempt ended before candidate evaluation.</div>
                     )}
 

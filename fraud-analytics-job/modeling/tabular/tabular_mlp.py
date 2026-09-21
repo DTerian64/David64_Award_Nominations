@@ -11,7 +11,7 @@ from sklearn.utils.class_weight import compute_sample_weight
 from feature_builders import TabularFeatureDataset
 
 from .contracts import TabularCandidateResult, TabularTrainingPolicy
-from .metrics import probability_metrics
+from .metrics import holdout_permutation_importance, probability_metrics
 from .preprocessing import MlpPreprocessor
 from .training_data import PreparedTabularHoldout, prepare_tabular_holdout
 
@@ -79,6 +79,14 @@ def train_tabular_mlp_candidate(
         sample_weight=sample_weights,
     )
     probabilities = model.predict_proba(transformed_evaluation)[:, 1]
+    permutation = holdout_permutation_importance(
+        model,
+        transformed_evaluation,
+        prepared.y_evaluation,
+        preprocessor.feature_columns,
+        repeats=policy.permutation_importance_repeats,
+        random_seed=policy.random_seed,
+    )
     parameter_count = int(
         sum(weights.size for weights in model.coefs_)
         + sum(bias.size for bias in model.intercepts_)
@@ -98,6 +106,7 @@ def train_tabular_mlp_candidate(
         "category_encoder_category_count": len(
             prepared.category_encoder.category_rates
         ),
+        "permutation_importance": permutation,
     }
     if not np.isfinite(model.loss_):
         raise ValueError("Tabular MLP emitted a non-finite training loss")

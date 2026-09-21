@@ -49,6 +49,28 @@ def test_bundle_contains_both_candidates_and_selected_serving_refit(tmp_path):
     assert manifest["tenant_id"] == 5
     assert manifest["selection"]["selected_architecture"] == selected
     assert set(manifest["candidates"]) == {"random_forest", "tabular_mlp"}
+    for architecture in ("random_forest", "tabular_mlp"):
+        permutation = manifest["candidates"][architecture][
+            "permutation_importance"
+        ]
+        assert permutation["holdout_row_count"] == len(
+            evaluation.candidates[architecture].evaluation_targets
+        )
+        assert permutation["repeats"] == policy.permutation_importance_repeats
+        assert {row["name"] for row in permutation["features"]} == set(
+            dataset.schema.feature_columns
+        )
+        assert "permutation_importance" not in manifest["candidates"][
+            architecture
+        ]["metrics"]
+    importance = manifest["candidates"]["random_forest"]["feature_importance"]
+    assert [row["importance"] for row in importance] == sorted(
+        [row["importance"] for row in importance], reverse=True
+    )
+    assert {row["name"] for row in importance} == set(
+        dataset.schema.feature_columns
+    )
+    assert sum(row["importance"] for row in importance) == pytest.approx(1.0)
     assert manifest["serving"]["architecture"] == selected
     assert all(item[0].is_file() for item in artifacts)
     assert b"modeling.tabular" not in serving_path.read_bytes()

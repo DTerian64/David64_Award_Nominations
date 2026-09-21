@@ -142,14 +142,38 @@ def write_tabular_bundle(
                 (chart_path, f"candidate_{architecture}_visualization"),
             ]
         )
+        manifest_metrics = {
+            key: value
+            for key, value in candidate.metrics.items()
+            if key != "permutation_importance"
+        }
         candidate_manifest[architecture] = {
             "status": candidate.status,
             "eligible": evaluation.selection.candidate_evaluations[architecture][
                 "eligible"
             ],
-            "metrics": dict(candidate.metrics),
+            "metrics": manifest_metrics,
+            "permutation_importance": candidate.metrics.get(
+                "permutation_importance"
+            ),
             "artifact_prefix": f"candidates/{architecture}",
         }
+        if architecture == "random_forest" and hasattr(
+            candidate.model, "feature_importances_"
+        ):
+            candidate_manifest[architecture]["feature_importance"] = sorted(
+                (
+                    {
+                        "name": str(name),
+                        "importance": float(importance),
+                    }
+                    for name, importance in zip(
+                        candidate.preprocessor.feature_columns,
+                        candidate.model.feature_importances_,
+                    )
+                ),
+                key=lambda item: (-item["importance"], item["name"]),
+            )
 
     serving_dir = bundle_dir / "serving"
     serving_model_path = serving_dir / "model.pkl"

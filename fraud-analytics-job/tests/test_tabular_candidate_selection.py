@@ -27,6 +27,7 @@ def _t4_policy() -> TabularTrainingPolicy:
         minimum_training_samples=60,
         minimum_evaluation_samples=20,
         minimum_class_samples_per_split=2,
+        permutation_importance_repeats=3,
         rf_estimators=12,
         rf_max_depth=6,
         rf_min_samples_split=2,
@@ -70,6 +71,24 @@ def test_candidates_share_holdout_and_selection_matches_policy():
     assert rf.evaluation_targets == mlp.evaluation_targets
     assert evaluation.selection.status == "SELECTED"
     assert not evaluation.selection.serving_state_changed
+
+    expected_features = set(_feature_dataset().schema.feature_columns)
+    for candidate in (rf, mlp):
+        importance = candidate.metrics["permutation_importance"]
+        assert importance["method"] == "PERMUTATION_IMPORTANCE"
+        assert importance["scoring"] == "average_precision"
+        assert importance["score_semantics"] == "decrease_in_holdout_pr_auc"
+        assert importance["holdout_row_count"] == len(
+            candidate.evaluation_targets
+        )
+        assert importance["repeats"] == _t4_policy().permutation_importance_repeats
+        assert importance["random_seed"] == _t4_policy().random_seed
+        assert {row["name"] for row in importance["features"]} == expected_features
+        assert all(
+            np.isfinite(row["pr_auc_decrease_mean"])
+            and np.isfinite(row["pr_auc_decrease_std"])
+            for row in importance["features"]
+        )
 
     rf_score = rf.metrics["holdout_pr_auc"]
     mlp_score = mlp.metrics["holdout_pr_auc"]

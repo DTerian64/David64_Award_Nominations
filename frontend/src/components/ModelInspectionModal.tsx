@@ -6,6 +6,7 @@ import {
 import { getAccessToken } from '../services/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+type JsonRecord = Record<string, unknown>;
 
 export type InspectableModel = 'rf' | 'gnn';
 
@@ -20,6 +21,23 @@ interface ArtifactInfo {
 interface FeatureImportance {
   name: string;
   importance: number;
+}
+
+interface PermutationFeatureImportance {
+  name: string;
+  pr_auc_decrease_mean: number;
+  pr_auc_decrease_std: number;
+}
+
+interface PermutationImportance {
+  schema_version: number;
+  method: string;
+  scoring: string;
+  score_semantics: string;
+  holdout_row_count: number;
+  repeats: number;
+  random_seed: number;
+  features: PermutationFeatureImportance[];
 }
 
 interface ForestSummary {
@@ -74,11 +92,15 @@ interface ModelManifest {
   models?: Record<string, ForestSummary>;
   feature_columns?: string[];
   training_policy?: Record<string, unknown>;
+  specialist_evaluation?: JsonRecord;
+  specialists?: JsonRecord;
   candidates?: Record<string, {
     status: string;
     eligible: boolean;
     metrics: Record<string, unknown>;
     artifact_prefix: string;
+    feature_importance?: FeatureImportance[];
+    permutation_importance?: PermutationImportance;
   }>;
   serving?: {
     architecture: string;
@@ -92,16 +114,17 @@ interface ModelManifest {
     decoder: ArchitecturePart;
   };
   selection?: {
+    serving_mode?: string;
     policy_version?: string;
-    selection_metric: string;
+    selection_metric?: string;
     selected_architecture: string | null;
     selected_metric_value?: number | null;
     mlp_baseline_value?: number | null;
     improvement_over_mlp?: number | null;
-    selection_reason: string;
+    selection_reason?: string;
     incumbent_architecture?: string | null;
     selected_at?: string;
-    candidates?: Record<string, Record<string, any>>;
+    candidates?: Record<string, JsonRecord>;
   };
   features?: {
     user: string[];
@@ -122,11 +145,28 @@ interface Props {
   onClose: () => void;
 }
 
-const prettyLabel = (value: string) =>
-  value.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+const asRecord = (value: unknown): JsonRecord | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as JsonRecord
+    : null;
+
+const prettyLabel = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return '—';
+  return String(value).replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+};
+
+const featureLabel = (value: string) =>
+  prettyLabel(value.replace(/([a-z0-9])([A-Z])/g, '$1_$2'));
 
 const forestModelLabel = (name: string) =>
   name.toLowerCase() === 'p2p' ? 'Peer to Peer' : prettyLabel(name);
+
+const tabularArchitectureLabel = (name?: string | null) => {
+  if (!name) return '—';
+  if (name === 'random_forest') return 'Random Forest';
+  if (name === 'tabular_mlp') return 'Tabular MLP';
+  return prettyLabel(name);
+};
 
 const displayValue = (value: unknown): string => {
   if (value === null || value === undefined || value === '') return '—';
@@ -159,6 +199,261 @@ const MetricsGrid: React.FC<{ values?: Record<string, unknown>; title: string }>
           </div>
         ))}
       </dl>
+    </section>
+  );
+};
+
+interface PolicyGroup {
+  title: string;
+  description: string;
+  keys: string[];
+  accent: string;
+}
+
+const TABULAR_POLICY_GROUPS: PolicyGroup[] = [
+  {
+    title: 'Training population',
+    description: 'Minimum evidence required before either candidate is trained.',
+    keys: [
+      'minimum_training_samples',
+      'minimum_evaluation_samples',
+      'minimum_class_samples_per_split',
+    ],
+    accent: 'border-slate-200 bg-slate-50/70',
+  },
+  {
+    title: 'Holdout & reproducibility',
+    description: 'Shared temporal evaluation and repeatability settings.',
+    keys: ['evaluation_fraction', 'permutation_importance_repeats', 'random_seed'],
+    accent: 'border-blue-200 bg-blue-50/50',
+  },
+  {
+    title: 'Random Forest',
+    description: 'Tree ensemble parameters used by the Random Forest candidate.',
+    keys: [
+      'rf_estimators',
+      'rf_max_depth',
+      'rf_min_samples_split',
+      'rf_min_samples_leaf',
+    ],
+    accent: 'border-emerald-200 bg-emerald-50/50',
+  },
+  {
+    title: 'Tabular MLP',
+    description: 'Neural-network architecture, optimization, and stopping settings.',
+    keys: [
+      'mlp_hidden_layers',
+      'mlp_alpha',
+      'mlp_batch_size',
+      'mlp_learning_rate',
+      'mlp_max_iterations',
+      'mlp_validation_fraction',
+      'mlp_patience',
+    ],
+    accent: 'border-violet-200 bg-violet-50/50',
+  },
+];
+
+const policyLabel = (key: string) => {
+  const labels: Record<string, string> = {
+    minimum_training_samples: 'Minimum training rows',
+    minimum_evaluation_samples: 'Minimum holdout rows',
+    minimum_class_samples_per_split: 'Minimum rows per class and split',
+    evaluation_fraction: 'Holdout fraction',
+    permutation_importance_repeats: 'Permutation repeats',
+    random_seed: 'Random seed',
+    rf_estimators: 'Trees',
+    rf_max_depth: 'Maximum tree depth',
+    rf_min_samples_split: 'Minimum rows to split',
+    rf_min_samples_leaf: 'Minimum rows per leaf',
+    mlp_hidden_layers: 'Hidden-layer shape',
+    mlp_alpha: 'L2 regularization (alpha)',
+    mlp_batch_size: 'Batch size',
+    mlp_learning_rate: 'Initial learning rate',
+    mlp_max_iterations: 'Maximum iterations',
+    mlp_validation_fraction: 'Validation fraction',
+    mlp_patience: 'Early-stopping patience',
+  };
+  return labels[key] || prettyLabel(key);
+};
+
+const policyValue = (key: string, value: unknown) => {
+  if (typeof value === 'number' && key.endsWith('_fraction')) {
+    return `${(value * 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+  }
+  if (key === 'mlp_hidden_layers' && Array.isArray(value)) {
+    return value.join(' → ');
+  }
+  return displayValue(value);
+};
+
+const TabularTrainingPolicy: React.FC<{ values?: Record<string, unknown> }> = ({ values }) => {
+  if (!values || Object.keys(values).length === 0) return null;
+  const grouped = new Set(TABULAR_POLICY_GROUPS.flatMap(group => group.keys));
+  const additional = Object.keys(values).filter(key => !grouped.has(key));
+  return (
+    <section>
+      <h4 className="mb-2 text-sm font-semibold text-gray-700">Training policy</h4>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {TABULAR_POLICY_GROUPS.map(group => (
+          <div key={group.title} className={`rounded-lg border p-3 ${group.accent}`}>
+            <h5 className="text-sm font-semibold text-gray-800">{group.title}</h5>
+            <p className="mt-0.5 min-h-8 text-[10px] leading-4 text-gray-500">{group.description}</p>
+            <dl className="mt-2 divide-y divide-white/80 rounded-md bg-white/80 px-2">
+              {group.keys.filter(key => key in values).map(key => (
+                <div key={key} className="flex items-start justify-between gap-3 py-1.5 text-xs">
+                  <dt className="text-gray-500">{policyLabel(key)}</dt>
+                  <dd className="shrink-0 text-right font-medium text-gray-800">{policyValue(key, values[key])}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ))}
+      </div>
+      {additional.length > 0 && (
+        <dl className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+          {additional.map(key => (
+            <div key={key} className="rounded-md bg-gray-50 px-3 py-2 text-xs">
+              <dt className="text-gray-400">{prettyLabel(key)}</dt>
+              <dd className="mt-0.5 break-words font-medium text-gray-700">{displayValue(values[key])}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </section>
+  );
+};
+
+const FeatureSignificanceChart: React.FC<{ features: FeatureImportance[] }> = ({ features }) => {
+  if (features.length === 0) return null;
+  const ordered = [...features].sort((left, right) => (
+    right.importance - left.importance || left.name.localeCompare(right.name)
+  ));
+  const maximum = Math.max(...ordered.map(feature => feature.importance), 0.0001);
+  return (
+    <section className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-4">
+      <div>
+        <h4 className="text-sm font-semibold text-gray-800">Random Forest feature significance scores</h4>
+        <p className="mt-1 text-xs text-gray-500">
+          Relative impurity-based importance within the evaluated Random Forest candidate. These are global model scores, not nomination-level SHAP contributions.
+        </p>
+      </div>
+      <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-2">
+        {ordered.map(feature => (
+          <div key={feature.name} className="grid grid-cols-[minmax(10rem,1fr)_minmax(12rem,2fr)_4.5rem] items-center gap-3 text-xs">
+            <span className="truncate text-gray-600" title={feature.name}>{featureLabel(feature.name)}</span>
+            <div className="h-2.5 overflow-hidden rounded-full bg-white ring-1 ring-emerald-100">
+              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(1, feature.importance / maximum * 100)}%` }} />
+            </div>
+            <span className="text-right font-mono text-gray-600">{(feature.importance * 100).toFixed(2)}%</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+};
+
+const PermutationImportanceCell: React.FC<{
+  feature?: PermutationFeatureImportance;
+  maximum: number;
+  color: string;
+}> = ({ feature, maximum, color }) => {
+  if (!feature) return <span className="text-gray-400">—</span>;
+  const meanPoints = feature.pr_auc_decrease_mean * 100;
+  const stdPoints = feature.pr_auc_decrease_std * 100;
+  const width = Math.max(1, Math.abs(feature.pr_auc_decrease_mean) / maximum * 100);
+  return (
+    <div className="min-w-52">
+      <div className="mb-1 flex items-center justify-between gap-3 font-mono text-[11px]">
+        <span className={meanPoints < 0 ? 'text-rose-600' : 'text-gray-700'}>
+          {meanPoints >= 0 ? '+' : ''}{meanPoints.toFixed(2)} pp
+        </span>
+        <span className="text-gray-400">± {stdPoints.toFixed(2)} pp</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+        <div className={`h-full rounded-full ${meanPoints < 0 ? 'bg-rose-300' : color}`} style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
+};
+
+const PermutationImportanceComparison: React.FC<{
+  randomForest?: PermutationImportance;
+  tabularMlp?: PermutationImportance;
+}> = ({ randomForest, tabularMlp }) => {
+  if (!randomForest && !tabularMlp) return null;
+  const rfByName = new Map((randomForest?.features || []).map(feature => [feature.name, feature]));
+  const mlpByName = new Map((tabularMlp?.features || []).map(feature => [feature.name, feature]));
+  const names = Array.from(new Set([...rfByName.keys(), ...mlpByName.keys()])).sort((left, right) => {
+    const leftImportance = Math.max(
+      Math.abs(rfByName.get(left)?.pr_auc_decrease_mean || 0),
+      Math.abs(mlpByName.get(left)?.pr_auc_decrease_mean || 0),
+    );
+    const rightImportance = Math.max(
+      Math.abs(rfByName.get(right)?.pr_auc_decrease_mean || 0),
+      Math.abs(mlpByName.get(right)?.pr_auc_decrease_mean || 0),
+    );
+    return rightImportance - leftImportance || left.localeCompare(right);
+  });
+  const maximum = Math.max(
+    ...names.flatMap(name => [
+      Math.abs(rfByName.get(name)?.pr_auc_decrease_mean || 0),
+      Math.abs(mlpByName.get(name)?.pr_auc_decrease_mean || 0),
+    ]),
+    0.0001,
+  );
+  const contract = randomForest || tabularMlp;
+  const contractsMatch = !randomForest || !tabularMlp || (
+    randomForest.holdout_row_count === tabularMlp.holdout_row_count
+    && randomForest.repeats === tabularMlp.repeats
+    && randomForest.random_seed === tabularMlp.random_seed
+    && randomForest.scoring === tabularMlp.scoring
+  );
+  return (
+    <section className="rounded-lg border border-indigo-200 bg-indigo-50/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-semibold text-gray-800">Holdout permutation importance</h4>
+          <p className="mt-1 max-w-4xl text-xs text-gray-500">
+            Direct model comparison on the same out-of-time holdout. Each value is the decrease in PR-AUC after shuffling one feature; larger positive values indicate greater predictive reliance.
+          </p>
+        </div>
+        {contract && (
+          <div className="flex flex-wrap gap-1.5 text-[10px] text-gray-600">
+            <span className="rounded-full border border-indigo-100 bg-white px-2 py-1">{contract.holdout_row_count.toLocaleString()} holdout rows</span>
+            <span className="rounded-full border border-indigo-100 bg-white px-2 py-1">{contract.repeats} repeats</span>
+            <span className="rounded-full border border-indigo-100 bg-white px-2 py-1">Seed {contract.random_seed}</span>
+          </div>
+        )}
+      </div>
+      {!contractsMatch && (
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Candidate permutation settings do not match; treat this run as non-comparable.
+        </p>
+      )}
+      <div className="mt-4 max-h-[32rem] overflow-auto rounded-lg border border-gray-200 bg-white">
+        <table className="w-full min-w-[48rem] text-left text-xs">
+          <thead className="sticky top-0 z-10 bg-gray-50 text-gray-500">
+            <tr>
+              <th className="px-3 py-2">Feature</th>
+              <th className="px-3 py-2">Random Forest · PR-AUC decrease</th>
+              <th className="px-3 py-2">Tabular MLP · PR-AUC decrease</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {names.map(name => (
+              <tr key={name}>
+                <td className="px-3 py-2 font-medium text-gray-700" title={name}>{featureLabel(name)}</td>
+                <td className="px-3 py-2"><PermutationImportanceCell feature={rfByName.get(name)} maximum={maximum} color="bg-emerald-500" /></td>
+                <td className="px-3 py-2"><PermutationImportanceCell feature={mlpByName.get(name)} maximum={maximum} color="bg-violet-500" /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[10px] text-gray-500">
+        ± shows variation across shuffles. A negative value means the shuffled holdout scored slightly better, so the feature was not a reliable positive contributor in this run.
+      </p>
     </section>
   );
 };
@@ -252,7 +547,7 @@ const TabularModelView: React.FC<{ manifest: ModelManifest; imageUrl: string | n
             <h4 className="text-sm font-semibold text-gray-800">Tabular architecture selection</h4>
             <p className="mt-1 text-xs text-gray-500">Random Forest and Tabular MLP were evaluated on the same out-of-time holdout.</p>
           </div>
-          {selected && <span className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold text-indigo-700">Serving {prettyLabel(selected)}</span>}
+          {selected && <span className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold text-indigo-700">Serving {tabularArchitectureLabel(selected)}</span>}
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
           <div className="rounded bg-white p-2"><dt className="text-gray-400">Selection metric</dt><dd className="font-medium text-gray-700">{prettyLabel(manifest.selection?.selection_metric || '—')}</dd></div>
@@ -269,7 +564,7 @@ const TabularModelView: React.FC<{ manifest: ModelManifest; imageUrl: string | n
             <tbody className="divide-y divide-gray-100">
               {Object.entries(manifest.candidates || {}).map(([name, candidate]) => (
                 <tr key={name} className={name === selected ? 'bg-indigo-50/50' : ''}>
-                  <td className="px-3 py-2 font-medium text-gray-700">{prettyLabel(name)}{name === selected ? ' · Serving' : ''}</td>
+                  <td className="px-3 py-2 font-medium text-gray-700">{tabularArchitectureLabel(name)}{name === selected ? ' · Serving' : ''}</td>
                   <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.metrics.holdout_pr_auc)}</td>
                   <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.metrics.holdout_roc_auc)}</td>
                   <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.metrics.holdout_brier_score)}</td>
@@ -281,6 +576,15 @@ const TabularModelView: React.FC<{ manifest: ModelManifest; imageUrl: string | n
         </div>
       </section>
 
+      <FeatureSignificanceChart
+        features={manifest.candidates?.random_forest?.feature_importance || []}
+      />
+
+      <PermutationImportanceComparison
+        randomForest={manifest.candidates?.random_forest?.permutation_importance}
+        tabularMlp={manifest.candidates?.tabular_mlp?.permutation_importance}
+      />
+
       {imageUrl && (
         <section className="overflow-hidden rounded-lg border border-gray-200 bg-white p-3">
           <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700"><BarChart3 className="h-4 w-4 text-indigo-500" />Selected model score distribution</h4>
@@ -288,7 +592,7 @@ const TabularModelView: React.FC<{ manifest: ModelManifest; imageUrl: string | n
         </section>
       )}
       {manifest.feature_columns && <FeatureList title="Tabular features" features={manifest.feature_columns} />}
-      <MetricsGrid values={manifest.training_policy} title="Training policy" />
+      <TabularTrainingPolicy values={manifest.training_policy} />
     </div>
   );
 };
@@ -334,8 +638,88 @@ const FeatureList: React.FC<{ title: string; features: string[] }> = ({ title, f
   </section>
 );
 
+const probabilityPercent = (value: unknown): string =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? `${(value * 100).toFixed(2)}%`
+    : '—';
+
+const specialistStatusClass = (value: unknown): string => {
+  switch (String(value || '').toUpperCase()) {
+    case 'ACTIVE':
+    case 'CARRIED_FORWARD':
+    case 'ADMITTED':
+      return 'border-green-200 bg-green-50 text-green-700';
+    case 'NOT_ADMITTED':
+    case 'DISABLED':
+      return 'border-amber-200 bg-amber-50 text-amber-700';
+    case 'FAILED':
+      return 'border-red-200 bg-red-50 text-red-700';
+    default:
+      return 'border-gray-200 bg-gray-50 text-gray-600';
+  }
+};
+
+const SpecialistServingView: React.FC<{
+  evaluation?: JsonRecord;
+  specialists?: JsonRecord;
+}> = ({ evaluation, specialists }) => {
+  const tracks = asRecord(evaluation?.tracks) || {};
+  const summary = asRecord(evaluation?.summary) || {};
+  const names = Array.from(new Set([
+    ...Object.keys(tracks),
+    ...Object.keys(specialists || {}),
+  ])).sort();
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-800"><BrainCircuit className="h-4 w-4 text-indigo-600" />Scenario specialist serving</h4>
+            <p className="mt-1 text-xs text-gray-500">Each integrity behavior independently selects and serves its best eligible graph architecture. No single architecture represents the entire GNN engine.</p>
+          </div>
+          <span className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-xs font-semibold text-indigo-700">Per-scenario specialists</span>
+        </div>
+        <dl className="mt-4 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+          {(['configured', 'admitted', 'not_admitted', 'failed'] as const).map(key => (
+            <div key={key} className="rounded bg-white p-2"><dt className="text-gray-400">{prettyLabel(key)}</dt><dd className="font-medium text-gray-700">{displayValue(summary[key])}</dd></div>
+          ))}
+        </dl>
+      </section>
+
+      <section>
+        <h4 className="mb-2 text-sm font-semibold text-gray-700">Serving specialists and admission results</h4>
+        <div className="grid gap-3 xl:grid-cols-2">
+          {names.map(name => {
+            const track = asRecord(tracks[name]) || {};
+            const serving = asRecord(specialists?.[name]) || {};
+            const state = serving.state || track.status;
+            return (
+              <article key={name} className="rounded-lg border border-gray-200 bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div><h5 className="font-semibold text-gray-800">{prettyLabel(name)}</h5><p className="mt-0.5 text-[10px] text-gray-500">{prettyLabel(serving.feature_contract || track.feature_contract)}</p></div>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${specialistStatusClass(state)}`}>{prettyLabel(state)}</span>
+                </div>
+                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Architecture</dt><dd className="font-medium text-gray-700">{String(serving.architecture || track.provisional_architecture || '—').toUpperCase()}</dd></div>
+                  <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Model version</dt><dd className="break-all font-mono text-gray-700">{String(serving.model_version || '—')}</dd></div>
+                  <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Final holdout PR-AUC</dt><dd className="font-mono text-gray-700">{probabilityPercent(track.final_holdout_pr_auc ?? serving.final_holdout_pr_auc)}</dd></div>
+                  <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Causal MLP baseline</dt><dd className="font-mono text-gray-700">{probabilityPercent(track.final_holdout_mlp_pr_auc ?? serving.final_holdout_mlp_pr_auc)}</dd></div>
+                </dl>
+                <p className="mt-3 text-xs text-gray-600"><span className="text-gray-400">Admission decision: </span>{prettyLabel(track.reason || serving.admission_reason || serving.reason)}</p>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+};
+
 const GnnView: React.FC<{ manifest: ModelManifest }> = ({ manifest }) => {
   const selection = manifest.selection;
+  if (selection?.serving_mode === 'scenario_specialists' || manifest.specialist_evaluation || manifest.specialists) {
+    return <SpecialistServingView evaluation={manifest.specialist_evaluation} specialists={manifest.specialists} />;
+  }
   if (selection) {
     return (
       <div className="space-y-5">
@@ -370,7 +754,7 @@ const GnnView: React.FC<{ manifest: ModelManifest }> = ({ manifest }) => {
                     <td className="px-3 py-2 text-gray-500">{name === 'mlp' ? 'Admission baseline' : name === selection.selected_architecture ? 'Selected GNN' : 'Graph candidate'}</td>
                     <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.eval_pr_auc)}</td>
                     <td className="px-3 py-2 font-mono text-gray-600">{displayValue(candidate.eval_roc_auc)}</td>
-                    <td className="px-3 py-2 text-gray-600">{candidate.eligible ? 'Eligible' : failures.map((value: unknown) => prettyLabel(String(value))).join(', ') || candidate.status}</td>
+                    <td className="px-3 py-2 text-gray-600">{candidate.eligible ? 'Eligible' : failures.map((value: unknown) => prettyLabel(value)).join(', ') || prettyLabel(candidate.status)}</td>
                   </tr>;
                 })}
               </tbody>

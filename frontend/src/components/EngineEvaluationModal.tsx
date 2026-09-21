@@ -24,7 +24,7 @@ const titleCase = (value: unknown): string =>
 const modelName = (value: string): string => ({
   random_forest: 'Random Forest',
   tabular_mlp: 'Tabular MLP',
-  mlp_tabular: 'MLP — tabular features',
+  mlp_tabular: 'GNN base-feature MLP',
   mlp_causal: 'MLP — causal features',
   graphsage: 'GraphSAGE',
   gcn: 'GCN',
@@ -156,7 +156,7 @@ const GraphValueTable: React.FC<{ evaluation: JsonRecord }> = ({ evaluation }) =
   return (
     <div className="space-y-4">
       <div className="grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded-lg bg-gray-50 p-3"><div className="text-gray-400">Tabular-feature MLP</div><div className="mt-1 font-semibold text-gray-800">{percent(ablation.mlp_tabular_value)}</div></div>
+        <div className="rounded-lg bg-gray-50 p-3"><div className="text-gray-400">GNN base-feature MLP · diagnostic</div><div className="mt-1 font-semibold text-gray-800">{percent(ablation.mlp_tabular_value)}</div></div>
         <div className="rounded-lg bg-gray-50 p-3"><div className="text-gray-400">Causal-feature MLP</div><div className="mt-1 font-semibold text-gray-800">{percent(ablation.mlp_causal_value)}</div></div>
         <div className="rounded-lg bg-green-50 p-3"><div className="text-green-600">Causal feature gain</div><div className="mt-1 font-semibold text-green-800">{percent(ablation.engineered_causal_feature_gain)}</div></div>
         <div className="rounded-lg bg-indigo-50 p-3"><div className="text-indigo-500">Best graph profile</div><div className="mt-1 font-semibold text-indigo-900">{ablation.best_graph_architecture ? modelName(String(ablation.best_graph_architecture)) : '—'} · {percent(ablation.best_graph_value)}</div></div>

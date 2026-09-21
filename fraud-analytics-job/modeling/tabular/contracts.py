@@ -15,6 +15,7 @@ class TabularTrainingPolicy:
     minimum_evaluation_samples: int = 20
     minimum_class_samples_per_split: int = 2
     random_seed: int = 42
+    permutation_importance_repeats: int = 10
     rf_estimators: int = 40
     rf_max_depth: int = 10
     rf_min_samples_split: int = 20
@@ -34,6 +35,7 @@ class TabularTrainingPolicy:
             "minimum_training_samples",
             "minimum_evaluation_samples",
             "minimum_class_samples_per_split",
+            "permutation_importance_repeats",
             "rf_estimators",
             "rf_max_depth",
             "rf_min_samples_split",

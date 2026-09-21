@@ -7,7 +7,7 @@ from sklearn.ensemble import RandomForestClassifier
 from feature_builders import TabularFeatureDataset
 
 from .contracts import TabularCandidateResult, TabularTrainingPolicy
-from .metrics import probability_metrics
+from .metrics import holdout_permutation_importance, probability_metrics
 from .preprocessing import RandomForestPreprocessor
 from .training_data import PreparedTabularHoldout, prepare_tabular_holdout
 
@@ -65,6 +65,14 @@ def train_random_forest_candidate(
     model = new_random_forest_model(policy)
     model.fit(transformed_train, y_train)
     probabilities = model.predict_proba(transformed_evaluation)[:, 1]
+    permutation = holdout_permutation_importance(
+        model,
+        transformed_evaluation,
+        y_evaluation,
+        preprocessor.feature_columns,
+        repeats=policy.permutation_importance_repeats,
+        random_seed=policy.random_seed,
+    )
     metrics = {
         **probability_metrics(y_evaluation, probabilities),
         "training_rows": len(holdout.train_index),
@@ -78,6 +86,7 @@ def train_random_forest_candidate(
         "category_encoder_category_count": len(
             prepared.category_encoder.category_rates
         ),
+        "permutation_importance": permutation,
     }
     return TabularCandidateResult(
         architecture=ARCHITECTURE,
