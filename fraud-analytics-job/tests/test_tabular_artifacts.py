@@ -42,7 +42,11 @@ def test_bundle_contains_both_candidates_and_selected_serving_refit(tmp_path):
         assert (candidate / "score_distribution.png").is_file()
     serving_path = bundle_dir / "serving" / "model.pkl"
     assert serving_path.is_file()
-    assert (bundle_dir / "serving" / "score_distribution.png").is_file()
+    evaluation_chart = (
+        bundle_dir / "evaluation" / "selected_candidate_score_distribution.png"
+    )
+    assert evaluation_chart.is_file()
+    assert not (bundle_dir / "serving" / "score_distribution.png").exists()
 
     manifest = json.loads((bundle_dir / "manifest.json").read_text())
     assert manifest["artifact_type"] == "tabular_integrity_model"
@@ -50,6 +54,17 @@ def test_bundle_contains_both_candidates_and_selected_serving_refit(tmp_path):
     assert manifest["selection"]["selected_architecture"] == selected
     assert set(manifest["candidates"]) == {"random_forest", "tabular_mlp"}
     for architecture in ("random_forest", "tabular_mlp"):
+        fit = manifest["candidates"][architecture]["fit"]
+        candidate = evaluation.candidates[architecture]
+        assert fit["fit_scope"] == "TEMPORAL_TRAINING_PARTITION"
+        assert fit["training_rows"] == candidate.metrics["training_rows"]
+        assert fit["fraud_rows"] == candidate.metrics["training_fraud_rows"]
+        assert fit["evaluation_status"] == "OUT_OF_TIME_HOLDOUT"
+        assert fit["evaluation_rows"] == candidate.metrics["evaluation_rows"]
+        assert fit["model_statistics"]["model_family"] in {
+            "TREE_ENSEMBLE",
+            "FEED_FORWARD_NEURAL_NETWORK",
+        }
         permutation = manifest["candidates"][architecture][
             "permutation_importance"
         ]
@@ -71,7 +86,32 @@ def test_bundle_contains_both_candidates_and_selected_serving_refit(tmp_path):
         dataset.schema.feature_columns
     )
     assert sum(row["importance"] for row in importance) == pytest.approx(1.0)
+    rf_statistics = manifest["candidates"]["random_forest"]["fit"][
+        "model_statistics"
+    ]
+    assert rf_statistics["tree_count"] == policy.rf_estimators
+    assert rf_statistics["total_node_count"] == evaluation.candidates[
+        "random_forest"
+    ].metrics["tree_node_count"]
+    assert rf_statistics["total_leaf_count"] > 0
+    assert rf_statistics["maximum_observed_depth"] <= policy.rf_max_depth
     assert manifest["serving"]["architecture"] == selected
+    serving_fit = manifest["serving"]["fit"]
+    assert serving_fit["fit_scope"] == "ALL_MATURED_LABELS"
+    assert serving_fit["selected_from_candidate"] == selected
+    assert serving_fit["training_rows"] == serving.training_rows
+    assert serving_fit["fraud_rows"] == serving.training_fraud_rows
+    assert serving_fit["evaluation_status"] == "NOT_APPLICABLE_AFTER_FULL_REFIT"
+    assert manifest["evaluation"] == {
+        "architecture": selected,
+        "fit_scope": "TEMPORAL_TRAINING_PARTITION",
+        "evaluation_scope": "OUT_OF_TIME_HOLDOUT",
+        "visualization_path": (
+            "evaluation/selected_candidate_score_distribution.png"
+        ),
+        "source_candidate_model_path": f"candidates/{selected}/model.pkl",
+        "source_candidate_metrics_path": f"candidates/{selected}/metrics.json",
+    }
     assert all(item[0].is_file() for item in artifacts)
     assert b"modeling.tabular" not in serving_path.read_bytes()
 
@@ -80,6 +120,7 @@ def test_bundle_contains_both_candidates_and_selected_serving_refit(tmp_path):
     assert payload["tenant_id"] == 5
     assert payload["architecture"] == selected
     assert payload["feature_schema_id"] == dataset.schema.schema_id
+    assert payload["training_lineage"] == serving_fit
     assert type(payload["model"]) is type(serving.model)
     assert payload["preprocessing"]["feature_columns"] == list(
         dataset.schema.feature_columns

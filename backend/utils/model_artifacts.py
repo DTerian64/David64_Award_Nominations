@@ -118,7 +118,21 @@ def get_rf_visualization(
         # The old two-panel image contains an Approver score distribution. Do
         # not show it after retirement; the next RF run publishes a P2P-only PNG.
         return None
+    evaluation = manifest.get("evaluation")
+    visualization_path = (
+        evaluation.get("visualization_path")
+        if isinstance(evaluation, dict)
+        else None
+    )
+    if visualization_path not in {
+        "evaluation/selected_candidate_score_distribution.png",
+        None,
+    }:
+        raise ValueError("Tabular visualization path is invalid")
+    relative_path = (
+        visualization_path or "serving/score_distribution.png"
+    )
     return _download(
-        f"tenant_{tenant_id}/tabular/{model_version}/serving/score_distribution.png",
+        f"tenant_{tenant_id}/tabular/{model_version}/{relative_path}",
         _MAX_VISUALIZATION_BYTES,
     )

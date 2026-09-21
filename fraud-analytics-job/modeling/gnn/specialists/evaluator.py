@@ -68,6 +68,91 @@ def _population(labels: Iterable[np.ndarray]) -> dict[str, int]:
     }
 
 
+def _date_value(fold: dict, key: str) -> str | None:
+    value = fold.get(key)
+    return value.isoformat() if hasattr(value, "isoformat") else None
+
+
+def _label_evidence(
+    *,
+    track: SpecialistTrackPolicy,
+    folds: list[dict],
+    train_labels: list[np.ndarray],
+    eval_labels: list[np.ndarray],
+) -> dict:
+    """Persist the observed fold populations and every label admission gate."""
+
+    training = _population(train_labels)
+    final_holdout = _population([eval_labels[-1]])
+    fold_populations = []
+    for index, (fold, train, evaluation) in enumerate(
+        zip(folds, train_labels, eval_labels), start=1
+    ):
+        evaluation_population = _population([evaluation])
+        fold_populations.append({
+            "fold_index": int(fold.get("fold_index", index)),
+            "role": (
+                "FINAL_HOLDOUT" if index == len(folds) else "SELECTION"
+            ),
+            "graph_cutoff": _date_value(fold, "t_graph"),
+            "training_end": _date_value(fold, "t_cut"),
+            "evaluation_end": _date_value(fold, "eval_end"),
+            "training": _population([train]),
+            "evaluation": evaluation_population,
+            "evaluation_has_both_classes": (
+                evaluation_population["positive_count"] > 0
+                and evaluation_population["negative_count"] > 0
+            ),
+        })
+    evaluable_selection_folds = sum(
+        row["role"] == "SELECTION" and row["evaluation_has_both_classes"]
+        for row in fold_populations
+    )
+    requirements = {
+        "minimum_train_positives": track.minimum_train_positives,
+        "minimum_train_negatives": track.minimum_train_negatives,
+        "minimum_holdout_positives": track.minimum_holdout_positives,
+        "minimum_holdout_negatives": track.minimum_holdout_negatives,
+        "minimum_evaluable_temporal_folds": (
+            track.minimum_evaluable_temporal_folds
+        ),
+    }
+    checks = {
+        "training_positive_labels": {
+            "actual": training["positive_count"],
+            "required": track.minimum_train_positives,
+        },
+        "training_negative_labels": {
+            "actual": training["negative_count"],
+            "required": track.minimum_train_negatives,
+        },
+        "final_holdout_positive_labels": {
+            "actual": final_holdout["positive_count"],
+            "required": track.minimum_holdout_positives,
+        },
+        "final_holdout_negative_labels": {
+            "actual": final_holdout["negative_count"],
+            "required": track.minimum_holdout_negatives,
+        },
+        "evaluable_selection_folds": {
+            "actual": evaluable_selection_folds,
+            "required": track.minimum_evaluable_temporal_folds,
+        },
+    }
+    for check in checks.values():
+        check["passed"] = check["actual"] >= check["required"]
+    return {
+        "requirements": requirements,
+        "observed": {
+            "training": training,
+            "final_holdout": final_holdout,
+            "evaluable_selection_folds": evaluable_selection_folds,
+        },
+        "checks": checks,
+        "folds": fold_populations,
+    }
+
+
 def _finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -189,12 +274,17 @@ def evaluate_specialist(
     views, y_train, y_eval = specialist_fold_views(
         folds, label_map, track.feature_contract
     )
-    training = _population(y_train)
-    final_holdout = _population([y_eval[-1]])
-    evaluable_selection_folds = sum(
-        int(values.sum()) > 0 and int(values.sum()) < len(values)
-        for values in y_eval[:-1]
+    label_evidence = _label_evidence(
+        track=track,
+        folds=folds,
+        train_labels=y_train,
+        eval_labels=y_eval,
     )
+    training = label_evidence["observed"]["training"]
+    final_holdout = label_evidence["observed"]["final_holdout"]
+    evaluable_selection_folds = label_evidence["observed"][
+        "evaluable_selection_folds"
+    ]
     populations = {
         "training": training,
         "final_holdout": final_holdout,
@@ -213,6 +303,7 @@ def evaluate_specialist(
             "status": "NOT_ADMITTED",
             "reason": "INSUFFICIENT_SPECIALIST_LABELS",
             "populations": populations,
+            "label_evidence": label_evidence,
         }
 
     candidates: dict[str, dict] = {}
@@ -291,6 +382,7 @@ def evaluate_specialist(
             "status": "NOT_ADMITTED",
             "reason": "SPECIALIST_GUARDRAIL_FAILED",
             "populations": populations,
+            "label_evidence": label_evidence,
             "candidates": candidates,
         }
 
@@ -346,6 +438,7 @@ def evaluate_specialist(
         ),
         "guardrail_failures": admission_failures,
         "populations": populations,
+        "label_evidence": label_evidence,
         "provisional_architecture": provisional,
         "architecture_selection_reason": selection_reason,
         "incumbent_architecture": incumbent_architecture,

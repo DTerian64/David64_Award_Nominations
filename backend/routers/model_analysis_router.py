@@ -250,7 +250,13 @@ async def get_rf_model_visualization(
         None,
     )
     model_version = rf_status["serving_version"] if rf_status else None
-    image = model_artifacts.get_rf_visualization(tenant_id, model_version)
+    try:
+        image = model_artifacts.get_rf_visualization(tenant_id, model_version)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The RF visualization representation is invalid",
+        ) from exc
     if image is None:
         raise HTTPException(status_code=404, detail="RF visualization is not available")
     return Response(

@@ -4,6 +4,7 @@ import {
   FileBox, RefreshCw, Trees, X,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
+import { SpecialistLabelEvidence } from './SpecialistLabelEvidence';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 type JsonRecord = Record<string, unknown>;
@@ -38,6 +39,21 @@ interface PermutationImportance {
   repeats: number;
   random_seed: number;
   features: PermutationFeatureImportance[];
+}
+
+interface ModelFitLineage {
+  fit_scope: string;
+  training_rows: number;
+  fraud_rows: number;
+  legitimate_rows: number;
+  evaluation_rows?: number;
+  evaluation_fraud_rows?: number;
+  evaluation_legitimate_rows?: number;
+  evaluation_status: string;
+  selected_from_candidate?: string;
+  selection_evidence_model_path?: string;
+  selection_evidence_metrics_path?: string;
+  model_statistics: Record<string, unknown>;
 }
 
 interface ForestSummary {
@@ -99,15 +115,25 @@ interface ModelManifest {
     eligible: boolean;
     metrics: Record<string, unknown>;
     artifact_prefix: string;
+    fit?: ModelFitLineage;
     feature_importance?: FeatureImportance[];
     permutation_importance?: PermutationImportance;
   }>;
   serving?: {
     architecture: string;
     model_path: string;
-    visualization_path: string;
+    visualization_path?: string;
+    fit?: ModelFitLineage;
     refit_training_rows: number;
     refit_fraud_rows: number;
+  };
+  evaluation?: {
+    architecture: string;
+    fit_scope: string;
+    evaluation_scope: string;
+    visualization_path: string;
+    source_candidate_model_path: string;
+    source_candidate_metrics_path: string;
   };
   architecture?: {
     encoder: ArchitecturePart;
@@ -165,6 +191,10 @@ const tabularArchitectureLabel = (name?: string | null) => {
   if (!name) return '—';
   if (name === 'random_forest') return 'Random Forest';
   if (name === 'tabular_mlp') return 'Tabular MLP';
+  if (name === 'graphsage') return 'GraphSAGE';
+  if (name === 'gatv2') return 'GATv2';
+  if (name === 'gcn') return 'GCN';
+  if (name === 'mlp') return 'MLP';
   return prettyLabel(name);
 };
 
@@ -458,23 +488,100 @@ const PermutationImportanceComparison: React.FC<{
   );
 };
 
-const Artifacts: React.FC<{ artifacts: ArtifactInfo[] }> = ({ artifacts }) => (
-  <section>
-    <h4 className="mb-2 text-sm font-semibold text-gray-700">Published artifacts</h4>
-    <div className="grid gap-2 md:grid-cols-2">
-      {artifacts.map(artifact => (
-        <div key={artifact.relative_path || `${artifact.role}-${artifact.file_name}`} className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
-          <FileBox className="mt-0.5 h-5 w-5 shrink-0 text-indigo-500" />
-          <div className="min-w-0 text-xs">
-            <div className="break-all font-mono font-medium text-gray-700">{artifact.relative_path || artifact.file_name}</div>
-            <div className="mt-1 text-gray-500">{prettyLabel(artifact.role)} · {formatBytes(artifact.size_bytes)}</div>
-            <div className="mt-1 truncate font-mono text-[10px] text-gray-400" title={artifact.sha256}>SHA-256 {artifact.sha256}</div>
-          </div>
-        </div>
-      ))}
-    </div>
-  </section>
-);
+interface ArtifactGroup {
+  key: string;
+  title: string;
+  description: string;
+  artifacts: ArtifactInfo[];
+}
+
+const artifactGroupIdentity = (
+  artifact: ArtifactInfo,
+  servingArchitecture?: string | null,
+): Omit<ArtifactGroup, 'artifacts'> => {
+  const path = artifact.relative_path || artifact.file_name;
+  const candidate = path.match(/^candidates\/([^/]+)\//);
+  if (candidate) {
+    const architecture = candidate[1];
+    return {
+      key: `candidate-${architecture}`,
+      title: `${tabularArchitectureLabel(architecture)} candidate`,
+      description: 'Evaluation fit trained on the pre-holdout training partition and retained for reproducibility.',
+    };
+  }
+  if (path.startsWith('serving/')) {
+    return {
+      key: 'serving',
+      title: 'Serving refit',
+      description: servingArchitecture
+        ? `Selected ${tabularArchitectureLabel(servingArchitecture)} architecture refitted on all matured labels and used for live inference.`
+        : 'Selected architecture refitted on all matured labels and used for live inference.',
+    };
+  }
+  if (path.startsWith('evaluation/')) {
+    return {
+      key: 'selected-candidate-evaluation',
+      title: 'Selected candidate evaluation',
+      description: 'Out-of-time holdout evidence produced before the selected architecture was refitted for serving.',
+    };
+  }
+  const specialist = path.match(/^specialists\/([^/]+)\/(serving\/)?/);
+  if (specialist) {
+    const serving = Boolean(specialist[2]);
+    return {
+      key: `${serving ? 'serving' : 'evaluation'}-specialist-${specialist[1]}`,
+      title: `${prettyLabel(specialist[1])} ${serving ? 'serving specialist' : 'specialist evaluation'}`,
+      description: serving
+        ? 'Behavior-specific serving artifacts used for live GNN inference.'
+        : 'Behavior-specific candidate evaluation retained for reproducibility.',
+    };
+  }
+  return {
+    key: 'supporting',
+    title: 'Run metadata and supporting artifacts',
+    description: 'Immutable evidence and supporting files for this model run.',
+  };
+};
+
+const Artifacts: React.FC<{
+  artifacts: ArtifactInfo[];
+  servingArchitecture?: string | null;
+}> = ({ artifacts, servingArchitecture }) => {
+  const groups = artifacts.reduce<ArtifactGroup[]>((result, artifact) => {
+    const identity = artifactGroupIdentity(artifact, servingArchitecture);
+    const existing = result.find(group => group.key === identity.key);
+    if (existing) existing.artifacts.push(artifact);
+    else result.push({ ...identity, artifacts: [artifact] });
+    return result;
+  }, []);
+  return (
+    <section>
+      <h4 className="mb-2 text-sm font-semibold text-gray-700">Published artifacts</h4>
+      <div className="space-y-3">
+        {groups.map(group => (
+          <section key={group.key} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <header className="border-b border-gray-200 bg-gray-50 px-4 py-3">
+              <h5 className="text-sm font-semibold text-gray-800">{group.title}</h5>
+              <p className="mt-0.5 text-[11px] text-gray-500">{group.description}</p>
+            </header>
+            <div className="grid gap-2 p-3 md:grid-cols-2">
+              {group.artifacts.map(artifact => (
+                <div key={artifact.relative_path || `${artifact.role}-${artifact.file_name}`} className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
+                  <FileBox className="mt-0.5 h-5 w-5 shrink-0 text-indigo-500" />
+                  <div className="min-w-0 text-xs">
+                    <div className="break-all font-mono font-medium text-gray-700">{artifact.relative_path || artifact.file_name}</div>
+                    <div className="mt-1 text-gray-500">{prettyLabel(artifact.role)} · {formatBytes(artifact.size_bytes)}</div>
+                    <div className="mt-1 truncate font-mono text-[10px] text-gray-400" title={artifact.sha256}>SHA-256 {artifact.sha256}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    </section>
+  );
+};
 
 const ForestModel: React.FC<{ name: string; summary: ForestSummary }> = ({ name, summary }) => {
   if (!summary.available) {
@@ -514,6 +621,63 @@ const ForestModel: React.FC<{ name: string; summary: ForestSummary }> = ({ name,
         </div>
       </div>
     </section>
+  );
+};
+
+const modelStructureSummary = (statistics: Record<string, unknown>): string => {
+  if (statistics.model_family === 'TREE_ENSEMBLE') {
+    return [
+      `${displayValue(statistics.tree_count)} trees`,
+      `${displayValue(statistics.total_node_count)} nodes`,
+      `${displayValue(statistics.total_leaf_count)} leaves`,
+      `maximum depth ${displayValue(statistics.maximum_observed_depth)}`,
+    ].join(' · ');
+  }
+  if (statistics.model_family === 'FEED_FORWARD_NEURAL_NETWORK') {
+    const shape = Array.isArray(statistics.hidden_layer_shape)
+      ? statistics.hidden_layer_shape.join(' → ')
+      : '—';
+    return [
+      `${displayValue(statistics.parameter_count)} parameters`,
+      `hidden layers ${shape}`,
+      `${displayValue(statistics.iterations_run)} iterations`,
+    ].join(' · ');
+  }
+  return 'Model structure was not recorded for this run.';
+};
+
+const ModelFitCard: React.FC<{
+  title: string;
+  fit?: ModelFitLineage;
+  serving?: boolean;
+}> = ({ title, fit, serving = false }) => {
+  if (!fit) {
+    return (
+      <article className="rounded-lg border border-dashed border-gray-200 p-4">
+        <h5 className="font-semibold text-gray-700">{title}</h5>
+        <p className="mt-2 text-xs text-gray-500">Fit lineage will be available after the next training run.</p>
+      </article>
+    );
+  }
+  return (
+    <article className={`rounded-lg border p-4 ${serving ? 'border-indigo-200 bg-indigo-50/30' : 'border-gray-200 bg-white'}`}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h5 className="font-semibold text-gray-800">{title}</h5>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${serving ? 'border-indigo-200 bg-white text-indigo-700' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+          {prettyLabel(fit.fit_scope)}
+        </span>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">Training population</dt><dd className="font-medium text-gray-700">{fit.training_rows.toLocaleString()}</dd></div>
+        <div className="rounded bg-white p-2"><dt className="text-gray-400">Training labels</dt><dd className="font-medium text-gray-700">{fit.fraud_rows.toLocaleString()} fraud / {fit.legitimate_rows.toLocaleString()} legitimate</dd></div>
+        <div className="col-span-2 rounded bg-white p-2"><dt className="text-gray-400">Evaluation</dt><dd className="font-medium text-gray-700">{fit.evaluation_rows !== undefined ? `${fit.evaluation_rows.toLocaleString()} out-of-time holdout rows · ${displayValue(fit.evaluation_fraud_rows)} fraud / ${displayValue(fit.evaluation_legitimate_rows)} legitimate` : 'Not independently evaluated after the full-data refit'}</dd></div>
+      </dl>
+      <div className="mt-2 rounded bg-white p-2 text-xs">
+        <div className="text-gray-400">Fitted model structure</div>
+        <div className="mt-0.5 text-gray-700">{modelStructureSummary(fit.model_statistics)}</div>
+      </div>
+      {fit.selected_from_candidate && <p className="mt-2 text-[10px] text-gray-500">Architecture selected from the {tabularArchitectureLabel(fit.selected_from_candidate)} candidate’s out-of-time evaluation.</p>}
+    </article>
   );
 };
 
@@ -576,6 +740,15 @@ const TabularModelView: React.FC<{ manifest: ModelManifest; imageUrl: string | n
         </div>
       </section>
 
+      <section>
+        <h4 className="mb-2 text-sm font-semibold text-gray-700">Model fit lineage</h4>
+        <div className="grid gap-3 xl:grid-cols-3">
+          <ModelFitCard title="Random Forest candidate" fit={manifest.candidates?.random_forest?.fit} />
+          <ModelFitCard title="Tabular MLP candidate" fit={manifest.candidates?.tabular_mlp?.fit} />
+          <ModelFitCard title={`Serving refit · ${tabularArchitectureLabel(manifest.serving?.architecture)}`} fit={manifest.serving?.fit} serving />
+        </div>
+      </section>
+
       <FeatureSignificanceChart
         features={manifest.candidates?.random_forest?.feature_importance || []}
       />
@@ -587,8 +760,9 @@ const TabularModelView: React.FC<{ manifest: ModelManifest; imageUrl: string | n
 
       {imageUrl && (
         <section className="overflow-hidden rounded-lg border border-gray-200 bg-white p-3">
-          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700"><BarChart3 className="h-4 w-4 text-indigo-500" />Selected model score distribution</h4>
-          <img src={imageUrl} alt="Selected tenant Tabular model score distribution" className="w-full rounded" />
+          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700"><BarChart3 className="h-4 w-4 text-indigo-500" />Selected candidate holdout score distribution</h4>
+          <p className="mb-2 text-xs text-gray-500">Out-of-time evaluation evidence from the selected candidate before the full-data serving refit.</p>
+          <img src={imageUrl} alt="Selected Tabular candidate out-of-time holdout score distribution" className="w-full rounded" />
         </section>
       )}
       {manifest.feature_columns && <FeatureList title="Tabular features" features={manifest.feature_columns} />}
@@ -693,18 +867,29 @@ const SpecialistServingView: React.FC<{
             const track = asRecord(tracks[name]) || {};
             const serving = asRecord(specialists?.[name]) || {};
             const state = serving.state || track.status;
+            const architecture = serving.architecture || track.provisional_architecture;
+            const modelVersion = serving.model_version;
+            const holdoutPrAuc = track.final_holdout_pr_auc ?? serving.final_holdout_pr_auc;
+            const baselinePrAuc = track.final_holdout_mlp_pr_auc ?? serving.final_holdout_mlp_pr_auc;
+            const labelEvidence = track.label_evidence || serving.label_evidence;
+            const hasModelFacts = Boolean(architecture || modelVersion)
+              || typeof holdoutPrAuc === 'number'
+              || typeof baselinePrAuc === 'number';
             return (
               <article key={name} className="rounded-lg border border-gray-200 bg-white p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div><h5 className="font-semibold text-gray-800">{prettyLabel(name)}</h5><p className="mt-0.5 text-[10px] text-gray-500">{prettyLabel(serving.feature_contract || track.feature_contract)}</p></div>
                   <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${specialistStatusClass(state)}`}>{prettyLabel(state)}</span>
                 </div>
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                  <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Architecture</dt><dd className="font-medium text-gray-700">{String(serving.architecture || track.provisional_architecture || '—').toUpperCase()}</dd></div>
-                  <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Model version</dt><dd className="break-all font-mono text-gray-700">{String(serving.model_version || '—')}</dd></div>
-                  <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Final holdout PR-AUC</dt><dd className="font-mono text-gray-700">{probabilityPercent(track.final_holdout_pr_auc ?? serving.final_holdout_pr_auc)}</dd></div>
-                  <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Causal MLP baseline</dt><dd className="font-mono text-gray-700">{probabilityPercent(track.final_holdout_mlp_pr_auc ?? serving.final_holdout_mlp_pr_auc)}</dd></div>
-                </dl>
+                {hasModelFacts && (
+                  <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    {Boolean(architecture) && <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Architecture</dt><dd className="font-medium text-gray-700">{String(architecture).toUpperCase()}</dd></div>}
+                    {Boolean(modelVersion) && <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Model version</dt><dd className="break-all font-mono text-gray-700">{String(modelVersion)}</dd></div>}
+                    {typeof holdoutPrAuc === 'number' && <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Final holdout PR-AUC</dt><dd className="font-mono text-gray-700">{probabilityPercent(holdoutPrAuc)}</dd></div>}
+                    {typeof baselinePrAuc === 'number' && <div className="rounded bg-gray-50 p-2"><dt className="text-gray-400">Causal MLP baseline</dt><dd className="font-mono text-gray-700">{probabilityPercent(baselinePrAuc)}</dd></div>}
+                  </dl>
+                )}
+                <SpecialistLabelEvidence evidence={labelEvidence} />
                 <p className="mt-3 text-xs text-gray-600"><span className="text-gray-400">Admission decision: </span>{prettyLabel(track.reason || serving.admission_reason || serving.reason)}</p>
               </article>
             );
@@ -898,7 +1083,7 @@ export const ModelInspectionModal: React.FC<Props> = ({ component, impersonatedU
               </section>
 
               {component === 'rf' ? <TabularModelView manifest={manifest} imageUrl={imageUrl} /> : <GnnView manifest={manifest} />}
-              <Artifacts artifacts={manifest.artifacts} />
+              <Artifacts artifacts={manifest.artifacts} servingArchitecture={manifest.serving?.architecture} />
             </>
           )}
         </div>

@@ -112,3 +112,98 @@ def test_nested_evaluator_selects_then_admits_on_final_holdout():
     assert result["status"] == "ADMITTED"
     assert result["provisional_architecture"] == "gatv2"
     assert result["improvement_over_mlp"] == 0.25
+
+
+def test_insufficient_labels_report_each_gate_and_fold_population():
+    folds = [_fold(index) for index in (1, 2, 3)]
+    label_map = {
+        11: 1,
+        12: 0,
+        13: 1,
+        21: 1,
+        23: 1,
+        24: 0,
+        31: 1,
+        32: 0,
+        33: 1,
+    }
+    track = SpecialistTrackPolicy(
+        key="BIPARTITE_DENSE_BLOCK",
+        enabled=True,
+        candidate_architectures=("graphsage", "gatv2"),
+        feature_contract="reciprocal-v1",
+        minimum_train_positives=4,
+        minimum_train_negatives=4,
+        minimum_holdout_positives=2,
+        minimum_holdout_negatives=2,
+        minimum_evaluable_temporal_folds=2,
+        maximum_fold_pr_auc_range=0.2,
+        minimum_improvement_over_mlp=0.02,
+        maximum_holdout_brier_score=0.25,
+        maximum_holdout_inference_ms=100.0,
+        incumbent_refresh_tolerance=0.01,
+        architecture_switch_tolerance=0.01,
+    )
+
+    result = evaluate_specialist(
+        track=track,
+        folds=folds,
+        label_map=label_map,
+        hidden_dim=8,
+        emb_dim=8,
+        epochs=1,
+    )
+
+    assert result["status"] == "NOT_ADMITTED"
+    assert result["reason"] == "INSUFFICIENT_SPECIALIST_LABELS"
+    evidence = result["label_evidence"]
+    assert evidence["requirements"] == {
+        "minimum_train_positives": 4,
+        "minimum_train_negatives": 4,
+        "minimum_holdout_positives": 2,
+        "minimum_holdout_negatives": 2,
+        "minimum_evaluable_temporal_folds": 2,
+    }
+    assert evidence["checks"] == {
+        "training_positive_labels": {
+            "actual": 3,
+            "required": 4,
+            "passed": False,
+        },
+        "training_negative_labels": {
+            "actual": 2,
+            "required": 4,
+            "passed": False,
+        },
+        "final_holdout_positive_labels": {
+            "actual": 1,
+            "required": 2,
+            "passed": False,
+        },
+        "final_holdout_negative_labels": {
+            "actual": 0,
+            "required": 2,
+            "passed": False,
+        },
+        "evaluable_selection_folds": {
+            "actual": 1,
+            "required": 2,
+            "passed": False,
+        },
+    }
+    assert [row["role"] for row in evidence["folds"]] == [
+        "SELECTION",
+        "SELECTION",
+        "FINAL_HOLDOUT",
+    ]
+    assert evidence["folds"][0]["evaluation"] == {
+        "count": 1,
+        "positive_count": 1,
+        "negative_count": 0,
+    }
+    assert evidence["folds"][1]["evaluation_has_both_classes"] is True
+    assert evidence["folds"][2]["evaluation"] == {
+        "count": 1,
+        "positive_count": 1,
+        "negative_count": 0,
+    }

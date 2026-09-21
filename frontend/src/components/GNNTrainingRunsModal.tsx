@@ -4,6 +4,7 @@ import {
   RefreshCw, ShieldCheck, X,
 } from 'lucide-react';
 import { getAccessToken } from '../services/api';
+import { SpecialistLabelEvidence } from './SpecialistLabelEvidence';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -289,6 +290,14 @@ const SpecialistComparison: React.FC<{
           const track = asRecord(raw) || {};
           const candidates = asRecord(track.candidates) || {};
           const servingTrack = asRecord(serving?.[trackName]);
+          const architecture = servingTrack?.architecture || track.provisional_architecture;
+          const finalHoldoutPrAuc = track.final_holdout_pr_auc;
+          const baselinePrAuc = track.final_holdout_mlp_pr_auc;
+          const improvement = track.improvement_over_mlp;
+          const hasModelFacts = Boolean(architecture)
+            || typeof finalHoldoutPrAuc === 'number'
+            || typeof baselinePrAuc === 'number'
+            || typeof improvement === 'number';
           return (
             <section key={trackName} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
               <header className="flex flex-wrap items-start justify-between gap-2 bg-gray-50 px-3 py-2">
@@ -300,12 +309,19 @@ const SpecialistComparison: React.FC<{
                   {label(track.status || servingTrack?.state)}
                 </span>
               </header>
-              <dl className="grid grid-cols-2 gap-2 border-t border-gray-100 p-3 text-xs sm:grid-cols-4">
-                <div><dt className="text-gray-400">Serving architecture</dt><dd className="font-medium text-gray-700">{candidateLabel(String(servingTrack?.architecture || track.provisional_architecture || ''))}</dd></div>
-                <div><dt className="text-gray-400">Final holdout</dt><dd className="font-mono text-gray-700">{percent(track.final_holdout_pr_auc)}</dd></div>
-                <div><dt className="text-gray-400">Causal MLP baseline</dt><dd className="font-mono text-gray-700">{percent(track.final_holdout_mlp_pr_auc)}</dd></div>
-                <div><dt className="text-gray-400">Improvement</dt><dd className="font-mono text-gray-700">{percent(track.improvement_over_mlp)}</dd></div>
-              </dl>
+              {hasModelFacts && (
+                <dl className="grid grid-cols-2 gap-2 border-t border-gray-100 p-3 text-xs sm:grid-cols-4">
+                  {Boolean(architecture) && <div><dt className="text-gray-400">Serving architecture</dt><dd className="font-medium text-gray-700">{candidateLabel(String(architecture))}</dd></div>}
+                  {typeof finalHoldoutPrAuc === 'number' && <div><dt className="text-gray-400">Final holdout</dt><dd className="font-mono text-gray-700">{percent(finalHoldoutPrAuc)}</dd></div>}
+                  {typeof baselinePrAuc === 'number' && <div><dt className="text-gray-400">Causal MLP baseline</dt><dd className="font-mono text-gray-700">{percent(baselinePrAuc)}</dd></div>}
+                  {typeof improvement === 'number' && <div><dt className="text-gray-400">Improvement</dt><dd className="font-mono text-gray-700">{percent(improvement)}</dd></div>}
+                </dl>
+              )}
+              {track.label_evidence !== undefined && (
+                <div className="border-t border-gray-100 px-3">
+                  <SpecialistLabelEvidence evidence={track.label_evidence} />
+                </div>
+              )}
               <div className="border-t border-gray-100 px-3 py-2 text-xs text-gray-600">
                 <span className="text-gray-400">Decision: </span>{label(track.reason)}
               </div>

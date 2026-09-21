@@ -30,6 +30,7 @@ def _model_payload(
     model: Any,
     preprocessor: Any,
     embed_model_name: str,
+    training_lineage: dict[str, Any],
 ) -> dict[str, Any]:
     amounts = feature_dataset.features["Amount"]
     category_encoder = preprocessor.category_encoder
@@ -42,6 +43,7 @@ def _model_payload(
         "feature_schema_id": feature_dataset.schema.schema_id,
         "feature_columns": list(feature_dataset.schema.feature_columns),
         "source_snapshot_id": feature_dataset.source_snapshot_id,
+        "training_lineage": training_lineage,
         "model": model,
         "preprocessing": {
             "feature_columns": list(preprocessor.feature_columns),
@@ -54,6 +56,42 @@ def _model_payload(
         "amount_std": float(amounts.std()),
         "embed_model_name": embed_model_name,
     }
+
+
+def _model_statistics(model: Any, architecture: str) -> dict[str, Any]:
+    """Return architecture-specific fitted-size diagnostics."""
+
+    if architecture == "random_forest":
+        trees = list(model.estimators_)
+        depths = [int(tree.tree_.max_depth) for tree in trees]
+        return {
+            "model_family": "TREE_ENSEMBLE",
+            "tree_count": len(trees),
+            "total_node_count": int(
+                sum(tree.tree_.node_count for tree in trees)
+            ),
+            "total_leaf_count": int(
+                sum(tree.tree_.n_leaves for tree in trees)
+            ),
+            "maximum_observed_depth": max(depths, default=0),
+            "mean_observed_depth": (
+                float(sum(depths) / len(depths)) if depths else 0.0
+            ),
+        }
+    if architecture == "tabular_mlp":
+        hidden_layers = model.hidden_layer_sizes
+        if isinstance(hidden_layers, int):
+            hidden_layers = (hidden_layers,)
+        return {
+            "model_family": "FEED_FORWARD_NEURAL_NETWORK",
+            "hidden_layer_shape": list(hidden_layers),
+            "parameter_count": int(
+                sum(weights.size for weights in model.coefs_)
+                + sum(bias.size for bias in model.intercepts_)
+            ),
+            "iterations_run": int(model.n_iter_),
+        }
+    raise ValueError(f"Unsupported Tabular architecture: {architecture}")
 
 
 def _write_pickle(path: Path, payload: dict[str, Any]) -> None:
@@ -112,6 +150,28 @@ def write_tabular_bundle(
         model_path = candidate_dir / "model.pkl"
         metrics_path = candidate_dir / "metrics.json"
         chart_path = candidate_dir / "score_distribution.png"
+        candidate_training_rows = int(candidate.metrics["training_rows"])
+        candidate_fraud_rows = int(candidate.metrics["training_fraud_rows"])
+        candidate_evaluation_rows = int(candidate.metrics["evaluation_rows"])
+        candidate_evaluation_fraud_rows = int(
+            candidate.metrics["evaluation_fraud_rows"]
+        )
+        candidate_statistics = _model_statistics(
+            candidate.model, architecture
+        )
+        candidate_lineage = {
+            "fit_scope": "TEMPORAL_TRAINING_PARTITION",
+            "training_rows": candidate_training_rows,
+            "fraud_rows": candidate_fraud_rows,
+            "legitimate_rows": candidate_training_rows - candidate_fraud_rows,
+            "evaluation_rows": candidate_evaluation_rows,
+            "evaluation_fraud_rows": candidate_evaluation_fraud_rows,
+            "evaluation_legitimate_rows": (
+                candidate_evaluation_rows - candidate_evaluation_fraud_rows
+            ),
+            "evaluation_status": "OUT_OF_TIME_HOLDOUT",
+            "model_statistics": candidate_statistics,
+        }
         _write_pickle(
             model_path,
             _model_payload(
@@ -122,6 +182,7 @@ def write_tabular_bundle(
                 model=candidate.model,
                 preprocessor=candidate.preprocessor,
                 embed_model_name=embed_model_name,
+                training_lineage=candidate_lineage,
             ),
         )
         metrics = dict(candidate.metrics)
@@ -156,6 +217,7 @@ def write_tabular_bundle(
             "permutation_importance": candidate.metrics.get(
                 "permutation_importance"
             ),
+            "fit": candidate_lineage,
             "artifact_prefix": f"candidates/{architecture}",
         }
         if architecture == "random_forest" and hasattr(
@@ -176,8 +238,31 @@ def write_tabular_bundle(
             )
 
     serving_dir = bundle_dir / "serving"
+    evaluation_dir = bundle_dir / "evaluation"
     serving_model_path = serving_dir / "model.pkl"
-    serving_chart_path = serving_dir / "score_distribution.png"
+    selected_candidate_chart_path = (
+        evaluation_dir / "selected_candidate_score_distribution.png"
+    )
+    serving_statistics = _model_statistics(
+        serving_fit.model, serving_fit.architecture
+    )
+    serving_lineage = {
+        "fit_scope": "ALL_MATURED_LABELS",
+        "selected_from_candidate": serving_fit.architecture,
+        "selection_evidence_model_path": (
+            f"candidates/{serving_fit.architecture}/model.pkl"
+        ),
+        "selection_evidence_metrics_path": (
+            f"candidates/{serving_fit.architecture}/metrics.json"
+        ),
+        "training_rows": serving_fit.training_rows,
+        "fraud_rows": serving_fit.training_fraud_rows,
+        "legitimate_rows": (
+            serving_fit.training_rows - serving_fit.training_fraud_rows
+        ),
+        "evaluation_status": "NOT_APPLICABLE_AFTER_FULL_REFIT",
+        "model_statistics": serving_statistics,
+    }
     _write_pickle(
         serving_model_path,
         _model_payload(
@@ -188,11 +273,12 @@ def write_tabular_bundle(
             model=serving_fit.model,
             preprocessor=serving_fit.preprocessor,
             embed_model_name=embed_model_name,
+            training_lineage=serving_lineage,
         ),
     )
     selected_candidate = evaluation.candidates[serving_fit.architecture]
     _write_score_distribution(
-        serving_chart_path,
+        selected_candidate_chart_path,
         selected_candidate.evaluation_probabilities,
         selected_candidate.evaluation_targets,
         f"{tenant_name} - selected {serving_fit.architecture} evaluation distribution",
@@ -200,7 +286,10 @@ def write_tabular_bundle(
     artifacts.extend(
         [
             (serving_model_path, "serving_model"),
-            (serving_chart_path, "serving_visualization"),
+            (
+                selected_candidate_chart_path,
+                "selected_candidate_evaluation_visualization",
+            ),
         ]
     )
 
@@ -226,9 +315,23 @@ def write_tabular_bundle(
         "serving": {
             "architecture": serving_fit.architecture,
             "model_path": "serving/model.pkl",
-            "visualization_path": "serving/score_distribution.png",
+            "fit": serving_lineage,
             "refit_training_rows": serving_fit.training_rows,
             "refit_fraud_rows": serving_fit.training_fraud_rows,
+        },
+        "evaluation": {
+            "architecture": serving_fit.architecture,
+            "fit_scope": "TEMPORAL_TRAINING_PARTITION",
+            "evaluation_scope": "OUT_OF_TIME_HOLDOUT",
+            "visualization_path": (
+                "evaluation/selected_candidate_score_distribution.png"
+            ),
+            "source_candidate_model_path": (
+                f"candidates/{serving_fit.architecture}/model.pkl"
+            ),
+            "source_candidate_metrics_path": (
+                f"candidates/{serving_fit.architecture}/metrics.json"
+            ),
         },
         "artifacts": [
             {

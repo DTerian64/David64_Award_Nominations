@@ -122,6 +122,43 @@ class ModelArtifactTests(unittest.TestCase):
         )
 
     @patch("utils.model_artifacts._download")
+    def test_rf_visualization_uses_manifest_registered_evaluation_path(self, download):
+        download.side_effect = [json.dumps({
+            "schema_version": 1,
+            "artifact_type": "tabular_integrity_model",
+            "tenant_id": 9,
+            "model_version": "tabular-v1-selected",
+            "evaluation": {
+                "visualization_path": (
+                    "evaluation/selected_candidate_score_distribution.png"
+                ),
+            },
+        }).encode(), b"png"]
+
+        self.assertEqual(
+            model_artifacts.get_rf_visualization(9, "tabular-v1-selected"),
+            b"png",
+        )
+        self.assertEqual(
+            download.call_args_list[1].args[0],
+            "tenant_9/tabular/tabular-v1-selected/"
+            "evaluation/selected_candidate_score_distribution.png",
+        )
+
+    @patch("utils.model_artifacts._download")
+    def test_rf_visualization_rejects_an_unregistered_manifest_path(self, download):
+        download.return_value = json.dumps({
+            "schema_version": 1,
+            "artifact_type": "tabular_integrity_model",
+            "tenant_id": 9,
+            "model_version": "tabular-v1-selected",
+            "evaluation": {"visualization_path": "../tenant_8/private.png"},
+        }).encode()
+
+        with self.assertRaisesRegex(ValueError, "visualization path"):
+            model_artifacts.get_rf_visualization(9, "tabular-v1-selected")
+
+    @patch("utils.model_artifacts._download")
     def test_rf_visualization_requires_a_registered_version(self, download):
         self.assertIsNone(model_artifacts.get_rf_visualization(9, None))
         download.assert_not_called()
