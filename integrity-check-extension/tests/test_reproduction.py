@@ -8,7 +8,7 @@ import torch.nn as nn
 from extensions.gnn_explainer.artifacts import ArtifactBundle
 from extensions.gnn_explainer.errors import PermanentExtensionError
 from extensions.gnn_explainer.model import HeteroEncoder, RELATIONS
-from extensions.gnn_explainer.reproduction import ReproductionPolicy, nomination_features, reproduce
+from extensions.gnn_explainer.reproduction import ReproductionPolicy, _calibrate, nomination_features, reproduce
 from integrity_engine.gnn import CAUSAL_CONTEXT_FEATURE_COLUMNS
 
 
@@ -27,6 +27,14 @@ def graph_fixture():
         "mappings": {"user_ids": [10, 11]},
     }
     return snapshot, nodes, edges
+
+
+def test_v4_reproduction_applies_overall_head_calibration():
+    decoder = {
+        "model_schema_version": 4,
+        "calibration": {"OVERALL": {"slope": 2.0, "intercept": 0.0}},
+    }
+    assert _calibrate(0.8, decoder) == pytest.approx(16 / 17)
 
 
 @pytest.mark.parametrize("architecture", ["graphsage", "gcn", "gatv2"])

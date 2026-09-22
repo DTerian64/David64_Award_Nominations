@@ -126,6 +126,10 @@ def _calibrate(probability: float, decoder: dict) -> float:
     calibration = decoder.get("calibration") or {
         "method": "IDENTITY", "slope": 1.0, "intercept": 0.0,
     }
+    if decoder.get("model_schema_version") == 4:
+        calibration = calibration.get("OVERALL")
+        if not isinstance(calibration, dict):
+            raise PermanentExtensionError("V4_OVERALL_CALIBRATION_MISSING")
     clipped = min(max(float(probability), 1e-6), 1.0 - 1e-6)
     logit = math.log(clipped / (1.0 - clipped))
     calibrated = (
