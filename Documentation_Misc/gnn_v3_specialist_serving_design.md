@@ -1,9 +1,9 @@
 # GNN v3 Scenario-Specialist Serving Design
 
-**Status:** Implemented for tenant-scoped activation through `scenario_specialists`; production expansion remains policy-controlled
+**Status:** Implemented experiment retained for rollback and comparison; superseded for forward development by `gnn_v4_shared_encoder_multi_head_design.md`
 **Owner:** Integrity modeling  
 **Applies to:** `fraud-analytics-job`, `integrity-check`, `integrity-check-extension`, `dbo.GNNScoringPolicies`, `dbo.GNN_UserEmbeddings`, `dbo.IntegrityComponentStatus`, `dbo.IntegrityDecisionResults`, administrative integrity UI  
-**Last updated:** 2026-09-18
+**Last updated:** 2026-09-22
 
 ## 1. Purpose
 

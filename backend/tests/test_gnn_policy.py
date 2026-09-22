@@ -93,6 +93,33 @@ class GNNPolicyValidationTests(unittest.TestCase):
             restored["candidate_architectures"], payload["candidate_architectures"]
         )
 
+    def test_v4_shared_heads_round_trip(self):
+        heads = {
+            key: {"enabled": True, "feature_contract": contract}
+            for key, contract in {
+                "RECIPROCAL": "reciprocal-v1", "RING": "ring-v1",
+                "TEMPORAL_BURST": "temporal-burst-v1",
+                "SUPER_NOMINATOR": "super-nominator-v1",
+                "SUPER_BENEFICIARY": "super-beneficiary-v1",
+                "BIPARTITE_DENSE_BLOCK": "bipartite-dense-block-v1",
+            }.items()
+        }
+        draft = policy(
+            serving_mode="shared_encoder_multi_head",
+            selection_metric="validation_overall_pr_auc",
+            pattern_heads=heads,
+        )
+        _validate_gnn_policy(draft)
+        configuration = _gnn_configuration_from_payload(draft.model_dump())
+        self.assertEqual(configuration["schema_version"], 4)
+        self.assertEqual(configuration["pattern_heads"], heads)
+        row = (41, 4, "ACTIVE", True, True, json.dumps(configuration),
+               False, "MEDIUM", None, "creator", None, "updater", None, None)
+        restored = _gnn_policy_row(row)
+        self.assertEqual(restored["serving_mode"], "shared_encoder_multi_head")
+        self.assertEqual(restored["selection_metric"], "validation_overall_pr_auc")
+        self.assertEqual(restored["pattern_heads"], heads)
+
 
 class GNNPolicyEndpointTests(unittest.IsolatedAsyncioTestCase):
     @patch("routers.setup_router.sqlhelper.create_gnn_scoring_policy_draft")

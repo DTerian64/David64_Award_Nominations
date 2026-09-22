@@ -317,6 +317,28 @@ def _stream_head_from_blob(
         return None
     try:
         head["_module"] = _build_decoder(head)
+        if head.get("model_schema_version") == 4:
+            contracts = head.get("pattern_feature_contracts") or {}
+            states = head.get("pattern_head_states") or {}
+            decoder_states = head.get("pattern_decoder_state_dicts") or {}
+            if not isinstance(contracts, dict) or not isinstance(states, dict):
+                raise ValueError("Invalid v4 pattern-head contract")
+            head["_pattern_modules"] = {}
+            for key, state in states.items():
+                if state.get("state") != "ACTIVE":
+                    continue
+                contract = contracts.get(key)
+                columns = _v4_pattern_columns(contract)
+                if not set(columns) <= set(head["nomination_feature_columns"]):
+                    raise ValueError(f"V4 {key} feature contract does not match decoder")
+                state_dict = decoder_states.get(key)
+                if state_dict is None:
+                    raise ValueError(f"V4 {key} is ACTIVE without decoder weights")
+                head["_pattern_modules"][key] = _build_decoder({
+                    **head,
+                    "nomination_feature_columns": columns,
+                    "decoder_state_dict": state_dict,
+                })
     except Exception as exc:
         logger.error(
             "GNN decoder for tenant %d does not match the P2P architecture: %s",
@@ -392,6 +414,22 @@ def _build_decoder(head: dict):
     module.load_state_dict(head["decoder_state_dict"], strict=True)
     module.eval()
     return module
+
+
+_V4_PATTERN_CONTRACTS = {
+    "reciprocal-v1": ("LogPriorDirectedPairCount", "LogPriorReversePairCount", "LogDirectedPairCount30d"),
+    "ring-v1": ("LogPriorDirectedPairCount", "LogPriorReversePairCount", "LogReverseTwoHopPathCount", "LogReverseThreeHopPathCount"),
+    "temporal-burst-v1": ("LogNominatorOutgoingCount30d", "LogNominatorUniqueBeneficiaries30d", "LogBeneficiaryIncomingCount30d", "LogBeneficiaryUniqueNominators30d", "LogBeneficiaryIncomingCount1h", "LogEndpointEdgeCount1h"),
+    "super-nominator-v1": ("LogNominatorOutgoingCount30d", "LogNominatorUniqueBeneficiaries30d", "LogDirectedPairCount30d"),
+    "super-beneficiary-v1": ("LogBeneficiaryIncomingCount30d", "LogBeneficiaryUniqueNominators30d", "LogBeneficiaryIncomingCount1h"),
+    "bipartite-dense-block-v1": ("LogNominatorOutgoingCount30d", "LogNominatorUniqueBeneficiaries30d", "LogBeneficiaryIncomingCount30d", "LogBeneficiaryUniqueNominators30d", "LogEndpointEdgeCount1h"),
+}
+
+
+def _v4_pattern_columns(contract: str | None) -> tuple[str, ...]:
+    if contract not in _V4_PATTERN_CONTRACTS:
+        raise ValueError(f"Unsupported v4 pattern feature contract: {contract}")
+    return _V4_PATTERN_CONTRACTS[contract]
 
 
 # ── Feature preparation ───────────────────────────────────────────────────────
@@ -875,13 +913,10 @@ def _assess_gnn_inner(
         component_status.get("serving_version") if component_status else None
     )
     # Policy activation and artifact publication are separate transactions.  A
-    # tenant may therefore have a v3 policy while its last healthy pointer is
-    # still a v2 bundle.  Keep serving that immutable v2 bundle until training
-    # atomically advances the component pointer to a published v3 bundle.
-    if (
-        policy.get("serving_mode") == "scenario_specialists"
-        and str(serving_version or "").startswith("gnn-v3-")
-    ):
+    # tenant may therefore have a v4 policy while its last healthy pointer is
+    # still a v2 or v3 bundle. Route by the immutable serving pointer, not the
+    # new policy mode, until training atomically activates a v4 bundle.
+    if str(serving_version or "").startswith("gnn-v3-"):
         return _assess_specialists_inner(
             details, tenant_id, component_status, policy
         )
@@ -1042,7 +1077,69 @@ def _assess_gnn_inner(
 
     with torch.no_grad():
         logit = head["_module"](torch.from_numpy(z)).squeeze()
+        if head.get("model_schema_version") == 4:
+            overall_calibration = (head.get("calibration") or {}).get("OVERALL")
+            if not overall_calibration:
+                raise ValueError("V4 overall calibration is missing")
+            logit = (
+                float(overall_calibration["slope"]) * logit
+                + float(overall_calibration["intercept"])
+            )
         fraud_prob = float(torch.sigmoid(logit))
+
+    pattern_heads = None
+    evidence = None
+    if head.get("model_schema_version") == 4:
+        pattern_heads = {}
+        for key, state in (head.get("pattern_head_states") or {}).items():
+            published_state = str(state.get("state") or "DIAGNOSTIC_ONLY")
+            if published_state != "ACTIVE":
+                pattern_heads[key] = {"status": published_state}
+                continue
+            try:
+                columns = _v4_pattern_columns(
+                    (head.get("pattern_feature_contracts") or {}).get(key)
+                )
+                indices = [head["nomination_feature_columns"].index(name) for name in columns]
+                pattern_z = np.concatenate([
+                    z_nom.reshape(1, -1), z_ben.reshape(1, -1),
+                    nomination_features[:, indices],
+                ], axis=1)
+                with torch.no_grad():
+                    pattern_logit = head["_pattern_modules"][key](
+                        torch.from_numpy(pattern_z)
+                    ).squeeze()
+                    calibration = (head.get("calibration") or {}).get(key)
+                    if not calibration:
+                        raise ValueError("Active pattern calibration is missing")
+                    pattern_logit = (
+                        float(calibration["slope"]) * pattern_logit
+                        + float(calibration["intercept"])
+                    )
+                    probability = float(torch.sigmoid(pattern_logit))
+                pattern_score = int(round(probability * 100))
+                pattern_heads[key] = {
+                    "status": "ACTIVE",
+                    "probability": round(probability, 4),
+                    "score": pattern_score,
+                    "risk_level": _risk_level(pattern_score, _thresholds(policy)),
+                    "feature_contract": head["pattern_feature_contracts"][key],
+                }
+            except Exception:
+                logger.exception("Optional GNN v4 pattern head %s failed", key)
+                pattern_heads[key] = {"status": "FAILED", "reason": "INFERENCE_FAILED"}
+        material = sorted(
+            (
+                (key, value) for key, value in pattern_heads.items()
+                if value.get("status") == "ACTIVE"
+                and value.get("risk_level") in {"MEDIUM", "HIGH", "CRITICAL"}
+            ),
+            key=lambda item: (-item[1]["probability"], item[0]),
+        )
+        evidence = {
+            "material_patterns": [key for key, _ in material],
+            "primary_pattern": material[0][0] if material else None,
+        }
 
     fraud_score = int(round(fraud_prob * 100))
     thresholds = _thresholds(policy)
@@ -1084,5 +1181,9 @@ def _assess_gnn_inner(
         ),
         "_policy": policy,
     }
+    if pattern_heads is not None:
+        result["pattern_heads"] = pattern_heads
+        result["evidence"] = evidence
+        result["model_schema_version"] = 4
     result.update(component_availability.available_metadata(component_status))
     return result

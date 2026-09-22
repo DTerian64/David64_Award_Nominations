@@ -56,6 +56,26 @@ def test_specialist_bundle_uses_gnn_schema_version_three():
     assert payload["aggregate"]["decisive_specialists"] == ["RING"]
 
 
+def test_shared_head_evidence_never_replaces_overall_probability():
+    payload = decision_contract.gnn_result({
+        "model_available": True,
+        "model_schema_version": 4,
+        "fraud_score": 41,
+        "fraud_prob": 0.41,
+        "risk_level": "LOW",
+        "model_version": "gnn-v4-test",
+        "pattern_heads": {
+            "RING": {"status": "ACTIVE", "probability": 0.92, "score": 92},
+            "RECIPROCAL": {"status": "DIAGNOSTIC_ONLY"},
+        },
+        "evidence": {"material_patterns": ["RING"], "primary_pattern": "RING"},
+    })
+    assert payload["schema_version"] == 4
+    assert payload["score"] == 41
+    assert payload["model_probability"] == 0.41
+    assert payload["pattern_heads"]["RING"]["probability"] == 0.92
+
+
 def test_each_engine_preserves_its_own_kind_of_evidence():
     semantic = CheckResult(
         action="flag",

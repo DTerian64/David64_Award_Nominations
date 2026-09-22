@@ -88,6 +88,31 @@ def test_returns_none_when_tenant_has_no_active_policy():
     assert load_active_policy(Connection(None), 7) is None
 
 
+def test_loads_v4_shared_multi_head_policy():
+    configuration = _configuration()
+    configuration["schema_version"] = 4
+    configuration["serving_mode"] = "shared_encoder_multi_head"
+    configuration["training"].update({
+        "overall_loss_weight": 1.0,
+        "pattern_total_loss_weight": 1.0,
+    })
+    configuration["architecture_selection"]["primary_metric"] = "validation_overall_pr_auc"
+    configuration["pattern_heads"] = {
+        key: {"enabled": True, "feature_contract": contract}
+        for key, contract in {
+            "RECIPROCAL": "reciprocal-v1", "RING": "ring-v1",
+            "TEMPORAL_BURST": "temporal-burst-v1",
+            "SUPER_NOMINATOR": "super-nominator-v1",
+            "SUPER_BENEFICIARY": "super-beneficiary-v1",
+            "BIPARTITE_DENSE_BLOCK": "bipartite-dense-block-v1",
+        }.items()
+    }
+    loaded = load_active_policy(Connection(_row(configuration=configuration)), 7)
+    assert loaded.serving_mode == "shared_encoder_multi_head"
+    assert loaded.selection_metric == "validation_overall_pr_auc"
+    assert len(loaded.pattern_heads) == 6
+
+
 def test_rejects_unsupported_candidate_architecture():
     try:
         load_active_policy(Connection(_row(["graphsage", "unknown"])), 7)
@@ -103,7 +128,7 @@ def test_rejects_unknown_configuration_schema():
     try:
         load_active_policy(Connection(_row(configuration=configuration)), 7)
     except ValueError as exc:
-        assert "schema_version 1 or 3" in str(exc)
+        assert "schema_version 1, 3, or 4" in str(exc)
     else:
         raise AssertionError("unknown configuration schema was accepted")
 

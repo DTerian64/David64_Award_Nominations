@@ -24,16 +24,31 @@ interface GNNPolicy {
   minimum_users: number;
   minimum_positives_per_split: number;
   candidate_architectures: Architecture[];
-  selection_metric: 'holdout_pr_auc';
+  selection_metric: 'holdout_pr_auc' | 'validation_overall_pr_auc';
   minimum_improvement_over_mlp: number;
   incumbent_tie_tolerance: number;
   minimum_eligible_graph_candidates: number;
   thresholds: { low: number; medium: number; high: number; critical: number };
   explanation_enabled: boolean;
   explanation_minimum_risk: Risk;
-  serving_mode: 'single_winner_v2' | 'scenario_specialists';
+  serving_mode: 'single_winner_v2' | 'scenario_specialists' | 'shared_encoder_multi_head';
   behavior_tracks: Record<string, Record<string, unknown>>;
   aggregation: Record<string, unknown>;
+  overall_loss_weight: number;
+  pattern_total_loss_weight: number;
+  overall_tie_tolerance: number;
+  minimum_graph_value_over_raw_mlp: number;
+  minimum_message_passing_value_over_engineered_graph_mlp: number;
+  pattern_heads: Record<string, { enabled: boolean; feature_contract: string }>;
+  maximum_holdout_inference_ms: number;
+  maximum_overall_holdout_brier_score: number;
+  minimum_pattern_train_positives: number;
+  minimum_pattern_validation_positives: number;
+  minimum_pattern_holdout_positives: number;
+  minimum_pattern_holdout_negatives: number;
+  maximum_pattern_holdout_brier_score: number;
+  maximum_pattern_validation_pr_auc_range: number;
+  minimum_pattern_improvement_over_engineered_mlp: number;
   published_at: string | null;
   published_by: string | null;
 }
@@ -55,6 +70,15 @@ const ARCHITECTURES: { value: Architecture; label: string }[] = [
   { value: 'gcn', label: 'GCN' },
   { value: 'gatv2', label: 'GATv2' },
 ];
+
+const V4_HEADS: Record<string, string> = {
+  RECIPROCAL: 'reciprocal-v1',
+  RING: 'ring-v1',
+  TEMPORAL_BURST: 'temporal-burst-v1',
+  SUPER_NOMINATOR: 'super-nominator-v1',
+  SUPER_BENEFICIARY: 'super-beneficiary-v1',
+  BIPARTITE_DENSE_BLOCK: 'bipartite-dense-block-v1',
+};
 
 const NumberField: React.FC<{
   label: string;
@@ -150,6 +174,17 @@ export const GNNPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) =>
       : [...current.candidate_architectures, architecture];
     return { ...current, candidate_architectures: selected };
   });
+  const changeServingMode = (mode: GNNPolicy['serving_mode']) => setDraft(current => current ? {
+    ...current,
+    serving_mode: mode,
+    selection_metric: mode === 'shared_encoder_multi_head'
+      ? 'validation_overall_pr_auc' : 'holdout_pr_auc',
+    pattern_heads: mode === 'shared_encoder_multi_head'
+      ? Object.fromEntries(Object.entries(V4_HEADS).map(([key, feature_contract]) => [
+          key, current.pattern_heads?.[key] || { enabled: true, feature_contract },
+        ]))
+      : current.pattern_heads,
+  } : current);
 
   const savePayload = draft && {
     training_enabled: draft.training_enabled,
@@ -175,6 +210,21 @@ export const GNNPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) =>
     serving_mode: draft.serving_mode,
     behavior_tracks: draft.behavior_tracks,
     aggregation: draft.aggregation,
+    overall_loss_weight: draft.overall_loss_weight ?? 1,
+    pattern_total_loss_weight: draft.pattern_total_loss_weight ?? 1,
+    overall_tie_tolerance: draft.overall_tie_tolerance ?? 0.01,
+    minimum_graph_value_over_raw_mlp: draft.minimum_graph_value_over_raw_mlp ?? 0.02,
+    minimum_message_passing_value_over_engineered_graph_mlp: draft.minimum_message_passing_value_over_engineered_graph_mlp ?? 0,
+    pattern_heads: draft.pattern_heads || {},
+    maximum_holdout_inference_ms: draft.maximum_holdout_inference_ms ?? 500,
+    maximum_overall_holdout_brier_score: draft.maximum_overall_holdout_brier_score ?? 0.25,
+    minimum_pattern_train_positives: draft.minimum_pattern_train_positives ?? 15,
+    minimum_pattern_validation_positives: draft.minimum_pattern_validation_positives ?? 5,
+    minimum_pattern_holdout_positives: draft.minimum_pattern_holdout_positives ?? 5,
+    minimum_pattern_holdout_negatives: draft.minimum_pattern_holdout_negatives ?? 100,
+    maximum_pattern_holdout_brier_score: draft.maximum_pattern_holdout_brier_score ?? 0.25,
+    maximum_pattern_validation_pr_auc_range: draft.maximum_pattern_validation_pr_auc_range ?? 0.5,
+    minimum_pattern_improvement_over_engineered_mlp: draft.minimum_pattern_improvement_over_engineered_mlp ?? 0,
   };
 
   return (
@@ -211,6 +261,13 @@ export const GNNPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) =>
 
               <section className="rounded-lg border border-gray-200 p-4">
                 <h3 className="text-sm font-semibold text-gray-800">Operational controls</h3>
+                <label className="mt-3 block text-xs text-gray-500">Serving mode
+                  <select disabled={!draft} value={policy.serving_mode} onChange={event => changeServingMode(event.target.value as GNNPolicy['serving_mode'])} className="mt-1 w-full rounded-md border border-gray-300 px-2.5 py-2 text-sm text-gray-800 disabled:bg-gray-50">
+                    <option value="single_winner_v2">Single binary GNN (v2)</option>
+                    <option value="scenario_specialists">Independent scenario specialists (v3)</option>
+                    <option value="shared_encoder_multi_head">Shared encoder with pattern heads (v4)</option>
+                  </select>
+                </label>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" disabled={!draft} checked={policy.training_enabled} onChange={event => edit({ training_enabled: event.target.checked })} />Run GNN candidate training</label>
                   <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" disabled={!draft} checked={policy.inference_enabled} onChange={event => edit({ inference_enabled: event.target.checked })} />Use the selected GNN in live scoring</label>
@@ -223,7 +280,7 @@ export const GNNPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) =>
                   <NumberField label="Hidden dimension" value={policy.hidden_dim} disabled={!draft} min={1} onChange={value => edit({ hidden_dim: value })} />
                   <NumberField label="Embedding dimension" value={policy.embed_dim} disabled={!draft} min={1} onChange={value => edit({ embed_dim: value })} />
                   <NumberField label="Epochs" value={policy.epochs} disabled={!draft} min={1} onChange={value => edit({ epochs: value })} />
-                  <NumberField label="Rolling folds" value={policy.rolling_folds} disabled={!draft} min={2} onChange={value => edit({ rolling_folds: value })} />
+                  <NumberField label="Rolling folds" value={policy.rolling_folds} disabled={!draft} min={policy.serving_mode === 'shared_encoder_multi_head' ? 3 : 2} onChange={value => edit({ rolling_folds: value })} />
                   <NumberField label="History window (days)" value={policy.window_days} disabled={!draft} min={1} onChange={value => edit({ window_days: value })} />
                   <NumberField label="Embedding retention (days)" value={policy.embedding_retention_days} disabled={!draft} min={1} onChange={value => edit({ embedding_retention_days: value })} />
                   <NumberField label="Stale after (days)" value={policy.stale_embedding_days} disabled={!draft} min={1} onChange={value => edit({ stale_embedding_days: value })} />
@@ -235,16 +292,37 @@ export const GNNPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) =>
 
               <section className="rounded-lg border border-gray-200 p-4">
                 <h3 className="text-sm font-semibold text-gray-800">Operational architecture selection</h3>
-                <p className="mt-1 text-xs text-gray-500">MLP remains the admission baseline. Only a graph candidate can become the live GNN architecture.</p>
+                <p className="mt-1 text-xs text-gray-500">{policy.serving_mode === 'shared_encoder_multi_head' ? 'Architecture is selected on temporal validation. Final testing then compares the frozen winner with raw-feature and engineered-graph MLP controls.' : 'MLP remains the admission baseline. Only a graph candidate can become the live GNN architecture.'}</p>
                 <div className="mt-3 flex flex-wrap gap-4">
                   {ARCHITECTURES.map(item => <label key={item.value} className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" disabled={!draft} checked={policy.candidate_architectures.includes(item.value)} onChange={() => toggleArchitecture(item.value)} />{item.label}</label>)}
                 </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                {policy.serving_mode !== 'shared_encoder_multi_head' && <div className="mt-3 grid gap-3 sm:grid-cols-3">
                   <NumberField label="Minimum improvement over MLP" value={policy.minimum_improvement_over_mlp} disabled={!draft} min={0} max={1} step={0.001} onChange={value => edit({ minimum_improvement_over_mlp: value })} />
                   <NumberField label="Incumbent tie tolerance" value={policy.incumbent_tie_tolerance} disabled={!draft} min={0} max={1} step={0.001} onChange={value => edit({ incumbent_tie_tolerance: value })} />
                   <NumberField label="Minimum eligible graph candidates" value={policy.minimum_eligible_graph_candidates} disabled={!draft} min={1} max={policy.candidate_architectures.length || 1} onChange={value => edit({ minimum_eligible_graph_candidates: value })} />
-                </div>
-                <p className="mt-3 text-xs text-gray-500">Selection metric: holdout PR-AUC</p>
+                </div>}
+                {policy.serving_mode === 'shared_encoder_multi_head' && <div className="mt-3 space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <NumberField label="Overall loss weight" value={policy.overall_loss_weight ?? 1} disabled={!draft} min={0.001} step={0.1} onChange={value => edit({ overall_loss_weight: value })} />
+                    <NumberField label="Pattern loss weight" value={policy.pattern_total_loss_weight ?? 1} disabled={!draft} min={0.001} step={0.1} onChange={value => edit({ pattern_total_loss_weight: value })} />
+                    <NumberField label="Validation tie tolerance" value={policy.overall_tie_tolerance ?? 0.01} disabled={!draft} min={0} max={1} step={0.001} onChange={value => edit({ overall_tie_tolerance: value })} />
+                    <NumberField label="Required value over raw MLP" value={policy.minimum_graph_value_over_raw_mlp ?? 0.02} disabled={!draft} min={0} max={1} step={0.001} onChange={value => edit({ minimum_graph_value_over_raw_mlp: value })} />
+                    <NumberField label="Required value over engineered MLP" value={policy.minimum_message_passing_value_over_engineered_graph_mlp ?? 0} disabled={!draft} min={0} max={1} step={0.001} onChange={value => edit({ minimum_message_passing_value_over_engineered_graph_mlp: value })} />
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(V4_HEADS).map(([key, feature_contract]) => <label key={key} className="flex items-center gap-2 text-xs text-gray-700"><input type="checkbox" disabled={!draft} checked={policy.pattern_heads?.[key]?.enabled ?? true} onChange={event => edit({ pattern_heads: { ...policy.pattern_heads, [key]: { enabled: event.target.checked, feature_contract } } })} />{key.replaceAll('_', ' ')}</label>)}</div>
+                  <details className="rounded border border-gray-200 p-3"><summary className="cursor-pointer text-xs font-semibold text-gray-700">Final-test and pattern-head admission gates</summary><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <NumberField label="Maximum GNN inference (ms)" value={policy.maximum_holdout_inference_ms ?? 500} disabled={!draft} min={1} onChange={value => edit({ maximum_holdout_inference_ms: value })} />
+                    <NumberField label="Maximum overall Brier score" value={policy.maximum_overall_holdout_brier_score ?? 0.25} disabled={!draft} min={0} max={1} step={0.01} onChange={value => edit({ maximum_overall_holdout_brier_score: value })} />
+                    <NumberField label="Pattern training positives" value={policy.minimum_pattern_train_positives ?? 15} disabled={!draft} min={1} onChange={value => edit({ minimum_pattern_train_positives: value })} />
+                    <NumberField label="Pattern validation positives per period" value={policy.minimum_pattern_validation_positives ?? 5} disabled={!draft} min={1} onChange={value => edit({ minimum_pattern_validation_positives: value })} />
+                    <NumberField label="Pattern final-test positives" value={policy.minimum_pattern_holdout_positives ?? 5} disabled={!draft} min={1} onChange={value => edit({ minimum_pattern_holdout_positives: value })} />
+                    <NumberField label="Pattern final-test negatives" value={policy.minimum_pattern_holdout_negatives ?? 100} disabled={!draft} min={1} onChange={value => edit({ minimum_pattern_holdout_negatives: value })} />
+                    <NumberField label="Maximum pattern Brier score" value={policy.maximum_pattern_holdout_brier_score ?? 0.25} disabled={!draft} min={0} max={1} step={0.01} onChange={value => edit({ maximum_pattern_holdout_brier_score: value })} />
+                    <NumberField label="Maximum validation PR-AUC range" value={policy.maximum_pattern_validation_pr_auc_range ?? 0.5} disabled={!draft} min={0} max={1} step={0.01} onChange={value => edit({ maximum_pattern_validation_pr_auc_range: value })} />
+                    <NumberField label="Required pattern value over engineered MLP" value={policy.minimum_pattern_improvement_over_engineered_mlp ?? 0} disabled={!draft} min={0} max={1} step={0.001} onChange={value => edit({ minimum_pattern_improvement_over_engineered_mlp: value })} />
+                  </div></details>
+                </div>}
+                <p className="mt-3 text-xs text-gray-500">Selection metric: {policy.selection_metric.replaceAll('_', ' ')}</p>
               </section>
 
               <section className="rounded-lg border border-gray-200 p-4">

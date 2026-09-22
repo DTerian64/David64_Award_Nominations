@@ -59,6 +59,7 @@ interface GNNManifest {
   graph_value_evaluation?: JsonRecord;
   specialist_evaluation?: JsonRecord;
   specialists?: JsonRecord;
+  shared_multi_head_evaluation?: JsonRecord;
   training_policy?: JsonRecord;
   artifacts?: ManifestArtifact[];
 }
@@ -92,6 +93,8 @@ const label = (value: unknown): string => {
 };
 
 const candidateLabel = (value: string): string => ({
+  raw_feature_mlp: 'Raw-feature MLP control',
+  engineered_graph_mlp: 'Engineered-graph MLP control',
   mlp: 'MLP admission baseline',
   mlp_tabular: 'GNN base-feature MLP',
   mlp_causal: 'Causal-feature MLP',
@@ -100,6 +103,20 @@ const candidateLabel = (value: string): string => ({
   gcn: 'GCN',
   gatv2: 'GATv2',
 }[value] || label(value));
+
+const SharedMultiHeadComparison: React.FC<{ evaluation: JsonRecord }> = ({ evaluation }) => {
+  const selection = asRecord(evaluation.selection) || {};
+  const candidates = asRecord(evaluation.validation_candidates) || {};
+  const final = asRecord(evaluation.final_test) || {};
+  const models = asRecord(final.models) || {};
+  const heads = asRecord(final.head_states) || {};
+  return <section className="space-y-4">
+    <div className="rounded-lg border border-violet-100 bg-violet-50/40 p-4 text-xs"><h4 className="font-semibold text-violet-900">Shared-encoder architecture selection</h4><p className="mt-1 text-violet-700">Selected {String(selection.selected_architecture || 'none').toUpperCase()} using overall PR-AUC across validation periods. Pattern PR-AUC only breaks close ties. The final test did not select an architecture.</p></div>
+    <div className="overflow-x-auto rounded-lg border border-gray-200"><table className="w-full text-left text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Validation overall PR-AUC</th><th className="px-3 py-2">Validation pattern macro PR-AUC</th><th className="px-3 py-2">Status</th></tr></thead><tbody className="divide-y divide-gray-100">{Object.entries(candidates).map(([name, raw]) => { const row = asRecord(raw) || {}; return <tr key={name}><td className="px-3 py-2 font-medium">{candidateLabel(name)}</td><td className="px-3 py-2 font-mono">{percent(row.validation_overall_pr_auc)}</td><td className="px-3 py-2 font-mono">{percent(row.validation_macro_pattern_pr_auc)}</td><td className="px-3 py-2">{name === selection.selected_architecture ? 'Selected' : label(row.status)}</td></tr>; })}</tbody></table></div>
+    {Object.keys(models).length > 0 && <div className="overflow-x-auto rounded-lg border border-gray-200"><div className="border-b border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700">Final temporal test · {final.admitted ? 'admitted' : 'not admitted'}</div><table className="w-full text-left text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Model</th><th className="px-3 py-2">Overall PR-AUC</th><th className="px-3 py-2">Brier score</th><th className="px-3 py-2">Fraud / total</th></tr></thead><tbody className="divide-y divide-gray-100">{Object.entries(models).map(([name, raw]) => { const overall = asRecord(asRecord(raw)?.overall) || {}; return <tr key={name}><td className="px-3 py-2 font-medium">{candidateLabel(name)}</td><td className="px-3 py-2 font-mono">{percent(overall.pr_auc)}</td><td className="px-3 py-2 font-mono">{decimal(overall.brier_score)}</td><td className="px-3 py-2 font-mono">{integer(overall.positive_count)} / {integer(overall.count)}</td></tr>; })}</tbody></table></div>}
+    {Object.keys(heads).length > 0 && <div className="overflow-x-auto rounded-lg border border-gray-200"><div className="border-b border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700">Pattern-head admission</div><table className="w-full text-left text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Pattern</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Training positives</th><th className="px-3 py-2">Final positives</th><th className="px-3 py-2">Final PR-AUC</th></tr></thead><tbody className="divide-y divide-gray-100">{Object.entries(heads).map(([name, raw]) => { const row = asRecord(raw) || {}; const test = asRecord(row.final_test) || {}; return <tr key={name}><td className="px-3 py-2 font-medium">{label(name)}</td><td className="px-3 py-2">{label(row.state)}</td><td className="px-3 py-2 font-mono">{integer(row.training_positive_count)}</td><td className="px-3 py-2 font-mono">{integer(test.positive_count)}</td><td className="px-3 py-2 font-mono">{percent(test.pr_auc)}</td></tr>; })}</tbody></table></div>}
+  </section>;
+};
 
 const dateTime = (value: string | null | undefined): string => {
   if (!value) return '—';
@@ -527,6 +544,7 @@ export const GNNTrainingRunsModal: React.FC<Props> = ({ impersonatedUPN, onClose
     || asRecord((detail?.run || selectedRun)?.diagnostics.specialists);
   const specialistMode = selection?.serving_mode === 'scenario_specialists'
     || specialistEvaluation !== null;
+  const sharedEvaluation = asRecord(detail?.manifest?.shared_multi_head_evaluation);
   const artifacts = detail?.manifest?.artifacts || [];
 
   return (
@@ -624,7 +642,9 @@ export const GNNTrainingRunsModal: React.FC<Props> = ({ impersonatedUPN, onClose
                       {(selectedRun.reason_detail || detail?.message) && <p className="mt-3 text-xs text-gray-600">{selectedRun.reason_detail || detail?.message}</p>}
                     </section>
 
-                    {specialistEvaluation ? (
+                    {sharedEvaluation ? (
+                      <SharedMultiHeadComparison evaluation={sharedEvaluation} />
+                    ) : specialistEvaluation ? (
                       <SpecialistComparison evaluation={specialistEvaluation} serving={servingSpecialists} />
                     ) : selection && Object.keys(asRecord(selection.candidates) || {}).length > 0 ? (
                       <CandidateComparison selection={selection} />

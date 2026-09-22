@@ -7,9 +7,11 @@ from dataclasses import dataclass
 
 SERVING_MODE_V2 = "single_winner_v2"
 SERVING_MODE_SPECIALISTS = "scenario_specialists"
+SERVING_MODE_SHARED_MULTI_HEAD = "shared_encoder_multi_head"
 SERVING_MODES = (
     SERVING_MODE_V2,
     SERVING_MODE_SPECIALISTS,
+    SERVING_MODE_SHARED_MULTI_HEAD,
 )
 
 BEHAVIOR_TRACKS = (

@@ -79,6 +79,8 @@ from .gnn.evaluators.graph_value_by_ablation import (  # noqa: E402
 )
 from .gnn.policy import GNNPolicy, load_active_policy  # noqa: E402
 from .gnn.specialists.contracts import SERVING_MODE_SPECIALISTS  # noqa: E402
+from .gnn.specialists.contracts import SERVING_MODE_SHARED_MULTI_HEAD  # noqa: E402
+from .gnn.shared_multi_head_evaluator import evaluate_shared_model  # noqa: E402
 from .gnn.specialists.evaluator import (  # noqa: E402
     evaluate_specialists,
     specialist_fold_views,
@@ -258,6 +260,7 @@ def _write_head(
     policy: GNNPolicy,
     specialist_key: str | None = None,
     calibration: dict | None = None,
+    pattern_head_states: dict | None = None,
 ) -> None:
     """
     Serialise the decoder — the only artifact integrity-check downloads.
@@ -268,8 +271,12 @@ def _write_head(
     restriction is what stops a .pt file being as executable as a .pkl — do not
     add a richer object here to save a conversion.
     """
+    multi_head = hasattr(model.decoder, "overall")
     head = {
-        "decoder_state_dict":         model.decoder.net.state_dict(),
+        "decoder_state_dict":         (
+            model.decoder.overall.net.state_dict() if multi_head
+            else model.decoder.net.state_dict()
+        ),
         "decoder_hidden":             [64, 32],
         "emb_dim":                    int(model.emb_dim),
         "architecture":               str(model.architecture),
@@ -311,6 +318,18 @@ def _write_head(
         head["specialist_key"] = specialist_key
     if calibration:
         head["calibration"] = calibration
+    if multi_head:
+        head["model_schema_version"] = 4
+        head["pattern_head_states"] = pattern_head_states or {}
+        head["pattern_feature_contracts"] = {
+            key: contract for key, contract, enabled in policy.pattern_heads if enabled
+        }
+        head["pattern_decoder_state_dicts"] = {
+            key: model.decoder.patterns[key].net.state_dict()
+            for key, state in (pattern_head_states or {}).items()
+            if state.get("state") == "ACTIVE"
+            and key in model.decoder.patterns
+        }
     torch.save(head, path)
 
     # Fail here rather than in production: prove the artifact we just wrote can
@@ -692,6 +711,160 @@ def _fit_admitted_specialists(
     return models, serving, artifacts
 
 
+def _process_shared_multi_head(
+    conn, *, tenant_id: int, run_id: str, policy: GNNPolicy,
+    users: list, nominations: list, labelled, folds: list[dict],
+    base_diagnostics: dict, label_source_counts: dict, started: float,
+) -> str:
+    """Publish one v4 bundle, preserving the incumbent on failed admission."""
+    report, selected_model = evaluate_shared_model(folds, labelled, policy)
+    final = report.get("final_test") or {}
+    selected = report["selection"].get("selected_architecture")
+    admitted = bool(final.get("admitted") and selected_model is not None)
+    graph = G.build_serving_graph(
+        users, nominations, causal_window_days=policy.window_days,
+    )
+    as_of = date.today()
+    suffix = run_id.replace("-", "")[:8]
+    model_version = f"gnn-v4-{as_of:%Y%m%d}-t{tenant_id}-{suffix}"
+    graph_snapshot_id = f"gnn-graph-v4-{as_of:%Y%m%d}-t{tenant_id}-{suffix}"
+    bundle_dir = OUTPUT_DIR / "gnn" / f"tenant_{tenant_id}" / model_version
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_path = bundle_dir / "graph_snapshot.pt"
+    bundle.write_snapshot(snapshot_path, bundle.build_snapshot(
+        graph=graph, tenant_id=tenant_id, model_version=model_version,
+        graph_snapshot_id=graph_snapshot_id,
+    ))
+    artifacts: list[tuple[Path, str]] = [(snapshot_path, "explanation_graph_snapshot")]
+    for architecture, candidate in report["validation_candidates"].items():
+        candidate_path = bundle_dir / "candidates" / architecture / "metrics.json"
+        candidate_path.parent.mkdir(parents=True, exist_ok=True)
+        write_manifest(candidate_path, candidate)
+        artifacts.append((candidate_path, f"candidate_{architecture}_metrics"))
+    if final:
+        for architecture, metrics in final["models"].items():
+            metrics_path = bundle_dir / "candidates" / architecture / "final_test_metrics.json"
+            metrics_path.parent.mkdir(parents=True, exist_ok=True)
+            write_manifest(metrics_path, metrics)
+            artifacts.append((metrics_path, f"candidate_{architecture}_final_test"))
+    if admitted:
+        serving_dir = bundle_dir / "serving"
+        serving_dir.mkdir(parents=True, exist_ok=True)
+        encoder_path = serving_dir / "encoder.pt"
+        decoder_path = serving_dir / "decoder.pt"
+        _write_encoder(
+            selected_model, graph, model_version, graph_snapshot_id,
+            encoder_path, policy,
+        )
+        _write_head(
+            selected_model, graph, model_version, graph_snapshot_id,
+            {"final_test_pr_auc": final["models"][selected]["overall"]["pr_auc"]},
+            decoder_path, policy, pattern_head_states=final["head_states"],
+            calibration=final["calibration"],
+        )
+        artifacts.extend([
+            (encoder_path, "serving_encoder"),
+            (decoder_path, "serving_decoder"),
+        ])
+    manifest_path = bundle_dir / "manifest.json"
+    write_manifest(manifest_path, {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "artifact_type": "graph_neural_network",
+        "model_schema_version": 4,
+        "tenant_id": tenant_id,
+        "model_version": model_version,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "graph_snapshot_id": graph_snapshot_id,
+        "graph_snapshot_as_of": graph.get(
+            "graph_snapshot_as_of", graph["t_graph"]
+        ).isoformat(),
+        "feature_schema_version": graph["feature_schema_version"],
+        "training_policy": policy.snapshot(),
+        "selection": report["selection"],
+        "shared_multi_head_evaluation": report,
+        "artifacts": [{
+            **artifact_descriptor(path, role),
+            "relative_path": path.relative_to(bundle_dir).as_posix(),
+        } for path, role in artifacts],
+    })
+    artifacts.append((manifest_path, "operational_manifest"))
+    prefix = gnn_bundle_prefix(tenant_id, model_version)
+    uploaded = []
+    for path, _role in artifacts:
+        relative_parent = path.relative_to(bundle_dir).parent.as_posix()
+        folder = prefix if relative_parent == "." else f"{prefix}/{relative_parent}"
+        uploaded.append(upload_artifact(path, blob_folder=folder))
+    if os.getenv("AZURE_STORAGE_ACCOUNT") and not all(uploaded):
+        raise RuntimeError("GNN v4 bundle upload incomplete; incumbent preserved")
+
+    selected_metrics = (final.get("models") or {}).get(selected, {})
+    diagnostics = {
+        **{key: value for key, value in base_diagnostics.items() if key != "selection"},
+        "diagnostics_schema_version": 4,
+        "model_version": model_version,
+        "serving_mode": SERVING_MODE_SHARED_MULTI_HEAD,
+        "selected_architecture": selected,
+        "selection_reason": report["selection"].get("reason"),
+        "validation_overall_pr_auc": report["selection"].get(
+            "validation_overall_pr_auc"
+        ),
+        "final_test_overall": selected_metrics.get("overall"),
+        "raw_mlp_overall": (
+            (final.get("models") or {}).get("raw_feature_mlp") or {}
+        ).get("overall"),
+        "engineered_graph_mlp_overall": (
+            (final.get("models") or {}).get("engineered_graph_mlp") or {}
+        ).get("overall"),
+        "head_states": {
+            key: {
+                "state": value["state"],
+                "training_positive_count": value.get("training_positive_count"),
+                "final_test_positive_count": (
+                    value.get("final_test") or {}
+                ).get("positive_count"),
+                "final_test_pr_auc": (
+                    value.get("final_test") or {}
+                ).get("pr_auc"),
+            }
+            for key, value in (final.get("head_states") or {}).items()
+        },
+        "label_source_counts": label_source_counts,
+        "artifact_bundle_prefix": prefix,
+        "graph_snapshot_id": graph_snapshot_id,
+        "admitted": admitted,
+    }
+    if not admitted:
+        reason = (
+            "NO_VALIDATION_CANDIDATE" if not selected
+            else "NO_MESSAGE_PASSING_VALUE_OVER_BASELINES"
+        )
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+            reason_code=reason,
+            reason_detail=(
+                "V4 final temporal test did not pass both raw-feature and "
+                "engineered-graph MLP admission margins; incumbent preserved."
+            ),
+            diagnostics=diagnostics, run_id=run_id,
+        )
+        return f"SKIPPED ({reason}; v4 manifest {model_version}; {time.monotonic() - started:.1f}s)"
+
+    user_ids = sorted(graph["user_index"], key=graph["user_index"].get)
+    with torch.no_grad():
+        embeddings = selected_model.embed_users(graph["data"]).numpy().astype(np.float32)
+    count = _publish_embeddings(conn, tenant_id, user_ids, embeddings, as_of, model_version)
+    evicted = _evict_stale_embeddings(conn, tenant_id, policy.embedding_retention_days)
+    # Only this last write makes the complete uploaded bundle visible to serving.
+    upsert_component_status(
+        conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
+        serving_status="AVAILABLE", serving_version=model_version,
+        serving_as_of=as_of, run_id=run_id,
+        diagnostics={**diagnostics, "embedding_count": count,
+                     "evicted_embedding_count": evicted},
+    )
+    return f"OK ({model_version}, {selected}, {count} embeddings; {time.monotonic() - started:.1f}s)"
+
+
 def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     t0 = time.monotonic()
     run_id = run_id or str(uuid.uuid4())
@@ -883,6 +1056,14 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         return (f"SKIPPED (supervised labels need both classes: "
                 f"train {train_pos} fraud/{train_neg} legitimate, "
                 f"eval {eval_pos} fraud/{eval_neg} legitimate)")
+
+    if policy.serving_mode == SERVING_MODE_SHARED_MULTI_HEAD:
+        return _process_shared_multi_head(
+            conn, tenant_id=tenant_id, run_id=run_id, policy=policy,
+            users=users, nominations=nominations, labelled=labelled,
+            folds=folds, base_diagnostics=base_diagnostics,
+            label_source_counts=label_source_counts, started=t0,
+        )
 
     candidate_models: dict[str, object] = {}
     candidate_metrics: dict[str, dict] = {}

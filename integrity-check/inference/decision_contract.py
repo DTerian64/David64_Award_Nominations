@@ -118,6 +118,7 @@ def graph_result(result: dict) -> dict:
 def gnn_result(result: dict) -> dict:
     payload = _common("GNN", result)
     payload["schema_version"] = (
+        4 if result.get("model_schema_version") == 4 else
         3 if result.get("specialists") is not None else GNN_ENGINE_SCHEMA_VERSION
     )
     payload.update({
@@ -136,6 +137,8 @@ def gnn_result(result: dict) -> dict:
         "bundle_version": result.get("bundle_version"),
         "specialists": result.get("specialists"),
         "aggregate": result.get("aggregate"),
+        "pattern_heads": result.get("pattern_heads"),
+        "evidence": result.get("evidence"),
         "explanation": result.get("explanation") or {
             "method": "GNNEXPLAINER",
             "status": "NOT_REQUESTED",

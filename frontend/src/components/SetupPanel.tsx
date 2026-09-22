@@ -209,6 +209,19 @@ type EvaluationDialog = {
 };
 
 const GnnSelectionSummary: React.FC<{ diagnostics: Record<string, unknown> }> = ({ diagnostics }) => {
+  const sharedHeads = asRecord(diagnostics.head_states);
+  if (diagnostics.diagnostics_schema_version === 4) {
+    const selected = String(diagnostics.selected_architecture || 'None');
+    const overall = asRecord(diagnostics.final_test_overall) || {};
+    const raw = asRecord(diagnostics.raw_mlp_overall) || {};
+    const engineered = asRecord(diagnostics.engineered_graph_mlp_overall) || {};
+    return <section className="rounded-lg border border-violet-100 bg-violet-50/40 p-3 text-xs">
+      <h4 className="font-semibold text-violet-900">Shared-encoder model</h4>
+      <p className="mt-1 text-violet-700">{selected !== 'None' ? `${selected.toUpperCase()} selected on temporal validation.` : 'No architecture passed validation.'} Final-test admission: {diagnostics.admitted ? 'admitted' : 'not admitted'}.</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3"><div className="rounded bg-white p-2">GNN final PR-AUC <strong>{diagnosticValue(overall.pr_auc)}</strong></div><div className="rounded bg-white p-2">Raw-feature MLP <strong>{diagnosticValue(raw.pr_auc)}</strong></div><div className="rounded bg-white p-2">Engineered-graph MLP <strong>{diagnosticValue(engineered.pr_auc)}</strong></div></div>
+      {sharedHeads && <div className="mt-2 grid gap-1 sm:grid-cols-2">{Object.entries(sharedHeads).map(([key, value]) => { const head = asRecord(value) || {}; return <div key={key} className="flex justify-between rounded bg-white px-2 py-1.5"><span>{diagnosticLabel(key)}</span><span>{diagnosticLabel(String(head.state || 'UNKNOWN'))} · {diagnosticValue(head.final_test_positive_count)} final positives</span></div>; })}</div>}
+    </section>;
+  }
   const specialists = asRecord(diagnostics.specialists);
   if (specialists && Object.keys(specialists).length > 0) {
     const active = Object.values(specialists).filter(raw => {

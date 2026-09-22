@@ -284,8 +284,8 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
     except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError("GNN ConfigurationJson is invalid") from exc
     schema_version = configuration.get("schema_version") if isinstance(configuration, dict) else None
-    if schema_version not in {1, 3}:
-        raise ValueError("GNN ConfigurationJson must use schema_version 1 or 3")
+    if schema_version not in {1, 3, 4}:
+        raise ValueError("GNN ConfigurationJson must use schema_version 1, 3, or 4")
     try:
         model = configuration["model"]
         training = configuration["training"]
@@ -317,13 +317,15 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
             training["minimum_positive_labels_per_split"]
         ),
         "candidate_architectures": candidates,
-        "selection_metric": str(selection["selection_metric"]).lower(),
+        "selection_metric": str(selection.get(
+            "primary_metric" if schema_version == 4 else "selection_metric", ""
+        )).lower(),
         "minimum_improvement_over_mlp": float(
-            selection["minimum_improvement_over_mlp"]
+            selection.get("minimum_improvement_over_mlp", 0.0)
         ),
-        "incumbent_tie_tolerance": float(selection["incumbent_tie_tolerance"]),
+        "incumbent_tie_tolerance": float(selection.get("incumbent_tie_tolerance", 0.01)),
         "minimum_eligible_graph_candidates": int(
-            selection["minimum_eligible_graph_candidates"]
+            selection.get("minimum_eligible_graph_candidates", 1)
         ),
         "thresholds": {
             "low": float(routing["low_threshold"]),
@@ -341,6 +343,7 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
             "method": "maximum_calibrated_probability",
             "mixed_minimum_specialists": 2,
         },
+        "pattern_heads": configuration.get("pattern_heads") or {},
     }
 
 

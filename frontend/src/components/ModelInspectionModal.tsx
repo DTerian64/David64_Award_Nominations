@@ -110,6 +110,7 @@ interface ModelManifest {
   training_policy?: Record<string, unknown>;
   specialist_evaluation?: JsonRecord;
   specialists?: JsonRecord;
+  shared_multi_head_evaluation?: JsonRecord;
   candidates?: Record<string, {
     status: string;
     eligible: boolean;
@@ -902,6 +903,31 @@ const SpecialistServingView: React.FC<{
 
 const GnnView: React.FC<{ manifest: ModelManifest }> = ({ manifest }) => {
   const selection = manifest.selection;
+  const shared = asRecord(manifest.shared_multi_head_evaluation);
+  if (shared) {
+    const chosen = asRecord(shared.selection) || {};
+    const candidates = asRecord(shared.validation_candidates) || {};
+    const final = asRecord(shared.final_test) || {};
+    const models = asRecord(final.models) || {};
+    const heads = asRecord(final.head_states) || {};
+    const selected = String(chosen.selected_architecture || '');
+    const metric = (model: unknown, field: string) => {
+      const overall = asRecord(asRecord(model)?.overall);
+      return displayValue(overall?.[field]);
+    };
+    return <div className="space-y-5">
+      <section className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-4 text-sm">
+        <h4 className="font-semibold text-gray-800">Shared-encoder GNN v4</h4>
+        <p className="mt-1 text-gray-600">One encoder supplies the overall integrity probability and six independent pattern heads. Pattern probabilities are supporting evidence, not additional engine votes.</p>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs"><span className="rounded bg-white px-2 py-1">Selected on validation: <strong>{selected ? selected.toUpperCase() : 'none'}</strong></span><span className="rounded bg-white px-2 py-1">Final-test admission: <strong>{final.admitted ? 'Admitted' : 'Not admitted'}</strong></span></div>
+      </section>
+      <section><h4 className="mb-2 text-sm font-semibold text-gray-700">Architecture validation</h4>
+        <div className="overflow-x-auto rounded-lg border border-gray-200"><table className="w-full text-left text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Architecture</th><th className="px-3 py-2">Overall PR-AUC</th><th className="px-3 py-2">Pattern macro PR-AUC</th><th className="px-3 py-2">Inference ms</th><th className="px-3 py-2">Status</th></tr></thead><tbody className="divide-y divide-gray-100">{Object.entries(candidates).map(([name, raw]) => { const row = asRecord(raw) || {}; return <tr key={name}><td className="px-3 py-2 font-medium">{name.toUpperCase()}</td><td className="px-3 py-2 font-mono">{displayValue(row.validation_overall_pr_auc)}</td><td className="px-3 py-2 font-mono">{displayValue(row.validation_macro_pattern_pr_auc)}</td><td className="px-3 py-2 font-mono">{displayValue(row.validation_inference_ms)}</td><td className="px-3 py-2">{name === selected ? 'Selected' : prettyLabel(row.status)}</td></tr>; })}</tbody></table></div>
+      </section>
+      {Object.keys(models).length > 0 && <section><h4 className="mb-2 text-sm font-semibold text-gray-700">Untouched final temporal test</h4><div className="overflow-x-auto rounded-lg border border-gray-200"><table className="w-full text-left text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Model</th><th className="px-3 py-2">Overall PR-AUC</th><th className="px-3 py-2">ROC-AUC</th><th className="px-3 py-2">Brier</th><th className="px-3 py-2">Fraud / total</th></tr></thead><tbody className="divide-y divide-gray-100">{Object.entries(models).map(([name, raw]) => { const overall = asRecord(asRecord(raw)?.overall) || {}; return <tr key={name}><td className="px-3 py-2 font-medium">{prettyLabel(name)}</td><td className="px-3 py-2 font-mono">{metric(raw, 'pr_auc')}</td><td className="px-3 py-2 font-mono">{metric(raw, 'roc_auc')}</td><td className="px-3 py-2 font-mono">{metric(raw, 'brier_score')}</td><td className="px-3 py-2 font-mono">{displayValue(overall.positive_count)} / {displayValue(overall.count)}</td></tr>; })}</tbody></table></div></section>}
+      {Object.keys(heads).length > 0 && <section><h4 className="mb-2 text-sm font-semibold text-gray-700">Pattern heads</h4><div className="overflow-x-auto rounded-lg border border-gray-200"><table className="w-full text-left text-xs"><thead className="bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Pattern</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Training positives</th><th className="px-3 py-2">Final positives</th><th className="px-3 py-2">Final PR-AUC</th><th className="px-3 py-2">Engineered MLP PR-AUC</th></tr></thead><tbody className="divide-y divide-gray-100">{Object.entries(heads).map(([name, raw]) => { const row = asRecord(raw) || {}; const test = asRecord(row.final_test) || {}; return <tr key={name}><td className="px-3 py-2 font-medium">{prettyLabel(name)}</td><td className="px-3 py-2">{prettyLabel(row.state)}</td><td className="px-3 py-2 font-mono">{displayValue(row.training_positive_count)}</td><td className="px-3 py-2 font-mono">{displayValue(test.positive_count)}</td><td className="px-3 py-2 font-mono">{displayValue(test.pr_auc)}</td><td className="px-3 py-2 font-mono">{displayValue(row.engineered_graph_mlp_pr_auc)}</td></tr>; })}</tbody></table></div></section>}
+    </div>;
+  }
   if (selection?.serving_mode === 'scenario_specialists' || manifest.specialist_evaluation || manifest.specialists) {
     return <SpecialistServingView evaluation={manifest.specialist_evaluation} specialists={manifest.specialists} />;
   }

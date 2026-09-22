@@ -309,6 +309,21 @@ class GNNPolicyDraft(BaseModel):
         "method": "maximum_calibrated_probability",
         "mixed_minimum_specialists": 2,
     })
+    overall_loss_weight: float = 1.0
+    pattern_total_loss_weight: float = 1.0
+    overall_tie_tolerance: float = 0.01
+    minimum_graph_value_over_raw_mlp: float = 0.02
+    minimum_message_passing_value_over_engineered_graph_mlp: float = 0.0
+    pattern_heads: dict[str, dict] = Field(default_factory=dict)
+    maximum_holdout_inference_ms: float = 500.0
+    maximum_overall_holdout_brier_score: float = 0.25
+    minimum_pattern_train_positives: int = 15
+    minimum_pattern_validation_positives: int = 5
+    minimum_pattern_holdout_positives: int = 5
+    minimum_pattern_holdout_negatives: int = 100
+    maximum_pattern_holdout_brier_score: float = 0.25
+    maximum_pattern_validation_pr_auc_range: float = 0.5
+    minimum_pattern_improvement_over_engineered_mlp: float = 0.0
 
 
 _GRAPH_PATTERNS = {
@@ -441,9 +456,13 @@ def _validate_gnn_policy(payload: GNNPolicyDraft) -> None:
             status_code=422,
             detail="GNN candidates must be GraphSAGE, GCN, and/or GATv2.",
         )
-    if payload.selection_metric.lower() != "holdout_pr_auc":
+    expected_metric = (
+        "validation_overall_pr_auc" if payload.serving_mode == "shared_encoder_multi_head"
+        else "holdout_pr_auc"
+    )
+    if payload.selection_metric.lower() != expected_metric:
         raise HTTPException(
-            status_code=422, detail="GNN selection metric must be holdout PR-AUC."
+            status_code=422, detail=f"GNN selection metric must be {expected_metric}."
         )
     positive_values = {
         "Hidden dimension": payload.hidden_dim,
@@ -462,6 +481,8 @@ def _validate_gnn_policy(payload: GNNPolicyDraft) -> None:
             raise HTTPException(status_code=422, detail=f"{name} must be positive.")
     if payload.rolling_folds < 2:
         raise HTTPException(status_code=422, detail="Rolling folds must be at least 2.")
+    if payload.serving_mode == "shared_encoder_multi_head" and payload.rolling_folds < 3:
+        raise HTTPException(status_code=422, detail="V4 requires at least three temporal folds.")
     if payload.minimum_eligible_graph_candidates > len(architectures):
         raise HTTPException(
             status_code=422,
@@ -498,13 +519,50 @@ def _validate_gnn_policy(payload: GNNPolicyDraft) -> None:
             status_code=422,
             detail="GNN explanation risk must be NONE, LOW, MEDIUM, HIGH, or CRITICAL.",
         )
-    if payload.serving_mode not in {"single_winner_v2", "scenario_specialists"}:
+    if payload.serving_mode not in {
+        "single_winner_v2", "scenario_specialists", "shared_encoder_multi_head"
+    }:
         raise HTTPException(status_code=422, detail="Unsupported GNN serving mode.")
     if payload.serving_mode == "scenario_specialists" and not payload.behavior_tracks:
         raise HTTPException(
             status_code=422,
             detail="Scenario-specialist mode requires behavior-track policies.",
         )
+    if payload.serving_mode == "shared_encoder_multi_head":
+        expected_heads = {
+            "RECIPROCAL": "reciprocal-v1", "RING": "ring-v1",
+            "TEMPORAL_BURST": "temporal-burst-v1",
+            "SUPER_NOMINATOR": "super-nominator-v1",
+            "SUPER_BENEFICIARY": "super-beneficiary-v1",
+            "BIPARTITE_DENSE_BLOCK": "bipartite-dense-block-v1",
+        }
+        if set(payload.pattern_heads) != set(expected_heads):
+            raise HTTPException(status_code=422, detail="V4 requires all six pattern heads.")
+        for key, expected in expected_heads.items():
+            head = payload.pattern_heads[key]
+            if head.get("feature_contract") != expected or not isinstance(head.get("enabled"), bool):
+                raise HTTPException(status_code=422, detail=f"Invalid {key} head contract.")
+        for value in (payload.overall_loss_weight, payload.pattern_total_loss_weight):
+            if not math.isfinite(value) or value <= 0:
+                raise HTTPException(status_code=422, detail="V4 loss weights must be positive.")
+        for value in (
+            payload.overall_tie_tolerance,
+            payload.minimum_graph_value_over_raw_mlp,
+            payload.minimum_message_passing_value_over_engineered_graph_mlp,
+            payload.maximum_overall_holdout_brier_score,
+            payload.maximum_pattern_holdout_brier_score,
+            payload.maximum_pattern_validation_pr_auc_range,
+            payload.minimum_pattern_improvement_over_engineered_mlp,
+        ):
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise HTTPException(status_code=422, detail="V4 admission margins must be between 0 and 1.")
+        if not math.isfinite(payload.maximum_holdout_inference_ms) or payload.maximum_holdout_inference_ms <= 0 or any(value <= 0 for value in (
+            payload.minimum_pattern_train_positives,
+            payload.minimum_pattern_validation_positives,
+            payload.minimum_pattern_holdout_positives,
+            payload.minimum_pattern_holdout_negatives,
+        )):
+            raise HTTPException(status_code=422, detail="V4 latency and label gates must be positive.")
 
 
 @router.get("/api/admin/setup/fraud")

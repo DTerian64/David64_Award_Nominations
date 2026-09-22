@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import torch
 
 
@@ -413,6 +414,12 @@ class GnnP2PContractTests(unittest.TestCase):
         self.assertAlmostEqual(
             audit["features"][0]["model_input_value"], model_row[0, 0]
         )
+
+
+def test_v4_pattern_contracts_are_explicit_and_bounded():
+    assert "LogReverseThreeHopPathCount" in gnn_check._v4_pattern_columns("ring-v1")
+    with pytest.raises(ValueError):
+        gnn_check._v4_pattern_columns("unknown")
 
 
 if __name__ == "__main__":

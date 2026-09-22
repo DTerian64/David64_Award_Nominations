@@ -3538,9 +3538,9 @@ def _gnn_training_run_row(row) -> dict:
         "is_current":            bool(
             valid_to is not None and valid_to.year == _TEMPORAL_OPEN_YEAR
         ),
-        "model_version":         latest_selection.get("model_version"),
-        "selected_architecture": latest_selection.get("selected_architecture"),
-        "selection_reason":      latest_selection.get("selection_reason"),
+        "model_version":         diagnostics.get("model_version") or latest_selection.get("model_version"),
+        "selected_architecture": diagnostics.get("selected_architecture") or latest_selection.get("selected_architecture"),
+        "selection_reason":      diagnostics.get("selection_reason") or latest_selection.get("selection_reason"),
         "artifact_bundle_prefix": diagnostics.get("artifact_bundle_prefix"),
     }
 
@@ -3885,7 +3885,8 @@ def _gnn_configuration_from_payload(payload: dict) -> dict:
     thresholds = payload["thresholds"]
     serving_mode = payload.get("serving_mode", "single_winner_v2")
     configuration = {
-        "schema_version": 3 if serving_mode == "scenario_specialists" else 1,
+        "schema_version": (4 if serving_mode == "shared_encoder_multi_head" else
+                           3 if serving_mode == "scenario_specialists" else 1),
         "model": {
             "hidden_dimension": payload["hidden_dim"],
             "embedding_dimension": payload["embed_dim"],
@@ -3934,14 +3935,47 @@ def _gnn_configuration_from_payload(payload: dict) -> dict:
                 "mixed_minimum_specialists": 2,
             },
         })
+    elif serving_mode == "shared_encoder_multi_head":
+        configuration["serving_mode"] = serving_mode
+        configuration["training"].update({
+            "overall_loss_weight": payload.get("overall_loss_weight", 1.0),
+            "pattern_total_loss_weight": payload.get("pattern_total_loss_weight", 1.0),
+        })
+        configuration["architecture_selection"].update({
+            "primary_metric": "validation_overall_pr_auc",
+            "tie_breaker_metric": "validation_macro_pattern_pr_auc",
+            "overall_tie_tolerance": payload.get("overall_tie_tolerance", 0.01),
+            "minimum_graph_value_over_raw_mlp": payload.get(
+                "minimum_graph_value_over_raw_mlp", 0.02
+            ),
+            "minimum_message_passing_value_over_engineered_graph_mlp": payload.get(
+                "minimum_message_passing_value_over_engineered_graph_mlp", 0.0
+            ),
+            "maximum_holdout_inference_ms": payload.get("maximum_holdout_inference_ms", 500.0),
+            "maximum_overall_holdout_brier_score": payload.get(
+                "maximum_overall_holdout_brier_score", 0.25
+            ),
+        })
+        configuration["pattern_heads"] = payload.get("pattern_heads") or {}
+        configuration["pattern_admission"] = {
+            "minimum_train_positives": payload.get("minimum_pattern_train_positives", 15),
+            "minimum_validation_positives": payload.get("minimum_pattern_validation_positives", 5),
+            "minimum_holdout_positives": payload.get("minimum_pattern_holdout_positives", 5),
+            "minimum_holdout_negatives": payload.get("minimum_pattern_holdout_negatives", 100),
+            "maximum_holdout_brier_score": payload.get("maximum_pattern_holdout_brier_score", 0.25),
+            "maximum_validation_pr_auc_range": payload.get("maximum_pattern_validation_pr_auc_range", 0.5),
+            "minimum_improvement_over_engineered_mlp": payload.get(
+                "minimum_pattern_improvement_over_engineered_mlp", 0.0
+            ),
+        }
     return configuration
 
 
 def _gnn_policy_row(row) -> dict:
     configuration = _json_value(row[5], {})
     schema_version = configuration.get("schema_version") if isinstance(configuration, dict) else None
-    if schema_version not in {1, 3}:
-        raise ValueError("GNN ConfigurationJson must use schema_version 1 or 3")
+    if schema_version not in {1, 3, 4}:
+        raise ValueError("GNN ConfigurationJson must use schema_version 1, 3, or 4")
     try:
         model = configuration["model"]
         training = configuration["training"]
@@ -3969,13 +4003,15 @@ def _gnn_policy_row(row) -> dict:
             training["minimum_positive_labels_per_split"]
         ),
         "candidate_architectures": selection["candidate_architectures"],
-        "selection_metric": str(selection["selection_metric"]).lower(),
+        "selection_metric": str(selection.get(
+            "primary_metric" if schema_version == 4 else "selection_metric", ""
+        )).lower(),
         "minimum_improvement_over_mlp": float(
-            selection["minimum_improvement_over_mlp"]
+            selection.get("minimum_improvement_over_mlp", 0.0)
         ),
-        "incumbent_tie_tolerance": float(selection["incumbent_tie_tolerance"]),
+        "incumbent_tie_tolerance": float(selection.get("incumbent_tie_tolerance", 0.01)),
         "minimum_eligible_graph_candidates": int(
-            selection["minimum_eligible_graph_candidates"]
+            selection.get("minimum_eligible_graph_candidates", 1)
         ),
         "thresholds": {
             "low": float(routing["low_threshold"]),
@@ -3991,6 +4027,25 @@ def _gnn_policy_row(row) -> dict:
             "method": "maximum_calibrated_probability",
             "mixed_minimum_specialists": 2,
         },
+        "overall_loss_weight": float(training.get("overall_loss_weight", 1.0)),
+        "pattern_total_loss_weight": float(training.get("pattern_total_loss_weight", 1.0)),
+        "overall_tie_tolerance": float(selection.get("overall_tie_tolerance", 0.01)),
+        "minimum_graph_value_over_raw_mlp": float(selection.get(
+            "minimum_graph_value_over_raw_mlp", 0.02
+        )),
+        "minimum_message_passing_value_over_engineered_graph_mlp": float(selection.get(
+            "minimum_message_passing_value_over_engineered_graph_mlp", 0.0
+        )),
+        "pattern_heads": configuration.get("pattern_heads") or {},
+        "maximum_holdout_inference_ms": float(selection.get("maximum_holdout_inference_ms", 500.0)),
+        "maximum_overall_holdout_brier_score": float(selection.get("maximum_overall_holdout_brier_score", 0.25)),
+        "minimum_pattern_train_positives": int((configuration.get("pattern_admission") or {}).get("minimum_train_positives", 15)),
+        "minimum_pattern_validation_positives": int((configuration.get("pattern_admission") or {}).get("minimum_validation_positives", 5)),
+        "minimum_pattern_holdout_positives": int((configuration.get("pattern_admission") or {}).get("minimum_holdout_positives", 5)),
+        "minimum_pattern_holdout_negatives": int((configuration.get("pattern_admission") or {}).get("minimum_holdout_negatives", 100)),
+        "maximum_pattern_holdout_brier_score": float((configuration.get("pattern_admission") or {}).get("maximum_holdout_brier_score", 0.25)),
+        "maximum_pattern_validation_pr_auc_range": float((configuration.get("pattern_admission") or {}).get("maximum_validation_pr_auc_range", 0.5)),
+        "minimum_pattern_improvement_over_engineered_mlp": float((configuration.get("pattern_admission") or {}).get("minimum_improvement_over_engineered_mlp", 0.0)),
         "created_at": _iso_utc(row[8]), "created_by": row[9],
         "updated_at": _iso_utc(row[10]), "updated_by": row[11],
         "published_at": _iso_utc(row[12]), "published_by": row[13],

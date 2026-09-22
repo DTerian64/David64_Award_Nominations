@@ -115,6 +115,15 @@ export interface EngineResult {
     causal_context?: EngineResult['causal_context'];
     feature_inputs?: EngineResult['feature_inputs'];
   }> | null;
+  pattern_heads?: Record<string, {
+    status?: string;
+    reason?: string;
+    probability?: number;
+    score?: number;
+    risk_level?: string;
+    feature_contract?: string;
+  }> | null;
+  evidence?: { material_patterns?: string[]; primary_pattern?: string | null } | null;
   aggregate?: {
     method?: string;
     probability?: number;
@@ -420,6 +429,7 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
   const persistedFeatureRows = engine.feature_inputs?.features || [];
   const thresholds = engine.score_thresholds || {};
   const specialists = Object.entries(engine.specialists || {});
+  const patternHeads = Object.entries(engine.pattern_heads || {});
   const decisiveSpecialists = new Set(engine.aggregate?.decisive_specialists || []);
 
   return (
@@ -507,6 +517,16 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
               Mixed evidence: {(engine.aggregate.material_specialists || []).map(readableCode).join(', ')}
             </p>
           )}
+        </div>
+      )}
+
+      {patternHeads.length > 0 && (
+        <div className="overflow-x-auto rounded border border-violet-200 bg-white">
+          <div className="border-b border-violet-100 bg-violet-50 px-2 py-1.5">
+            <p className="font-semibold text-violet-900">Shared-model pattern heads</p>
+            <p className="text-[10px] text-violet-700">The overall GNN probability above is the only routing score. Active pattern heads provide independent, multi-label evidence; diagnostic heads do not make live claims.</p>
+          </div>
+          <table className="w-full border-collapse text-left text-xs"><thead className="bg-slate-100 text-[10px] font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-2 py-1.5">Pattern</th><th className="px-2 py-1.5">State</th><th className="px-2 py-1.5">Feature contract</th><th className="px-2 py-1.5 text-right">Probability</th><th className="px-2 py-1.5">Risk</th></tr></thead><tbody>{patternHeads.map(([name, head]) => <tr key={name} className="border-t border-slate-100"><td className="px-2 py-1.5 font-medium">{readableCode(name)}{engine.evidence?.primary_pattern === name && <span className="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[9px] text-violet-800">Primary</span>}</td><td className="px-2 py-1.5">{readableCode(head.status)}</td><td className="px-2 py-1.5 font-mono text-[10px]">{head.feature_contract || '—'}</td><td className="px-2 py-1.5 text-right font-mono">{head.status === 'ACTIVE' && head.probability !== undefined ? `${(head.probability * 100).toFixed(1)}%` : '—'}</td><td className="px-2 py-1.5">{head.status === 'ACTIVE' ? <RiskBadge level={head.risk_level || 'NONE'} /> : 'No live claim'}</td></tr>)}</tbody></table>
         </div>
       )}
 
