@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 from types import SimpleNamespace
 
-from modeling.gnn.shared_multi_head import (
+from modeling.gnn.evaluators.selection_by_temporal_validation.model import (
     PatternTargets,
     build_pattern_targets,
     masked_joint_loss,
@@ -14,8 +14,10 @@ from modeling.gnn.shared_multi_head import (
 from modeling.gnn.specialists.contracts import BEHAVIOR_TRACKS
 from modeling.gnn.specialists.feature_contracts import FEATURE_CONTRACTS
 from modeling.gnn.graph import NOMINATION_FEATURE_COLUMNS
-from modeling.gnn.shared_multi_head_evaluator import select_shared_architecture
-from modeling.gnn.shared_multi_head_evaluator import _fit, evaluate_shared_model
+from modeling.gnn.evaluators.selection_by_temporal_validation.evaluator import (
+    _fit, evaluate_shared_model, select_shared_architecture,
+)
+from modeling.gnn.evaluators.metrics import display_threshold_metrics
 from modeling.gnn import graph as G
 from tests.synthetic import make_tenant
 
@@ -83,6 +85,31 @@ def test_architecture_selection_uses_overall_then_pattern_tie_breaker():
     assert select_shared_architecture(candidates, 0.001)["selected_architecture"] == "graphsage"
 
 
+def test_display_threshold_diagnostics_match_inference_score_rounding():
+    probabilities = np.array([0.446, 0.444, 0.46, 0.10])
+    logits = np.log(probabilities / (1 - probabilities))
+    result = display_threshold_metrics(np.array([1, 1, 0, 0]), logits, 45.0)
+
+    assert result["alert_count"] == 2
+    assert result["true_positive_count"] == 1
+    assert result["false_positive_count"] == 1
+    assert result["false_negative_count"] == 1
+    assert result["true_negative_count"] == 1
+    assert result["precision"] == 0.5
+    assert result["recall"] == 0.5
+    assert result["false_positive_rate"] == 0.5
+    assert result["alert_rate"] == 0.5
+
+
+def test_display_threshold_diagnostics_report_undefined_precision_without_alerts():
+    result = display_threshold_metrics(
+        np.array([1, 0]), np.array([-10.0, -10.0]), 45.0
+    )
+    assert result["alert_count"] == 0
+    assert result["precision"] is None
+    assert result["recall"] == 0.0
+
+
 def test_joint_training_uses_one_graph_encoder_and_all_heads():
     users, nominations, labels = make_tenant(
         1, n_users=24, nominations_per_user=4, n_decoys=6,
@@ -135,8 +162,10 @@ def test_v4_evaluation_keeps_final_period_out_of_architecture_selection():
         maximum_pattern_validation_pr_auc_range=1.0,
         minimum_pattern_improvement_over_engineered_mlp=0.0,
         maximum_pattern_holdout_brier_score=1.0,
+        medium_threshold=45.0,
     )
     report, _model = evaluate_shared_model(folds, frame, policy)
     assert report["selection"]["selected_architecture"] == "graphsage"
     assert len(report["validation_candidates"]["graphsage"]["validation_folds"]) == 2
     assert report["final_test"]["selected_architecture"] == "graphsage"
+    assert "display_threshold_diagnostics" in report["final_test"]["head_states"]["RING"]["final_test"]

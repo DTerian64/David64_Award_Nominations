@@ -9,12 +9,12 @@ import numpy as np
 import torch
 from sklearn.linear_model import LogisticRegression
 
-from .evaluators.metrics import binary_metrics, sigmoid
-from .shared_multi_head import (
+from ..metrics import binary_metrics, display_threshold_metrics, sigmoid
+from .model import (
     PatternTargets, SharedMultiHeadModel, build_pattern_targets,
     masked_joint_loss,
 )
-from .specialists.contracts import BEHAVIOR_TRACKS
+from ...specialists.contracts import BEHAVIOR_TRACKS
 
 
 def _targets(labelled, fold: dict, split: str) -> PatternTargets:
@@ -248,9 +248,24 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
             for j, key in enumerate(BEHAVIOR_TRACKS):
                 if key in logits:
                     known = final_targets.mask[:, j].astype(bool)
+                    raw_logits = logits[key][known]
+                    labels = final_targets.patterns[:, j][known]
+                    head_calibration = calibration.get(key)
                     metrics["pattern_heads"][key] = _calibrated_metrics(
-                        logits[key][known], final_targets.patterns[:, j][known],
-                        calibration.get(key),
+                        raw_logits, labels, head_calibration,
+                    )
+                    metrics["pattern_heads"][key]["display_threshold_diagnostics"] = (
+                        display_threshold_metrics(
+                            labels,
+                            head_calibration["slope"] * raw_logits
+                            + head_calibration["intercept"],
+                            policy.medium_threshold,
+                        )
+                        if head_calibration is not None
+                        else {
+                            "status": "UNAVAILABLE",
+                            "reason": "NO_VALIDATION_CALIBRATION",
+                        }
                     )
         final_models[architecture] = model
         final_metrics[architecture] = {"fit": fit, **metrics}

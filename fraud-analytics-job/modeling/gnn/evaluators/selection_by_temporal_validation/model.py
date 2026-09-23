@@ -14,10 +14,10 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .graph import BASE_NOMINATION_FEATURE_COLUMNS
-from .model import EdgeDecoder, GRAPH_ENCODERS, HeteroEncoder
-from .specialists.contracts import BEHAVIOR_TRACKS
-from .specialists.feature_contracts import FEATURE_CONTRACTS
+from ...graph import BASE_NOMINATION_FEATURE_COLUMNS
+from ...model import EdgeDecoder, GRAPH_ENCODERS, HeteroEncoder
+from ...specialists.contracts import BEHAVIOR_TRACKS
+from ...specialists.feature_contracts import FEATURE_CONTRACTS
 
 
 @dataclass(frozen=True)

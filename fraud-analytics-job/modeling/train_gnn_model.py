@@ -80,7 +80,9 @@ from .gnn.evaluators.graph_value_by_ablation import (  # noqa: E402
 from .gnn.policy import GNNPolicy, load_active_policy  # noqa: E402
 from .gnn.specialists.contracts import SERVING_MODE_SPECIALISTS  # noqa: E402
 from .gnn.specialists.contracts import SERVING_MODE_SHARED_MULTI_HEAD  # noqa: E402
-from .gnn.shared_multi_head_evaluator import evaluate_shared_model  # noqa: E402
+from .gnn.evaluators.selection_by_temporal_validation.evaluator import (  # noqa: E402
+    evaluate_shared_model,
+)
 from .gnn.specialists.evaluator import (  # noqa: E402
     evaluate_specialists,
     specialist_fold_views,

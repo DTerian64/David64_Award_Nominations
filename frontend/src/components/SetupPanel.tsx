@@ -115,7 +115,7 @@ const ENGINE_NAMES: Record<string, { name: string; description: string; populati
   GNN: {
     name: 'Graph Neural Network',
     description: 'Independent graph neural-network fraud model',
-    population: 'P2P behavior: Pending, Approved, and Paid nominations. HRBP-confirmed outcomes are retained only as supervised labels.',
+    population: 'P2P graph history: Pending, Approved, and Paid nominations, plus qualifying Rejected nominations with HRBP-confirmed fraud. Those confirmations also provide positive supervised training labels.',
   },
 };
 

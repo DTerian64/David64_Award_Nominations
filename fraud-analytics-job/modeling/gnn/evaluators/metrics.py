@@ -73,3 +73,48 @@ def binary_metrics(y_true: np.ndarray, logits: np.ndarray) -> dict:
         "negative_count": int(len(labels) - labels.sum()),
     }
 
+
+def display_threshold_metrics(
+    y_true: np.ndarray, calibrated_logits: np.ndarray, medium_threshold: float
+) -> dict:
+    """Measure material pattern alerts using the same score rule as inference."""
+    labels = np.asarray(y_true, dtype=np.int64)
+    logits = np.asarray(calibrated_logits, dtype=float)
+    if labels.shape != logits.shape or labels.ndim != 1:
+        raise ValueError("Display-threshold labels and logits must be matching vectors")
+    if not np.isin(labels, (0, 1)).all() or not np.isfinite(logits).all():
+        raise ValueError("Display-threshold inputs must be binary and finite")
+
+    scores = np.array(
+        [int(round(float(probability) * 100)) for probability in sigmoid(logits)],
+        dtype=np.int64,
+    )
+    alerted = scores >= medium_threshold
+    positive = labels == 1
+    true_positive = int(np.count_nonzero(alerted & positive))
+    false_positive = int(np.count_nonzero(alerted & ~positive))
+    false_negative = int(np.count_nonzero(~alerted & positive))
+    true_negative = int(np.count_nonzero(~alerted & ~positive))
+    alert_count = true_positive + false_positive
+    positive_count = true_positive + false_negative
+    negative_count = false_positive + true_negative
+
+    return {
+        "minimum_risk_level": "MEDIUM",
+        "threshold_score": float(medium_threshold),
+        "score_derivation": "round(calibrated_probability * 100)",
+        "count": int(len(labels)),
+        "positive_count": positive_count,
+        "negative_count": negative_count,
+        "alert_count": alert_count,
+        "true_positive_count": true_positive,
+        "false_positive_count": false_positive,
+        "false_negative_count": false_negative,
+        "true_negative_count": true_negative,
+        "precision": true_positive / alert_count if alert_count else None,
+        "recall": true_positive / positive_count if positive_count else None,
+        "false_positive_rate": (
+            false_positive / negative_count if negative_count else None
+        ),
+        "alert_rate": alert_count / len(labels) if len(labels) else None,
+    }
