@@ -102,6 +102,9 @@ class DecisionPersistenceTests(unittest.TestCase):
         self.assertIn("VALUES (source.TenantId,", new_sql)
         self.assertIn("IN ('RUNNING', 'COMPLETED')", new_sql)
         self.assertIn("JSON_QUERY(target.GnnResultJson, '$.explanation')", new_sql)
+        self.assertIn(
+            "CAST(? AS NVARCHAR(MAX)) AS IncomingGnnResultJson", new_sql
+        )
 
     def test_unresolved_tenant_or_conflicting_decision_does_not_commit(self):
         conn = _Connection(rowcount=0)

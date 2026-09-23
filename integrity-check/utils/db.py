@@ -866,7 +866,7 @@ def save_integrity_decision_results(
             MERGE dbo.IntegrityDecisionResults AS target
             USING (
                 SELECT n.NominationId, u.TenantId, ? AS SourceMessageId,
-                       ? AS IncomingGnnResultJson
+                       CAST(? AS NVARCHAR(MAX)) AS IncomingGnnResultJson
                 FROM dbo.Nominations n
                 JOIN dbo.Users u ON u.UserId = n.NominatorId
                 WHERE n.NominationId = ? AND u.TenantId IS NOT NULL
