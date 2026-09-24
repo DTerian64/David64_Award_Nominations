@@ -6,7 +6,7 @@ validation tenant. Its default and `--validate` modes create the logical
 print a reproducibility manifest without mutating Microsoft Entra, SQL, Service
 Bus, or model artifacts.
 
-Generator v4.0 creates 50 directly labelled fraud targets for each of the six
+Generator v5.0 creates 50 directly labelled fraud targets for each of the six
 GNN specialist families: ring, reciprocal, temporal burst, super nominator,
 super beneficiary, and bipartite dense block. Every fraud target persists
 exactly one matching `confirmed_patterns` value. Legitimate rows persist an
@@ -17,24 +17,38 @@ Each behavior has its own causal topology rather than a shared shortcut.
 Feature-matched legitimate controls are distributed across the same five
 temporal segments. This supplies every specialist with 30 training positives,
 10 positives in each of two selection folds, and 10 positives in the final
-holdout. The inclusive 365-day observation window ends on September 21, 2026,
-so the generator uses the exclusive `--as-of 2026-09-22` boundary.
+holdout. V5 also keeps four complete reporting teams quiet, designates twelve
+frequent nominators who are seldom nominated, diversifies ordinary pairs, and
+generates category-specific stories that name the actual beneficiary and
+award amount. Each category has 2,900 distinct texts among 3,000 nominations,
+including intentional exact-reuse groups whose beneficiary and amount agree.
+The
+default inclusive 365-day window ends on September 23, 2026, using the
+exclusive `--as-of 2026-09-24` boundary.
 
 From the repository root:
 
 ```powershell
 python -m scripts.synthetic_tenant.seed_synthetics_inc --dry-run
-python -m scripts.synthetic_tenant.seed_synthetics_inc --validate --seed 20260921 --as-of 2026-09-22
+python -m scripts.synthetic_tenant.seed_synthetics_inc --validate --seed 20260921 --as-of 2026-09-24
+python -m scripts.synthetic_tenant.audit_descriptions --seed 20260921 --as-of 2026-09-24
 python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-configuration
-python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260921 --as-of 2026-09-22 --manifest-out Output/synthetics-inc-v4-manifest.json
-python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260921 --as-of 2026-09-22 --manifest-out Output/synthetics-inc-v4-manifest.json
+python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260921 --as-of 2026-09-24 --manifest-out Output/synthetics-inc-v5-manifest.json
+python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260921 --as-of 2026-09-24 --manifest-out Output/synthetics-inc-v5-manifest.json
 ```
+
+The optional description audit uses locally cached `all-MiniLM-L6-v2` weights
+and reports full-corpus exact repetition plus embedding-similar clusters in a
+representative sample at the default 0.92 Graph threshold. It is read-only.
+`--sample-step 1` checks all 15,000 texts but can be very slow on a local CPU;
+the deployed Graph job remains the definitive full-corpus check. The SQL
+seeder itself has no model download or embedding dependency.
 
 The seed and `as-of` date are part of the corpus identity. The same two inputs
 must produce the same SHA-256 hash. Persistence is isolated behind the explicit
 apply modes and the fail-closed preflight described in the design document.
 The existing directory roster has its own fixed seed, `20260912`; changing the
-v4 corpus seed never regenerates or replaces those 400 user identities.
+v5 corpus seed never regenerates or replaces those 400 user identities.
 
 `--apply-configuration` is the Phase-B boundary. It requires the normal
 `SQL_SERVER`, `SQL_DATABASE`, `SQL_USER`, and `SQL_PASSWORD` environment
@@ -66,11 +80,13 @@ directory. It uses only the provider-hosted SQL connection, requires the exact
 401-user SQL roster to exist, and does not request a customer-tenant Microsoft
 Graph token. It validates the existing tenant identity, active Graph policy,
 active GNN policy, and 365-day GNN training window without cloning or replacing
-configuration from Tenant 1. Its manifest records that the Entra directory and
+configuration from Tenant 1. Deploy migration 0066 and the corresponding
+Graph Analytics/API/frontend changes before running Graph Analytics to inspect
+the new participation finding. Its manifest records that the Entra directory and
 tenant configuration were preserved rather than reconciled and retains the
 complete logical-to-SQL identity map.
 
-Do not run `--apply` to replace the currently deployed v3.0 corpus. Stable
+Do not run `--apply` to replace the currently deployed corpus. Stable
 nomination identities intentionally cause the apply preflight to reject changed
 generation metadata instead of silently rewriting history. First run
 `reset_synthetics_inc_corpus.sql` as a rollback preview, review its inventory,
@@ -79,7 +95,7 @@ configuration, policies, all 401 SQL/Entra users, and the administrator. It
 validates that TenantId 5 is the expected synthetic tenant, then removes every
 TenantId 5 nomination, decision, and corpus-derived record, including later
 test nominations. It then invalidates old serving pointers. After the committed
-reset, run the v4.0
+reset, run the v5.0
 `--apply-corpus` command above. Keep the fixed seed and `as-of` date and write to
-the new v4 manifest path so the deployed v3.0 manifest remains available as
+the new v5 manifest path so the deployed v4.0 manifest remains available as
 reset provenance. No replacement-specific Python mode is required.

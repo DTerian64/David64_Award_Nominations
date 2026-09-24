@@ -9,6 +9,7 @@ export const GRAPH_PATTERN_LABELS: Record<string, string> = {
   CopyPaste: 'Copy-Paste Fraud',
   HiddenCandidate: 'Hidden Candidate',
   Desert: 'Nomination Desert',
+  LowRecognitionNominator: 'Frequent nominator, seldom nominated',
 };
 
 export interface GraphDetectorScore {

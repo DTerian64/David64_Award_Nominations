@@ -110,6 +110,7 @@ const PATTERN_META: Record<string, { label: string; description: string }> = {
   SuperNominator:      { label: 'Super Nominator',        description: 'Unusually high nomination volume' },
   SuperBeneficiary:    { label: 'Super Beneficiary',      description: 'Unusually frequent beneficiary with broad nominator support' },
   Desert:              { label: 'Nomination Desert',      description: 'Entire team absent from all nominations' },
+  LowRecognitionNominator: { label: 'Frequent nominator, seldom nominated', description: 'Active nominator who has received at most one nomination' },
   ApproverAffinity:    { label: 'Approver Affinity (legacy)', description: 'Historical finding retained for audit only' },
   CopyPaste:           { label: 'Copy-Paste Fraud',       description: 'Near-identical nomination descriptions' },
   HiddenCandidate:     { label: 'Hidden Candidate',       description: 'Named in descriptions but never nominated' },

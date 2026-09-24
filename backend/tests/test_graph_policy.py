@@ -22,13 +22,16 @@ def _patterns():
     names = [
         "Ring", "BipartiteDenseBlock", "TemporalBurst", "SuperNominator",
         "SuperBeneficiary", "CopyPaste", "HiddenCandidate", "Desert",
+        "LowRecognitionNominator",
     ]
     return [
         GraphPatternPolicy(
             pattern_type=name,
             display_order=display_order,
             enabled=True,
-            enabled_for_routing=name not in {"Desert", "HiddenCandidate"},
+            enabled_for_routing=name not in {
+                "Desert", "HiddenCandidate", "LowRecognitionNominator"
+            },
             applicable_roles=["nominator"],
             base_score=30,
             minimum_score=0,
@@ -55,6 +58,18 @@ class GraphPolicyValidationTests(unittest.TestCase):
             snapshot_max_age_days=14,
             patterns=_patterns(),
         ))
+
+    def test_participation_detector_cannot_be_used_for_routing(self):
+        patterns = _patterns()
+        patterns[-1].enabled_for_routing = True
+        with self.assertRaises(HTTPException) as raised:
+            _validate_graph_policy(GraphPolicyDraft(
+                thresholds=GraphThresholds(low=25, medium=50, high=75, critical=90),
+                detection_window_days=365,
+                snapshot_max_age_days=14,
+                patterns=patterns,
+            ))
+        self.assertEqual(raised.exception.status_code, 422)
 
     def test_routing_detector_must_be_enabled(self):
         patterns = _patterns()

@@ -386,7 +386,8 @@ SCHEMAS = [
                         "type": "string",
                         "enum": ["Ring", "BipartiteDenseBlock", "TemporalBurst",
                                  "SuperNominator", "SuperBeneficiary", "CopyPaste",
-                                 "HiddenCandidate", "Desert", "ApproverAffinity"],
+                                 "HiddenCandidate", "Desert", "LowRecognitionNominator",
+                                 "ApproverAffinity"],
                         "description": "Filter to a specific pattern type."
                     },
                     "severity": {

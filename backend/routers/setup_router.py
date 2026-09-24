@@ -329,6 +329,7 @@ class GNNPolicyDraft(BaseModel):
 _GRAPH_PATTERNS = {
     "Ring", "BipartiteDenseBlock", "TemporalBurst", "SuperNominator",
     "SuperBeneficiary", "CopyPaste", "HiddenCandidate", "Desert",
+    "LowRecognitionNominator",
 }
 _GRAPH_ROLES = {"nominator", "beneficiary"}
 _REQUEST_REVIEW_STATUSES = {
@@ -360,6 +361,11 @@ def _validate_graph_policy(payload: GraphPolicyDraft) -> None:
             detail="Graph detector display order must use each position exactly once",
         )
     for item in payload.patterns:
+        if item.pattern_type in {"Desert", "HiddenCandidate", "LowRecognitionNominator"} and item.enabled_for_routing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{item.pattern_type} is analytics-only and cannot route nominations",
+            )
         if item.enabled_for_routing and not item.enabled:
             raise HTTPException(
                 status_code=422,
@@ -369,6 +375,11 @@ def _validate_graph_policy(payload: GraphPolicyDraft) -> None:
             raise HTTPException(
                 status_code=422,
                 detail=f"{item.pattern_type} has invalid participant roles",
+            )
+        if item.pattern_type == "LowRecognitionNominator" and item.applicable_roles != ["nominator"]:
+            raise HTTPException(
+                status_code=422,
+                detail="LowRecognitionNominator applies only to the nominator",
             )
         scores = [item.base_score, item.minimum_score, item.maximum_score]
         if not all(math.isfinite(value) and 0 <= value <= 100 for value in scores):

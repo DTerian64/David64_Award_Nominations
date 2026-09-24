@@ -14,11 +14,11 @@ from types import SimpleNamespace
 from scripts.synthetic_tenant import database, entra, seed_synthetics_inc
 
 
-def test_default_identity_uses_the_fixed_v4_window_boundary():
+def test_default_identity_uses_the_fixed_v5_window_boundary():
     args = seed_synthetics_inc._parser().parse_args([])
 
     assert args.seed == 20260921
-    assert args.as_of == date(2026, 9, 22)
+    assert args.as_of == date(2026, 9, 24)
 
 
 class _Connection:
@@ -33,7 +33,7 @@ def test_apply_corpus_uses_existing_sql_roster_without_microsoft_graph(
     monkeypatch,
     tmp_path,
 ):
-    manifest_path = tmp_path / "v4-manifest.json"
+    manifest_path = tmp_path / "v5-manifest.json"
     connection = _Connection()
     captured: dict[str, object] = {}
 

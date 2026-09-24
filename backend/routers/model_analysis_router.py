@@ -31,6 +31,7 @@ ReviewOutcome = Literal[
 _GRAPH_PATTERNS = {
     "Ring", "BipartiteDenseBlock", "TemporalBurst", "SuperNominator",
     "SuperBeneficiary", "CopyPaste", "HiddenCandidate", "Desert",
+    "LowRecognitionNominator",
 }
 
 

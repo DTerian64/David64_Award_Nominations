@@ -21,7 +21,7 @@ from scripts.synthetic_tenant.seed_synthetics_inc import build_manifest
 from scripts.synthetic_tenant.validation import validate_corpus
 
 
-AS_OF = date(2026, 9, 22)
+AS_OF = date(2026, 9, 24)
 SEED = 20260921
 
 
@@ -70,6 +70,21 @@ def test_exact_population_labels_segments_and_scenarios():
     assert result["category_counts"] == {
         category: 3_000 for category in sorted(CATEGORIES)
     }
+    assert result["quiet_user_count"] == 40
+    assert result["quiet_team_manager_ids"] == [
+        "SYN-U0037", "SYN-U0038", "SYN-U0039", "SYN-U0040",
+    ]
+    assert len(result["low_recognition_cohort"]) == 12
+    assert all(
+        evidence["made"] >= 8
+        and evidence["distinct_beneficiaries"] >= 4
+        and evidence["received"] <= 1
+        for evidence in result["low_recognition_cohort_evidence"].values()
+    )
+    assert all(
+        metrics == {"unique": 2900, "repeated_rows": 150, "maximum_exact_reuse": 3}
+        for metrics in result["description_metrics_by_category"].values()
+    )
     assert all(
         CATEGORY_AMOUNT_BOUNDS[row.category_name][0]
         <= row.amount
@@ -189,9 +204,60 @@ def test_administrator_is_not_in_the_generated_corpus():
     assert all(row.beneficiary_logical_id in corpus_ids for row in nominations)
 
 
+def test_generated_approver_is_always_the_beneficiary_manager():
+    users, nominations = _corpus()
+    manager_by_user = {
+        user.logical_id: user.manager_logical_id for user in users
+    }
+
+    assert all(
+        row.approver_logical_id == manager_by_user[row.beneficiary_logical_id]
+        for row in nominations
+    )
+
+
 def test_directory_roster_remains_stable_across_corpus_versions():
     users = generate_users(DIRECTORY_SEED)
 
     assert DIRECTORY_SEED == 20260912
     assert users[0].logical_id == "SYN-U0001"
     assert users[0].upn == "shoghik.hakobyan@synthetics.terian-services.com"
+
+
+def test_background_pairs_no_longer_repeat_in_a_modulo_cycle():
+    _users, nominations = _corpus()
+    background = [
+        row for row in nominations if row.scenario_phase == "BACKGROUND"
+    ]
+    from collections import Counter
+
+    pairs = Counter(
+        (row.nominator_logical_id, row.beneficiary_logical_id)
+        for row in background
+    )
+    assert len(pairs) >= 7000
+    assert max(pairs.values()) <= 10
+
+
+def test_descriptions_name_the_actual_beneficiary_and_award_amount():
+    users, nominations = _corpus()
+    names = {user.logical_id: user.display_name for user in users}
+    assert all(
+        names[row.beneficiary_logical_id] in row.description
+        and f"${row.amount:,}" in row.description
+        for row in nominations
+    )
+
+
+def test_quiet_teams_and_low_recognition_cohort_are_distinct():
+    users, nominations = _corpus()
+    result = validate_corpus(users, nominations, AS_OF)
+    participants = {
+        user_id for row in nominations
+        for user_id in (row.nominator_logical_id, row.beneficiary_logical_id)
+    }
+    assert len(participants) == 360
+    assert not set(result["low_recognition_cohort"]) - participants
+    assert all(
+        user_id not in participants for user_id in result["quiet_team_manager_ids"]
+    )

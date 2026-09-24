@@ -16,6 +16,7 @@ Pattern catalogue
 6. CopyPaste           — cosine similarity ≥ 0.92 between descriptions, min cluster 3
 7. HiddenCandidate     — name appears ≥ 5× in descriptions but never a BeneficiaryId
 8. Desert              — whole team absent from both sides of the graph
+9. LowRecognitionNominator — frequent nominator, seldom nominated (analytics-only)
 
 Environment variables (all injected by the Container Apps Job)
 --------------------------------------------------------------
@@ -1262,6 +1263,65 @@ def detect_deserts(
     return findings
 
 
+def detect_low_recognition_nominators(
+    nominations: list[dict],
+    users: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """Identify generous nominators who rarely receive recognition themselves.
+
+    This is a participation observation, not fraud evidence. The active policy
+    must keep it disabled for nomination routing.
+    """
+    parameters = _pattern_config(policy, "LowRecognitionNominator").get(
+        "parameters", {}
+    )
+    minimum_made = int(parameters.get("minimum_nominations_made", 8))
+    minimum_distinct = int(parameters.get("minimum_distinct_beneficiaries", 4))
+    maximum_received = int(parameters.get("maximum_nominations_received", 1))
+    made: dict[int, list[dict]] = defaultdict(list)
+    received: Counter[int] = Counter()
+    eligible_to_receive = {
+        int(user["UserId"]) for user in users if user.get("ManagerId") is not None
+    }
+    for nomination in nominations:
+        made[int(nomination["NominatorId"])].append(nomination)
+        received[int(nomination["BeneficiaryId"])] += 1
+    findings: list[dict] = []
+    for user_id, rows in sorted(made.items()):
+        if user_id not in eligible_to_receive:
+            continue
+        beneficiaries = {int(row["BeneficiaryId"]) for row in rows}
+        if (
+            len(rows) < minimum_made
+            or len(beneficiaries) < minimum_distinct
+            or received[user_id] > maximum_received
+        ):
+            continue
+        nominations_made = len(rows)
+        findings.append(_finding(
+            tenant_id, run_id, "LowRecognitionNominator", "Low",
+            [user_id], sorted(int(row["NominationId"]) for row in rows),
+            f"User {user_id} made {nominations_made} nominations for "
+            f"{len(beneficiaries)} distinct people but received "
+            f"{received[user_id]} in the {policy['detection_window_days'] if policy else 365}-day window. "
+            "This is a participation finding, not a fraud determination.",
+            policy=policy,
+            signals={
+                "activity": min(nominations_made / max(float(
+                    parameters.get("nominations_reference", 20)
+                ), 1.0), 1.0),
+                "breadth": min(len(beneficiaries) / max(float(
+                    parameters.get("beneficiaries_reference", 10)
+                ), 1.0), 1.0),
+            },
+        ))
+    logger.info("  LowRecognitionNominator: %d detected", len(findings))
+    return findings
+
+
 # ── Embedding cache helpers ───────────────────────────────────────────────────
 
 def _evict_stale_embeddings(conn: pyodbc.Connection, window_days: int) -> None:
@@ -1784,6 +1844,10 @@ def _process_tenant(
     if enabled("Desert"):
         detected_findings.extend(detect_deserts(
             ever_active_ids, users, tenant_id, run_id, policy
+        ))
+    if enabled("LowRecognitionNominator"):
+        detected_findings.extend(detect_low_recognition_nominators(
+            nominations, users, tenant_id, run_id, policy
         ))
 
     detected_findings = list({f["FindingHash"]: f for f in detected_findings}.values())

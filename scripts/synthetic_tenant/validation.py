@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
+
+from .descriptions import STORIES
 
 from .scenarios import (
     ACTIVE_USER_COUNT,
@@ -16,11 +18,13 @@ from .scenarios import (
     NOMINATION_COUNT,
     NOMINATIONS_PER_SEGMENT,
     PATTERN_TAXONOMY_VERSION,
+    QUIET_TEAM_MANAGER_IDS,
     SEGMENT_COUNT,
     SPECIALIST_FAMILIES,
     UPN_DOMAIN,
     SyntheticNomination,
     SyntheticUser,
+    participation_cohorts,
 )
 
 
@@ -63,6 +67,14 @@ def validate_corpus(
     for field in ("nominator_logical_id", "beneficiary_logical_id", "approver_logical_id"):
         if any(getattr(row, field) not in user_ids for row in nominations):
             errors.append(f"{field} contains a cross-corpus reference")
+    manager_by_user = {
+        user.logical_id: user.manager_logical_id for user in users
+    }
+    if any(
+        row.approver_logical_id != manager_by_user.get(row.beneficiary_logical_id)
+        for row in nominations
+    ):
+        errors.append("an approver is not the beneficiary's manager")
 
     fraud_count = SEGMENT_COUNT * sum(FRAUD_PER_SEGMENT.values())
     legitimate_count = NOMINATION_COUNT - fraud_count
@@ -337,8 +349,89 @@ def validate_corpus(
         errors.append(
             f"expected {ACTIVE_USER_COUNT} active graph participants, found {len(participants)}"
         )
-    if any(row.category_name not in row.description for row in nominations):
-        errors.append("one or more descriptions omit the exact category phrase")
+    quiet, cohort = participation_cohorts(users)
+    if quiet & participants or participants != user_ids - quiet:
+        errors.append("quiet teams or active participants do not match v5 cohorts")
+    by_id = {user.logical_id: user for user in users}
+    if len({by_id[user_id].department for user_id in cohort}) < 6:
+        errors.append("low-recognition cohort spans fewer than six departments")
+    made = Counter(row.nominator_logical_id for row in nominations)
+    received = Counter(row.beneficiary_logical_id for row in nominations)
+    unique_beneficiaries: dict[str, set[str]] = defaultdict(set)
+    for row in nominations:
+        unique_beneficiaries[row.nominator_logical_id].add(
+            row.beneficiary_logical_id
+        )
+    if any(
+        made[user_id] < 8 or len(unique_beneficiaries[user_id]) < 4
+        or received[user_id] > 1
+        for user_id in cohort
+    ):
+        errors.append("designated low-recognition cohort misses the 8/4/1 criteria")
+    if received[users[0].logical_id] or made[users[0].logical_id] == 0:
+        errors.append("root executive must nominate but never be a beneficiary")
+
+    background = [row for row in nominations if row.scenario_phase == "BACKGROUND"]
+    background_pairs = Counter(
+        (row.nominator_logical_id, row.beneficiary_logical_id)
+        for row in background
+    )
+    background_same_department_share = sum(
+        by_id[row.nominator_logical_id].department
+        == by_id[row.beneficiary_logical_id].department
+        for row in background
+    ) / len(background)
+    if (
+        len(background_pairs) < 7000
+        or max(background_pairs.values(), default=0) > 10
+        or not 0.6 <= background_same_department_share <= 0.72
+    ):
+        errors.append("background pair variety or department mix is outside v5 bounds")
+
+    description_counts_by_category: dict[str, Counter[str]] = {
+        category: Counter() for category in CATEGORIES
+    }
+    for row in nominations:
+        if row.category_name not in STORIES:
+            errors.append(f"{row.logical_id} has an unknown description category")
+            continue
+        description_counts_by_category[row.category_name][row.description] += 1
+        _contexts, actions, outcomes = STORIES[row.category_name]
+        description = row.description.lower()
+        if (
+            not 70 <= len(row.description) <= 500
+            or by_id[row.beneficiary_logical_id].display_name not in row.description
+            or f"${row.amount:,}" not in row.description
+            or not any(action in description for action in actions)
+            or not any(outcome in description for outcome in outcomes)
+        ):
+            errors.append(f"{row.logical_id} lacks a category-grounded story")
+    description_metrics = {}
+    for category, counts in description_counts_by_category.items():
+        total = sum(counts.values())
+        repeated_rows = sum(count for count in counts.values() if count > 1)
+        if total and (
+            len(counts) < 0.9 * total
+            or not 0.03 <= repeated_rows / total <= 0.06
+            or max(counts.values()) > 8
+        ):
+            errors.append(f"{category} description variety/reuse is outside v5 bounds")
+        description_metrics[category] = {
+            "unique": len(counts),
+            "repeated_rows": repeated_rows,
+            "maximum_exact_reuse": max(counts.values(), default=0),
+        }
+    all_description_counts = Counter(
+        row.description for row in nominations
+    )
+    repeat_by_label = Counter(
+        row.training_disposition for row in nominations
+        if all_description_counts[row.description] > 1
+    )
+    fraud_repeat_rate = repeat_by_label["FRAUD"] / fraud_count
+    legitimate_repeat_rate = repeat_by_label["LEGITIMATE"] / legitimate_count
+    if abs(fraud_repeat_rate - legitimate_repeat_rate) > 0.03:
+        errors.append("exact description reuse is a fraud-label shortcut")
     category_counts = Counter(row.category_name for row in nominations)
     expected_category_count = NOMINATION_COUNT // len(CATEGORIES)
     if category_counts != Counter(
@@ -421,6 +514,22 @@ def validate_corpus(
         "operational_admin_count": 1,
         "total_directory_and_sql_users": len(users) + 1,
         "active_graph_participants": len(participants),
+        "quiet_team_manager_ids": list(QUIET_TEAM_MANAGER_IDS),
+        "quiet_user_count": len(quiet),
+        "low_recognition_cohort": list(cohort),
+        "low_recognition_cohort_evidence": {
+            user_id: {
+                "made": made[user_id],
+                "distinct_beneficiaries": len(unique_beneficiaries[user_id]),
+                "received": received[user_id],
+            }
+            for user_id in cohort
+        },
+        "background_same_department_share": round(background_same_department_share, 4),
+        "background_unique_pair_count": len(background_pairs),
+        "background_max_pair_count": max(background_pairs.values(), default=0),
+        "exact_repeat_rows_by_label": dict(repeat_by_label),
+        "description_metrics_by_category": description_metrics,
         "nomination_count": len(nominations),
         "legitimate_count": class_counts["LEGITIMATE"],
         "fraud_count": class_counts["FRAUD"],

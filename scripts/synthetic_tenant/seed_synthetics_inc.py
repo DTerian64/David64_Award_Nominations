@@ -4,10 +4,10 @@ Usage (from the repository root)::
 
     python -m scripts.synthetic_tenant.seed_synthetics_inc --dry-run
     python -m scripts.synthetic_tenant.seed_synthetics_inc --validate
-    python -m scripts.synthetic_tenant.seed_synthetics_inc --as-of 2026-09-22 --seed 20260921
+    python -m scripts.synthetic_tenant.seed_synthetics_inc --as-of 2026-09-24 --seed 20260921
     python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-configuration
-    python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260921 --as-of 2026-09-22 --manifest-out Output/synthetics-inc-v4-manifest.json
-    python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260921 --as-of 2026-09-22 --manifest-out Output/synthetics-inc-v4-manifest.json
+    python -m scripts.synthetic_tenant.seed_synthetics_inc --apply-corpus --seed 20260921 --as-of 2026-09-24 --manifest-out Output/synthetics-inc-v5-manifest.json
+    python -m scripts.synthetic_tenant.seed_synthetics_inc --apply --seed 20260921 --as-of 2026-09-24 --manifest-out Output/synthetics-inc-v5-manifest.json
 
 The default is a dry run. ``--apply-configuration`` performs Phase B only: it
 clones the approved Tenant 1 settings into the destination SQL tenant. It does
@@ -38,7 +38,7 @@ from .validation import validate_corpus
 
 
 DEFAULT_SEED = 20260921
-DEFAULT_AS_OF = date(2026, 9, 22)
+DEFAULT_AS_OF = date(2026, 9, 24)
 
 
 def _progress(message: str) -> None:

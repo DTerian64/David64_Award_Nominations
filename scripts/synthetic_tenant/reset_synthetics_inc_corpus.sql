@@ -1,14 +1,14 @@
 /*
 Purpose
 =======
-Tenant-scoped removal of all Synthetics Inc. nomination data so the v4.0 direct
-specialist-label corpus can be loaded with the Python seeder.
+Tenant-scoped removal of all Synthetics Inc. nomination data so the v5.0
+participation corpus can be loaded with the Python seeder.
 
 This script preserves dbo.Tenants, dbo.Users, roles, categories, email
 templates, Graph/GNN scoring policies, Entra identities, DNS, and application
 configuration. It removes every nomination owned by TenantId 5 and all
 nomination-derived data for that tenant, including test nominations created
-after the deployed v3 corpus.
+after the deployed v4 corpus.
 
 Safety and usage
 ================
@@ -18,7 +18,7 @@ Safety and usage
    rolls it back.
 4. Review the inventory result sets and all preflight checks.
 5. Change @CommitChanges to 1 and run the entire file again to commit.
-6. Run the v4.0 seeder --apply-corpus command documented in README.md.
+6. Run the v5.0 seeder --apply-corpus command documented in README.md.
 
 Do not change TenantId 5, the organization ID, tenant name, domain, or expected
 user count merely to bypass a failed preflight. Investigate the difference

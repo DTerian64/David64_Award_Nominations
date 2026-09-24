@@ -94,7 +94,8 @@ interface DetectorCalculator {
 }
 
 const label = (value: string) =>
-  value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ')
+  (value === 'LowRecognitionNominator' ? 'Frequent nominator, seldom nominated' : value)
+    .replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ')
     .replace(/\b\w/g, character => character.toUpperCase());
 
 const formatValue = (value: number) => Number.isInteger(value)
@@ -236,6 +237,19 @@ const DETECTOR_FORMULAS: Record<string, DetectorFormula> = {
       {
         key: 'team_size', name: 'Team size',
         expression: pattern => `clamp(team members ÷ ${formatValue(parameter(pattern, 'team_size_reference', 10))}, 0, 1)`,
+      },
+    ],
+  },
+  LowRecognitionNominator: {
+    detectionCondition: pattern => `A user made at least ${formatValue(parameter(pattern, 'minimum_nominations_made', 8))} nominations for at least ${formatValue(parameter(pattern, 'minimum_distinct_beneficiaries', 4))} different people, and received at most ${formatValue(parameter(pattern, 'maximum_nominations_received', 1))} nomination(s) in the detection window. Analytics only; this is not a fraud verdict.`,
+    signals: [
+      {
+        key: 'activity', name: 'Nominations made',
+        expression: pattern => `clamp(nominations made ÷ ${formatValue(parameter(pattern, 'nominations_reference', 20))}, 0, 1)`,
+      },
+      {
+        key: 'breadth', name: 'Distinct beneficiaries',
+        expression: pattern => `clamp(distinct beneficiaries ÷ ${formatValue(parameter(pattern, 'beneficiaries_reference', 10))}, 0, 1)`,
       },
     ],
   },
@@ -510,6 +524,23 @@ const DETECTOR_CALCULATORS: Record<string, DetectorCalculator> = {
         },
       };
     },
+  },
+  LowRecognitionNominator: {
+    inputs: [
+      { key: 'made', name: 'Nominations made', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_nominations_made', 8) },
+      { key: 'distinct', name: 'Distinct beneficiaries', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'minimum_distinct_beneficiaries', 4) },
+      { key: 'received', name: 'Nominations received', minimum: 0, step: 1, defaultValue: pattern => parameter(pattern, 'maximum_nominations_received', 1) },
+    ],
+    calculate: (pattern, values) => ({
+      activity: {
+        rawEvidence: `${formatValue(Number(values.made))} nominations`,
+        normalized: clamp(Number(values.made) / Math.max(parameter(pattern, 'nominations_reference', 20), 1)),
+      },
+      breadth: {
+        rawEvidence: `${formatValue(Number(values.distinct))} people; ${formatValue(Number(values.received))} received`,
+        normalized: clamp(Number(values.distinct) / Math.max(parameter(pattern, 'beneficiaries_reference', 10), 1)),
+      },
+    }),
   },
   CopyPaste: {
     inputs: [
@@ -889,9 +920,9 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
                         </div>
                         <div className="flex flex-wrap gap-4 text-sm">
                           <label className="flex items-center gap-2"><input type="checkbox" checked={pattern.enabled} disabled={!draft} onChange={event => updatePattern(index, { enabled: event.target.checked, enabled_for_routing: event.target.checked ? pattern.enabled_for_routing : false })} />Detection enabled</label>
-                          <label className="flex items-center gap-2"><input type="checkbox" checked={pattern.enabled_for_routing} disabled={!draft || !pattern.enabled} onChange={event => updatePattern(index, { enabled_for_routing: event.target.checked })} />Use for nomination routing</label>
+                          <label className="flex items-center gap-2"><input type="checkbox" checked={pattern.enabled_for_routing} disabled={!draft || !pattern.enabled || ['Desert', 'HiddenCandidate', 'LowRecognitionNominator'].includes(pattern.pattern_type)} onChange={event => updatePattern(index, { enabled_for_routing: event.target.checked })} />Use for nomination routing</label>
                           {(['nominator', 'beneficiary'] as const).map(role => (
-                            <label key={role} className="flex items-center gap-2"><input type="checkbox" checked={pattern.applicable_roles.includes(role)} disabled={!draft} onChange={event => updatePattern(index, { applicable_roles: event.target.checked ? [...pattern.applicable_roles, role] : pattern.applicable_roles.filter(value => value !== role) })} />{label(role)}</label>
+                            <label key={role} className="flex items-center gap-2"><input type="checkbox" checked={pattern.applicable_roles.includes(role)} disabled={!draft || pattern.pattern_type === 'LowRecognitionNominator'} onChange={event => updatePattern(index, { applicable_roles: event.target.checked ? [...pattern.applicable_roles, role] : pattern.applicable_roles.filter(value => value !== role) })} />{label(role)}</label>
                           ))}
                         </div>
                         {pattern.pattern_type === 'Ring' && (

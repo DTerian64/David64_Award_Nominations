@@ -7,7 +7,8 @@ adapter is allowed to persist them.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from collections import defaultdict
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
 import json
@@ -16,14 +17,20 @@ import random
 import re
 import uuid
 
+from .descriptions import description_for_nomination
 
-GENERATOR_VERSION = "synthetics-inc-v4.0"
+
+GENERATOR_VERSION = "synthetics-inc-v5.0"
 PATTERN_TAXONOMY_VERSION = "gnn-v3-patterns-v1"
 DIRECTORY_SEED = 20260912
 GENERATOR_NAMESPACE = uuid.UUID("bbf46d6d-a7c0-4f45-8ba0-2cce41121085")
 UPN_DOMAIN = "synthetics.terian-services.com"
 CORPUS_USER_COUNT = 400
 ACTIVE_USER_COUNT = 360
+QUIET_TEAM_MANAGER_IDS = (
+    "SYN-U0037", "SYN-U0038", "SYN-U0039", "SYN-U0040",
+)
+LOW_RECOGNITION_COHORT_SIZE = 12
 NOMINATION_COUNT = 15_000
 SEGMENT_COUNT = 5
 NOMINATIONS_PER_SEGMENT = 3_000
@@ -445,48 +452,176 @@ def generate_users(seed: int) -> list[SyntheticUser]:
     return users
 
 
-def _description(category: str, variant: int) -> str:
-    subjects = (
-        "led a cross-functional delivery through an unexpected deadline",
-        "redesigned a recurring workflow and removed avoidable handoffs",
-        "helped a customer team resolve a complex implementation issue",
-        "coached colleagues while completing a demanding project milestone",
-        "identified a service risk and coordinated a practical response",
-    )
-    impacts = (
-        "The work reduced delays, improved clarity, and gave the team a repeatable approach.",
-        "The result improved service quality and helped colleagues meet their commitments.",
-        "Their initiative produced a measurable outcome and strengthened collaboration.",
-        "This contribution removed a persistent obstacle and improved the customer experience.",
-        "The approach delivered a timely result while sharing knowledge across the team.",
-    )
-    return (
-        f"For {category}, the nominee {subjects[variant % len(subjects)]}. "
-        f"{impacts[(variant * 3) % len(impacts)]} The award recognizes a specific, "
-        "well-documented contribution and its positive business impact."
-    )
+def participation_cohorts(
+    users: list[SyntheticUser],
+) -> tuple[set[str], tuple[str, ...]]:
+    """Return four complete quiet teams and twelve non-scenario nominators."""
+    by_id = {user.logical_id: user for user in users}
+    quiet = set(QUIET_TEAM_MANAGER_IDS)
+    for manager_id in QUIET_TEAM_MANAGER_IDS:
+        if manager_id not in by_id:
+            raise ValueError(f"Missing quiet-team manager {manager_id}")
+        reports = [
+            user for user in users if user.manager_logical_id == manager_id
+        ]
+        if len(reports) != 9:
+            raise ValueError(f"Quiet team {manager_id} has {len(reports)} reports")
+        quiet.update(user.logical_id for user in reports)
+    cohort = tuple(
+        user.logical_id for user in users
+        if user.manager_logical_id is not None
+        and user.logical_id not in quiet
+    )[-LOW_RECOGNITION_COHORT_SIZE:]
+    if len(quiet) != 40 or len(cohort) != LOW_RECOGNITION_COHORT_SIZE:
+        raise ValueError("Invalid v5 participation cohorts")
+    if len({by_id[user_id].department for user_id in cohort}) < 6:
+        raise ValueError("Low-recognition cohort lacks department diversity")
+    return quiet, cohort
 
 
 def _legitimate_parties(
-    active: list[SyntheticUser], global_index: int
+    active: list[SyntheticUser], beneficiaries: list[SyntheticUser],
+    cohort: tuple[str, ...], global_index: int, background_ordinal: int, seed: int,
 ) -> tuple[SyntheticUser, SyntheticUser]:
-    """Create an ordinary background edge without scenario-specific shortcuts."""
-    nominator = active[global_index % len(active)]
-    beneficiary = active[(global_index * 7 + 37) % len(active)]
-    if beneficiary.logical_id == nominator.logical_id:
-        beneficiary = active[(active.index(beneficiary) + 1) % len(active)]
+    """Seed-stable, department-weighted background pairing without pair cycles."""
+    rng = random.Random(f"v5:pair:{seed}:{global_index}")
+    # Guarantee every eligible user participates, including the root, and give
+    # the designated low-recognition cohort at least eight outgoing edges.
+    if background_ordinal < len(active):
+        nominator = active[background_ordinal]
+    elif background_ordinal < len(active) + len(cohort) * 8:
+        cohort_id = cohort[(background_ordinal - len(active)) % len(cohort)]
+        nominator = next(user for user in active if user.logical_id == cohort_id)
+    else:
+        nominator = rng.choice(active)
+    candidates = [
+        user for user in beneficiaries if user.logical_id != nominator.logical_id
+    ]
+    same_department = [
+        user for user in candidates if user.department == nominator.department
+    ]
+    cross_department = [
+        user for user in candidates if user.department != nominator.department
+    ]
+    pool = (
+        same_department if rng.random() < 2 / 3 and same_department
+        else cross_department if cross_department else candidates
+    )
+    beneficiary = rng.choice(pool)
     return nominator, beneficiary
+
+
+def _apply_intentional_description_reuse(
+    nominations: list[SyntheticNomination],
+) -> list[SyntheticNomination]:
+    """Create exact-reuse trios whose text, beneficiary, and amount agree.
+
+    Three trios per category include one fraud target plus two legitimate
+    background nominations for the *same* beneficiary. The remaining 47 trios
+    per category are ordinary recognition campaigns. Specialist topology is
+    untouched; only background recipients/amounts can be harmonized.
+    """
+    result = list(nominations)
+    background: dict[tuple[str, int], list[int]] = defaultdict(list)
+    fraud_targets: dict[tuple[str, int], list[int]] = defaultdict(list)
+    for index, row in enumerate(result):
+        key = (row.category_name, row.segment)
+        if row.scenario_phase == "BACKGROUND":
+            background[key].append(index)
+        elif row.scenario_phase == "TARGET" and row.training_disposition == "FRAUD":
+            fraud_targets[key].append(index)
+
+    used: set[int] = set()
+    for category in CATEGORIES:
+        for segment in (0, 2, 4):
+            for anchor_index in fraud_targets[(category, segment)]:
+                anchor = result[anchor_index]
+                matches = [
+                    index for index in background[(category, segment)]
+                    if index not in used
+                    and result[index].beneficiary_logical_id
+                    == anchor.beneficiary_logical_id
+                ]
+                if len(matches) < 2:
+                    continue
+                for index in matches[:2]:
+                    result[index] = replace(
+                        result[index], amount=anchor.amount,
+                        description=anchor.description,
+                    )
+                    used.add(index)
+                break
+            else:
+                raise ValueError(
+                    f"No fraud-linked description trio for {category} segment {segment}"
+                )
+
+        # 10, 10, 10, 10, 7 benign trios across the five time segments.
+        for segment, group_count in enumerate((10, 10, 10, 10, 7)):
+            candidates = [
+                index for index in background[(category, segment)]
+                if index not in used
+            ]
+            stride = len(candidates) // group_count
+            for group_number in range(group_count):
+                block = candidates[
+                    group_number * stride:(group_number + 1) * stride
+                ]
+                block = [index for index in block if index not in used]
+                anchor_index = block[0]
+                anchor = result[anchor_index]
+                partners: list[int] = []
+                nominators = {anchor.nominator_logical_id}
+                for index in block[1:]:
+                    row = result[index]
+                    if (
+                        row.nominator_logical_id == anchor.beneficiary_logical_id
+                        or row.nominator_logical_id in nominators
+                    ):
+                        continue
+                    partners.append(index)
+                    nominators.add(row.nominator_logical_id)
+                    if len(partners) == 2:
+                        break
+                if len(partners) != 2:
+                    raise ValueError(
+                        f"No benign description trio for {category} segment {segment}"
+                    )
+                used.add(anchor_index)
+                for index in partners:
+                    result[index] = replace(
+                        result[index],
+                        beneficiary_logical_id=anchor.beneficiary_logical_id,
+                        approver_logical_id=anchor.approver_logical_id,
+                        amount=anchor.amount,
+                        description=anchor.description,
+                    )
+                    used.add(index)
+    return result
 
 
 def generate_nominations(
     users: list[SyntheticUser], seed: int, as_of: date
 ) -> list[SyntheticNomination]:
-    """Generate the v4 corpus with direct specialist labels and controls."""
-    active = users[:ACTIVE_USER_COUNT]
+    """Generate the v5 corpus with direct specialist labels and controls."""
+    quiet, cohort = participation_cohorts(users)
+    active = [user for user in users if user.logical_id not in quiet]
+    if len(active) != ACTIVE_USER_COUNT:
+        raise ValueError("The active corpus needs 360 users")
+    scenario_active = [
+        user for user in active
+        if user.manager_logical_id is not None and user.logical_id not in cohort
+    ]
+    background_beneficiaries = [
+        user for user in active
+        if user.manager_logical_id is not None and user.logical_id not in cohort
+    ]
     by_id = {user.logical_id: user for user in users}
     start = as_of - timedelta(days=365)
     nominations: list[SyntheticNomination] = []
-    scenario_plan = _scenario_plan(active)
+    scenario_plan = _scenario_plan(scenario_active)
+    category_ordinals = {category: 0 for category in CATEGORIES}
+    background_ordinal = 0
 
     for segment in range(SEGMENT_COUNT):
         for ordinal in range(NOMINATIONS_PER_SEGMENT):
@@ -504,13 +639,19 @@ def generate_nominations(
                 variant = BACKGROUND_VARIANTS[
                     global_index % len(BACKGROUND_VARIANTS)
                 ]
-                nominator, beneficiary = _legitimate_parties(active, global_index)
+                nominator, beneficiary = _legitimate_parties(
+                    active, background_beneficiaries, cohort, global_index,
+                    background_ordinal, seed,
+                )
+                background_ordinal += 1
 
             # Three is coprime to the five category count, yielding an even
             # category mix inside every temporal segment instead of coupling a
             # fold to one category.
             category_index = (global_index * 3 + segment) % len(CATEGORIES)
             category = CATEGORIES[category_index]
+            category_ordinal = category_ordinals[category]
+            category_ordinals[category] += 1
             date_position = (
                 scenario_event.target_position
                 if scenario_event and scenario_event.timing_mode == "ACTIVE"
@@ -536,7 +677,11 @@ def generate_nominations(
                 (global_index * 137) % (amount_steps + 1)
             )
 
-            approver_id = nominator.manager_logical_id or users[1].logical_id
+            approver_id = beneficiary.manager_logical_id
+            if approver_id is None:
+                raise ValueError(
+                    f"Beneficiary {beneficiary.logical_id} has no manager"
+                )
             status = (
                 (
                     "Rejected"
@@ -559,7 +704,10 @@ def generate_nominations(
                 category_key=f"CATEGORY_{category_index + 1:02d}",
                 category_name=category,
                 amount=amount,
-                description=_description(category, global_index),
+                description=description_for_nomination(
+                    category, category_ordinal, seed,
+                    beneficiary.display_name, amount,
+                ),
                 status=status,
                 training_disposition=disposition,
                 scenario_family=(
@@ -579,7 +727,7 @@ def generate_nominations(
                     else ()
                 ),
             ))
-    return nominations
+    return _apply_intentional_description_reuse(nominations)
 
 
 def corpus_hash(users: list[SyntheticUser], nominations: list[SyntheticNomination]) -> str:
