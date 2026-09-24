@@ -12,6 +12,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { X, RefreshCw, AlertCircle, Info } from 'lucide-react';
 import { getAccessToken } from '../services/api';
 import { SHAP_FEATURE_LABELS, parseShapContributions } from '../utils/shap';
+import {
+  GRAPH_PATTERN_LABELS,
+  OtherGraphDetectorScores,
+  parseGraphDetectorScores,
+} from './GraphDetectorScores';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -66,17 +71,6 @@ function formatDetailValue(value: unknown): string {
   if (typeof value === 'object') return JSON.stringify(value, null, 2);
   return String(value);
 }
-
-const GRAPH_PATTERN_LABELS: Record<string, string> = {
-  Ring: 'Nomination Ring',
-  BipartiteDenseBlock: 'Bipartite Dense Block',
-  TemporalBurst: 'Temporal Burst',
-  SuperNominator: 'Super Nominator',
-  SuperBeneficiary: 'Super Beneficiary',
-  CopyPaste: 'Copy-Paste Fraud',
-  HiddenCandidate: 'Hidden Candidate',
-  Desert: 'Nomination Desert',
-};
 
 /** Show the one finding that determines Graph score and participant history context. */
 function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
@@ -135,7 +129,9 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
   const nominatorHistoryCount = historyCount('nominator_history');
   const beneficiaryHistoryCount = historyCount('beneficiary_history');
   const sharedHistoryCount = historyCount('shared_history');
-  if (!winningType && nominatorHistoryCount + beneficiaryHistoryCount + sharedHistoryCount === 0) return null;
+  const detectorScores = parseGraphDetectorScores(extras.candidate_detector_scores);
+  if (!winningType && nominatorHistoryCount + beneficiaryHistoryCount + sharedHistoryCount === 0
+      && detectorScores.length === 0) return null;
   const patternLabel = winningType ? GRAPH_PATTERN_LABELS[winningType] || `${winningType} pattern` : null;
   return (
     <div className="mt-3 space-y-2">
@@ -156,6 +152,7 @@ function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
         <p>Beneficiary: {beneficiaryHistoryCount} historical ring finding{beneficiaryHistoryCount === 1 ? '' : 's'}</p>
         {sharedHistoryCount > 0 && <p>Both participants: {sharedHistoryCount} shared historical ring finding{sharedHistoryCount === 1 ? '' : 's'}</p>}
       </div>}
+      <OtherGraphDetectorScores scores={detectorScores} winningPatternType={winningType} />
     </div>
   );
 }
@@ -338,7 +335,8 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                         && (!isGraph || ![
                           'warning_flags', 'winning_finding', 'winning_pattern_type',
                           'winning_pattern_count', 'detector_summary', 'pattern_findings',
-                          'candidate_findings', 'nominator_history', 'beneficiary_history',
+                          'candidate_findings', 'candidate_detector_scores',
+                          'nominator_history', 'beneficiary_history',
                           'shared_history', 'candidate_evaluation_version',
                           'candidate_evaluation_ms', 'candidate_evaluation',
                           'inference_snapshot_blob',

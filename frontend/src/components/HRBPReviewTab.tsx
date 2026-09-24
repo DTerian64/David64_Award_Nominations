@@ -14,6 +14,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ShieldAlert, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { useImpersonation } from '../contexts/ImpersonationContext';
 import { parseShapContributions, SHAP_FEATURE_LABELS, type ShapContribution } from '../utils/shap';
+import {
+  GRAPH_PATTERN_LABELS,
+  OtherGraphDetectorScores,
+  parseGraphDetectorScores,
+  type GraphDetectorScore,
+} from './GraphDetectorScores';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -159,16 +165,7 @@ export interface EngineResult {
     remaining_score_upper_bound?: number | null;
   } | null;
   candidate_findings?: Array<NonNullable<EngineResult['winning_finding']>>;
-  candidate_detector_scores?: Array<{
-    detector: string;
-    score: number;
-    severity?: string;
-    eligible: boolean;
-    enabled_for_routing: boolean;
-    state: 'SCORING' | 'NOT_SCORING' | 'ANALYTICS_ONLY';
-    eligibility_reasons?: string[];
-    detail?: string;
-  }>;
+  candidate_detector_scores?: GraphDetectorScore[];
   nominator_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   beneficiary_history?: Array<NonNullable<EngineResult['winning_finding']>>;
   shared_history?: Array<NonNullable<EngineResult['winning_finding']>>;
@@ -239,17 +236,6 @@ export interface PairHistory {
   history:          PairHistoryItem[];
 }
 
-const GRAPH_PATTERN_LABELS: Record<string, string> = {
-  Ring: 'Nomination Ring',
-  BipartiteDenseBlock: 'Bipartite Dense Block',
-  TemporalBurst: 'Temporal Burst',
-  SuperNominator: 'Super Nominator',
-  SuperBeneficiary: 'Super Beneficiary',
-  CopyPaste: 'Copy-Paste Fraud',
-  HiddenCandidate: 'Hidden Candidate',
-  Desert: 'Nomination Desert',
-};
-
 /** Compact Graph attribution matching the Graph Pattern Findings vocabulary. */
 export const GraphScoreContribution: React.FC<{
   engine: EngineResult;
@@ -264,7 +250,8 @@ export const GraphScoreContribution: React.FC<{
   const beneficiaryRingCount = (engine.beneficiary_history || []).filter(item => item.pattern_type === 'Ring').length;
   const sharedRingCount = (engine.shared_history || []).filter(item => item.pattern_type === 'Ring').length;
   const hasRingHistory = nominatorRingCount + beneficiaryRingCount + sharedRingCount > 0;
-  const hasDetectorScores = (engine.candidate_detector_scores || []).length > 0;
+  const detectorScores = parseGraphDetectorScores(engine.candidate_detector_scores);
+  const hasDetectorScores = detectorScores.length > 0;
   if (!patternType && !fallback && !hasRingHistory && !hasDetectorScores) return null;
   const patternLabel = patternType ? GRAPH_PATTERN_LABELS[patternType] || `${patternType} pattern` : null;
   const candidateAware = finding?.evidence_scope === 'CURRENT_NOMINATION';
@@ -283,9 +270,6 @@ export const GraphScoreContribution: React.FC<{
     const userId = persistedId ?? fallbackId;
     return userId === undefined ? role : `${role} #${userId}`;
   });
-  const otherDetectorScores = (engine.candidate_detector_scores || [])
-    .filter(item => item.detector !== patternType && Number.isFinite(item.score))
-    .sort((left, right) => right.score - left.score || left.detector.localeCompare(right.detector));
   return (
     <div className="mt-2 space-y-2 text-xs">
       {(patternType || fallback) && <div className="text-teal-800">
@@ -322,57 +306,7 @@ export const GraphScoreContribution: React.FC<{
           </div>
         </div>
       )}
-      {otherDetectorScores.length > 0 && (
-        <div className="rounded border border-slate-200 bg-slate-50 p-2 text-slate-700">
-          <p className="font-semibold text-slate-900">Other detector scores</p>
-          <p className="text-slate-500">Current nomination evaluation · scores are not summed.</p>
-          <div className="mt-2 space-y-1.5">
-            {otherDetectorScores.map(item => {
-              const statusLabel = item.state === 'SCORING'
-                ? 'Eligible'
-                : item.state === 'ANALYTICS_ONLY'
-                  ? 'Analytics only'
-                  : 'Not eligible';
-              const explanation = item.state === 'SCORING'
-                ? 'Participated; lower than the winning detector.'
-                : item.state === 'ANALYTICS_ONLY'
-                  ? 'Excluded from routing by policy.'
-                  : item.eligibility_reasons?.[0] || 'Minimum detector criteria were not met.';
-              return (
-                <div
-                  key={item.detector}
-                  className={`rounded-md border px-2 py-1.5 ${
-                    item.state === 'SCORING'
-                      ? 'border-emerald-200 bg-emerald-50/60'
-                      : item.state === 'ANALYTICS_ONLY'
-                        ? 'border-slate-200 bg-slate-100'
-                        : 'border-amber-200 bg-amber-50/60'
-                  }`}
-                  title={(item.eligibility_reasons || []).join('; ') || item.detail}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-medium text-slate-800">
-                      {GRAPH_PATTERN_LABELS[item.detector] || `${item.detector} pattern`}
-                    </span>
-                    <span className="flex-shrink-0 rounded bg-white px-1.5 py-0.5 font-semibold text-indigo-700 shadow-sm">
-                      {item.score.toFixed(2)}
-                    </span>
-                  </div>
-                  <p className={`mt-1 leading-tight ${
-                    item.state === 'SCORING'
-                      ? 'text-emerald-700'
-                      : item.state === 'ANALYTICS_ONLY'
-                        ? 'text-slate-500'
-                        : 'text-amber-700'
-                  }`}>
-                    <span className="font-semibold">{statusLabel}</span> · {explanation}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <OtherGraphDetectorScores scores={detectorScores} winningPatternType={patternType} />
     </div>
   );
 };
