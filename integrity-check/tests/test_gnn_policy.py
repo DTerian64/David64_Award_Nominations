@@ -163,6 +163,12 @@ def test_live_causal_history_query_is_strictly_before_the_target():
     assert "n.NominationDate < ?" in cursor.query
     assert "n.NominationId < ?" in cursor.query
     assert "idr.FinalRoute = 'HRBP_REVIEW'" in cursor.query
+    # For a candidate 4 -> 1, retain the middle edge 2 -> 3 of
+    # 1 -> 2 -> 3 -> 4, even though that edge touches neither endpoint.
+    assert "first_edge.NominatorId = ?" in cursor.query
+    assert "first_edge.BeneficiaryId = history.NominatorId" in cursor.query
+    assert "last_edge.NominatorId = history.BeneficiaryId" in cursor.query
+    assert "last_edge.BeneficiaryId = ?" in cursor.query
     assert cursor.params == (
         7,
         365,
@@ -174,4 +180,6 @@ def test_live_causal_history_query_is_strictly_before_the_target():
         1,
         3,
         1,
+        1,
+        3,
     )

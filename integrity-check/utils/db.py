@@ -360,7 +360,9 @@ def get_gnn_causal_context_rows(
 
     Timestamp plus NominationId is the shared causal ordering contract. The
     target cannot enter its own features even if it has already been committed
-    when the Service Bus message is handled.
+    when the Service Bus message is handled. In addition to endpoint edges,
+    load the middle edge of any three-hop return path so four-user rings have
+    the same causal feature at inference as they do during training.
     """
     if window_days < 1:
         raise ValueError("GNN causal context window must be at least one day")
@@ -368,36 +370,52 @@ def get_gnn_causal_context_rows(
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
-                   n.NominationDate AS CreatedAt,
-                   CAST(1 AS BIT) AS IsBehaviorEligible
-            FROM dbo.Nominations n
-            JOIN dbo.Users nominator ON nominator.UserId = n.NominatorId
-            LEFT JOIN dbo.IntegrityDecisionResults idr
-                   ON idr.NominationId = n.NominationId
-            WHERE nominator.TenantId = ?
-              AND n.NominationDate >= DATEADD(DAY, -?, ?)
-              AND (
-                    n.NominationDate < ?
-                    OR (
-                        n.NominationDate = ?
-                        AND n.NominationId < ?
+            WITH eligible_history AS (
+                SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
+                       n.NominationDate AS CreatedAt,
+                       CAST(1 AS BIT) AS IsBehaviorEligible
+                FROM dbo.Nominations n
+                JOIN dbo.Users nominator ON nominator.UserId = n.NominatorId
+                LEFT JOIN dbo.IntegrityDecisionResults idr
+                       ON idr.NominationId = n.NominationId
+                WHERE nominator.TenantId = ?
+                  AND n.NominationDate >= DATEADD(DAY, -?, ?)
+                  AND (
+                        n.NominationDate < ?
+                        OR (
+                            n.NominationDate = ?
+                            AND n.NominationId < ?
+                        )
+                  )
+                  AND (
+                        n.Status IN ('Pending', 'Approved', 'Paid')
+                        OR (
+                            n.Status = 'Rejected'
+                            AND idr.FinalRoute = 'HRBP_REVIEW'
+                            AND idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')
+                            AND idr.TrainingDisposition = 'FRAUD'
+                        )
+                  )
+            )
+            SELECT history.NominationId, history.NominatorId,
+                   history.BeneficiaryId, history.CreatedAt,
+                   history.IsBehaviorEligible
+            FROM eligible_history history
+            WHERE history.NominatorId IN (?, ?)
+               OR history.BeneficiaryId IN (?, ?)
+               OR (
+                    EXISTS (
+                        SELECT 1 FROM eligible_history first_edge
+                        WHERE first_edge.NominatorId = ?
+                          AND first_edge.BeneficiaryId = history.NominatorId
                     )
-              )
-              AND (
-                    n.NominatorId IN (?, ?)
-                    OR n.BeneficiaryId IN (?, ?)
-              )
-              AND (
-                    n.Status IN ('Pending', 'Approved', 'Paid')
-                    OR (
-                        n.Status = 'Rejected'
-                        AND idr.FinalRoute = 'HRBP_REVIEW'
-                        AND idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')
-                        AND idr.TrainingDisposition = 'FRAUD'
+                    AND EXISTS (
+                        SELECT 1 FROM eligible_history last_edge
+                        WHERE last_edge.NominatorId = history.BeneficiaryId
+                          AND last_edge.BeneficiaryId = ?
                     )
-              )
-            ORDER BY n.NominationDate, n.NominationId
+               )
+            ORDER BY history.CreatedAt, history.NominationId
             """,
             tenant_id,
             window_days,
@@ -409,6 +427,8 @@ def get_gnn_causal_context_rows(
             beneficiary_id,
             nominator_id,
             beneficiary_id,
+            beneficiary_id,
+            nominator_id,
         )
         columns = [column[0] for column in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
