@@ -1,10 +1,14 @@
 # Synthetics Inc. v4 Specialist Corpus Replacement
 
-**Status:** Implemented; database reset and corpus deployment pending  
+**Status:** Implemented and deployed; retained as the v4 corpus baseline
 **Owner:** Integrity modeling  
 **Applies to:** Synthetics Inc., `scripts/synthetic_tenant`, `fraud-analytics-job`, GNN v3 scenario specialists  
 **Supersedes:** The deployed Synthetics Inc. v3 nomination corpus, but not the tenant, users, configuration, or policies  
 **Last updated:** 2026-09-21
+
+Proposed participation-analytics changes belong to the separate
+[v5 design](synthetics_inc_v5_participation_analytics_design.md); they do not
+retroactively change the deployed v4 corpus or its manifest.
 
 ## 1. Purpose
 
