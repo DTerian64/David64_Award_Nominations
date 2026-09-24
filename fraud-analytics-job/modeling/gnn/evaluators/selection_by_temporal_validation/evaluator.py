@@ -260,6 +260,7 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
                             head_calibration["slope"] * raw_logits
                             + head_calibration["intercept"],
                             policy.medium_threshold,
+                            overall_fraud_labels=final_targets.overall[known],
                         )
                         if head_calibration is not None
                         else {

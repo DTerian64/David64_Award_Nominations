@@ -88,11 +88,16 @@ def test_architecture_selection_uses_overall_then_pattern_tie_breaker():
 def test_display_threshold_diagnostics_match_inference_score_rounding():
     probabilities = np.array([0.446, 0.444, 0.46, 0.10])
     logits = np.log(probabilities / (1 - probabilities))
-    result = display_threshold_metrics(np.array([1, 1, 0, 0]), logits, 45.0)
+    result = display_threshold_metrics(
+        np.array([1, 1, 0, 0]), logits, 45.0,
+        overall_fraud_labels=np.array([1, 1, 0, 0]),
+    )
 
     assert result["alert_count"] == 2
     assert result["true_positive_count"] == 1
     assert result["false_positive_count"] == 1
+    assert result["false_positive_legitimate_count"] == 1
+    assert result["false_positive_other_fraud_count"] == 0
     assert result["false_negative_count"] == 1
     assert result["true_negative_count"] == 1
     assert result["precision"] == 0.5
@@ -103,11 +108,28 @@ def test_display_threshold_diagnostics_match_inference_score_rounding():
 
 def test_display_threshold_diagnostics_report_undefined_precision_without_alerts():
     result = display_threshold_metrics(
-        np.array([1, 0]), np.array([-10.0, -10.0]), 45.0
+        np.array([1, 0]), np.array([-10.0, -10.0]), 45.0,
+        overall_fraud_labels=np.array([1, 0]),
     )
     assert result["alert_count"] == 0
     assert result["precision"] is None
     assert result["recall"] == 0.0
+
+
+def test_display_threshold_diagnostics_split_other_fraud_from_legitimate_alerts():
+    probabilities = np.array([0.80, 0.70, 0.60, 0.10])
+    logits = np.log(probabilities / (1 - probabilities))
+    result = display_threshold_metrics(
+        np.array([1, 0, 0, 0]), logits, 45.0,
+        overall_fraud_labels=np.array([1, 0, 1, 0]),
+    )
+
+    assert result["alert_count"] == 3
+    assert result["true_positive_count"] == 1
+    assert result["false_positive_count"] == 2
+    assert result["false_positive_legitimate_count"] == 1
+    assert result["false_positive_other_fraud_count"] == 1
+    assert result["false_negative_count"] == 0
 
 
 def test_joint_training_uses_one_graph_encoder_and_all_heads():

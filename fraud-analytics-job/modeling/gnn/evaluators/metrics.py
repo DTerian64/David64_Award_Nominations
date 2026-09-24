@@ -75,15 +75,24 @@ def binary_metrics(y_true: np.ndarray, logits: np.ndarray) -> dict:
 
 
 def display_threshold_metrics(
-    y_true: np.ndarray, calibrated_logits: np.ndarray, medium_threshold: float
+    y_true: np.ndarray,
+    calibrated_logits: np.ndarray,
+    medium_threshold: float,
+    *,
+    overall_fraud_labels: np.ndarray,
 ) -> dict:
-    """Measure material pattern alerts using the same score rule as inference."""
+    """Measure pattern alerts, separating legitimate and other-fraud errors."""
     labels = np.asarray(y_true, dtype=np.int64)
+    overall = np.asarray(overall_fraud_labels, dtype=np.int64)
     logits = np.asarray(calibrated_logits, dtype=float)
-    if labels.shape != logits.shape or labels.ndim != 1:
-        raise ValueError("Display-threshold labels and logits must be matching vectors")
-    if not np.isin(labels, (0, 1)).all() or not np.isfinite(logits).all():
+    if labels.shape != logits.shape or labels.shape != overall.shape or labels.ndim != 1:
+        raise ValueError("Display-threshold labels, overall labels, and logits must match")
+    if (not np.isin(labels, (0, 1)).all()
+            or not np.isin(overall, (0, 1)).all()
+            or not np.isfinite(logits).all()):
         raise ValueError("Display-threshold inputs must be binary and finite")
+    if np.any((labels == 1) & (overall != 1)):
+        raise ValueError("A confirmed pattern-positive must also be fraud-positive")
 
     scores = np.array(
         [int(round(float(probability) * 100)) for probability in sigmoid(logits)],
@@ -93,6 +102,12 @@ def display_threshold_metrics(
     positive = labels == 1
     true_positive = int(np.count_nonzero(alerted & positive))
     false_positive = int(np.count_nonzero(alerted & ~positive))
+    false_positive_legitimate = int(np.count_nonzero(
+        alerted & ~positive & (overall == 0)
+    ))
+    false_positive_other_fraud = int(np.count_nonzero(
+        alerted & ~positive & (overall == 1)
+    ))
     false_negative = int(np.count_nonzero(~alerted & positive))
     true_negative = int(np.count_nonzero(~alerted & ~positive))
     alert_count = true_positive + false_positive
@@ -109,6 +124,8 @@ def display_threshold_metrics(
         "alert_count": alert_count,
         "true_positive_count": true_positive,
         "false_positive_count": false_positive,
+        "false_positive_legitimate_count": false_positive_legitimate,
+        "false_positive_other_fraud_count": false_positive_other_fraud,
         "false_negative_count": false_negative,
         "true_negative_count": true_negative,
         "precision": true_positive / alert_count if alert_count else None,
