@@ -81,12 +81,15 @@ class GNNPolicy:
 
 _SELECT_ACTIVE = """
     SELECT TOP 1
-        PolicyId, PolicyVersion, TrainingEnabled, InferenceEnabled,
-        ConfigurationJson,
-        ExplanationEnabled, ExplanationMinimumRisk
-    FROM dbo.GNNScoringPolicies
-    WHERE TenantId = ? AND Status = 'ACTIVE'
-    ORDER BY PolicyVersion DESC
+        p.PolicyId, p.PolicyVersion, p.TrainingEnabled, p.InferenceEnabled,
+        p.ConfigurationJson,
+        p.ExplanationEnabled, p.ExplanationMinimumRisk,
+        TRY_CONVERT(int, JSON_VALUE(CAST(t.integrity_config AS nvarchar(max)),
+            '$.gnn.window_days'))
+    FROM dbo.GNNScoringPolicies p
+    JOIN dbo.Tenants t ON t.TenantId=p.TenantId
+    WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
+    ORDER BY p.PolicyVersion DESC
 """
 
 
@@ -320,7 +323,9 @@ def load_active_policy(conn, tenant_id: int) -> GNNPolicy | None:
             embed_dim=int(model["embedding_dimension"]),
             epochs=int(training["epochs"]),
             rolling_folds=int(training["rolling_fold_count"]),
-            window_days=int(training["window_days"]),
+            # Tenant history configuration is independent of Graph Analytics.
+            # The policy value is retained for pre-0067 rows/audit history only.
+            window_days=int(row[7] if row[7] is not None else training["window_days"]),
             embedding_retention_days=int(artifacts["embedding_retention_days"]),
             stale_embedding_days=int(artifacts["stale_embedding_days"]),
             minimum_training_samples=int(training["minimum_training_samples"]),

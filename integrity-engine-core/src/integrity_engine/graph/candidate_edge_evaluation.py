@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import heapq
 from typing import Any, Mapping
 
@@ -104,6 +104,20 @@ class GraphInferenceSnapshot:
     scoring_policy: Mapping[str, Any]
     nominations: tuple[SnapshotNomination, ...]
     schema_version: int = GRAPH_SNAPSHOT_SCHEMA_VERSION
+
+    def history_for_candidate(self, candidate: CandidateNomination) -> tuple[SnapshotNomination, ...]:
+        """Apply the published rolling window at the candidate's timestamp.
+
+        A weekly snapshot may contain nominations that have since aged out.
+        Reuse this filter across detectors so live checks share one window.
+        """
+        cutoff = candidate.created_at - timedelta(days=self.window_days)
+        return tuple(
+            item for item in self.nominations
+            if item.nomination_id != candidate.nomination_id
+            and cutoff <= item.created_at < candidate.created_at
+            and item.status in BEHAVIOR_STATUSES
+        )
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "GraphInferenceSnapshot":
@@ -252,13 +266,7 @@ def evaluate_candidate_edge_for_ring(
     edge_items: dict[tuple[int, int], list[SnapshotNomination]] = defaultdict(list)
     adjacency: dict[int, set[int]] = defaultdict(set)
     reverse_adjacency: dict[int, set[int]] = defaultdict(set)
-    for item in snapshot.nominations:
-        if (
-            item.nomination_id == candidate.nomination_id
-            or item.created_at >= candidate.created_at
-            or item.status not in BEHAVIOR_STATUSES
-        ):
-            continue
+    for item in snapshot.history_for_candidate(candidate):
         key = (item.nominator_id, item.beneficiary_id)
         edge_items[key].append(item)
         adjacency[item.nominator_id].add(item.beneficiary_id)

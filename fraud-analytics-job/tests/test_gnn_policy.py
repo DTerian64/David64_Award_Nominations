@@ -68,6 +68,7 @@ def _row(candidates=None, configuration=None):
         41, 3, True, True,
         json.dumps(configuration or _configuration(candidates)),
         False, "MEDIUM",
+        None,
     )
 
 
@@ -82,6 +83,15 @@ def test_loads_active_tenant_policy_without_environment_fallback():
     assert policy.embed_dim == 32
     assert connection.value.tenant_id == 7
     assert "Status = 'ACTIVE'" in connection.value.query
+    assert "'$.gnn.window_days'" in connection.value.query
+
+
+def test_tenant_gnn_window_overrides_policy_window_without_using_graph_window():
+    row = (*_row()[:-1], 365)
+    connection = Connection(row)
+    loaded = load_active_policy(connection, 5)
+    assert loaded.window_days == 365
+    assert "graph_pattern" not in connection.value.query
 
 
 def test_returns_none_when_tenant_has_no_active_policy():

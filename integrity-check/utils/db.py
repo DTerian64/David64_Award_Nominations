@@ -261,20 +261,24 @@ def get_tenant_integrity_config(tenant_id: int) -> dict:
 def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
     """Read the tenant's currently published GNN policy without caching.
 
-    Training and serving use the same versioned source of truth.  A newly
-    published policy is therefore effective for the next nomination handled by
-    this process; no container restart or Terraform run is required.
+    Scoring settings come from the active policy; the configured history
+    window comes from Tenants.integrity_config.gnn.window_days. Inference
+    reconstructs features with the trained artifact's window, not a newly
+    edited history window, until retraining publishes a replacement model.
     """
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT TOP 1
-                PolicyId, PolicyVersion, TrainingEnabled, InferenceEnabled,
-                ConfigurationJson,
-                ExplanationEnabled, ExplanationMinimumRisk
-            FROM dbo.GNNScoringPolicies
-            WHERE TenantId = ? AND Status = 'ACTIVE'
-            ORDER BY PolicyVersion DESC
+                p.PolicyId, p.PolicyVersion, p.TrainingEnabled, p.InferenceEnabled,
+                p.ConfigurationJson,
+                p.ExplanationEnabled, p.ExplanationMinimumRisk,
+                TRY_CONVERT(int, JSON_VALUE(CAST(t.integrity_config AS nvarchar(max)),
+                    '$.gnn.window_days'))
+            FROM dbo.GNNScoringPolicies p
+            JOIN dbo.Tenants t ON t.TenantId=p.TenantId
+            WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
+            ORDER BY p.PolicyVersion DESC
         """, tenant_id)
         row = cursor.fetchone()
     if not row:
@@ -308,7 +312,7 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
         "embed_dim": int(model["embedding_dimension"]),
         "epochs": int(training["epochs"]),
         "rolling_folds": int(training["rolling_fold_count"]),
-        "window_days": int(training["window_days"]),
+        "window_days": int(row[7] if row[7] is not None else training["window_days"]),
         "embedding_retention_days": int(artifacts["embedding_retention_days"]),
         "stale_embedding_days": int(artifacts["stale_embedding_days"]),
         "minimum_training_samples": int(training["minimum_training_samples"]),

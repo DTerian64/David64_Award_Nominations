@@ -147,12 +147,7 @@ def _candidate_record(candidate: CandidateNomination) -> SnapshotNomination:
 def _candidate_graph(
     snapshot: GraphInferenceSnapshot, candidate: CandidateNomination
 ) -> list[SnapshotNomination]:
-    history = [
-        item for item in snapshot.nominations
-        if item.nomination_id != candidate.nomination_id
-        and item.created_at < candidate.created_at
-        and item.status in BEHAVIOR_STATUSES
-    ]
+    history = list(snapshot.history_for_candidate(candidate))
     history.append(_candidate_record(candidate))
     return history
 

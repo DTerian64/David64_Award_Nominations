@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, timedelta
+from unittest.mock import MagicMock
 
 from modeling import graph_analytics as graph
 
@@ -70,6 +71,31 @@ POLICY = {
         },
     },
 }
+
+
+def test_active_policy_reads_tenant_window_not_legacy_policy_window():
+    connection = MagicMock()
+    cursor = connection.cursor.return_value
+    cursor.fetchone.return_value = (4, 2, "MAX_RELEVANT_FINDING", 25, 50, 75, 100, 180, 14)
+    cursor.fetchall.return_value = []
+    policy = graph._load_active_graph_policy(connection, 5, 180)
+    assert policy["detection_window_days"] == 180
+    query = cursor.execute.call_args_list[0].args[0]
+    assert "'$.graph_pattern.detection_window_days'" in query
+    assert "CAST(t.integrity_config AS nvarchar(max))" in query
+    assert "p.DetectionWindowDays" not in query
+    assert cursor.execute.call_args_list[0].args[1:] == (180, 5)
+
+
+def test_embedding_retention_uses_longest_tenant_window_not_legacy_policy():
+    connection = MagicMock()
+    cursor = connection.cursor.return_value
+    cursor.fetchone.return_value = (180,)
+    assert graph._maximum_active_detection_window(connection, 365) == 180
+    query = cursor.execute.call_args.args[0]
+    assert "'$.graph_pattern.detection_window_days'" in query
+    assert "MAX(DetectionWindowDays)" not in query
+
 
 
 def test_graph_run_places_snapshot_below_tenant_boundary():

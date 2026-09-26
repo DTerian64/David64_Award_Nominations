@@ -1,6 +1,7 @@
 """Continuous candidate scores stay separate from routing eligibility."""
 
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 
 from integrity_engine import (
     CandidateNomination,
@@ -93,6 +94,17 @@ def _candidate():
         99, 10, 20, 1_000, NOW,
         "A sufficiently long candidate nomination description",
     )
+
+
+def test_other_candidate_detectors_use_the_same_rolling_window():
+    historical = replace(_snapshot(
+        _nom(1, 11, 20, days=181),
+        _nom(2, 12, 20, days=180),
+        _nom(3, 13, 20, days=1),
+    ), window_days=180)
+    result = evaluate_super_beneficiary(historical, _candidate())
+    assert 1 not in result.supporting_nomination_ids
+    assert set(result.supporting_nomination_ids) == {2, 3, 99}
 
 
 def test_ineligible_detector_keeps_its_formula_base_score():

@@ -72,7 +72,7 @@ class _Connection:
 
 def test_configuration_json_is_expanded_for_live_inference():
     connection = _Connection(
-        (41, 3, True, True, json.dumps(_configuration()), False, "MEDIUM")
+        (41, 3, True, True, json.dumps(_configuration()), False, "MEDIUM", 365)
     )
 
     @contextmanager
@@ -89,13 +89,16 @@ def test_configuration_json_is_expanded_for_live_inference():
     }
     assert connection.cursor_value.tenant_id == 7
     assert "ConfigurationJson" in connection.cursor_value.query
+    assert "'$.gnn.window_days'" in connection.cursor_value.query
+    assert "graph_pattern" not in connection.cursor_value.query
+    assert policy["window_days"] == 365
 
 
 def test_unknown_configuration_schema_is_rejected():
     configuration = _configuration()
     configuration["schema_version"] = 2
     connection = _Connection(
-        (41, 3, True, True, json.dumps(configuration), False, "MEDIUM")
+        (41, 3, True, True, json.dumps(configuration), False, "MEDIUM", None)
     )
 
     @contextmanager

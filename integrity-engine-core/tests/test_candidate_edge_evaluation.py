@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 import random
+from dataclasses import replace
 
 import pytest
 
@@ -61,6 +62,33 @@ def snapshot(*items):
         scoring_policy=POLICY,
         nominations=tuple(items),
     )
+
+
+def test_ring_history_respects_published_window_and_inclusive_lower_boundary():
+    candidate = CandidateNomination(10, 1, 2, 1000, NOW)
+    historical = snapshot(
+        nomination(1, 2, 3, when=NOW - timedelta(days=180)),
+        nomination(2, 3, 1, when=NOW - timedelta(days=1)),
+    )
+    assert evaluate_candidate_edge_for_ring(replace(historical, window_days=180), candidate)
+    aged_out = replace(historical, nominations=(
+        nomination(1, 2, 3, when=NOW - timedelta(days=180, seconds=1)),
+        historical.nominations[1],
+    ))
+    assert evaluate_candidate_edge_for_ring(replace(aged_out, window_days=180), candidate) is None
+    assert evaluate_candidate_edge_for_ring(aged_out, candidate)
+
+
+def test_candidate_history_excludes_future_self_and_rejected_rows():
+    candidate = CandidateNomination(10, 1, 2, 1000, NOW)
+    historical = snapshot(
+        nomination(1, 2, 3, when=NOW - timedelta(days=181)),
+        nomination(2, 2, 3, when=NOW - timedelta(days=180)),
+        nomination(10, 1, 2),
+        nomination(4, 2, 3, when=NOW),
+        replace(nomination(5, 2, 3), status="Rejected"),
+    )
+    assert [item.nomination_id for item in replace(historical, window_days=180).history_for_candidate(candidate)] == [2]
 
 
 def candidate(identifier=99, source=1, target=2, amount=2000):

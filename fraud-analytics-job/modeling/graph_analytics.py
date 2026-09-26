@@ -107,21 +107,31 @@ def _load_active_graph_policy(
     tenant_id: int,
     default_window_days: int,
 ) -> dict:
-    """Load the immutable active scoring policy and its detector parameters."""
+    """Load scoring parameters plus the tenant's current Graph history window.
+
+    DetectionWindowDays in the policy table is legacy/staged policy data;
+    Tenants.integrity_config owns the operational detection window.
+    """
     cur = conn.cursor()
     cur.execute("""
-        SELECT TOP 1 PolicyId, PolicyVersion, ScoringStrategy,
-               LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
-               DetectionWindowDays, SnapshotMaxAgeDays
-        FROM dbo.GraphScoringPolicies
-        WHERE TenantId = ? AND Status = 'ACTIVE'
-        ORDER BY PolicyVersion DESC
-    """, tenant_id)
+        SELECT TOP 1 p.PolicyId, p.PolicyVersion, p.ScoringStrategy,
+               p.LowThreshold, p.MediumThreshold, p.HighThreshold, p.CriticalThreshold,
+               COALESCE(TRY_CONVERT(int, JSON_VALUE(
+                   CAST(t.integrity_config AS nvarchar(max)),
+                   '$.graph_pattern.detection_window_days'
+               )), ?), p.SnapshotMaxAgeDays
+        FROM dbo.GraphScoringPolicies p
+        JOIN dbo.Tenants t ON t.TenantId = p.TenantId
+        WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
+        ORDER BY p.PolicyVersion DESC
+    """, default_window_days, tenant_id)
     row = cur.fetchone()
     if not row:
         raise RuntimeError(
             f"Tenant {tenant_id} has no active Graph Analytics scoring policy"
         )
+    if int(row[7]) <= 0:
+        raise ValueError(f"Tenant {tenant_id} Graph detection window must be positive")
     policy = {
         "policy_id": int(row[0]),
         "version": int(row[1]),
@@ -353,10 +363,9 @@ def _load_nominations(
     topology; HRBP-confirmed rejected outcomes remain available separately as
     supervised model labels.
 
-    window_days controls how far back to look. All active detectors share
-    this tenant-policy value.
-
-    Set DETECTION_WINDOW_DAYS=3650 on first deploy to process full history.
+    window_days comes from Tenants.integrity_config.graph_pattern.
+    detection_window_days. All window-based detectors share this value;
+    Desert separately uses all-time participation.
     """
     cur = conn.cursor()
     cur.execute("""
@@ -422,15 +431,21 @@ def _maximum_active_detection_window(
     conn: pyodbc.Connection,
     fallback_days: int,
 ) -> int:
-    """Preserve embeddings needed by the tenant with the longest active policy."""
+    """Preserve embeddings for the longest configured active tenant window."""
     cur = conn.cursor()
     cur.execute("""
-        SELECT MAX(DetectionWindowDays)
-        FROM dbo.GraphScoringPolicies
-        WHERE Status = 'ACTIVE'
-    """)
+        SELECT MAX(COALESCE(TRY_CONVERT(int, JSON_VALUE(
+            CAST(t.integrity_config AS nvarchar(max)),
+            '$.graph_pattern.detection_window_days'
+        )), ?))
+        FROM dbo.Tenants t
+        WHERE EXISTS (
+            SELECT 1 FROM dbo.GraphScoringPolicies p
+            WHERE p.TenantId = t.TenantId AND p.Status = 'ACTIVE'
+        )
+    """, fallback_days)
     row = cur.fetchone()
-    return max(int(row[0] or fallback_days), fallback_days)
+    return int(row[0] or fallback_days)
 
 
 # ── Finding helpers ───────────────────────────────────────────────────────────
@@ -1331,7 +1346,7 @@ def _evict_stale_embeddings(conn: pyodbc.Connection, window_days: int) -> None:
 
     Called once per job run — before per-tenant processing — to keep the
     NomGraph_NominationEmbedding table bounded to roughly
-    DETECTION_WINDOW_DAYS × eligible nomination rate rows.
+    Tenant Graph window × eligible nomination rate rows.
     """
     cur = conn.cursor()
     cur.execute("""
@@ -1909,11 +1924,11 @@ def main(tenants_to_process: list | None = None) -> None:
     logger.info("graph_analytics — starting")
 
     findings_table      = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
-    default_window_days = int(os.getenv("DETECTION_WINDOW_DAYS", "180"))
+    default_window_days = 180
     run_id              = str(uuid.uuid4())
     logger.info("RunId: %s", run_id)
     logger.info("Target table: %s", findings_table)
-    logger.info("Default detection window: %d days (DETECTION_WINDOW_DAYS env var)", default_window_days)
+    logger.info("Graph window source: Tenants.integrity_config (default %d days)", default_window_days)
 
     conn = _get_connection()
 

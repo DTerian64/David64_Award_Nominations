@@ -156,11 +156,8 @@ def _copy_paste_evidence(
     parameters = config.get("parameters") or {}
     threshold = float(parameters.get("similarity_threshold", 0.92))
     history = [
-        item for item in snapshot.nominations
-        if item.nomination_id != candidate.nomination_id
-        and item.created_at < candidate.created_at
-        and item.status in ("Pending", "Approved", "Paid")
-        and item.description
+        item for item in snapshot.history_for_candidate(candidate)
+        if item.description
         and len(item.description.strip()) > 20
     ]
     if not history or len(candidate.description.strip()) <= 20:
@@ -723,6 +720,9 @@ def _assess_graph_inner(
         "snapshot_run_id": snapshot.get("snapshot_run_id"),
         "snapshot_finding_count": snapshot.get("snapshot_finding_count", 0),
         "snapshot_age_days": snapshot_age_days,
+        # Live checks use the immutable published window until the next
+        # analytics run builds a snapshot from the refreshed tenant JSON.
+        "detection_window_days": inference_snapshot.window_days,
         "affected_user_ids": list(dict.fromkeys(affected)),
         "pattern_findings": findings,
         "candidate_findings": candidate_findings,

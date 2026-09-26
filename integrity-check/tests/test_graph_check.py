@@ -256,6 +256,7 @@ class GraphCheckTests(unittest.TestCase):
         })
         result = graph_check.assess_graph(DETAILS, tenant_id=7)
         self.assertEqual(result["fraud_score"], 82)
+        self.assertEqual(result["detection_window_days"], 365)
         self.assertEqual(result["winning_finding"]["evidence_scope"], "CURRENT_NOMINATION")
         self.assertEqual(result["winning_finding"]["path_user_ids"], [2, 4, 1, 2])
         self.assertEqual(

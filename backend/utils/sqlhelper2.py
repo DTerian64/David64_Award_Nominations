@@ -3614,13 +3614,18 @@ def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
     """Return active/draft Graph policies, their parameters, history, and requests."""
     with get_db_context() as session:
         policy_rows = session.execute(text("""
-            SELECT PolicyId, PolicyVersion, Status, ScoringStrategy,
-                   LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
-                   DetectionWindowDays, SnapshotMaxAgeDays,
-                   CreatedAt, CreatedBy, UpdatedAt, UpdatedBy, PublishedAt, PublishedBy
-            FROM dbo.GraphScoringPolicies
-            WHERE TenantId = :tid
-            ORDER BY PolicyVersion DESC
+            SELECT p.PolicyId, p.PolicyVersion, p.Status, p.ScoringStrategy,
+                   p.LowThreshold, p.MediumThreshold, p.HighThreshold, p.CriticalThreshold,
+                   CASE WHEN p.Status='ACTIVE' THEN COALESCE(
+                       TRY_CONVERT(int, JSON_VALUE(CAST(t.integrity_config AS nvarchar(max)),
+                           '$.graph_pattern.detection_window_days')), 180
+                   ) ELSE p.DetectionWindowDays END,
+                   p.SnapshotMaxAgeDays,
+                   p.CreatedAt, p.CreatedBy, p.UpdatedAt, p.UpdatedBy, p.PublishedAt, p.PublishedBy
+            FROM dbo.GraphScoringPolicies p
+            JOIN dbo.Tenants t ON t.TenantId=p.TenantId
+            WHERE p.TenantId = :tid
+            ORDER BY p.PolicyVersion DESC
         """), {"tid": tenant_id}).fetchall()
         policy_ids = [int(row[0]) for row in policy_rows]
         pattern_rows = []
@@ -3762,11 +3767,15 @@ def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
         if existing is not None:
             return int(existing)
         active = session.execute(text("""
-            SELECT TOP 1 PolicyId, PolicyVersion, ScoringStrategy,
-                   LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
-                   DetectionWindowDays, SnapshotMaxAgeDays
-            FROM dbo.GraphScoringPolicies
-            WHERE TenantId=:tid AND Status='ACTIVE'
+            SELECT TOP 1 p.PolicyId, p.PolicyVersion, p.ScoringStrategy,
+                   p.LowThreshold, p.MediumThreshold, p.HighThreshold, p.CriticalThreshold,
+                   COALESCE(TRY_CONVERT(int, JSON_VALUE(
+                       CAST(t.integrity_config AS nvarchar(max)),
+                       '$.graph_pattern.detection_window_days'
+                   )), 180), p.SnapshotMaxAgeDays
+            FROM dbo.GraphScoringPolicies p
+            JOIN dbo.Tenants t ON t.TenantId=p.TenantId
+            WHERE p.TenantId=:tid AND p.Status='ACTIVE'
         """), {"tid": tenant_id}).fetchone()
         if not active:
             raise ValueError("No active Graph Analytics policy exists")
@@ -3877,6 +3886,21 @@ def publish_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
                 UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
             WHERE PolicyId=:policy_id AND TenantId=:tid AND Status='DRAFT'
         """), {"policy_id": draft_id, "tid": tenant_id, "actor": actor})
+        # The draft stages the editable window; publishing transfers it to
+        # the tenant JSON, the sole operational owner. Preserve other settings.
+        session.execute(text("""
+            UPDATE t SET integrity_config=JSON_MODIFY(
+                JSON_MODIFY(
+                    COALESCE(CAST(t.integrity_config AS nvarchar(max)), N'{}'),
+                    '$.graph_pattern', JSON_QUERY(COALESCE(JSON_QUERY(
+                        CAST(t.integrity_config AS nvarchar(max)), '$.graph_pattern'
+                    ), N'{}'))
+                ), '$.graph_pattern.detection_window_days', p.DetectionWindowDays
+            )
+            FROM dbo.Tenants t
+            JOIN dbo.GraphScoringPolicies p ON p.TenantId=t.TenantId
+            WHERE t.TenantId=:tid AND p.PolicyId=:policy_id
+        """), {"tid": tenant_id, "policy_id": draft_id})
         session.commit()
         return int(draft_id)
 
@@ -4056,15 +4080,23 @@ def get_gnn_scoring_policy_bundle(tenant_id: int) -> dict:
     """Return the tenant's active, draft, and historical GNN policies."""
     with get_db_context() as session:
         rows = session.execute(text("""
-            SELECT PolicyId, PolicyVersion, Status,
-                   TrainingEnabled, InferenceEnabled,
-                   ConfigurationJson,
-                   ExplanationEnabled, ExplanationMinimumRisk,
-                   CreatedAt, CreatedBy, UpdatedAt, UpdatedBy,
-                   PublishedAt, PublishedBy
-            FROM dbo.GNNScoringPolicies
-            WHERE TenantId=:tid
-            ORDER BY PolicyVersion DESC
+            SELECT p.PolicyId, p.PolicyVersion, p.Status,
+                   p.TrainingEnabled, p.InferenceEnabled,
+                   CASE WHEN p.Status='ACTIVE' THEN JSON_MODIFY(
+                       CAST(p.ConfigurationJson AS nvarchar(max)), '$.training.window_days',
+                       COALESCE(TRY_CONVERT(int, JSON_VALUE(
+                           CAST(t.integrity_config AS nvarchar(max)), '$.gnn.window_days'
+                       )), TRY_CONVERT(int, JSON_VALUE(
+                           CAST(p.ConfigurationJson AS nvarchar(max)), '$.training.window_days'
+                       )))
+                   ) ELSE CAST(p.ConfigurationJson AS nvarchar(max)) END,
+                   p.ExplanationEnabled, p.ExplanationMinimumRisk,
+                   p.CreatedAt, p.CreatedBy, p.UpdatedAt, p.UpdatedBy,
+                   p.PublishedAt, p.PublishedBy
+            FROM dbo.GNNScoringPolicies p
+            JOIN dbo.Tenants t ON t.TenantId=p.TenantId
+            WHERE p.TenantId=:tid
+            ORDER BY p.PolicyVersion DESC
         """), {"tid": tenant_id}).fetchall()
     policies = [_gnn_policy_row(row) for row in rows]
     return {
@@ -4095,13 +4127,20 @@ def create_gnn_scoring_policy_draft(tenant_id: int, actor: str) -> int:
                 ExplanationEnabled, ExplanationMinimumRisk,
                 CreatedBy, UpdatedBy
             ) OUTPUT INSERTED.PolicyId
-            SELECT TenantId, PolicyVersion + 1, 'DRAFT',
-                   TrainingEnabled, InferenceEnabled,
-                   ConfigurationJson,
-                   ExplanationEnabled, ExplanationMinimumRisk,
+            SELECT p.TenantId, p.PolicyVersion + 1, 'DRAFT',
+                   p.TrainingEnabled, p.InferenceEnabled,
+                   JSON_MODIFY(CAST(p.ConfigurationJson AS nvarchar(max)), '$.training.window_days',
+                       COALESCE(TRY_CONVERT(int, JSON_VALUE(
+                           CAST(t.integrity_config AS nvarchar(max)), '$.gnn.window_days'
+                       )), TRY_CONVERT(int, JSON_VALUE(
+                           CAST(p.ConfigurationJson AS nvarchar(max)), '$.training.window_days'
+                       )))
+                   ),
+                   p.ExplanationEnabled, p.ExplanationMinimumRisk,
                    :actor, :actor
-            FROM dbo.GNNScoringPolicies
-            WHERE TenantId=:tid AND Status='ACTIVE'
+            FROM dbo.GNNScoringPolicies p
+            JOIN dbo.Tenants t ON t.TenantId=p.TenantId
+            WHERE p.TenantId=:tid AND p.Status='ACTIVE'
         """), {"tid": tenant_id, "actor": actor}).scalar_one_or_none()
         if draft_id is None:
             raise ValueError("No active GNN policy exists")
@@ -4160,6 +4199,21 @@ def publish_gnn_scoring_policy_draft(tenant_id: int, actor: str) -> int:
         """), {
             "policy_id": draft_id, "tid": tenant_id, "actor": actor,
         })
+        session.execute(text("""
+            UPDATE t SET integrity_config=JSON_MODIFY(
+                JSON_MODIFY(
+                    COALESCE(CAST(t.integrity_config AS nvarchar(max)), N'{}'),
+                    '$.gnn', JSON_QUERY(COALESCE(JSON_QUERY(
+                        CAST(t.integrity_config AS nvarchar(max)), '$.gnn'
+                    ), N'{}'))
+                ), '$.gnn.window_days', TRY_CONVERT(int, JSON_VALUE(
+                    CAST(p.ConfigurationJson AS nvarchar(max)), '$.training.window_days'
+                ))
+            )
+            FROM dbo.Tenants t
+            JOIN dbo.GNNScoringPolicies p ON p.TenantId=t.TenantId
+            WHERE t.TenantId=:tid AND p.PolicyId=:policy_id
+        """), {"tid": tenant_id, "policy_id": draft_id})
         session.commit()
         return int(draft_id)
 
