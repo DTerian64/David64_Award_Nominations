@@ -12,6 +12,19 @@ from utils.db_conn import connect
 DEFAULT_EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 
 
+def get_tenant_tabular_window(connection, tenant_id: int) -> int:
+    cursor = connection.cursor()
+    cursor.execute("""
+        SELECT TRY_CONVERT(int, JSON_VALUE(CAST(integrity_config AS nvarchar(max)),
+            '$.tabular.window_days')) FROM dbo.Tenants WHERE TenantId = ?
+    """, tenant_id)
+    row = cursor.fetchone()
+    days = int(row[0]) if row and row[0] is not None else 365
+    if days < 1:
+        raise ValueError("Tabular window_days must be positive")
+    return days
+
+
 def get_tenants(connection) -> list[tuple[int, str]]:
     """Return all tenant identifiers and names in deterministic order."""
     frame = pd.read_sql(

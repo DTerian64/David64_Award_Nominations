@@ -95,12 +95,18 @@ def _is_independent_rf_artifact(model_data: object) -> bool:
         return False
     if model_data.get("artifact_type") == "tabular_integrity_model":
         feature_columns = model_data.get("feature_columns")
+        schema = model_data.get("feature_schema_id")
+        if schema == "award-nomination-tabular:tabular-v2":
+            from integrity_engine.tabular_history import HISTORY_CONTRACT
+            days = model_data.get("history_window_days")
+            if (isinstance(days, bool) or not isinstance(days, int) or days < 1
+                    or model_data.get("history_feature_contract") != HISTORY_CONTRACT):
+                return False
         return bool(
             isinstance(feature_columns, (list, tuple))
             and _LEGACY_GRAPH_DERIVED_FEATURES.isdisjoint(feature_columns)
             and model_data.get("architecture") in {"random_forest", "tabular_mlp"}
-            and model_data.get("feature_schema_id")
-            == "award-nomination-tabular:tabular-v1"
+            and schema in {"award-nomination-tabular:tabular-v1", "award-nomination-tabular:tabular-v2"}
             and model_data.get("model") is not None
             and isinstance(model_data.get("preprocessing"), dict)
         )
@@ -296,6 +302,40 @@ def _get_embed_model(model_name: str = "all-MiniLM-L6-v2"):
 
 # ── Feature engineering ───────────────────────────────────────────────────────
 
+def _build_windowed_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, float]:
+    from integrity_engine.tabular_history import TabularHistory, semantic_features
+    target = {
+        "NominationId": details["nomination_id"],
+        "NominatorId": details["nominator_id"], "BeneficiaryId": details["beneficiary_id"],
+        "Amount": details["amount"],
+        "NominationDate": details.get("nomination_date") or datetime.now(timezone.utc),
+    }
+    days = model_data["history_window_days"]
+    rows = db.get_tabular_history_rows(model_data["tenant_id"],
+        target_nomination_id=target["NominationId"], target_time=target["NominationDate"], window_days=days)
+    history = TabularHistory(days)
+    for row in rows:
+        history.add(row)
+    values = history.features(target)
+    preprocessing = model_data["preprocessing"]
+    category = details.get("category_id")
+    values["CategoryFraudRate"] = preprocessing.get("category_fraud_rate", {}).get(
+        category, preprocessing.get("global_fraud_rate", 0.0)) if category is not None else 0.0
+    description = details.get("description") or ""
+    prior = history.prior_descriptions(target["BeneficiaryId"])
+    similarity, distance = 0.0, 1.0
+    if description.strip() and prior:
+        embed = _get_embed_model(model_data.get("embed_model_name", "all-MiniLM-L6-v2"))
+        vectors = embed.encode([description] + [row["NominationDescription"] for row in prior], normalize_embeddings=True)
+        similarity, distance = semantic_features(vectors[0], list(vectors[1:]))
+    values.update(DescriptionCosineSim=similarity, DescriptionEmbDistance=distance,
+                  TransactionalPhraseScore=transactional_phrase_score(description))
+    numeric = np.array([[values[column] for column in model_data["feature_columns"]]], dtype=float)
+    scaled = preprocessing["scaler"].transform(preprocessing["imputer"].transform(numeric))
+    logger.info("Tabular causal feature vector", extra={"nomination_id": details["nomination_id"],
+                "history_window_days": days, "eligible_history_count": len(history.rows)})
+    return scaled, values, similarity
+
 def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, float]:
     """
     Build and scale the feature vector from nomination details + DB lookups.
@@ -307,6 +347,9 @@ def _build_features(details: dict, model_data: dict) -> tuple[np.ndarray, dict, 
       feature_vals — raw unscaled dict (used for SHAP display values)
       desc_cosine_sim — returned separately so _warning_flags doesn't re-index
     """
+    if model_data.get("feature_schema_id") == "award-nomination-tabular:tabular-v2":
+        return _build_windowed_features(details, model_data)
+    # Previously published models keep their original transform until retrained.
     nominator_id    = details["nominator_id"]
     beneficiary_id  = details["beneficiary_id"]
     amount          = details["amount"]
@@ -880,6 +923,8 @@ def assess(details: dict, tenant_id: int, component_status: dict | None = None) 
         "llm_explanation_reason": llm_explanation_reason,
         "model_version":     model_data.get("model_version"),
         "architecture":      architecture,
+        "history_window_days": model_data.get("history_window_days"),
+        "history_feature_contract": model_data.get("history_feature_contract"),
         "score_thresholds":  thresholds,
         "score_derivation":  "floor(model_probability * 100)",
     }

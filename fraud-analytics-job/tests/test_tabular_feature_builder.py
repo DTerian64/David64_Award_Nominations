@@ -33,7 +33,7 @@ class _DeterministicEncoder:
         for position, description in enumerate(descriptions, start=1):
             vector = np.array(
                 [
-                    float(position),
+                    float(sum(map(ord, description)) % 17 + 1),
                     float(len(description) % 7 + 1),
                     float(sum(map(ord, description)) % 11 + 1),
                 ]
@@ -239,6 +239,8 @@ def test_builder_emits_valid_ordered_non_serving_feature_dataset():
         "source_event_count": 5,
         "eligible_event_count": 3,
         "excluded_by_rf_policy": 2,
+        "history_context_event_count": 0,
+        "window_days": 365,
     }
     result.validate()
 
@@ -261,3 +263,15 @@ def test_tabular_v1_cyclic_coordinates_preserve_calendar_closeness():
     january = engineered.loc[0, ["MonthSin", "MonthCos"]].to_numpy(float)
     december = engineered.loc[2, ["MonthSin", "MonthCos"]].to_numpy(float)
     assert np.linalg.norm(january - december) < 1.0
+
+
+def test_short_window_keeps_context_for_features_but_not_as_training_targets():
+    # September 17 minus 45 days includes August 3, but not August 1/2.
+    result = AwardNominationTabularV1FeatureBuilder().build(
+        _dataset(), embed_model=_DeterministicEncoder(), window_days=45)
+    assert result.frame["NominationId"].tolist() == [3]
+    assert result.features["PairNominationCount"].tolist() == [1]
+    assert result.features["HasReciprocalNomination"].tolist() == [1]
+    assert result.diagnostics["history_context_event_count"] == 2
+    assert result.fitted_state["history_window_days"] == 45
+    assert result.schema.version == "tabular-v2"

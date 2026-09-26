@@ -59,6 +59,8 @@ def rf_result(result: dict) -> dict:
     payload.update({
         "model_version": result.get("model_version"),
         "architecture": result.get("architecture"),
+        "history_window_days": result.get("history_window_days"),
+        "history_feature_contract": result.get("history_feature_contract"),
         "explanation": {
             "shap_status": result.get("shap_status"),
             "shap_reason": result.get("shap_reason"),

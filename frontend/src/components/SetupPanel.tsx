@@ -87,6 +87,9 @@ export const SetupPanel: React.FC = () => {
 // Operational state plus versioned Graph and GNN policy inspection.
 
 interface DetectionEngineStatus {
+  configured_window_days: number;
+  serving_window_days: number | null;
+  legacy_full_history: boolean;
   component: string;
   serving_status: string;
   serving_version: string | null;
@@ -119,6 +122,27 @@ const ENGINE_NAMES: Record<string, { name: string; description: string; populati
   },
 };
 
+function HistoryWindowStatus({ row }: { row: DetectionEngineStatus }) {
+  return <>
+    <div className="rounded-lg bg-blue-50 p-2">
+      <dt className="text-gray-500">Configured history window</dt>
+      <dd className="mt-0.5 font-semibold text-gray-800">{row.configured_window_days} days</dd>
+    </div>
+    <div className="rounded-lg bg-blue-50 p-2">
+      <dt className="text-gray-500">Serving history window</dt>
+      <dd className="mt-0.5 font-semibold text-gray-800">{
+        !row.serving_version ? 'No serving model / snapshot' :
+        row.legacy_full_history ? 'Full history (legacy model)' :
+        row.serving_window_days != null ? `${row.serving_window_days} days` : 'Not recorded in this run'
+      }</dd>
+    </div>
+    {row.serving_version && (row.legacy_full_history ||
+      (row.serving_window_days != null && row.configured_window_days !== row.serving_window_days)) && (
+      <p className="col-span-2 text-amber-700">Window change pending: takes effect after the next successful {row.component === 'GRAPH' ? 'snapshot publication' : 'training and model publication'}.</p>
+    )}
+  </>;
+}
+
 const DIAGNOSTIC_PRIORITY = [
   'window_days', 'nomination_count',
   'train_positive_count', 'train_negative_count',
@@ -139,6 +163,10 @@ const HIDDEN_DIAGNOSTICS = new Set([
   'specialists',
   'selected_architecture',
   'selection_reason',
+  'final_test_overall',
+  'raw_mlp_overall',
+  'engineered_graph_mlp_overall',
+  'head_states',
 ]);
 
 const orderedDiagnostics = (diagnostics: Record<string, unknown>) =>
@@ -201,6 +229,76 @@ const architectureLabel = (value: unknown): string => ({
   gatv2: 'GATv2',
 }[String(value)] || diagnosticLabel(String(value || '')));
 
+function GnnFinalTestTables({ diagnostics }: { diagnostics: Record<string, unknown> }) {
+  const models = [
+    { label: 'Selected GNN', metrics: asRecord(diagnostics.final_test_overall) },
+    { label: 'Raw-feature MLP', metrics: asRecord(diagnostics.raw_mlp_overall) },
+    { label: 'Engineered-graph MLP', metrics: asRecord(diagnostics.engineered_graph_mlp_overall) },
+  ];
+  const metrics = [
+    { key: 'pr_auc', label: 'PR-AUC', kind: 'ratio' },
+    { key: 'roc_auc', label: 'ROC-AUC', kind: 'ratio' },
+    { key: 'base_rate', label: 'Fraud base rate', kind: 'percent' },
+    { key: 'lift', label: 'Lift', kind: 'lift' },
+    { key: 'brier_score', label: 'Brier score', kind: 'ratio' },
+    { key: 'count', label: 'Total nominations', kind: 'count' },
+    { key: 'positive_count', label: 'Fraud labels', kind: 'count' },
+    { key: 'negative_count', label: 'Legitimate labels', kind: 'count' },
+  ];
+  const format = (value: unknown, kind = 'ratio') => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+    if (kind === 'count') return value.toLocaleString();
+    if (kind === 'percent') return `${(value * 100).toFixed(2)}%`;
+    if (kind === 'lift') return `${value.toFixed(2)}×`;
+    return value.toFixed(4);
+  };
+  const heads = asRecord(diagnostics.head_states);
+  return <div className="mt-3 space-y-4 text-gray-700">
+    <section aria-label="Final-test overall comparison">
+      <h5 className="mb-1.5 font-semibold text-gray-800">Final-test overall comparison</h5>
+      <p className="mb-2 text-gray-500">Latest training run: GNN and its two non-serving admission baselines. PR-AUC and ROC-AUC use a 0–1 scale. These metrics do not replace the serving-version status above.</p>
+      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <table className="w-full min-w-[400px] text-xs">
+          <thead className="bg-gray-50 text-gray-600"><tr>
+            <th scope="col" className="px-2 py-2 text-left font-medium">Metric</th>
+            {models.map(model => <th key={model.label} scope="col" className="px-2 py-2 text-right font-medium">{model.label}</th>)}
+          </tr></thead>
+          <tbody className="divide-y divide-gray-100">{metrics.map(metric => <tr key={metric.key}>
+            <th scope="row" className="whitespace-nowrap px-2 py-2 text-left font-medium">{metric.label}</th>
+            {models.map(model => <td key={model.label} className="px-2 py-2 text-right font-mono tabular-nums">{format(model.metrics?.[metric.key], metric.kind)}</td>)}
+          </tr>)}</tbody>
+        </table>
+      </div>
+    </section>
+    {heads && Object.keys(heads).length > 0 && <section aria-label="Pattern-head states">
+      <h5 className="mb-1.5 font-semibold text-gray-800">Pattern-head states</h5>
+      <p className="mb-2 text-gray-500">Pattern-positive labels confirm that specific behavior; head state is separate from the overall model result.</p>
+      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <table className="w-full min-w-[480px] text-xs">
+          <thead className="bg-gray-50 text-gray-600"><tr>
+            <th scope="col" className="px-2 py-2 text-left font-medium">Pattern</th>
+            <th scope="col" className="px-2 py-2 text-left font-medium">State</th>
+            <th scope="col" className="px-2 py-2 text-right font-medium">Training positives</th>
+            <th scope="col" className="px-2 py-2 text-right font-medium">Final-test positives</th>
+            <th scope="col" className="px-2 py-2 text-right font-medium">Final-test PR-AUC</th>
+          </tr></thead>
+          <tbody className="divide-y divide-gray-100">{Object.entries(heads).map(([pattern, raw]) => {
+            const head = asRecord(raw) || {};
+            const state = String(head.state || 'UNKNOWN');
+            return <tr key={pattern}>
+              <th scope="row" className="px-2 py-2 text-left font-medium">{diagnosticLabel(pattern.toLowerCase())}</th>
+              <td className="px-2 py-2"><span className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 ${state === 'ACTIVE' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{diagnosticLabel(state.toLowerCase())}</span></td>
+              <td className="px-2 py-2 text-right font-mono">{format(head.training_positive_count, 'count')}</td>
+              <td className="px-2 py-2 text-right font-mono">{format(head.final_test_positive_count, 'count')}</td>
+              <td className="px-2 py-2 text-right font-mono">{format(head.final_test_pr_auc)}</td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+    </section>}
+  </div>;
+}
+
 type EvaluationDialog = {
   kind: 'tabular-candidates' | 'graph-value';
   data: Record<string, unknown>;
@@ -209,17 +307,12 @@ type EvaluationDialog = {
 };
 
 const GnnSelectionSummary: React.FC<{ diagnostics: Record<string, unknown> }> = ({ diagnostics }) => {
-  const sharedHeads = asRecord(diagnostics.head_states);
   if (diagnostics.diagnostics_schema_version === 4) {
     const selected = String(diagnostics.selected_architecture || 'None');
-    const overall = asRecord(diagnostics.final_test_overall) || {};
-    const raw = asRecord(diagnostics.raw_mlp_overall) || {};
-    const engineered = asRecord(diagnostics.engineered_graph_mlp_overall) || {};
     return <section className="rounded-lg border border-violet-100 bg-violet-50/40 p-3 text-xs">
       <h4 className="font-semibold text-violet-900">Shared-encoder model</h4>
       <p className="mt-1 text-violet-700">{selected !== 'None' ? `${selected.toUpperCase()} selected on temporal validation.` : 'No architecture passed validation.'} Final-test admission: {diagnostics.admitted ? 'admitted' : 'not admitted'}.</p>
-      <div className="mt-2 grid gap-2 sm:grid-cols-3"><div className="rounded bg-white p-2">GNN final PR-AUC <strong>{diagnosticValue(overall.pr_auc)}</strong></div><div className="rounded bg-white p-2">Raw-feature MLP <strong>{diagnosticValue(raw.pr_auc)}</strong></div><div className="rounded bg-white p-2">Engineered-graph MLP <strong>{diagnosticValue(engineered.pr_auc)}</strong></div></div>
-      {sharedHeads && <div className="mt-2 grid gap-1 sm:grid-cols-2">{Object.entries(sharedHeads).map(([key, value]) => { const head = asRecord(value) || {}; return <div key={key} className="flex justify-between rounded bg-white px-2 py-1.5"><span>{diagnosticLabel(key)}</span><span>{diagnosticLabel(String(head.state || 'UNKNOWN'))} · {diagnosticValue(head.final_test_positive_count)} final positives</span></div>; })}</div>}
+      <GnnFinalTestTables diagnostics={diagnostics} />
     </section>;
   }
   const specialists = asRecord(diagnostics.specialists);
@@ -400,7 +493,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
               ? architectureLabel(row.diagnostics?.selected_architecture)
               : null;
             return (
-              <section key={row.component} className="border border-gray-200 rounded-lg p-4 space-y-4">
+              <section key={row.component} className="min-w-0 border border-gray-200 rounded-lg p-4 space-y-4">
                 <div>
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -453,6 +546,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                 </div>
 
                 <dl className="grid grid-cols-2 gap-x-3 gap-y-3 text-xs">
+                  <HistoryWindowStatus row={row} />
                   <div>
                     <dt className="text-gray-400">Serving version</dt>
                     <dd className="mt-0.5 text-gray-700 font-mono break-all">{row.serving_version || '—'}</dd>
@@ -545,6 +639,7 @@ export const DetectionEnginesPanel: React.FC<DetectionEnginesPanelProps> = ({
                           >
                             {row.component === 'GRAPH' && key === 'finding_count'
                               ? 'Last Successful Run Finding Count'
+                              : key === 'validation_overall_pr_auc' ? 'Validation overall PR-AUC'
                               : diagnosticLabel(key)}
                           </dt>
                           <dd className="mt-0.5 font-medium text-gray-700 break-words">{diagnosticValue(value)}</dd>
@@ -1094,6 +1189,9 @@ const CategoriesPanel: React.FC = () => {
 };
 
 interface FraudSettings {
+  graph_window_days: number;
+  gnn_window_days: number;
+  tabular_window_days: number;
   low_threshold: number;
   medium_threshold: number;
   high_threshold: number;
@@ -1226,15 +1324,26 @@ export const FraudPanel: React.FC<FraudPanelProps> = ({
       ) : (
         <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Changes are saved immediately and apply to subsequent integrity checks.</span>
+          <span>Score and pre-check settings apply to subsequent checks. History-window changes apply after the next successful analytics publication or model retraining.</span>
         </div>
       )}
+
+      <section className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 sm:p-5">
+        <h3 className="text-sm font-semibold text-gray-800 mb-2">Detection and feature-history windows</h3>
+        <p className="text-xs text-gray-500 mb-3">Tenant-specific settings, in days. All Graph detectors share one window; GNN is independent; Random Forest and Tabular MLP share the tabular window. Model inputs use prior nominations only.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {numField('graph_window_days', 'Graph Analytics', { min: 1 })}
+          {numField('gnn_window_days', 'GNN', { min: 1 })}
+          {numField('tabular_window_days', 'Tabular · RF / MLP', { min: 1 })}
+        </div>
+        <p className="text-xs text-gray-500 mt-3">Graph: next successful snapshot. GNN and Tabular: next successful training and model publication. Engine Status shows the configured and serving windows separately. Nomination Desert remains an all-time participation analysis.</p>
+      </section>
 
       {/* Fraud score routing */}
       <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-4 sm:p-5">
         <div className="flex items-center gap-2 mb-2">
-          <span className="rounded bg-blue-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-blue-700">RF</span>
-          <h3 className="text-sm font-semibold text-gray-800">Random Forest score routing (0–100)</h3>
+          <span className="rounded bg-blue-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-blue-700">TABULAR</span>
+          <h3 className="text-sm font-semibold text-gray-800">Tabular Models score routing (0–100)</h3>
         </div>
         <p className="text-xs text-gray-500 mb-3">A nomination's fraud score maps to a risk level at these cutoffs; they must be non-decreasing.</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

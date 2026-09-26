@@ -64,6 +64,7 @@ class DetectionEnginesSqlTests(unittest.TestCase):
             '{"nomination_count":75,"minimum_nominations":300}',
             datetime(2026, 8, 24, 2, 4, 12), None, "run-1",
             datetime(2026, 8, 24, 2, 4, 13), "svc:fraud-analytics-job",
+            365, None,
         )])
 
         with patch(
@@ -76,6 +77,10 @@ class DetectionEnginesSqlTests(unittest.TestCase):
         self.assertEqual(rows[0]["reason_code"], "BELOW_MINIMUM_VOLUME")
         self.assertEqual(rows[0]["diagnostics"]["nomination_count"], 75)
         self.assertEqual(rows[0]["last_attempt_at"], "2026-08-24T02:04:12Z")
+        self.assertEqual(rows[0]["configured_window_days"], 365)
+        self.assertIsNone(rows[0]["serving_window_days"])
+        self.assertIn("CROSS JOIN (VALUES ('RF'), ('GRAPH'), ('GNN'))", session.statement)
+        self.assertIn("h.LastAttemptAt=s.LastSuccessfulAt", session.statement)
 
     def test_gnn_run_history_uses_temporal_rows_and_latest_candidate_selection(self):
         diagnostics = (

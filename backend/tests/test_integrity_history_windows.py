@@ -1,10 +1,56 @@
 """Policy UI and publishing honor separate tenant-owned history windows."""
 
 from unittest.mock import MagicMock
+import json
 
 import pytest
 
 from utils import sqlhelper2 as sql
+
+
+def test_setup_window_updates_preserve_other_tenant_configuration(monkeypatch):
+    session = _session(monkeypatch)
+    configuration = {"graph_pattern": {"detection_window_days": 180},
+                     "gnn": {"window_days": 365, "score_routing": {"high_threshold": 65}},
+                     "tabular": {"window_days": 365}, "unrelated": {"preserve": True}}
+    session.execute.return_value.fetchone.return_value = ('{"embed_model":"preserved"}', json.dumps(configuration))
+    data = sql.get_fraud_settings(5)
+    assert (data["graph_window_days"], data["gnn_window_days"], data["tabular_window_days"]) == (180, 365, 365)
+    data.update(graph_window_days=90, tabular_window_days=180)
+    sql.update_fraud_settings(5, data, "admin@example.com")
+    written = json.loads(session.execute.call_args.args[1]["ic"])
+    assert written["graph_pattern"]["detection_window_days"] == 90
+    assert written["gnn"] == configuration["gnn"]
+    assert written["tabular"]["window_days"] == 180
+    assert written["unrelated"] == {"preserve": True}
+    assert json.loads(session.execute.call_args.args[1]["dcc"])["embed_model"] == "preserved"
+    session.commit.assert_called_once()
+
+
+def test_old_setup_client_does_not_overwrite_omitted_windows(monkeypatch):
+    session = _session(monkeypatch)
+    existing = {"graph_pattern": {"detection_window_days": 90}, "gnn": {"window_days": 180}, "tabular": {"window_days": 270}}
+    session.execute.return_value.fetchone.return_value = (None, json.dumps(existing))
+    data = sql.get_fraud_settings(5)
+    for key in ("graph_window_days", "gnn_window_days", "tabular_window_days"):
+        del data[key]
+    sql.update_fraud_settings(5, data, "admin@example.com")
+    written = json.loads(session.execute.call_args.args[1]["ic"])
+    for namespace in existing:
+        assert written[namespace] == existing[namespace]
+
+
+@pytest.mark.parametrize("field", ["graph_window_days", "gnn_window_days", "tabular_window_days"])
+def test_window_api_rejects_non_positive_values(field):
+    from routers.setup_router import FraudConfig
+    from pydantic import ValidationError
+    data = {"low_threshold": 20, "medium_threshold": 40, "high_threshold": 60,
+            "critical_threshold": 80, "use_char_count": False, "min_char_count": 12,
+            "min_word_count": 3, "category_alignment_threshold": .15,
+            "duplicate_similarity_threshold": .85, "llm_category_check_enabled": False,
+            "llm_fit_threshold": .4, field: 0}
+    with pytest.raises(ValidationError):
+        FraudConfig(**data)
 
 
 def _session(monkeypatch):

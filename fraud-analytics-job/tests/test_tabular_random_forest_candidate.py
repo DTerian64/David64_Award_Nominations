@@ -84,6 +84,7 @@ def _feature_dataset(count: int = 120) -> TabularFeatureDataset:
         frame=frame,
         features=features,
         target=target,
+        fitted_state={"history_window_days": 365, "history_feature_contract": "tabular-causal-window-v1"},
     )
     result.validate()
     return result
@@ -94,7 +95,7 @@ def test_random_forest_candidate_uses_out_of_time_holdout_and_shared_schema():
 
     assert result.completed
     assert result.architecture == "random_forest"
-    assert result.feature_schema_id == "award-nomination-tabular:tabular-v1"
+    assert result.feature_schema_id == "award-nomination-tabular:tabular-v2"
     assert result.holdout is not None
     assert max(result.holdout.train_nomination_ids) < min(
         result.holdout.evaluation_nomination_ids

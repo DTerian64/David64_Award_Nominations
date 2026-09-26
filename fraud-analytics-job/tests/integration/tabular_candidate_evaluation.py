@@ -60,16 +60,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_environment()
 
     from utils.db_conn import connect
-    from utils.tenant_model_config import get_tenant_embed_model
+    from utils.tenant_model_config import get_tenant_embed_model, get_tenant_tabular_window
 
     connection = connect()
     try:
+        window_days = get_tenant_tabular_window(connection, args.tenant)
         dataset = AwardNominationAdapter().load(
             connection,
             SourceReadRequest(
                 tenant_id=args.tenant,
                 as_of_exclusive=datetime.now(timezone.utc),
-                window_days=None,
+                window_days=2 * window_days,
             ),
         )
     finally:
@@ -79,6 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     feature_dataset = AwardNominationTabularV1FeatureBuilder().build(
         dataset,
         embed_model=SentenceTransformer(embed_model_name),
+        window_days=window_days,
     )
     evaluation = evaluate_tabular_candidates(feature_dataset)
     summary = {

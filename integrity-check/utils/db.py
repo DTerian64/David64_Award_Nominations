@@ -588,6 +588,34 @@ def reject_nomination(nomination_id: int, reason: str, actor: str) -> None:
 
 # ── Fraud history lookups ─────────────────────────────────────────────────────
 
+def get_tabular_history_rows(tenant_id: int, *, target_nomination_id: int,
+                             target_time: datetime, window_days: int) -> list[dict]:
+    """Tenant-wide prior history for the same causal transform as training."""
+    if window_days < 1:
+        raise ValueError("Tabular history window must be positive")
+    if target_time.tzinfo is not None:
+        target_time = target_time.astimezone(timezone.utc).replace(tzinfo=None)
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT n.NominationId, n.NominatorId, n.BeneficiaryId, n.Amount,
+                   n.NominationDate, n.NominationDescription
+            FROM dbo.Nominations n
+            JOIN dbo.Users u ON u.UserId=n.NominatorId
+            WHERE u.TenantId=?
+              AND n.NominationDate >= DATEADD(DAY, -?, ?)
+              AND (n.NominationDate < ? OR
+                   (n.NominationDate = ? AND n.NominationId < ?))
+              AND n.Status <> 'PendingHRBPReview'
+              AND n.Status <> 'DO_NOT_USE'
+              AND NOT (n.Status='Rejected' AND
+                  COALESCE(n.RejectionActor, '')='Fraud Detection (Description)')
+            ORDER BY n.NominationDate, n.NominationId
+        """, (tenant_id, window_days, target_time, target_time,
+              target_time, target_nomination_id))
+        columns = [item[0] for item in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
 def get_nominator_history(nominator_id: int) -> list[tuple]:
     with _get_conn() as conn:
         cursor = conn.cursor()

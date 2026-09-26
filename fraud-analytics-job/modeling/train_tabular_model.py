@@ -23,7 +23,7 @@ from source_adapters.contracts import SourceReadRequest
 from utils.component_status import upsert_component_status
 from utils.db_conn import connect
 from utils.model_artifacts import upload_artifact
-from utils.tenant_model_config import get_tenant_embed_model, get_tenants
+from utils.tenant_model_config import get_tenant_embed_model, get_tenants, get_tenant_tabular_window
 
 
 logger = logging.getLogger(__name__)
@@ -84,12 +84,15 @@ def main(tenants_to_process: list | None = None) -> None:
             as_of = datetime.now(timezone.utc)
             source = connect()
             try:
+                window_days = get_tenant_tabular_window(source, tenant_id)
                 dataset = AwardNominationAdapter().load(
                     source,
                     SourceReadRequest(
                         tenant_id=tenant_id,
                         as_of_exclusive=as_of,
-                        window_days=None,
+                        # One target window plus its warm-up history. Context
+                        # rows build features but are not fitted/evaluated.
+                        window_days=2 * window_days,
                     ),
                 )
             finally:
@@ -99,6 +102,7 @@ def main(tenants_to_process: list | None = None) -> None:
             features = AwardNominationTabularV1FeatureBuilder().build(
                 dataset,
                 embed_model=SentenceTransformer(embed_model_name),
+                window_days=window_days,
             )
             policy = TabularTrainingPolicy()
             evaluation = evaluate_tabular_candidates(features, policy)
@@ -112,6 +116,7 @@ def main(tenants_to_process: list | None = None) -> None:
                     diagnostics={
                         "selection": evaluation.selection.candidate_evaluations,
                         "source_snapshot_id": features.source_snapshot_id,
+                        "window_days": window_days,
                     },
                     run_id=run_id,
                 )
@@ -121,7 +126,7 @@ def main(tenants_to_process: list | None = None) -> None:
                 features, selected, policy
             )
             model_version = (
-                f"tabular-v1-{as_of:%Y%m%d%H%M%S}-t{tenant_id}-"
+                f"tabular-v2-{as_of:%Y%m%d%H%M%S}-t{tenant_id}-"
                 f"{run_id.replace('-', '')[:8]}"
             )
             bundle_dir, artifacts = write_tabular_bundle(
@@ -142,6 +147,8 @@ def main(tenants_to_process: list | None = None) -> None:
                 artifacts=artifacts,
             )
             diagnostics = {
+                "window_days": window_days,
+                "history_feature_contract": features.fitted_state["history_feature_contract"],
                 "artifact_bundle_prefix": tabular_bundle_prefix(
                     tenant_id, model_version
                 ),

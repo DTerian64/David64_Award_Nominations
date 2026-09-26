@@ -233,6 +233,9 @@ async def update_category(category_id: int, payload: CategoryPayload,
 # by the versioned dbo.GNNScoringPolicies contract below.
 
 class FraudConfig(BaseModel):
+    graph_window_days: Optional[int] = Field(default=None, gt=0)
+    gnn_window_days: Optional[int] = Field(default=None, gt=0)
+    tabular_window_days: Optional[int] = Field(default=None, gt=0)
     # Fraud score routing (0..100 cutoffs)
     low_threshold:      int
     medium_threshold:   int

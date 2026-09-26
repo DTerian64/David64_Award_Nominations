@@ -51,6 +51,8 @@ def test_bundle_contains_both_candidates_and_selected_serving_refit(tmp_path):
     manifest = json.loads((bundle_dir / "manifest.json").read_text())
     assert manifest["artifact_type"] == "tabular_integrity_model"
     assert manifest["tenant_id"] == 5
+    assert manifest["history_window_days"] == 365
+    assert manifest["history_feature_contract"] == "tabular-causal-window-v1"
     assert manifest["selection"]["selected_architecture"] == selected
     assert set(manifest["candidates"]) == {"random_forest", "tabular_mlp"}
     for architecture in ("random_forest", "tabular_mlp"):
@@ -120,6 +122,9 @@ def test_bundle_contains_both_candidates_and_selected_serving_refit(tmp_path):
     assert payload["tenant_id"] == 5
     assert payload["architecture"] == selected
     assert payload["feature_schema_id"] == dataset.schema.schema_id
+    assert payload["history_window_days"] == 365
+    assert payload["history_feature_contract"] == "tabular-causal-window-v1"
+    assert "amount_mean" not in payload  # Never reuse full-dataset stats at inference.
     assert payload["training_lineage"] == serving_fit
     assert type(payload["model"]) is type(serving.model)
     assert payload["preprocessing"]["feature_columns"] == list(

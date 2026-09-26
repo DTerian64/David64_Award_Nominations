@@ -3317,6 +3317,9 @@ def get_fraud_settings(tenant_id: int) -> dict:
     phrases = dcc.get("boilerplate_phrases")
     return {
         # Fraud score routing (0..100 cutoffs)
+        "graph_window_days": int((ic.get("graph_pattern") or {}).get("detection_window_days", 180)),
+        "gnn_window_days": int((ic.get("gnn") or {}).get("window_days", 365)),
+        "tabular_window_days": int((ic.get("tabular") or {}).get("window_days", 365)),
         "low_threshold":                  int(routing.get("low_threshold", 20)),
         "medium_threshold":               int(routing.get("medium_threshold", 40)),
         "high_threshold":                 int(routing.get("high_threshold", 60)),
@@ -3369,6 +3372,16 @@ def update_fraud_settings(tenant_id: int, data: dict, actor: str) -> None:
         routing["high_threshold"]     = int(data["high_threshold"])
         routing["critical_threshold"] = int(data["critical_threshold"])
         ic["score_routing"] = routing
+        for field, namespace, key in (
+            ("graph_window_days", "graph_pattern", "detection_window_days"),
+            ("gnn_window_days", "gnn", "window_days"),
+            ("tabular_window_days", "tabular", "window_days"),
+        ):
+            if data.get(field) is not None:
+                days = int(data[field])
+                if days < 1:
+                    raise ValueError("History windows must be positive")
+                ic.setdefault(namespace, {})[key] = days
         session.execute(
             text("""
                 UPDATE dbo.Tenants
@@ -3466,12 +3479,37 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
     with get_db_context() as session:
         rows = session.execute(
             text("""
-                SELECT Component, ServingStatus, ServingVersion, ServingAsOf,
-                       LastAttemptStatus, ReasonCode, ReasonDetail, DiagnosticsJson,
-                       LastAttemptAt, LastSuccessfulAt, RunId, UpdatedAt, UpdatedBy
-                FROM dbo.IntegrityComponentStatus
-                WHERE TenantId = :tid
-                ORDER BY CASE Component
+                SELECT engine.Component, COALESCE(s.ServingStatus, 'UNAVAILABLE'),
+                       s.ServingVersion, s.ServingAsOf,
+                       COALESCE(s.LastAttemptStatus, 'NOT_RUN'), s.ReasonCode,
+                       s.ReasonDetail, s.DiagnosticsJson,
+                       s.LastAttemptAt, s.LastSuccessfulAt, s.RunId, s.UpdatedAt, s.UpdatedBy,
+                       CASE engine.Component
+                         WHEN 'GRAPH' THEN COALESCE(TRY_CONVERT(int, JSON_VALUE(
+                           CAST(t.integrity_config AS nvarchar(max)), '$.graph_pattern.detection_window_days')), 180)
+                         WHEN 'GNN' THEN COALESCE(TRY_CONVERT(int, JSON_VALUE(
+                           CAST(t.integrity_config AS nvarchar(max)), '$.gnn.window_days')), 365)
+                         ELSE COALESCE(TRY_CONVERT(int, JSON_VALUE(
+                           CAST(t.integrity_config AS nvarchar(max)), '$.tabular.window_days')), 365)
+                       END AS ConfiguredWindowDays,
+                       serving.WindowDays AS ServingWindowDays
+                FROM dbo.Tenants t
+                CROSS JOIN (VALUES ('RF'), ('GRAPH'), ('GNN')) engine(Component)
+                LEFT JOIN dbo.IntegrityComponentStatus s
+                  ON s.TenantId=t.TenantId AND s.Component=engine.Component
+                OUTER APPLY (
+                    SELECT TOP 1 TRY_CONVERT(int, JSON_VALUE(
+                        CASE WHEN ISJSON(CAST(h.DiagnosticsJson AS nvarchar(max)))=1
+                          THEN CAST(h.DiagnosticsJson AS nvarchar(max)) ELSE '{}' END,
+                        '$.window_days')) AS WindowDays
+                    FROM dbo.IntegrityComponentStatus FOR SYSTEM_TIME ALL h
+                    WHERE h.TenantId=t.TenantId AND h.Component=engine.Component
+                      AND h.ServingVersion=s.ServingVersion AND h.LastAttemptStatus='SUCCEEDED'
+                      AND h.LastAttemptAt=s.LastSuccessfulAt
+                    ORDER BY h.UpdatedAt DESC
+                ) serving
+                WHERE t.TenantId = :tid
+                ORDER BY CASE engine.Component
                     WHEN 'RF' THEN 1 WHEN 'GRAPH' THEN 2 WHEN 'GNN' THEN 3 ELSE 4
                 END
             """),
@@ -3504,6 +3542,10 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
             "run_id":                row[10],
             "updated_at":            _iso_utc(row[11]),
             "updated_by":            row[12],
+            "configured_window_days": row[13],
+            "serving_window_days": row[14],
+            "legacy_full_history": bool(row[0] == "RF" and row[2] and
+                not str(row[2]).startswith("tabular-v2-")),
         })
     return result
 

@@ -32,7 +32,6 @@ def _model_payload(
     embed_model_name: str,
     training_lineage: dict[str, Any],
 ) -> dict[str, Any]:
-    amounts = feature_dataset.features["Amount"]
     category_encoder = preprocessor.category_encoder
     return {
         "schema_version": 1,
@@ -41,6 +40,8 @@ def _model_payload(
         "model_version": model_version,
         "architecture": architecture,
         "feature_schema_id": feature_dataset.schema.schema_id,
+        "history_window_days": feature_dataset.fitted_state["history_window_days"],
+        "history_feature_contract": feature_dataset.fitted_state["history_feature_contract"],
         "feature_columns": list(feature_dataset.schema.feature_columns),
         "source_snapshot_id": feature_dataset.source_snapshot_id,
         "training_lineage": training_lineage,
@@ -52,8 +53,6 @@ def _model_payload(
             "category_fraud_rate": dict(category_encoder.category_rates),
             "global_fraud_rate": float(category_encoder.global_rate),
         },
-        "amount_mean": float(amounts.mean()),
-        "amount_std": float(amounts.std()),
         "embed_model_name": embed_model_name,
     }
 
@@ -301,6 +300,8 @@ def write_tabular_bundle(
         "tenant_name": tenant_name,
         "model_version": model_version,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "history_window_days": feature_dataset.fitted_state["history_window_days"],
+        "history_feature_contract": feature_dataset.fitted_state["history_feature_contract"],
         "source_snapshot_id": feature_dataset.source_snapshot_id,
         "feature_schema_id": feature_dataset.schema.schema_id,
         "feature_columns": list(feature_dataset.schema.feature_columns),

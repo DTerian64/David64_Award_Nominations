@@ -1,11 +1,4 @@
-"""Non-serving T2 builder for the Award Nomination Tabular-v1 contract.
-
-Random Forest and ``tabular_mlp`` consume the same ordered feature information.
-This first implementation intentionally reproduces the deployed RF transform
-while the old and new paths run in parity. The production trainer is not
-switched to this builder in T2. Once live parity is accepted, the compatibility
-entry point can delegate here and the duplicate legacy functions can be removed.
-"""
+"""Shared RF/Tabular MLP features with causal, tenant-configured history."""
 
 from __future__ import annotations
 
@@ -15,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
+from integrity_engine.tabular_history import HISTORY_CONTRACT, TabularHistory, semantic_features
 
 from feature_builders.contracts import TabularFeatureDataset, TabularFeatureSchema
 from integrity_data import IntegrityDataset, validate_dataset
@@ -48,7 +41,7 @@ TABULAR_V1_FEATURE_COLUMNS = (
 
 AWARD_NOMINATION_TABULAR_V1_SCHEMA = TabularFeatureSchema(
     name="award-nomination-tabular",
-    version="tabular-v1",
+    version="tabular-v2",
     source_system="AWARD_NOMINATION",
     required_capabilities=frozenset(
         {
@@ -203,165 +196,76 @@ def build_nomination_frame(dataset: IntegrityDataset) -> pd.DataFrame:
     return frame
 
 
-def add_semantic_features(df: pd.DataFrame, embed_model: Any) -> pd.DataFrame:
-    """Reproduce the deployed RF semantic transform for parity testing."""
+def extract_features(df: pd.DataFrame, window_days: int = 365) -> tuple[pd.DataFrame, dict[Any, float], float]:
+    """Build bounded prior-only numeric features; category encoding is fitted
+    separately on each training partition, never on the full label population.
+    """
+    history = TabularHistory(window_days)
+    df = df.copy()
+    df["NominationDate"] = pd.to_datetime(df["NominationDate"])
+    values = {}
+    for index, row in df.sort_values(["NominationDate", "NominationId"]).iterrows():
+        target = row.to_dict()
+        values[index] = history.features(target)
+        history.add(target)
+    for column in (next(iter(values.values())).keys() if values else TABULAR_V1_FEATURE_COLUMNS):
+        if column not in {"DescriptionCosineSim", "DescriptionEmbDistance"}:
+            df[column] = pd.Series({index: item[column] for index, item in values.items()}, dtype=float)
+    df["TransactionalPhraseScore"] = df["NominationDescription"].fillna("").map(transactional_phrase_score)
+    df["CategoryFraudRate"] = 0.0
+    return df, {}, 0.0
 
-    descriptions = df["NominationDescription"].fillna("").tolist()
-    if not any(descriptions):
-        df["DescriptionCosineSim"] = 0.0
-        df["DescriptionEmbDistance"] = 1.0
+
+def add_semantic_features(df: pd.DataFrame, embed_model: Any, window_days: int = 365) -> pd.DataFrame:
+    """Compare with the beneficiary's latest 20 prior authored descriptions."""
+    df = df.copy()
+    df["DescriptionCosineSim"] = 0.0
+    df["DescriptionEmbDistance"] = 1.0
+    if df.empty:
         return df
-
-    all_embs = embed_model.encode(
-        descriptions,
-        batch_size=64,
-        show_progress_bar=False,
-        normalize_embeddings=True,
-    )
-    beneficiary_embeddings: dict[Any, Any] = {}
-    for user_id, group in df.groupby("BeneficiaryId"):
-        indices = group.index.tolist()
-        user_embeddings = all_embs[df.index.get_indexer(indices)]
-        if len(user_embeddings) > 0:
-            beneficiary_embeddings[user_id] = user_embeddings.mean(axis=0)
-
-    cosine_sims: list[float] = []
-    embedding_distances: list[float] = []
-    for position, (_, row) in enumerate(df.iterrows()):
-        nomination_embedding = all_embs[position]
-        beneficiary_mean = beneficiary_embeddings.get(row["BeneficiaryId"])
-        if beneficiary_mean is None:
-            similarity = 0.0
-            distance = 1.0
-        else:
-            similarity = float(
-                sk_cosine_similarity(
-                    [nomination_embedding], [beneficiary_mean]
-                )[0][0]
-            )
-            distance = float(np.linalg.norm(nomination_embedding - beneficiary_mean))
-        cosine_sims.append(similarity)
-        embedding_distances.append(distance)
-
-    df["DescriptionCosineSim"] = cosine_sims
-    df["DescriptionEmbDistance"] = embedding_distances
+    descriptions = df["NominationDescription"].fillna("").tolist()
+    vectors = embed_model.encode(descriptions, batch_size=64, show_progress_bar=False, normalize_embeddings=True) if any(descriptions) else None
+    indexed_vectors = dict(zip(df.index, vectors)) if vectors is not None else {}
+    history = TabularHistory(window_days)
+    for index, row in df.sort_values(["NominationDate", "NominationId"]).iterrows():
+        target = row.to_dict()
+        target["NominationDescription"] = target.get("NominationDescription") or ""
+        history.expire(target["NominationDate"])
+        prior = history.prior_descriptions(target["BeneficiaryId"])
+        if target["NominationDescription"].strip() and prior and vectors is not None:
+            similarity, distance = semantic_features(indexed_vectors[index], [item["_embedding"] for item in prior])
+            df.loc[index, ["DescriptionCosineSim", "DescriptionEmbDistance"]] = similarity, distance
+        target["_embedding"] = indexed_vectors.get(index)
+        history.add(target)
     return df
 
 
-def extract_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[Any, float], float]:
-    """Reproduce the deployed RF deterministic feature transform."""
-
-    df["TransactionalPhraseScore"] = (
-        df["NominationDescription"].fillna("").map(transactional_phrase_score)
-    )
-    df["NominationDate"] = pd.to_datetime(df["NominationDate"])
-    df["DayOfWeek"] = df["NominationDate"].dt.dayofweek
-    df["Month"] = df["NominationDate"].dt.month
-    df["Hour"] = df["NominationDate"].dt.hour
-    df["IsWeekend"] = df["DayOfWeek"].isin([5, 6]).astype(int)
-    # Tabular-v1 exposes cyclic coordinates to both candidate architectures.
-    # Retain the raw values in the audit frame for RF-v3 parity and diagnostics.
-    df["DayOfWeekSin"] = np.sin(2 * np.pi * df["DayOfWeek"] / 7)
-    df["DayOfWeekCos"] = np.cos(2 * np.pi * df["DayOfWeek"] / 7)
-    zero_based_month = df["Month"] - 1
-    df["MonthSin"] = np.sin(2 * np.pi * zero_based_month / 12)
-    df["MonthCos"] = np.cos(2 * np.pi * zero_based_month / 12)
-
-    nominator_stats = df.groupby("NominatorId").agg(
-        NominatorTotalNominations=("NominationId", "count"),
-        NominatorAvgAmount=("Amount", "mean"),
-        NominatorStdAmount=("Amount", "std"),
-        NominatorMinAmount=("Amount", "min"),
-        NominatorMaxAmount=("Amount", "max"),
-        NominatorUniqueBeneficiaries=("BeneficiaryId", "nunique"),
-    ).reset_index()
-    df = df.merge(nominator_stats, on="NominatorId", how="left")
-
-    beneficiary_stats = df.groupby("BeneficiaryId").agg(
-        BeneficiaryTotalReceived=("NominationId", "count"),
-        BeneficiaryAvgAmountReceived=("Amount", "mean"),
-    ).reset_index()
-    df = df.merge(beneficiary_stats, on="BeneficiaryId", how="left")
-
-    reciprocal = df.merge(
-        df[["NominatorId", "BeneficiaryId"]],
-        left_on=["NominatorId", "BeneficiaryId"],
-        right_on=["BeneficiaryId", "NominatorId"],
-        how="inner",
-        suffixes=("", "_reciprocal"),
-    )
-    df["HasReciprocalNomination"] = (
-        df["NominationId"].isin(reciprocal["NominationId"]).astype(int)
-    )
-    pair_counts = (
-        df.groupby(["NominatorId", "BeneficiaryId"])
-        .size()
-        .reset_index(name="PairNominationCount")
-    )
-    df = df.merge(pair_counts, on=["NominatorId", "BeneficiaryId"], how="left")
-
-    amount_mean = df["Amount"].mean()
-    amount_std = df["Amount"].std()
-    df["AmountZScore"] = (
-        (df["Amount"] - amount_mean) / amount_std
-        if amount_std and amount_std > 0
-        else 0.0
-    )
-    df["IsHighAmount"] = (df["AmountZScore"] > 2).astype(int)
-    df["IsLowAmount"] = (df["AmountZScore"] < -2).astype(int)
-    df["NominatorConcentrationRatio"] = df["NominatorTotalNominations"] / (
-        df["NominatorUniqueBeneficiaries"] + 1
-    )
-
-    if "CategoryId" in df.columns and "IsFraud" in df.columns:
-        observed_rate = df["IsFraud"].mean()
-        global_fraud_rate = 0.0 if pd.isna(observed_rate) else float(observed_rate)
-        category_fraud_rate = (
-            df.groupby("CategoryId")["IsFraud"]
-            .mean()
-            .fillna(0.0)
-            .astype(float)
-            .to_dict()
-        )
-        df["CategoryFraudRate"] = (
-            df["CategoryId"].map(category_fraud_rate).fillna(0.0)
-        )
-    else:
-        df["CategoryFraudRate"] = 0.0
-        category_fraud_rate = {}
-        global_fraud_rate = 0.0
-    return df, category_fraud_rate, global_fraud_rate
-
-
 class AwardNominationTabularV1FeatureBuilder:
-    """Build the shared Tabular-v1 matrix from a canonical source snapshot."""
+    """Shared builder; the persisted schema is v2 for causal-window semantics.
 
+    The Python entry-point name is retained for source-adapter compatibility.
+    """
     schema = AWARD_NOMINATION_TABULAR_V1_SCHEMA
 
-    def build(
-        self,
-        dataset: IntegrityDataset,
-        *,
-        embed_model: Any,
-    ) -> TabularFeatureDataset:
+    def build(self, dataset: IntegrityDataset, *, embed_model: Any, window_days: int = 365) -> TabularFeatureDataset:
         frame = build_nomination_frame(dataset)
-        frame = add_semantic_features(frame, embed_model)
-        frame, category_rates, global_rate = extract_features(frame)
+        eligible_count = len(frame)
+        frame = add_semantic_features(frame, embed_model, window_days)
+        frame, category_rates, global_rate = extract_features(frame, window_days)
+        target_start = dataset.snapshot.as_of_exclusive.replace(tzinfo=None) - pd.Timedelta(days=window_days)
+        frame = frame.loc[frame["NominationDate"] >= target_start].copy()
         result = TabularFeatureDataset(
             schema=self.schema,
             source_snapshot_id=dataset.snapshot.snapshot_id,
             frame=frame,
             features=frame.loc[:, list(self.schema.feature_columns)].copy(),
             target=frame[self.schema.target_column].copy(),
-            fitted_state={
-                "category_fraud_rate": category_rates,
-                "global_fraud_rate": global_rate,
-            },
-            diagnostics={
-                "source_event_count": len(dataset.events),
-                "eligible_event_count": len(frame),
-                "excluded_by_rf_policy": len(dataset.events) - len(frame),
-            },
+            fitted_state={"category_fraud_rate": category_rates, "global_fraud_rate": global_rate,
+                          "history_window_days": window_days, "history_feature_contract": HISTORY_CONTRACT},
+            diagnostics={"source_event_count": len(dataset.events), "eligible_event_count": len(frame),
+                         "history_context_event_count": eligible_count - len(frame),
+                         "excluded_by_rf_policy": len(dataset.events) - eligible_count,
+                         "window_days": window_days},
         )
         result.validate()
         return result
