@@ -205,7 +205,7 @@ export const GNNPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) =>
     incumbent_tie_tolerance: draft.incumbent_tie_tolerance,
     minimum_eligible_graph_candidates: draft.minimum_eligible_graph_candidates,
     thresholds: draft.thresholds,
-    explanation_enabled: draft.explanation_enabled,
+    explanation_enabled: true, // Legacy API field; eligible explanations are automatic.
     explanation_minimum_risk: draft.explanation_minimum_risk,
     serving_mode: draft.serving_mode,
     behavior_tracks: draft.behavior_tracks,
@@ -335,9 +335,9 @@ export const GNNPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) =>
               <section className="rounded-lg border border-gray-200 p-4">
                 <h3 className="text-sm font-semibold text-gray-800">GNN explanation</h3>
                 <div className="mt-3 flex flex-wrap items-center gap-5">
-                  <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" disabled={!draft} checked={policy.explanation_enabled} onChange={event => edit({ explanation_enabled: event.target.checked })} />Request asynchronous GNNExplainer evidence</label>
+                  <p className="text-sm text-gray-700">GNNExplainer evidence is requested automatically for eligible nominations. Skipped requests record their reason.</p>
                   <label className="text-xs text-gray-500">Minimum risk
-                    <select disabled={!draft || !policy.explanation_enabled} value={policy.explanation_minimum_risk} onChange={event => edit({ explanation_minimum_risk: event.target.value as Risk })} className="ml-2 rounded-md border border-gray-300 px-2.5 py-2 text-sm text-gray-800 disabled:bg-gray-50">
+                    <select disabled={!draft} value={policy.explanation_minimum_risk} onChange={event => edit({ explanation_minimum_risk: event.target.value as Risk })} className="ml-2 rounded-md border border-gray-300 px-2.5 py-2 text-sm text-gray-800 disabled:bg-gray-50">
                       {(['NONE', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as Risk[]).map(value => <option key={value}>{value}</option>)}
                     </select>
                   </label>

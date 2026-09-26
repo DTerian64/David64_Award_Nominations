@@ -172,6 +172,7 @@ def build_nomination_frame(dataset: IntegrityDataset) -> pd.DataFrame:
                 "IsFraud": is_fraud,
                 "LabelSource": label_source,
                 "TrainingDisposition": disposition,
+                "LabelKnownAt": labels[event.event_id].known_at if event.event_id in labels else None,
             }
         )
 
@@ -189,6 +190,7 @@ def build_nomination_frame(dataset: IntegrityDataset) -> pd.DataFrame:
         "IsFraud",
         "LabelSource",
         "TrainingDisposition",
+        "LabelKnownAt",
     ]
     frame = pd.DataFrame(rows, columns=columns)
     if not frame.empty:

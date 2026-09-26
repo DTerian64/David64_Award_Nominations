@@ -12,6 +12,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { X, RefreshCw, AlertCircle, Info } from 'lucide-react';
 import { getAccessToken } from '../services/api';
 import { SHAP_FEATURE_LABELS, parseShapContributions } from '../utils/shap';
+import { AttributionStatus, GnnAnalysisDetails, TabularAnalysisDetails, tabularModelLabel, type EngineResult } from './HRBPReviewTab';
 import {
   GRAPH_PATTERN_LABELS,
   OtherGraphDetectorScores,
@@ -51,6 +52,55 @@ const LEVEL_STYLES: Record<string, string> = {
 // Fields too noisy or redundant to show as extras tags.
 const SKIP_EXTRAS = new Set(['nomination_id', 'message_id', 'body', 'NominationId']);
 
+const isModelAssessment = (text: string) => [
+  'Tabular assessment completed', 'Random Forest assessment completed', 'GNN assessment completed',
+].includes(text);
+
+/** Render the evidence captured at scoring time, never today's serving model. */
+export function ModelLogEvidence({ text, extras }: { text: string; extras: Record<string, unknown> }) {
+  const lifecycle = ({
+    'GNN explanation requested': 'REQUESTED',
+    'GNN explanation started': 'RUNNING',
+    'GNN explanation completed': 'COMPLETED',
+    'GNN explanation failed': 'FAILED',
+    'GNN explanation request publish failed; nomination routing is unchanged': 'FAILED',
+  } as Record<string, string>)[text];
+  if (lifecycle) return <AttributionStatus method="GNNExplainer" status={lifecycle} reason={typeof extras.reason === 'string' ? extras.reason : undefined} />;
+  if (!isModelAssessment(text)) return null;
+  const isGnn = text === 'GNN assessment completed';
+  const snapshot = extras.engine_result;
+  const engine = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    ? snapshot as EngineResult
+    : {
+      available: extras.model_available === true,
+      score: extras.fraud_score,
+      model_probability: extras.fraud_prob ?? extras.model_probability,
+      architecture: extras.architecture,
+      model_version: extras.model_version,
+      unavailable_reason: extras.unavailable_reason,
+      unavailable_detail: extras.unavailable_detail,
+      explanation: isGnn ? extras.explanation : {
+        shap_status: extras.shap_status, shap_reason: extras.shap_reason,
+        top_features: extras.top_features,
+        llm_status: extras.llm_explanation_status, llm_reason: extras.llm_explanation_reason,
+      },
+    } as EngineResult;
+  return (
+    <div className="mt-2 rounded border border-slate-200 bg-white p-3">
+      <p className="font-semibold text-slate-800">{isGnn ? 'GNN' : tabularModelLabel(engine.architecture)}</p>
+      {engine.available && <p className="mt-1 text-slate-600">
+        Score {engine.score ?? 'Not recorded'}
+        {engine.model_probability != null && <> · Probability {(engine.model_probability * 100).toFixed(2)}%</>}
+      </p>}
+      {!engine.available && <p className="mt-1 text-slate-500">Unavailable{engine.unavailable_reason ? `: ${engine.unavailable_reason}` : ''}</p>}
+      {isGnn ? <GnnAnalysisDetails engine={engine} /> : <>
+        <TabularAnalysisDetails engine={engine} />
+        {engine.explanation?.llm_text && <p className="mt-2">{engine.explanation.llm_text}</p>}
+      </>}
+    </div>
+  );
+}
+
 /** Parse the structured `details` JSON column into an extras object. */
 function parseDetails(raw: string | undefined): Record<string, unknown> {
   if (!raw) return {};
@@ -73,7 +123,7 @@ function formatDetailValue(value: unknown): string {
 }
 
 /** Show the one finding that determines Graph score and participant history context. */
-function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
+export function GraphEvidence({ extras }: { extras: Record<string, unknown> }) {
   const asFindings = (value: unknown) => Array.isArray(value)
     ? value.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
     : [];
@@ -329,8 +379,11 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                     const extras = parseDetails(log.details);
                     const shapContributions = parseShapContributions(extras.top_features);
                     const isGraph = text === 'Graph Analytics assessment completed';
+                    const isModel = isModelAssessment(text);
                     const extraEntries = Object.entries(extras).filter(
                       ([k]) => !SKIP_EXTRAS.has(k)
+                        && k !== 'engine_result'
+                        && (!isModel || !['explanation', 'top_features'].includes(k))
                         && (k !== 'top_features' || shapContributions.length === 0)
                         && (!isGraph || ![
                           'warning_flags', 'winning_finding', 'winning_pattern_type',
@@ -365,6 +418,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                           {text}
                         </p>
                         {isGraph && <GraphEvidence extras={extras} />}
+                        <ModelLogEvidence text={text} extras={extras} />
                         {/* Structured extras — fraud score, risk level, etc. */}
                         {extraEntries.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mt-2">
@@ -378,7 +432,7 @@ export const NominationLogsDrawer: React.FC<Props> = ({ nominationId, onClose })
                             ))}
                           </div>
                         )}
-                        {shapContributions.length > 0 && (
+                        {!isModel && shapContributions.length > 0 && (
                           <div className="mt-2 rounded border border-gray-200 bg-gray-50 p-2">
                             <p className="mb-1.5 font-mono text-[10px] text-gray-400">top_features</p>
                             <div className="space-y-1.5">

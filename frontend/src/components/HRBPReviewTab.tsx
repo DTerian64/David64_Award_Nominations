@@ -67,6 +67,8 @@ export interface EngineResult {
   findings?: string[];
   model_version?: string | null;
   architecture?: string | null;
+  history_window_days?: number | null;
+  history_feature_contract?: string | null;
   training_policy_id?: number | null;
   training_policy_version?: number | null;
   scoring_policy_id?: number | null;
@@ -195,6 +197,8 @@ export interface EngineResult {
     }>;
     shap_status?: string | null;
     shap_reason?: string | null;
+    llm_status?: string | null;
+    llm_reason?: string | null;
   };
   pattern_findings?: Array<NonNullable<EngineResult['winning_finding']> & {
     routing_relevant?: boolean;
@@ -343,7 +347,35 @@ const readableCode = (value?: string | null) => value
   ? value.replace(/_/g, ' ').toLowerCase().replace(/^./, first => first.toUpperCase())
   : 'Unavailable';
 
-/** Complete persisted GNN inference context for the data-scientist analysis view. */
+/** Explicit attribution lifecycle, including records with no captured status. */
+export const AttributionStatus: React.FC<{
+  method: string; status?: string | null; reason?: string | null;
+}> = ({ method, status, reason }) => (
+  <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+    <p className="font-semibold">{method}: {status === 'SKIPPED' || status === 'NOT_REQUESTED'
+      ? 'Not called' : status ? readableCode(status) : 'Not recorded'}</p>
+    {reason && <p className="mt-1" title={reason}>{readableCode(reason)}</p>}
+    {!status && <p className="mt-1">This record does not contain an attribution status; no explanation is inferred.</p>}
+  </div>
+);
+
+export const tabularModelLabel = (architecture?: string | null) => architecture === 'tabular_mlp'
+  ? 'Tabular MLP' : architecture === 'random_forest' ? 'Random Forest' : 'Tabular model';
+
+/** Reused by the queue, model analysis and immutable nomination logs. */
+export const TabularAnalysisDetails: React.FC<{
+  engine: EngineResult; legacyTopFeatures?: HRBPQueueItem['top_features'];
+}> = ({ engine, legacyTopFeatures }) => (
+  <div className="mt-2 text-xs text-slate-700">
+    {engine.model_version && <p className="break-all">Model: {engine.model_version}</p>}
+    {engine.history_window_days != null && <p>History window: {engine.history_window_days} days</p>}
+    <AttributionStatus method="SHAP" status={engine.explanation?.shap_status} reason={engine.explanation?.shap_reason} />
+    <ShapPanel topFeatures={engine.explanation?.top_features ?? (engine.architecture === 'tabular_mlp' ? null : legacyTopFeatures)} />
+    <AttributionStatus method="LLM explanation" status={engine.explanation?.llm_status} reason={engine.explanation?.llm_reason} />
+  </div>
+);
+
+/** Complete persisted GNN inference context, visible in every evidence view. */
 export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine }) => {
   const context = engine.causal_context;
   const features = context?.features || {};
@@ -460,7 +492,7 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
             <p className="font-semibold text-violet-900">Shared-model pattern heads</p>
             <p className="text-[10px] text-violet-700">The overall GNN probability above is the only routing score. Active pattern heads provide independent, multi-label evidence; diagnostic heads do not make live claims.</p>
           </div>
-          <table className="w-full border-collapse text-left text-xs"><thead className="bg-slate-100 text-[10px] font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-2 py-1.5">Pattern</th><th className="px-2 py-1.5">State</th><th className="px-2 py-1.5">Feature contract</th><th className="px-2 py-1.5 text-right">Probability</th><th className="px-2 py-1.5">Risk</th></tr></thead><tbody>{patternHeads.map(([name, head]) => <tr key={name} className="border-t border-slate-100"><td className="px-2 py-1.5 font-medium">{readableCode(name)}{engine.evidence?.primary_pattern === name && <span className="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[9px] text-violet-800">Primary</span>}</td><td className="px-2 py-1.5">{readableCode(head.status)}</td><td className="px-2 py-1.5 font-mono text-[10px]">{head.feature_contract || '—'}</td><td className="px-2 py-1.5 text-right font-mono">{head.status === 'ACTIVE' && head.probability !== undefined ? `${(head.probability * 100).toFixed(1)}%` : '—'}</td><td className="px-2 py-1.5">{head.status === 'ACTIVE' ? <RiskBadge level={head.risk_level || 'NONE'} /> : 'No live claim'}</td></tr>)}</tbody></table>
+<table className="w-full border-collapse text-left text-xs"><thead className="bg-slate-100 text-[10px] font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-2 py-1.5">Pattern</th><th className="px-2 py-1.5">State</th><th className="px-2 py-1.5">Feature contract</th><th className="px-2 py-1.5 text-right">Probability</th><th className="px-2 py-1.5">Risk</th></tr></thead><tbody>{patternHeads.map(([name, head]) => <tr key={name} className="border-t border-slate-100"><td className="px-2 py-1.5 font-medium">{readableCode(name)}{engine.evidence?.primary_pattern === name && <span className="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[9px] text-violet-800">Primary</span>}</td><td className="px-2 py-1.5">{readableCode(head.status)}</td><td className="px-2 py-1.5 font-mono text-[10px]">{head.feature_contract || '—'}</td><td className="px-2 py-1.5 text-right font-mono">{head.status === 'ACTIVE' && head.probability !== undefined ? `${(head.probability * 100).toFixed(2)}%` : '—'}</td><td className="px-2 py-1.5">{head.status === 'ACTIVE' ? <RiskBadge level={head.risk_level || 'NONE'} /> : 'No live claim'}</td></tr>)}</tbody></table>
         </div>
       )}
 
@@ -517,13 +549,9 @@ export const GnnAnalysisDetails: React.FC<{ engine: EngineResult }> = ({ engine 
         </div>
       )}
 
-      {explanation && (
+      <AttributionStatus method="GNNExplainer" status={explanation?.status} reason={explanation?.reason} />
+      {explanation && (explanation.detail || explanation.summary || explanation.fidelity != null || explanation.stability != null || topRelationships.length > 0 || topFeatures.length > 0) && (
         <div className="rounded border border-indigo-200 bg-indigo-50 p-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="font-semibold text-indigo-900">GNNExplainer</p>
-            <span className="rounded-full border border-indigo-200 bg-white px-2 py-0.5 font-semibold text-indigo-700">{readableCode(explanation.status)}</span>
-          </div>
-          {explanation.reason && <p className="mt-1 text-slate-600">{readableCode(explanation.reason)}</p>}
           {explanation.detail && <p className="mt-1 text-slate-600">{explanation.detail}</p>}
           {explanation.summary && <p className="mt-2 leading-relaxed">{explanation.summary}</p>}
           {(explanation.fidelity !== null && explanation.fidelity !== undefined) && <span className="mr-2 mt-2 inline-block rounded bg-white px-2 py-0.5">Fidelity {(explanation.fidelity * 100).toFixed(1)}%</span>}
@@ -624,8 +652,7 @@ export const RiskBadge: React.FC<{ level: string | null }> = ({ level }) => {
 
 export const EngineVerdicts: React.FC<{
   item: HRBPQueueItem;
-  showTechnicalDetails?: boolean;
-}> = ({ item, showTechnicalDetails = false }) => {
+}> = ({ item }) => {
   if (item.decision_source === 'legacy') {
     return (
       <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -635,7 +662,7 @@ export const EngineVerdicts: React.FC<{
   }
 
   const entries = [
-    ['Random Forest', item.engine_results.rf],
+    [tabularModelLabel(item.engine_results.rf?.architecture), item.engine_results.rf],
     ['Graph Analytics', item.engine_results.graph],
     ['GNN', item.engine_results.gnn],
     ['Semantic', item.engine_results.semantic],
@@ -661,12 +688,12 @@ export const EngineVerdicts: React.FC<{
           </span>
         )}
       </div>
-      <div className={`grid grid-cols-1 gap-3 md:grid-cols-2 ${showTechnicalDetails ? 'xl:grid-cols-3' : 'xl:grid-cols-4'}`}>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {entries.map(([label, engine]) => {
           if (!engine) return null;
           const isSemantic = label === 'Semantic';
           const isGraph = label === 'Graph Analytics';
-          const isRf = label === 'Random Forest';
+          const isRf = engine === item.engine_results.rf;
           const isGnn = label === 'GNN';
           const action = engine.combined_decision?.action;
           const findings = [
@@ -674,10 +701,10 @@ export const EngineVerdicts: React.FC<{
             ...(engine.combined_decision?.checks || []),
           ];
           const rfLlmExplanation = isRf
-            ? engine.explanation?.llm_text || item.llm_explanation
+            ? engine.explanation?.llm_text ?? (engine.architecture === 'tabular_mlp' ? null : item.llm_explanation)
             : null;
           return (
-            <div key={label} className={`rounded-lg border border-slate-200 bg-white p-3 ${isGnn && showTechnicalDetails ? 'order-last md:col-span-2 xl:col-span-3' : ''}`}>
+            <div key={label} className={`rounded-lg border border-slate-200 bg-white p-3 ${isGnn ? 'order-last md:col-span-2 xl:col-span-3' : ''}`}>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold text-slate-800">{label}</p>
                 {isSemantic
@@ -738,8 +765,8 @@ export const EngineVerdicts: React.FC<{
                   <p className="mt-1 leading-relaxed">{rfLlmExplanation}</p>
                 </div>
               )}
-              {isRf && <ShapPanel topFeatures={engine.explanation?.top_features || item.top_features} />}
-              {isGnn && showTechnicalDetails && <GnnAnalysisDetails engine={engine} />}
+              {isRf && <TabularAnalysisDetails engine={engine} legacyTopFeatures={item.top_features} />}
+              {isGnn && <GnnAnalysisDetails engine={engine} />}
             </div>
           );
         })}

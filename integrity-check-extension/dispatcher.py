@@ -86,9 +86,8 @@ def dispatch(
             sql_embeddings=embeddings,
             policy=ReproductionPolicy.from_configuration(context.policy_configuration),
         )
-        # E1/E2 are intentionally deployed while tenant request production is
-        # disabled. Fail closed if a request is nevertheless introduced; E3
-        # replaces this boundary with GNNExplainer execution.
+        # Score reproduction is implemented, but attribution execution is not.
+        # Persist this explicit failure; never fabricate explanation evidence.
         raise PermanentExtensionError(
             "EXPLANATION_ENGINE_NOT_DEPLOYED:"
             f"reproduced={result.serving_probability:.8f}"

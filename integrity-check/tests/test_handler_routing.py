@@ -211,7 +211,7 @@ class CompleteAssessmentTests(unittest.TestCase):
             "feature_schema_version": "gnn-v2",
             "scoring_policy_version": 4,
             "_policy": {
-                "explanation_enabled": True,
+                "explanation_enabled": False,  # Legacy toggle must not block eligible requests.
                 "explanation_minimum_risk": "MEDIUM",
             },
         }
@@ -251,10 +251,11 @@ class CompleteAssessmentTests(unittest.TestCase):
             ))
             stack.enter_context(patch("inference.handler.db.update_processed_event_result"))
 
-            handler.handle("source-message", {
-                "event_type": "nomination.submitted",
-                "nomination_id": 13881,
-            })
+            with self.assertLogs("integrity_check.handler", level="INFO") as logs:
+                handler.handle("source-message", {
+                    "event_type": "nomination.submitted",
+                    "nomination_id": 13881,
+                })
 
         self.assertEqual(call_order, [
             "decision",
@@ -263,6 +264,9 @@ class CompleteAssessmentTests(unittest.TestCase):
             "gnn.explanation.requested",
         ])
         persisted_gnn = save_decision.call_args.kwargs["engine_results"]["gnn"]
+        logged_gnn = next(record.engine_result for record in logs.records
+                          if record.getMessage() == "GNN assessment completed")
+        self.assertEqual(logged_gnn, persisted_gnn)
         self.assertEqual(persisted_gnn["explanation"]["status"], "REQUESTED")
         explanation_call = publish.call_args_list[-1]
         self.assertEqual(

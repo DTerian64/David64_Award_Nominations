@@ -34,14 +34,18 @@ def _plan(result=None, config=None):
     )
 
 
-def test_explanations_are_fail_closed_until_tenant_enables_them():
-    planned = _plan()
+def test_eligible_explanations_are_automatic_even_with_legacy_flag_disabled():
+    for config in ({}, {"explanation_enabled": False}):
+        planned = _plan(config=config)
+        assert planned.should_publish is True
+        assert planned.explanation["status"] == "REQUESTED"
+
+
+def test_low_risk_explanation_explicitly_records_why_it_was_not_called():
+    planned = _plan(result={**BASE_RESULT, "risk_level": "LOW"})
     assert planned.should_publish is False
-    assert planned.explanation == {
-        "method": "GNNEXPLAINER",
-        "status": "NOT_REQUESTED",
-        "reason": "FEATURE_DISABLED",
-    }
+    assert planned.explanation["status"] == "NOT_REQUESTED"
+    assert planned.explanation["reason"] == "BELOW_TRIGGER_RISK"
 
 
 def test_enabled_medium_policy_builds_deterministic_pointer_message():

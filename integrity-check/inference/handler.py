@@ -219,6 +219,7 @@ def handle(message_id: str, payload: dict) -> None:
             "llm_explanation_status": rf_result.get("llm_explanation_status"),
             "llm_explanation_reason": rf_result.get("llm_explanation_reason"),
             "llm_explanation_generated": bool(rf_result.get("llm_explanation")),
+            "engine_result": decision_contract.rf_result(rf_result),
         },
     )
 
@@ -230,6 +231,14 @@ def handle(message_id: str, payload: dict) -> None:
         extra={"nomination_id": nomination_id, "tenant_id": tenant_id},
     )
     gnn_result = gnn_check.assess_gnn(details, tenant_id, component_statuses.get("GNN"))
+    explanation_plan = gnn_explanation.plan(
+        gnn_result=gnn_result,
+        gnn_policy=gnn_result.get("_policy"),
+        tenant_id=tenant_id,
+        nomination_id=nomination_id,
+        source_message_id=message_id,
+    )
+    gnn_result["explanation"] = explanation_plan.explanation
     logger.info(
         "GNN assessment completed",
         extra={
@@ -241,6 +250,7 @@ def handle(message_id: str, payload: dict) -> None:
             "fraud_score": gnn_result.get("fraud_score"),
             "risk_level": gnn_result.get("risk_level"),
             "model_version": gnn_result.get("model_version"),
+            "engine_result": decision_contract.gnn_result(gnn_result),
             "architecture": gnn_result.get("architecture"),
             "feature_schema_version": gnn_result.get("feature_schema_version"),
             "causal_context_edge_count": gnn_result.get(
@@ -264,15 +274,6 @@ def handle(message_id: str, payload: dict) -> None:
             ) or None,
         },
     )
-    explanation_plan = gnn_explanation.plan(
-        gnn_result=gnn_result,
-        gnn_policy=gnn_result.get("_policy"),
-        tenant_id=tenant_id,
-        nomination_id=nomination_id,
-        source_message_id=message_id,
-    )
-    gnn_result["explanation"] = explanation_plan.explanation
-
     decision = result_fusion.combine(rf_result, graph_result, gnn_result)
     all_flags = pre_ml_flags + decision["warning_flags"]
     route_decision = _select_route(desc_result, decision)

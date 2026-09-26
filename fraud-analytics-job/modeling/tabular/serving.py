@@ -43,7 +43,9 @@ def fit_selected_for_serving(
     encoder = CategoryFraudRateEncoder()
     features = dataset.features.loc[index].copy()
     features["CategoryFraudRate"] = encoder.fit_transform_training(
-        dataset.frame.loc[index, "CategoryId"], target
+        dataset.frame.loc[index, "CategoryId"], target,
+        occurred_at=dataset.frame.loc[index, "NominationDate"],
+        known_at=dataset.frame.loc[index, "LabelKnownAt"] if "LabelKnownAt" in dataset.frame else None,
     )
 
     if architecture == "random_forest":

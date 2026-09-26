@@ -3,10 +3,13 @@
 Asynchronous, non-routing work that extends a completed integrity decision.
 The first extension is GNN score reproduction, followed by GNNExplainer in E3.
 
-E1/E2 deliberately leave explanation generation disabled. The worker validates
+The worker validates
 and claims `gnn.explanation.requested`, loads only immutable versioned artifacts,
 and proves that both serving and reconstructed scores reproduce the stored GNN
-probability before later phases are allowed to explain it.
+probability. Actual GNNExplainer attribution execution remains unimplemented;
+eligible automatic requests therefore record `FAILED` with
+`EXPLANATION_ENGINE_NOT_DEPLOYED` after successful score reproduction.
+The former tenant enable flag is no longer used by the producer or worker.
 
 Run tests from this directory with:
 
@@ -16,13 +19,13 @@ python -m pytest tests -v
 
 ## Sandbox deployment order
 
-1. Keep every tenant's `dbo.GNNScoringPolicies.ExplanationEnabled` set to `0`.
-2. Apply the sandbox Terraform changes to create the subscription, identity,
+1. Apply the sandbox Terraform changes to create the subscription, identity,
    permissions, and Container App.
-3. Set the sandbox GitHub Actions variable
+2. Set the sandbox GitHub Actions variable
    `CONTAINER_APP_INTEGRITY_CHECK_EXTENSION` to
    `award-integrity-ext-sandbox`.
-4. Run **Deploy Integrity Check Extension**.
+3. Run **Deploy Integrity Check Extension**.
 
-Do not enable tenant requests until E3 replaces the intentional
-`EXPLANATION_ENGINE_NOT_DEPLOYED` fail-closed boundary.
+Deploy the producer, frontend, and extension changes together for consistent
+lifecycle reporting. Attribution will not be available until E3 replaces the
+`EXPLANATION_ENGINE_NOT_DEPLOYED` boundary; these requests cannot provide it yet.

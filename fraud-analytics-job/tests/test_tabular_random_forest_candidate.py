@@ -125,7 +125,7 @@ def test_candidate_and_preprocessor_are_deterministic_and_pickle_safe():
     )
 
 
-def test_category_rates_are_leave_one_out_for_training_and_train_only_for_holdout():
+def test_category_rates_are_forward_only_and_smoothed_for_holdout():
     categories = pd.Series(["A", "A", "B", "B"])
     target = pd.Series([1, 0, 1, 1])
     encoder = CategoryFraudRateEncoder()
@@ -133,8 +133,9 @@ def test_category_rates_are_leave_one_out_for_training_and_train_only_for_holdou
     training = encoder.fit_transform_training(categories, target)
     evaluation = encoder.transform(pd.Series(["A", "B", "UNKNOWN", None]))
 
-    assert training.tolist() == [0.0, 1.0, 1.0, 1.0]
-    assert evaluation.tolist() == [0.5, 1.0, 0.75, 0.75]
+    assert training.iloc[0] == 0.02
+    assert training.iloc[1] == 1.0  # only the earlier A outcome was known
+    assert evaluation.tolist() == pytest.approx([16 / 22, 17 / 22, 0.75, 0.75])
 
 
 def test_candidate_skips_when_temporal_label_volume_is_insufficient():

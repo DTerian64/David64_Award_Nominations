@@ -52,6 +52,7 @@ def _model_payload(
             "scaler": preprocessor.scaler,
             "category_fraud_rate": dict(category_encoder.category_rates),
             "global_fraud_rate": float(category_encoder.global_rate),
+            "category_encoding": dict(category_encoder.diagnostics),
         },
         "embed_model_name": embed_model_name,
     }

@@ -168,7 +168,7 @@ test('RF narrative and Semantic description belong to their engine cards', () =>
       } },
     },
   });
-  assert.equal((html.match(/LLM explanation/g) || []).length, 1);
+  assert.equal((html.match(/LLM explanation/g) || []).length, 2); // Narrative and explicit lifecycle.
   assert.equal((html.match(/SHAP factors explain/g) || []).length, 1);
   assert.equal((html.match(/Semantic finding/g) || []).length, 1);
   assert.equal((html.match(/Description needs stronger/g) || []).length, 1);
@@ -186,4 +186,55 @@ test('older Graph evidence without a pattern type retains one maximum finding', 
   assert.match(html, /Biggest score contributor/);
   assert.equal((html.match(/Beneficiary is an outlier/g) || []).length, 1);
   assert.doesNotMatch(html, /Older duplicate/);
+});
+
+test('Tabular MLP is correctly named and explicitly shows skipped attribution', () => {
+  const html = renderEvidence({
+    top_features: [{ feature: 'Amount', raw_value: 500, contribution: 0.4 }],
+    llm_explanation: 'Old RF narrative',
+    engine_results: { rf: {
+      available: true, architecture: 'tabular_mlp', score: 21, risk_level: 'LOW',
+      explanation: { shap_status: 'SKIPPED', shap_reason: 'risk_below_medium', top_features: [],
+        llm_status: 'SKIPPED', llm_reason: 'risk_below_medium', llm_text: null },
+    } },
+  });
+  assert.match(html, /Tabular MLP/);
+  assert.match(html, /SHAP: Not called/);
+  assert.match(html, /Risk below medium/);
+  assert.match(html, /LLM explanation: Not called/);
+  assert.doesNotMatch(html, /Random Forest|Top SHAP factors|Old RF narrative/);
+});
+
+test('GNN evidence is always visible in the default HRBP view, including skip reason', () => {
+  const html = renderEvidence({ engine_results: { gnn: {
+    available: true, architecture: 'gatv2', score: 0, risk_level: 'NONE',
+    causal_context: { window_days: 365, eligible_edge_count: 320,
+      features: { LogReverseThreeHopPathCount: Math.log1p(118) } },
+    feature_inputs: { features: [{ name: 'Amount', pre_scaler_value: 300, model_input_value: 0.5 }] },
+    pattern_heads: { RING: { status: 'ACTIVE', probability: 0.0011 },
+      SUPER_BENEFICIARY: { status: 'DIAGNOSTIC_ONLY' } },
+    explanation: { status: 'NOT_REQUESTED', reason: 'BELOW_TRIGGER_RISK' },
+  } } });
+  for (const value of ['GNN inference summary', 'Causal graph signals', 'Complete GNN feature vector',
+    '118', 'Shared-model pattern heads', 'No live claim', 'GNNExplainer: Not called', 'Below trigger risk']) {
+    assert.ok(html.includes(value), value);
+  }
+});
+
+test('historical missing attribution is explicit, and failures are not rendered as success', () => {
+  assert.match(renderEvidence({ engine_results: { gnn: { available: true } } }), /GNNExplainer: Not recorded/);
+  const html = renderEvidence({ engine_results: { gnn: { available: true,
+    explanation: { status: 'FAILED', reason: 'EXPLANATION_ENGINE_NOT_DEPLOYED' } } } });
+  assert.match(html, /GNNExplainer: Failed/);
+  assert.match(html, /Explanation engine not deployed/);
+});
+
+test('above-threshold Tabular MLP explicitly states that its local explainer is unavailable', () => {
+  const html = renderEvidence({ engine_results: { rf: {
+    available: true, architecture: 'tabular_mlp', score: 65, risk_level: 'HIGH',
+    explanation: { shap_status: 'SKIPPED', shap_reason: 'architecture_explainer_unavailable', top_features: [] },
+  } } });
+  assert.match(html, /SHAP: Not called/);
+  assert.match(html, /Architecture explainer unavailable/);
+  assert.doesNotMatch(html, /Top SHAP factors/);
 });

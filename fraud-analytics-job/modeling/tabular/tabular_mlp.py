@@ -103,6 +103,7 @@ def train_tabular_mlp_candidate(
         "iterations_run": int(model.n_iter_),
         "final_training_loss": float(model.loss_),
         "category_encoder_global_rate": prepared.category_encoder.global_rate,
+        "category_encoding": dict(prepared.category_encoder.diagnostics),
         "category_encoder_category_count": len(
             prepared.category_encoder.category_rates
         ),

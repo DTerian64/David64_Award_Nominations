@@ -83,6 +83,7 @@ def train_random_forest_candidate(
         "feature_count": len(dataset.schema.feature_columns),
         "random_seed": policy.random_seed,
         "category_encoder_global_rate": prepared.category_encoder.global_rate,
+        "category_encoding": dict(prepared.category_encoder.diagnostics),
         "category_encoder_category_count": len(
             prepared.category_encoder.category_rates
         ),

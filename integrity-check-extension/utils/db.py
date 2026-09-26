@@ -55,8 +55,7 @@ def load_request_context(request: ExplanationRequest) -> RequestContext:
         cursor.execute("""
             SELECT n.Amount, n.CategoryId, n.NominationDate,
                    n.NominatorId, n.BeneficiaryId,
-                   decision.GnnResultJson, policy.ConfigurationJson,
-                   policy.ExplanationEnabled
+                   decision.GnnResultJson, policy.ConfigurationJson
             FROM dbo.Nominations n
             JOIN dbo.Users owner ON owner.UserId = n.NominatorId
             JOIN dbo.IntegrityDecisionResults decision
@@ -87,8 +86,6 @@ def load_request_context(request: ExplanationRequest) -> RequestContext:
     explanation = gnn_result.get("explanation") or {}
     if explanation.get("request_id") != request.request_id:
         raise PermanentExtensionError("DECISION_REQUEST_MISMATCH")
-    if not bool(row[7]):
-        raise PermanentExtensionError("EXPLANATION_DISABLED_BY_POLICY")
     return RequestContext(
         details={
             "nomination_id": request.nomination_id,

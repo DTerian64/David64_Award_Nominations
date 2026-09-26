@@ -43,7 +43,10 @@ def prepare_tabular_holdout(
     x_train = dataset.features.loc[train_index].copy()
     x_evaluation = dataset.features.loc[evaluation_index].copy()
     x_train["CategoryFraudRate"] = category_encoder.fit_transform_training(
-        dataset.frame.loc[train_index, "CategoryId"], y_train
+        dataset.frame.loc[train_index, "CategoryId"], y_train,
+        occurred_at=dataset.frame.loc[train_index, "NominationDate"],
+        known_at=dataset.frame.loc[train_index, "LabelKnownAt"] if "LabelKnownAt" in dataset.frame else None,
+        fit_cutoff=dataset.frame.loc[evaluation_index, "NominationDate"].min(),
     )
     x_evaluation["CategoryFraudRate"] = category_encoder.transform(
         dataset.frame.loc[evaluation_index, "CategoryId"]

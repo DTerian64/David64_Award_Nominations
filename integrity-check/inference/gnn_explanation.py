@@ -72,13 +72,12 @@ def plan(
 ) -> ExplanationPlan:
     """Return the explanation state and event for one persisted GNN verdict.
 
-    Requests are fail-closed until a tenant explicitly enables them and the GNN
-    result identifies an immutable graph snapshot.  This prevents the extension
-    from explaining a different graph than the one that produced the score.
+    Eligible results automatically request evidence; the legacy enable flag is
+    no longer a gate. Requests still require an immutable graph snapshot,
+    preventing the extension from explaining a different graph than the one
+    that produced the score.
     """
     policy = gnn_policy if isinstance(gnn_policy, dict) else {}
-    if not bool(policy.get("explanation_enabled", False)):
-        return _not_requested("FEATURE_DISABLED")
     if not bool(gnn_result.get("model_available")):
         return _not_requested("MODEL_UNAVAILABLE")
 

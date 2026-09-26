@@ -1,23 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import ts from 'typescript';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { loadEvidenceModule } from './evidence-module.mjs';
 
-// Exercise the actual pure renderer without importing browser-only auth.
-const source = readFileSync(new URL('../src/components/NominationLogsDrawer.tsx', import.meta.url), 'utf8');
-const ast = ts.createSourceFile('drawer.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const declarations = ast.statements.filter(node =>
-  (ts.isFunctionDeclaration(node) && ['formatDetailValue', 'GraphEvidence'].includes(node.name?.text))
-  || (ts.isVariableStatement(node) && node.getText(ast).includes('GRAPH_PATTERN_LABELS')),
-);
-assert.equal(declarations.length, 3);
-const isolated = declarations.map(node => node.getText(ast)).join('\n');
-const compiled = ts.transpileModule(isolated, {
-  compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 },
-}).outputText;
-const GraphEvidence = new Function('React', `${compiled}\nreturn GraphEvidence;`)(React);
+const { GraphEvidence } = await loadEvidenceModule('../src/components/NominationLogsDrawer.tsx');
 const render = extras => renderToStaticMarkup(React.createElement(GraphEvidence, { extras }));
 
 test('only the biggest-contributing pattern and its maximum finding are shown', () => {

@@ -55,6 +55,7 @@ from integrity_engine.graph.finding_scoring import (
     calculate_ring_compactness,
     derive_graph_finding_severity,
 )
+from integrity_engine.graph.history_windows import detector_windows, filter_detector_history
 
 from utils.component_status import upsert_component_status
 
@@ -119,7 +120,8 @@ def _load_active_graph_policy(
                COALESCE(TRY_CONVERT(int, JSON_VALUE(
                    CAST(t.integrity_config AS nvarchar(max)),
                    '$.graph_pattern.detection_window_days'
-               )), ?), p.SnapshotMaxAgeDays
+               )), ?), p.SnapshotMaxAgeDays,
+               JSON_QUERY(CAST(t.integrity_config AS nvarchar(max)), '$.graph_pattern.detector_windows')
         FROM dbo.GraphScoringPolicies p
         JOIN dbo.Tenants t ON t.TenantId = p.TenantId
         WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
@@ -144,6 +146,8 @@ def _load_active_graph_policy(
         "snapshot_max_age_days": int(row[8] or 14),
         "patterns": {},
     }
+    policy["detector_windows"] = json.loads(row[9]) if len(row) > 9 and row[9] else {}
+    detector_windows(policy)
     cur.execute("""
         SELECT PatternType, Enabled, EnabledForRouting, ApplicableRolesJson,
                BaseScore, MinimumScore, MaximumScore, ParametersJson,
@@ -364,8 +368,8 @@ def _load_nominations(
     supervised model labels.
 
     window_days comes from Tenants.integrity_config.graph_pattern.
-    detection_window_days. All window-based detectors share this value;
-    Desert separately uses all-time participation.
+    detection_window_days and detector_windows. Load the longest required
+    interval once, then filter each detector independently. Desert is all-time.
     """
     cur = conn.cursor()
     cur.execute("""
@@ -434,11 +438,16 @@ def _maximum_active_detection_window(
     """Preserve embeddings for the longest configured active tenant window."""
     cur = conn.cursor()
     cur.execute("""
-        SELECT MAX(COALESCE(TRY_CONVERT(int, JSON_VALUE(
-            CAST(t.integrity_config AS nvarchar(max)),
-            '$.graph_pattern.detection_window_days'
-        )), ?))
+        SELECT MAX(w.Days)
         FROM dbo.Tenants t
+        CROSS APPLY (
+            SELECT COALESCE(TRY_CONVERT(int, JSON_VALUE(
+                CAST(t.integrity_config AS nvarchar(max)),
+                '$.graph_pattern.detection_window_days')), ?) AS Days
+            UNION ALL
+            SELECT TRY_CONVERT(int, value) FROM OPENJSON(
+                CAST(t.integrity_config AS nvarchar(max)), '$.graph_pattern.detector_windows')
+        ) w
         WHERE EXISTS (
             SELECT 1 FROM dbo.GraphScoringPolicies p
             WHERE p.TenantId = t.TenantId AND p.Status = 'ACTIVE'
@@ -1441,6 +1450,7 @@ def detect_copy_paste(
     min_cluster_size: int = 3,
     chunk_size: int = 512,
     policy: dict | None = None,
+    embedding_vectors: dict[int, np.ndarray] | None = None,
 ) -> list[dict]:
     """
     Clusters of nominations whose description embeddings are mutually similar
@@ -1490,15 +1500,12 @@ def detect_copy_paste(
     if len(eligible) < min_cluster_size:
         return []
 
-    try:
-        from sentence_transformers import SentenceTransformer  # type: ignore
-    except ImportError:
-        logger.warning("sentence-transformers not available — skipping CopyPaste")
-        return []
-
     # ── Step 1: load cached embeddings ───────────────────────────────────────
     nom_ids = [n["NominationId"] for n in eligible]
-    cached  = _load_cached_embeddings(conn, nom_ids)
+    if embedding_vectors is not None and any(key not in embedding_vectors for key in nom_ids):
+        raise ValueError("Offline CopyPaste embeddings do not cover all eligible nominations")
+    cached = ({key: embedding_vectors[key] for key in nom_ids} if embedding_vectors is not None
+              else _load_cached_embeddings(conn, nom_ids))
     n_cached = len(cached)
     n_total  = len(eligible)
     logger.info(
@@ -1512,6 +1519,11 @@ def detect_copy_paste(
     new_embeddings: dict[int, np.ndarray] = {}
 
     if to_embed:
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+        except ImportError:
+            logger.warning("sentence-transformers not available — skipping CopyPaste")
+            return []
         texts = [n["Description"] for n in to_embed]
         logger.info("  Encoding %d new description(s) …", len(texts))
 
@@ -1797,13 +1809,19 @@ def _process_tenant(
     logger.info("Tenant %d", tenant_id)
 
     policy = _load_active_graph_policy(conn, tenant_id, default_window_days)
-    window_days = int(policy["detection_window_days"])
+    windows = detector_windows(policy)
+    window_days = max(windows.values())
+    as_of = datetime.now(timezone.utc)
     logger.info(
         "  Graph policy: v%d, %s; detection window: %d days",
         policy["version"], policy["strategy"], window_days,
     )
 
     nominations = _load_nominations(conn, tenant_id, window_days)
+    nominations = filter_detector_history(nominations, window_days, as_of)
+    scoped = {name: filter_detector_history(nominations, days, as_of)
+              for name, days in windows.items()}
+    logger.info("  Graph detector windows: %s", windows)
     users = _load_users(conn, tenant_id)
     ever_active_ids = _load_ever_active_user_ids(conn, tenant_id)
     logger.info(
@@ -1830,31 +1848,31 @@ def _process_tenant(
                 "Ring candidate max_ring_size must be between 3 and 4"
             )
         detected_findings.extend(detect_rings(
-            nominations, users, tenant_id, run_id, ring_max_cluster, policy
+            scoped["Ring"], users, tenant_id, run_id, ring_max_cluster, policy
         ))
     if enabled("BipartiteDenseBlock"):
         detected_findings.extend(detect_bipartite_dense_blocks(
-            nominations, tenant_id, run_id, policy
+            scoped["BipartiteDenseBlock"], tenant_id, run_id, policy
         ))
     if enabled("TemporalBurst"):
         detected_findings.extend(detect_temporal_bursts(
-            nominations, tenant_id, run_id, policy
+            scoped["TemporalBurst"], tenant_id, run_id, policy
         ))
     if enabled("SuperNominator"):
         detected_findings.extend(detect_super_nominators(
-            nominations, tenant_id, run_id, policy
+            scoped["SuperNominator"], tenant_id, run_id, policy
         ))
     if enabled("SuperBeneficiary"):
         detected_findings.extend(detect_super_beneficiaries(
-            nominations, tenant_id, run_id, policy
+            scoped["SuperBeneficiary"], tenant_id, run_id, policy
         ))
     if enabled("CopyPaste"):
         detected_findings.extend(detect_copy_paste(
-            nominations, tenant_id, run_id, conn, policy=policy
+            scoped["CopyPaste"], tenant_id, run_id, conn, policy=policy
         ))
     if enabled("HiddenCandidate"):
         detected_findings.extend(detect_hidden_candidate(
-            nominations, users, tenant_id, run_id, policy=policy
+            scoped["HiddenCandidate"], users, tenant_id, run_id, policy=policy
         ))
     if enabled("Desert"):
         detected_findings.extend(detect_deserts(
@@ -1862,7 +1880,8 @@ def _process_tenant(
         ))
     if enabled("LowRecognitionNominator"):
         detected_findings.extend(detect_low_recognition_nominators(
-            nominations, users, tenant_id, run_id, policy
+            scoped["LowRecognitionNominator"], users, tenant_id, run_id,
+            {**policy, "detection_window_days": windows["LowRecognitionNominator"]}
         ))
 
     detected_findings = list({f["FindingHash"]: f for f in detected_findings}.values())
@@ -1894,6 +1913,8 @@ def _process_tenant(
             "snapshot_schema_version": 2,
             "nomination_count": len(nominations), "user_count": len(users),
             "finding_count": len(detected_findings), "window_days": window_days,
+            "detector_windows": windows,
+            "detector_nomination_counts": {name: len(rows) for name, rows in scoped.items()},
             "scoring_policy_version": policy["version"],
             "scoring_strategy": policy["strategy"],
             "snapshot_max_age_days": policy["snapshot_max_age_days"],

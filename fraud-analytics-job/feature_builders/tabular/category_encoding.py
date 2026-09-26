@@ -1,59 +1,78 @@
-"""Leakage-safe category target encoding for Tabular model inputs."""
+"""Forward-only, out-of-fold category target encoding."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-
+import numpy as np
 import pandas as pd
+
+ENCODING_CONTRACT = "category-fraud-rate-forward-oof-v1"
 
 
 @dataclass(slots=True)
 class CategoryFraudRateEncoder:
-    """Fit category rates on training labels and transform future rows."""
+    """Encode a temporal fold using only labels known before that fold."""
 
     category_rates: dict[Any, float] = field(default_factory=dict)
-    global_rate: float = 0.0
+    global_rate: float = 0.02
     fitted: bool = False
+    smoothing: float = 20.0
+    folds: int = 5
+    cold_start_rate: float = 0.02
+    diagnostics: dict = field(default_factory=dict)
+
+    def _rates(self, categories: pd.Series, target: pd.Series) -> tuple[dict, float]:
+        prior = float(target.mean()) if len(target) else self.cold_start_rate
+        grouped = pd.DataFrame({"category": categories, "target": target}).dropna(subset=["category"]).groupby("category")["target"].agg(["sum", "count"])
+        return {category: float((row["sum"] + self.smoothing * prior) / (row["count"] + self.smoothing))
+                for category, row in grouped.iterrows()}, prior
 
     def fit_transform_training(
         self,
         categories: pd.Series,
         target: pd.Series,
+        *, occurred_at: pd.Series | None = None,
+        known_at: pd.Series | None = None, fit_cutoff: Any = None,
     ) -> pd.Series:
-        if not categories.index.equals(target.index):
-            raise ValueError("Category and target indices differ")
+        if not categories.index.equals(target.index) or not categories.index.is_unique:
+            raise ValueError("Category and target indices must be equal and unique")
+        if self.folds < 2 or self.smoothing < 0 or not 0 <= self.cold_start_rate <= 1:
+            raise ValueError("Invalid category encoding parameters")
         numeric_target = target.astype(int)
-        self.global_rate = float(numeric_target.mean()) if len(target) else 0.0
-        observed = pd.DataFrame(
-            {"category": categories, "target": numeric_target},
-            index=categories.index,
-        ).dropna(subset=["category"])
-        grouped = observed.groupby("category")["target"].agg(["sum", "count"])
-        self.category_rates = {
-            category: float(row["sum"] / row["count"])
-            for category, row in grouped.iterrows()
-        }
+        if not numeric_target.isin([0, 1]).all():
+            raise ValueError("Category encoding requires binary outcomes")
+        # Isolated callers may use ordinal ordering. Production passes actual
+        # event and label-availability timestamps from the source adapter.
+        if occurred_at is None:
+            occurred_at = pd.Series(pd.date_range("2000-01-01", periods=len(target), freq="s", tz="UTC"), index=target.index)
+        if not occurred_at.index.equals(target.index) or (known_at is not None and not known_at.index.equals(target.index)):
+            raise ValueError("Category encoding timestamp indices differ")
+        times = pd.to_datetime(occurred_at, utc=True)
+        availability = pd.to_datetime(known_at if known_at is not None else occurred_at, utc=True)
+        if times.isna().any() or availability.isna().any():
+            raise ValueError("Category encoding timestamps must be known")
+        encoded = pd.Series(self.cold_start_rate, index=target.index, dtype=float)
+        evidence = []
+        # Never split simultaneous events between folds.
+        for number, block in enumerate(np.array_split(np.sort(times.unique()), min(self.folds, max(times.nunique(), 1))), 1):
+            if not len(block):
+                continue
+            start = pd.Timestamp(block[0])
+            history = (times < start) & (availability < start)
+            rates, prior = self._rates(categories.loc[history], numeric_target.loc[history])
+            current = times.isin(block)
+            encoded.loc[current] = categories.loc[current].map(rates).fillna(prior)
+            evidence.append({"fold": number, "start": start.isoformat(), "encoded_rows": int(current.sum()), "known_history_rows": int(history.sum())})
+        fit_history = pd.Series(True, index=target.index)
+        if fit_cutoff is not None:
+            cutoff = pd.to_datetime(fit_cutoff, utc=True)
+            fit_history = (times < cutoff) & (availability < cutoff)
+        self.category_rates, self.global_rate = self._rates(categories.loc[fit_history], numeric_target.loc[fit_history])
         self.fitted = True
-
-        values: list[float] = []
-        total_sum = int(numeric_target.sum())
-        total_count = len(numeric_target)
-        for index, category in categories.items():
-            target_value = int(numeric_target.loc[index])
-            if pd.notna(category) and category in grouped.index:
-                category_sum = int(grouped.loc[category, "sum"])
-                category_count = int(grouped.loc[category, "count"])
-                if category_count > 1:
-                    values.append(
-                        float((category_sum - target_value) / (category_count - 1))
-                    )
-                    continue
-            if total_count > 1:
-                values.append(float((total_sum - target_value) / (total_count - 1)))
-            else:
-                values.append(0.0)
-        return pd.Series(values, index=categories.index, dtype=float)
+        self.diagnostics = {"contract": ENCODING_CONTRACT, "smoothing": self.smoothing, "cold_start_rate": self.cold_start_rate,
+                            "folds": evidence, "fitted_known_label_count": int(fit_history.sum())}
+        return encoded
 
     def transform(self, categories: pd.Series) -> pd.Series:
         if not self.fitted:
