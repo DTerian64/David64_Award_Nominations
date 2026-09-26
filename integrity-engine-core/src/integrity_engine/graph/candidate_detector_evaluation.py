@@ -145,9 +145,9 @@ def _candidate_record(candidate: CandidateNomination) -> SnapshotNomination:
 
 
 def _candidate_graph(
-    snapshot: GraphInferenceSnapshot, candidate: CandidateNomination
+    snapshot: GraphInferenceSnapshot, candidate: CandidateNomination, detector: str
 ) -> list[SnapshotNomination]:
-    history = list(snapshot.history_for_candidate(candidate))
+    history = list(snapshot.history_for_candidate(candidate, detector))
     history.append(_candidate_record(candidate))
     return history
 
@@ -158,7 +158,7 @@ def evaluate_super_nominator(
     detector = "SuperNominator"
     config = _config(snapshot, detector)
     parameters = config.get("parameters") or {}
-    records = _candidate_graph(snapshot, candidate)
+    records = _candidate_graph(snapshot, candidate, detector)
     outgoing: dict[int, list[SnapshotNomination]] = defaultdict(list)
     for item in records:
         outgoing[item.nominator_id].append(item)
@@ -203,7 +203,7 @@ def evaluate_super_beneficiary(
     detector = "SuperBeneficiary"
     config = _config(snapshot, detector)
     parameters = config.get("parameters") or {}
-    records = _candidate_graph(snapshot, candidate)
+    records = _candidate_graph(snapshot, candidate, detector)
     incoming: dict[int, list[SnapshotNomination]] = defaultdict(list)
     for item in records:
         incoming[item.beneficiary_id].append(item)
@@ -278,7 +278,7 @@ def evaluate_temporal_burst(
     detector = "TemporalBurst"
     config = _config(snapshot, detector)
     parameters = config.get("parameters") or {}
-    records = _candidate_graph(snapshot, candidate)
+    records = _candidate_graph(snapshot, candidate, detector)
     burst_days = max(int(parameters.get("burst_window_days", 3)), 1)
     baseline_days = max(int(parameters.get("minimum_baseline_days", 21)), burst_days)
     minimum_count = max(int(parameters.get("minimum_nominations", 8)), 1)
@@ -427,7 +427,7 @@ def evaluate_bipartite_dense_block(
     detector = "BipartiteDenseBlock"
     config = _config(snapshot, detector)
     parameters = config.get("parameters") or {}
-    records = _candidate_graph(snapshot, candidate)
+    records = _candidate_graph(snapshot, candidate, detector)
     left, right, target, density, overlap = _candidate_dense_group(
         records, candidate, parameters
     )
@@ -522,7 +522,7 @@ def evaluate_copy_paste(
     ids = {int(value) for value in component_nomination_ids}
     ids.add(candidate.nomination_id)
     records = [
-        item for item in _candidate_graph(snapshot, candidate)
+        item for item in _candidate_graph(snapshot, candidate, "CopyPaste")
         if item.nomination_id in ids
         and item.description
         and len(item.description.strip()) > 20

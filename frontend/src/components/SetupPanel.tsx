@@ -87,6 +87,8 @@ export const SetupPanel: React.FC = () => {
 // Operational state plus versioned Graph and GNN policy inspection.
 
 interface DetectionEngineStatus {
+  configured_detector_windows?: Record<string, number>;
+  serving_detector_windows?: Record<string, number>;
   configured_window_days: number;
   serving_window_days: number | null;
   legacy_full_history: boolean;
@@ -136,6 +138,19 @@ function HistoryWindowStatus({ row }: { row: DetectionEngineStatus }) {
         row.serving_window_days != null ? `${row.serving_window_days} days` : 'Not recorded in this run'
       }</dd>
     </div>
+    {row.component === 'GRAPH' && Object.keys(row.configured_detector_windows || {}).length > 0 && (
+      <div className="col-span-2 overflow-x-auto rounded-lg border border-blue-100">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-blue-50"><tr><th className="p-2">Graph pattern</th><th className="p-2">Configured days</th><th className="p-2">Serving days</th></tr></thead>
+          <tbody>{Object.entries(row.configured_detector_windows || {}).map(([name, days]) => {
+            const key = name === 'CopyPasteFraud' ? 'CopyPaste' : name;
+            const serving = row.serving_detector_windows?.[key] ?? row.serving_detector_windows?.[name] ?? row.serving_window_days;
+            return <tr key={name} className="border-t border-blue-100"><td className="p-2">{name.replace(/([a-z])([A-Z])/g, '$1 $2')}</td><td className="p-2">{days}</td><td className="p-2">{row.serving_version ? serving ?? 'Not recorded' : 'Not published'}{row.serving_version && serving != null && serving !== days ? ' · Pending publication' : ''}</td></tr>;
+          })}</tbody>
+        </table>
+        <p className="p-2 text-gray-500">Nomination Desert: all-time participation.</p>
+      </div>
+    )}
     {row.serving_version && (row.legacy_full_history ||
       (row.serving_window_days != null && row.configured_window_days !== row.serving_window_days)) && (
       <p className="col-span-2 text-amber-700">Window change pending: takes effect after the next successful {row.component === 'GRAPH' ? 'snapshot publication' : 'training and model publication'}.</p>
@@ -1190,6 +1205,7 @@ const CategoriesPanel: React.FC = () => {
 
 interface FraudSettings {
   graph_window_days: number;
+  graph_detector_windows: Record<string, number>;
   gnn_window_days: number;
   tabular_window_days: number;
   low_threshold: number;
@@ -1330,11 +1346,16 @@ export const FraudPanel: React.FC<FraudPanelProps> = ({
 
       <section className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 sm:p-5">
         <h3 className="text-sm font-semibold text-gray-800 mb-2">Detection and feature-history windows</h3>
-        <p className="text-xs text-gray-500 mb-3">Tenant-specific settings, in days. All Graph detectors share one window; GNN is independent; Random Forest and Tabular MLP share the tabular window. Model inputs use prior nominations only.</p>
+        <p className="text-xs text-gray-500 mb-3">Tenant-specific settings, in days. Graph patterns have separate windows; GNN is independent; Random Forest and Tabular MLP share the tabular window. Model inputs use prior nominations only.</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {numField('graph_window_days', 'Graph Analytics', { min: 1 })}
+          {numField('graph_window_days', 'Graph fallback window', { min: 1 })}
           {numField('gnn_window_days', 'GNN', { min: 1 })}
           {numField('tabular_window_days', 'Tabular · RF / MLP', { min: 1 })}
+        </div>
+        <div className="mt-3 overflow-x-auto rounded-lg border border-indigo-100">
+          <table className="w-full text-sm text-left"><thead className="bg-indigo-50"><tr><th className="p-2">Graph pattern</th><th className="p-2">Detection window (days)</th></tr></thead><tbody>
+            {Object.entries(data.graph_detector_windows || {}).map(([name, days]) => <tr key={name} className="border-t border-indigo-100"><td className="p-2">{name.replace(/([a-z])([A-Z])/g, '$1 $2')}</td><td className="p-2"><input aria-label={`${name} detection window`} type="number" min={1} step={1} disabled={readOnly} value={days} onChange={event => setData(current => current ? { ...current, graph_detector_windows: { ...current.graph_detector_windows, [name]: Number(event.target.value) } } : current)} className="w-28 rounded border px-2 py-1 disabled:bg-gray-100" /></td></tr>)}
+          </tbody></table>
         </div>
         <p className="text-xs text-gray-500 mt-3">Graph: next successful snapshot. GNN and Tabular: next successful training and model publication. Engine Status shows the configured and serving windows separately. Nomination Desert remains an all-time participation analysis.</p>
       </section>

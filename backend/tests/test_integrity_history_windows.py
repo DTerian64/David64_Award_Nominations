@@ -32,12 +32,37 @@ def test_old_setup_client_does_not_overwrite_omitted_windows(monkeypatch):
     existing = {"graph_pattern": {"detection_window_days": 90}, "gnn": {"window_days": 180}, "tabular": {"window_days": 270}}
     session.execute.return_value.fetchone.return_value = (None, json.dumps(existing))
     data = sql.get_fraud_settings(5)
-    for key in ("graph_window_days", "gnn_window_days", "tabular_window_days"):
+    for key in ("graph_window_days", "graph_detector_windows", "gnn_window_days", "tabular_window_days"):
         del data[key]
     sql.update_fraud_settings(5, data, "admin@example.com")
     written = json.loads(session.execute.call_args.args[1]["ic"])
     for namespace in existing:
         assert written[namespace] == existing[namespace]
+
+
+def test_detector_window_edits_merge_without_changing_other_engines(monkeypatch):
+    session = _session(monkeypatch)
+    existing = {"graph_pattern": {"detection_window_days": 180,
+                                 "detector_windows": {"Ring": 60, "CopyPaste": 180}},
+                "gnn": {"window_days": 365}, "tabular": {"window_days": 270}}
+    session.execute.return_value.fetchone.return_value = (None, json.dumps(existing))
+    data = sql.get_fraud_settings(5)
+    data["graph_detector_windows"] = {"Ring": 45, "CopyPasteFraud": 90}
+    sql.update_fraud_settings(5, data, "admin@example.com")
+    written = json.loads(session.execute.call_args.args[1]["ic"])
+    assert written["graph_pattern"]["detector_windows"] == {"Ring": 45, "CopyPasteFraud": 90}
+    assert written["gnn"] == existing["gnn"] and written["tabular"] == existing["tabular"]
+
+
+@pytest.mark.parametrize("days", [0, -1, True, 60.5, "60"])
+def test_detector_window_map_rejects_invalid_values(monkeypatch, days):
+    session = _session(monkeypatch)
+    session.execute.return_value.fetchone.return_value = (None, "{}")
+    data = sql.get_fraud_settings(5)
+    data["graph_detector_windows"] = {"Ring": days}
+    with pytest.raises(ValueError, match="positive integers"):
+        sql.update_fraud_settings(5, data, "admin@example.com")
+    session.commit.assert_not_called()
 
 
 @pytest.mark.parametrize("field", ["graph_window_days", "gnn_window_days", "tabular_window_days"])

@@ -4,27 +4,42 @@ The operational windows live in each tenant's `dbo.Tenants.integrity_config`:
 
 ```json
 {
-  "graph_pattern": { "detection_window_days": 180 },
+  "graph_pattern": {
+    "detection_window_days": 180,
+    "detector_windows": {
+      "Ring": 60,
+      "BipartiteDenseBlock": 180,
+      "TemporalBurst": 180,
+      "SuperNominator": 180,
+      "SuperBeneficiary": 180,
+      "CopyPasteFraud": 180,
+      "HiddenCandidate": 180,
+      "LowRecognitionNominator": 180
+    }
+  },
   "gnn": { "window_days": 365 },
   "tabular": { "window_days": 365 }
 }
 ```
 
 This is a fragment: preserve the existing score-routing and other settings.
-There is no per-detector override map and no new policy table.
+The shared Graph value is the fallback for an omitted detector entry. It is not
+a second filter after that detector's own window. There is no new policy table.
 
 ## Graph Analytics
 
-- Migration **0067** sets the shared Graph window to **180 days for every tenant**.
-- All window-based detectors use the same nomination population. Nomination
-  Desert continues to use all-time participation.
+- Migration **0069** sets Ring to **60 days** and the other windowed detectors to
+  **180 days for every tenant**, building on migrations 0067/0068.
+- The job loads the maximum required history once, then gives each detector its
+  own population. Nomination Desert continues to use all-time participation.
 - Each analytics run reads the tenant JSON afresh and records the effective
-  window in its diagnostics and immutable inference snapshot.
+  windows in its diagnostics and immutable inference snapshot.
 - Live nomination checks use that published snapshot's window. They also exclude
   nominations that have aged out at the candidate's timestamp. An existing
   365-day snapshot is not relabelled as 180 days; the next successful Graph run
   must publish the replacement.
-- Embedding cleanup uses the longest Graph window required by active tenants.
+- Embedding cleanup uses the longest resolved Graph detector window required by
+  active tenants, including overrides longer than the fallback.
 - `GraphScoringPolicies.DetectionWindowDays` remains for historical records and
   draft editing, but is not the operational source. The active policy UI reads
   the tenant window. Publishing a draft writes its staged window into the tenant
@@ -49,11 +64,12 @@ There is no per-detector override map and no new policy table.
 
 ## Rollout
 
-1. Deploy schema migration 0067, the analytics job, integrity-check, and backend.
+1. Deploy schema migration 0069, the core, analytics job, integrity-check, backend
+   and frontend.
 2. Run fraud-analytics-job; no corpus reset or reseeding is required.
-3. Verify the Graph console reports `detection window: 180 days`, and Graph
-   diagnostics report `window_days: 180`. The new inference snapshot must also
-   carry `window_days: 180`.
+3. Verify Graph diagnostics and the new snapshot carry `detector_windows` with
+   Ring 60 and other patterns 180. `window_days: 180` is the maximum history loaded,
+   not the Ring window. Engine Status distinguishes configured/serving windows.
 4. For Tenant 5, verify GNN diagnostics still report `window_days: 365`.
 
 The smaller Graph window reduces the eligible graph and ring workload. It is
@@ -76,8 +92,11 @@ may still need separate optimization.
 - Semantic features now match live behavior: compare the target description with
   the beneficiary's latest 20 prior **authored** descriptions within the same
   window. Previously training used full-corpus descriptions of awards received.
-- Category target encoding remains fitted on training labels only, with
-  leave-one-out encoding for training and train-fitted encoding for holdout.
+- Category target encoding uses chronological, forward-only out-of-fold rates:
+  each block sees only labels known before its start. Holdout uses training labels
+  known before holdout starts. The contract is
+  `category-fraud-rate-forward-oof-v1`; both candidates keep permutation importance
+  on the same held-out set. Published models must be retrained to adopt it.
 - The column set is unchanged. The feature schema is `tabular-v2` and artifact
   versions start `tabular-v2-` because historical feature semantics changed.
   Payloads/manifests record `history_window_days` and `history_feature_contract`.
@@ -87,7 +106,7 @@ may still need separate optimization.
 ## Setup and Engine Status
 
 - Integrity Setup → Model Setup → Scoring & Routing shows all three editable windows
-  together. Data scientists see the same fields read-only.
+  together, plus a per-pattern Graph table. Data scientists see these read-only.
 - Engine Status shows **Configured history window** and **Serving history window**
   on each engine card, including engines which have not run. The latter comes
   from the successful publication corresponding to the serving version, not a

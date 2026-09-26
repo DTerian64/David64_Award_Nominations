@@ -516,8 +516,9 @@ path was still active:
 - [x] use a deterministic out-of-time train/evaluation split;
 - [x] fit imputation and scaling on the training window only;
 - [x] replace the RF-v3 full-dataset category rate with leakage-safe fitting:
-  leave-one-out values for training rows and persisted training-only category
-  rates for evaluation and future inference;
+  chronological forward-only out-of-fold values for training rows, using only
+  outcomes known before each fold, and persisted training-only category rates
+  known before evaluation begins (contract `category-fraud-rate-forward-oof-v1`);
 - [x] report holdout PR-AUC, ROC-AUC, Brier score, population counts, and model
   complexity;
 - [x] return an in-memory candidate result with no upload, publication, routing,

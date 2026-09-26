@@ -45,3 +45,15 @@ test('setup exposes all three separate tenant window controls', () => {
   }
   assert.match(source, /HistoryWindowStatus row=\{row\}/);
 });
+
+test('Graph detector windows show configured and published values independently', () => {
+  const html = render({ configured_window_days: 180, serving_window_days: 180,
+    configured_detector_windows: { Ring: 60, CopyPasteFraud: 180 },
+    serving_detector_windows: { Ring: 180, CopyPaste: 180 } });
+  assert.match(html, /Graph pattern/);
+  assert.match(html, /Configured days/);
+  assert.match(html, /Serving days/);
+  assert.match(html, /60/);
+  assert.match(html, /Pending publication/);
+  assert.match(html, /Nomination Desert: all-time/);
+});

@@ -156,7 +156,7 @@ def _copy_paste_evidence(
     parameters = config.get("parameters") or {}
     threshold = float(parameters.get("similarity_threshold", 0.92))
     history = [
-        item for item in snapshot.history_for_candidate(candidate)
+        item for item in snapshot.history_for_candidate(candidate, "CopyPaste")
         if item.description
         and len(item.description.strip()) > 20
     ]
@@ -723,6 +723,7 @@ def _assess_graph_inner(
         # Live checks use the immutable published window until the next
         # analytics run builds a snapshot from the refreshed tenant JSON.
         "detection_window_days": inference_snapshot.window_days,
+        "detector_windows": dict(inference_snapshot.scoring_policy.get("detector_windows") or {}),
         "affected_user_ids": list(dict.fromkeys(affected)),
         "pattern_findings": findings,
         "candidate_findings": candidate_findings,

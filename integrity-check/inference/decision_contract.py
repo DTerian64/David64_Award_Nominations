@@ -85,6 +85,7 @@ def graph_result(result: dict) -> dict:
         "snapshot_finding_count": result.get("snapshot_finding_count"),
         "snapshot_age_days": result.get("snapshot_age_days"),
         "detection_window_days": result.get("detection_window_days"),
+        "detector_windows": result.get("detector_windows"),
         "affected_user_ids": list(result.get("affected_user_ids") or []),
         "pattern_findings": list(result.get("pattern_findings") or []),
         "candidate_findings": list(result.get("candidate_findings") or []),

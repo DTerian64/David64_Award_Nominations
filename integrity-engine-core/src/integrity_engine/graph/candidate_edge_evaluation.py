@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 import heapq
 from typing import Any, Mapping
+from .history_windows import detector_windows
 
 from .finding_scoring import (
     calculate_graph_finding_score,
@@ -105,13 +106,15 @@ class GraphInferenceSnapshot:
     nominations: tuple[SnapshotNomination, ...]
     schema_version: int = GRAPH_SNAPSHOT_SCHEMA_VERSION
 
-    def history_for_candidate(self, candidate: CandidateNomination) -> tuple[SnapshotNomination, ...]:
+    def history_for_candidate(self, candidate: CandidateNomination, detector: str | None = None) -> tuple[SnapshotNomination, ...]:
         """Apply the published rolling window at the candidate's timestamp.
 
         A weekly snapshot may contain nominations that have since aged out.
-        Reuse this filter across detectors so live checks share one window.
+        Detector-specific windows come from the published scoring policy.
+        Older snapshots retain their original common window.
         """
-        cutoff = candidate.created_at - timedelta(days=self.window_days)
+        days = detector_windows(self.scoring_policy, self.window_days)[detector] if detector else self.window_days
+        cutoff = candidate.created_at - timedelta(days=days)
         return tuple(
             item for item in self.nominations
             if item.nomination_id != candidate.nomination_id
@@ -266,7 +269,7 @@ def evaluate_candidate_edge_for_ring(
     edge_items: dict[tuple[int, int], list[SnapshotNomination]] = defaultdict(list)
     adjacency: dict[int, set[int]] = defaultdict(set)
     reverse_adjacency: dict[int, set[int]] = defaultdict(set)
-    for item in snapshot.history_for_candidate(candidate):
+    for item in snapshot.history_for_candidate(candidate, "Ring"):
         key = (item.nominator_id, item.beneficiary_id)
         edge_items[key].append(item)
         adjacency[item.nominator_id].add(item.beneficiary_id)

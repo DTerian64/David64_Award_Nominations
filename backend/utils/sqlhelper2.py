@@ -3295,6 +3295,19 @@ def update_category(category_id: int, tenant_id: int, description: str, min_amou
 # ADMIN SETUP — Fraud / Integrity (Tenants.desc_check_config + integrity_config)
 # ===========================================================================
 
+GRAPH_WINDOW_KEYS = ("Ring", "BipartiteDenseBlock", "TemporalBurst", "SuperNominator",
+                     "SuperBeneficiary", "CopyPasteFraud", "HiddenCandidate", "LowRecognitionNominator")
+
+
+def _graph_detector_windows(configuration: dict) -> dict:
+    graph = configuration.get("graph_pattern") or {}
+    fallback = int(graph.get("detection_window_days", 180))
+    overrides = graph.get("detector_windows") or {}
+    return {name: int(overrides.get(name, overrides.get("CopyPaste", fallback)
+                                 if name == "CopyPasteFraud" else fallback))
+            for name in GRAPH_WINDOW_KEYS}
+
+
 def get_fraud_settings(tenant_id: int) -> dict:
     """Return the tenant's description-quality + fraud-routing config, flattened,
     with system defaults filled in for any missing key."""
@@ -3318,6 +3331,7 @@ def get_fraud_settings(tenant_id: int) -> dict:
     return {
         # Fraud score routing (0..100 cutoffs)
         "graph_window_days": int((ic.get("graph_pattern") or {}).get("detection_window_days", 180)),
+        "graph_detector_windows": _graph_detector_windows(ic),
         "gnn_window_days": int((ic.get("gnn") or {}).get("window_days", 365)),
         "tabular_window_days": int((ic.get("tabular") or {}).get("window_days", 365)),
         "low_threshold":                  int(routing.get("low_threshold", 20)),
@@ -3382,6 +3396,16 @@ def update_fraud_settings(tenant_id: int, data: dict, actor: str) -> None:
                 if days < 1:
                     raise ValueError("History windows must be positive")
                 ic.setdefault(namespace, {})[key] = days
+        if data.get("graph_detector_windows") is not None:
+            overrides = data["graph_detector_windows"]
+            if not isinstance(overrides, dict) or set(overrides) - set(GRAPH_WINDOW_KEYS):
+                raise ValueError("Unknown Graph detector window")
+            if any(isinstance(days, bool) or not isinstance(days, int) or days < 1 for days in overrides.values()):
+                raise ValueError("Graph detector windows must be positive integers")
+            graph = ic.setdefault("graph_pattern", {})
+            graph.setdefault("detector_windows", {}).update(overrides)
+            if "CopyPasteFraud" in overrides:
+                graph["detector_windows"].pop("CopyPaste", None)
         session.execute(
             text("""
                 UPDATE dbo.Tenants
@@ -3492,7 +3516,9 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
                          ELSE COALESCE(TRY_CONVERT(int, JSON_VALUE(
                            CAST(t.integrity_config AS nvarchar(max)), '$.tabular.window_days')), 365)
                        END AS ConfiguredWindowDays,
-                       serving.WindowDays AS ServingWindowDays
+                       serving.WindowDays AS ServingWindowDays,
+                       JSON_QUERY(CAST(t.integrity_config AS nvarchar(max)), '$.graph_pattern') AS GraphConfiguration,
+                       serving.DetectorWindows AS ServingDetectorWindows
                 FROM dbo.Tenants t
                 CROSS JOIN (VALUES ('RF'), ('GRAPH'), ('GNN')) engine(Component)
                 LEFT JOIN dbo.IntegrityComponentStatus s
@@ -3501,7 +3527,10 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
                     SELECT TOP 1 TRY_CONVERT(int, JSON_VALUE(
                         CASE WHEN ISJSON(CAST(h.DiagnosticsJson AS nvarchar(max)))=1
                           THEN CAST(h.DiagnosticsJson AS nvarchar(max)) ELSE '{}' END,
-                        '$.window_days')) AS WindowDays
+                        '$.window_days')) AS WindowDays,
+                        JSON_QUERY(CASE WHEN ISJSON(CAST(h.DiagnosticsJson AS nvarchar(max)))=1
+                            THEN CAST(h.DiagnosticsJson AS nvarchar(max)) ELSE '{}' END,
+                            '$.detector_windows') AS DetectorWindows
                     FROM dbo.IntegrityComponentStatus FOR SYSTEM_TIME ALL h
                     WHERE h.TenantId=t.TenantId AND h.Component=engine.Component
                       AND h.ServingVersion=s.ServingVersion AND h.LastAttemptStatus='SUCCEEDED'
@@ -3542,8 +3571,10 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
             "run_id":                row[10],
             "updated_at":            _iso_utc(row[11]),
             "updated_by":            row[12],
-            "configured_window_days": row[13],
+            "configured_window_days": max(_graph_detector_windows({"graph_pattern": _json_value(row[15], {})}).values()) if row[0] == "GRAPH" and len(row) > 15 else row[13],
             "serving_window_days": row[14],
+            "configured_detector_windows": _graph_detector_windows({"graph_pattern": _json_value(row[15], {})}) if row[0] == "GRAPH" and len(row) > 15 else {},
+            "serving_detector_windows": _json_value(row[16], {}) if row[0] == "GRAPH" and len(row) > 16 else {},
             "legacy_full_history": bool(row[0] == "RF" and row[2] and
                 not str(row[2]).startswith("tabular-v2-")),
         })

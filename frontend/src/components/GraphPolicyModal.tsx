@@ -873,7 +873,7 @@ export const GraphPolicyModal: React.FC<Props> = ({ impersonatedUPN, onClose }) 
                   {(['low', 'medium', 'high', 'critical'] as const).map(key => (
                     <NumberInput key={key} labelText={label(`${key} threshold`)} value={policy.thresholds[key]} disabled={!draft} max={100} step={0.01} onChange={value => updateThreshold(key, value)} />
                   ))}
-                  <NumberInput labelText="Detection window (days)" value={policy.detection_window_days} disabled={!draft} min={1} onChange={value => setDraft(current => current ? { ...current, detection_window_days: value } : current)} />
+                  <NumberInput labelText="Fallback window (days; per-pattern overrides in Integrity Setup)" value={policy.detection_window_days} disabled={!draft} min={1} onChange={value => setDraft(current => current ? { ...current, detection_window_days: value } : current)} />
                   <NumberInput labelText="Maximum snapshot age (days)" value={policy.snapshot_max_age_days} disabled={!draft} min={1} onChange={value => setDraft(current => current ? { ...current, snapshot_max_age_days: value } : current)} />
                 </div>
               </section>

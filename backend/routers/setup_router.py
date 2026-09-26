@@ -14,7 +14,7 @@ Audit & Access Review.
 import logging
 import math
 import os
-from typing import Optional
+from typing import Optional, Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
@@ -234,6 +234,7 @@ async def update_category(category_id: int, payload: CategoryPayload,
 
 class FraudConfig(BaseModel):
     graph_window_days: Optional[int] = Field(default=None, gt=0)
+    graph_detector_windows: Optional[dict[str, Annotated[int, Field(strict=True, gt=0)]]] = None
     gnn_window_days: Optional[int] = Field(default=None, gt=0)
     tabular_window_days: Optional[int] = Field(default=None, gt=0)
     # Fraud score routing (0..100 cutoffs)
