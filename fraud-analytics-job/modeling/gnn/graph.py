@@ -76,27 +76,10 @@ FEATURE_SCHEMA_VERSION = CAUSAL_FEATURE_SCHEMA_VERSION
 # predicate in fetch_tenant_rows(); status alone never admits them.
 BEHAVIOR_STATUSES = ("Pending", "Approved", "Paid", "Rejected")
 
-USER_FEATURE_COLUMNS = [
-    "LogNominationsMade",
-    "LogNominationsReceived",
-    "LogUniqueCounterparties",
-]
-
-BASE_NOMINATION_FEATURE_COLUMNS = [
-    "LogAmount",
-    "CategoryRelativeAmountRobustZScore",
-    "DaysBeforeGraphCutoff",
-    "DayOfWeekSin",
-    "DayOfWeekCos",
-    "MonthSin",
-    "MonthCos",
-    "HistoricalStatus",
-]
-
-NOMINATION_FEATURE_COLUMNS = [
-    *BASE_NOMINATION_FEATURE_COLUMNS,
-    *CAUSAL_CONTEXT_FEATURE_COLUMNS,
-]
+from integrity_engine.gnn.features import (
+    USER_FEATURE_COLUMNS, BASE_NOMINATION_FEATURE_COLUMNS,
+    NOMINATION_FEATURE_COLUMNS, build_user_features, build_nomination_features,
+)
 
 EDGE_TYPES = [
     ("user", "nominates", "nomination"),
@@ -341,33 +324,7 @@ def _apply(x: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
     return ((x - mean) / std).astype(np.float32)
 
 
-def build_user_features(
-    user_ids: Sequence[int], graph_rows: Sequence[dict]
-) -> np.ndarray:
-    """
-    Behavioural aggregates over the MESSAGE-PASSING window only.
 
-    Deliberately excludes every dbo.UserGraphFlags column.
-    """
-    made = defaultdict(int)
-    received = defaultdict(int)
-    counterparties = defaultdict(set)
-
-    for n in graph_rows:
-        a, b = n["NominatorId"], n["BeneficiaryId"]
-        made[a] += 1
-        received[b] += 1
-        counterparties[a].add(b)
-        counterparties[b].add(a)
-
-    rows = np.zeros((len(user_ids), len(USER_FEATURE_COLUMNS)), dtype=np.float32)
-    for i, uid in enumerate(user_ids):
-        rows[i] = (
-            math.log1p(made[uid]),
-            math.log1p(received[uid]),
-            math.log1p(len(counterparties[uid])),
-        )
-    return rows
 
 
 def build_category_amount_stats(rows: Sequence[dict]) -> dict:
@@ -396,53 +353,7 @@ def build_category_amount_stats(rows: Sequence[dict]) -> dict:
     }
 
 
-def build_nomination_features(
-    rows: Sequence[dict],
-    category_amount_stats: dict,
-    graph_cutoff: date,
-    *,
-    historical: bool,
-    context_rows: Sequence[dict] | None = None,
-    causal_window_days: int = 365,
-) -> np.ndarray:
-    """Build the graph-native v2 nomination attributes without future state."""
-    out = np.zeros(
-        (len(rows), len(BASE_NOMINATION_FEATURE_COLUMNS)), dtype=np.float32
-    )
-    status_code = {
-        "Pending": 0.0,
-        "Approved": 1.0,
-        "Paid": 2.0,
-        "Rejected": 3.0,
-    }
-    category_stats = category_amount_stats.get("categories", {})
-    global_stats = category_amount_stats.get("global", {"median": 0.0, "scale": 1.0})
-    for i, n in enumerate(rows):
-        d = _as_date(n["CreatedAt"])
-        amt = float(n.get("Amount") or 0.0)
-        stats = category_stats.get(str(int(n.get("CategoryId") or 0)), global_stats)
-        robust_z = (amt - float(stats["median"])) / max(float(stats["scale"]), 1.0)
-        dow_angle = 2.0 * math.pi * d.weekday() / 7.0
-        month_angle = 2.0 * math.pi * (d.month - 1) / 12.0
-        out[i] = (
-            math.log1p(max(amt, 0.0)),
-            robust_z,
-            float(max((graph_cutoff - d).days, 0)) if historical else 0.0,
-            math.sin(dow_angle),
-            math.cos(dow_angle),
-            math.sin(month_angle),
-            math.cos(month_angle),
-            status_code.get(str(n.get("Status")), 0.0) if historical else 0.0,
-        )
-    causal = np.asarray(
-        causal_context_matrix(
-            rows if context_rows is None else context_rows,
-            rows,
-            window_days=causal_window_days,
-        ),
-        dtype=np.float32,
-    ).reshape(len(rows), len(CAUSAL_CONTEXT_FEATURE_COLUMNS))
-    return np.concatenate([out, causal], axis=1)
+
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
@@ -581,6 +492,9 @@ def build_hetero_data(
 
     return {
         "data": data,
+        # Raw, model-neutral history for causal live-path temporal evaluation.
+        "live_users": [dict(row) for row in users],
+        "live_history": [dict(row) for row in nominations],
         "user_index": user_index,
         "category_index": category_index,
         "graph_nomination_ids": [n["NominationId"] for n in graph_rows],

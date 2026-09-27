@@ -6,17 +6,17 @@ Stage 3 of the fraud-analytics-job pipeline.
 The model is trained as one network and deployed as two pieces:
 
     encoder   HeteroGNN over the user/nomination graph -> per-user embeddings.
-              Runs weekly in fraud-analytics-job. Its OUTPUT (the embeddings)
-              is persisted to dbo.GNN_UserEmbeddings; the encoder itself goes to
-              blob for audit and retraining and is never downloaded by inference.
+              Trained in fraud-analytics-job. New v4 bundles execute its frozen
+              weights on live causal history during inference. Published weekly
+              embeddings remain available for audit and immutable legacy bundles.
 
     decoder   MLP over [z_nominator | z_beneficiary | x_nomination].
-              ~11k parameters. This is the only artifact integrity-check reads,
-              which is what keeps PyTorch Geometric out of the inference image.
+              New live bundles publish both encoder and decoder with the same
+              training-fitted preprocessing and model identity.
 
-GraphSAGE rather than GCN because its aggregation can support inductive serving.
-The current decoder-only live path still requires a user embedding from the
-latest compatible weekly snapshot, so new users remain an explicit cold start.
+GraphSAGE, GCN and GATv2 compete under the same causal replay evaluation.
+Legacy decoder-only bundles require compatible weekly embeddings; live bundles
+can encode new users and newly forming relationships without retraining.
 TGN is reserved for the later architecture experiment defined in the v2 plan.
 """
 
@@ -29,79 +29,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATv2Conv, GraphConv, HeteroConv, SAGEConv
 
 from .evaluators.metrics import pr_auc, roc_auc
 
 logger = logging.getLogger(__name__)
 
-# Message-passing relations, including the reverse edges added by graph.py.
-_RELATIONS = [
-    ("user", "nominates", "nomination"),
-    ("nomination", "benefits", "user"),
-    ("nomination", "rev_nominates", "user"),
-    ("user", "rev_benefits", "nomination"),
-    ("nomination", "belongs_to", "category"),
-    ("category", "rev_belongs_to", "nomination"),
-]
-
-
-GRAPH_ENCODERS = ("graphsage", "gcn", "gatv2")
+# One encoder implementation for training, live scoring and explanation.
+from integrity_engine.gnn.encoder import (
+    RELATIONS as _RELATIONS, GRAPH_ENCODERS, HeteroEncoder,
+    message_passing_layer as _message_passing_layer,
+)
 CANDIDATE_ARCHITECTURES = ("mlp", *GRAPH_ENCODERS)
-
-
-def _message_passing_layer(architecture: str, out_dim: int) -> nn.Module:
-    if architecture == "graphsage":
-        return SAGEConv((-1, -1), out_dim)
-    if architecture == "gcn":
-        # GraphConv supports bipartite heterogeneous relations. PyG's GCNConv
-        # does not, so GraphConv is the correct GCN-family implementation here.
-        return GraphConv((-1, -1), out_dim, aggr="mean")
-    if architecture == "gatv2":
-        return GATv2Conv(
-            (-1, -1), out_dim, heads=1, concat=False, add_self_loops=False
-        )
-    raise ValueError(
-        f"Unknown graph encoder {architecture!r}; expected one of {GRAPH_ENCODERS}"
-    )
-
-
-class HeteroEncoder(nn.Module):
-    """Two-layer heterogeneous graph encoder producing per-user embeddings."""
-
-    def __init__(
-        self,
-        hidden_dim: int = 64,
-        out_dim: int = 64,
-        num_layers: int = 2,
-        architecture: str = "graphsage",
-    ):
-        super().__init__()
-        if architecture not in GRAPH_ENCODERS:
-            raise ValueError(
-                f"Unknown graph encoder {architecture!r}; expected one of {GRAPH_ENCODERS}"
-            )
-        self.convs = nn.ModuleList()
-        for i in range(num_layers):
-            dim = out_dim if i == num_layers - 1 else hidden_dim
-            self.convs.append(
-                HeteroConv(
-                    {
-                        rel: _message_passing_layer(architecture, dim)
-                        for rel in _RELATIONS
-                    },
-                    aggr="mean",
-                )
-            )
-        self.out_dim = out_dim
-        self.architecture = architecture
-
-    def forward(self, x_dict, edge_index_dict):
-        for i, conv in enumerate(self.convs):
-            x_dict = conv(x_dict, edge_index_dict)
-            if i < len(self.convs) - 1:
-                x_dict = {k: F.relu(v) for k, v in x_dict.items()}
-        return x_dict
 
 
 class EdgeDecoder(nn.Module):

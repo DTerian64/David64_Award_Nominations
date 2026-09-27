@@ -2,7 +2,12 @@ FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1
+
+# Default worker allocation is one vCPU. Do not let the live encoder create
+# host-core-count thread pools; deployment environment values can override this.
 
 WORKDIR /app
 

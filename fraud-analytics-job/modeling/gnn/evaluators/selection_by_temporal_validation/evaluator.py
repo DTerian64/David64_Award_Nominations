@@ -15,6 +15,9 @@ from .model import (
     masked_joint_loss,
 )
 from ...specialists.contracts import BEHAVIOR_TRACKS
+from integrity_engine.gnn.live_graph import (
+    LIVE_ENCODING_CONTRACT, LiveGraphReplay, preprocessing_from_graph,
+)
 
 
 def _targets(labelled, fold: dict, split: str) -> PatternTargets:
@@ -76,14 +79,42 @@ def _fit(
 
 def _score(model: SharedMultiHeadModel, fold: dict, split: str, targets: PatternTargets) -> tuple[dict, dict]:
     started = time.perf_counter()
+    timings = []
     with torch.no_grad():
-        output = model(fold["data"], fold[split]["pairs"], fold[split]["x"])
-    latency_ms = (time.perf_counter() - started) * 1000
+        if model.architecture == "raw_feature_mlp":
+            output = model(fold["data"], fold[split]["pairs"], fold[split]["x"])
+        else:
+            replay = LiveGraphReplay(fold["live_users"], fold["live_history"],
+                                    preprocessing_from_graph(fold),
+                                    num_layers=len(model.encoder.convs) if model.encoder is not None else None)
+            rows = {int(row["NominationId"]): row for row in fold["live_history"]}
+            parts = {}
+            for index, nomination_id in enumerate(fold[split]["nom_ids"]):
+                tick = time.perf_counter()
+                target = rows[int(nomination_id)]
+                inputs = replay.build(target)
+                z = (model.encoder(inputs.x_dict, inputs.edge_index_dict)["user"]
+                     if model.encoder is not None else inputs.x_dict["user"])
+                logits = model.decoder(
+                    z[inputs.user_index[int(target["NominatorId"])]].unsqueeze(0),
+                    z[inputs.user_index[int(target["BeneficiaryId"])]].unsqueeze(0),
+                    fold[split]["x"][index:index + 1, model.overall_indices],
+                )
+                for key, value in logits.items():
+                    parts.setdefault(key, []).append(value)
+                timings.append((time.perf_counter() - tick) * 1000)
+            output = {key: torch.cat(values) for key, values in parts.items()}
+    total_ms = (time.perf_counter() - started) * 1000
+    latency_ms = float(np.percentile(timings, 95)) if timings else total_ms / max(len(targets.overall), 1)
     logits = {key: value.detach().numpy() for key, value in output.items()}
     metrics = {
         "overall": binary_metrics(targets.overall, logits["OVERALL"]),
         "pattern_heads": {},
         "inference_ms": latency_ms,
+        "inference_latency_basis": "per_nomination_compute_p95_ms",
+        "replay_total_ms": total_ms,
+        "inference_contract": LIVE_ENCODING_CONTRACT,
+        "inference_median_ms": float(np.median(timings)) if timings else latency_ms,
     }
     for j, key in enumerate(BEHAVIOR_TRACKS):
         if key not in logits:
@@ -220,6 +251,7 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
     report = {
         "schema_version": 4,
         "evaluator": "shared-multi-head-temporal-v1",
+        "inference_contract": LIVE_ENCODING_CONTRACT,
         "validation_candidates": candidates,
         "selection": selection,
         "final_test": None,

@@ -20,6 +20,7 @@ pyodbc>=5.0.0,<6.0.0
 # CPU-only torch: ~1.5 GB lighter than the CUDA variant
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2.0
+torch-geometric>=2.5.0,<3.0.0
 sentence-transformers>=2.6.0
 scikit-learn==1.8.0
 numpy>=1.24.0

@@ -265,7 +265,8 @@ def _write_head(
     pattern_head_states: dict | None = None,
 ) -> None:
     """
-    Serialise the decoder — the only artifact integrity-check downloads.
+    Serialise the decoder and its training-fitted preprocessing.
+    Live v4 inference also loads the matching frozen encoder and manifest.
 
     Every value here must be a torch tensor or a Python primitive. gnn_check.py
     loads with torch.load(weights_only=True), which rejects numpy's array
@@ -296,8 +297,9 @@ def _write_head(
         "causal_context_window_days": int(graph["causal_context_window_days"]),
         "nomination_scaler_mean":     [float(v) for v in graph["nomination_scaler"]["mean"]],
         "nomination_scaler_std":      [float(v) for v in graph["nomination_scaler"]["std"]],
-        # Persisted for reproducibility only. gnn_check.py must NOT apply these:
-        # the embeddings it reads are encoder OUTPUT, already past this transform.
+        # Applied to raw user inputs by live graph assembly, never to the
+        # encoder-output embeddings consumed by the decoder. Legacy bundles
+        # retain these for reproducibility only.
         "user_scaler_mean":           [float(v) for v in graph["user_scaler"]["mean"]],
         "user_scaler_std":            [float(v) for v in graph["user_scaler"]["std"]],
         "amount_mean":                float(graph["amount_mean"]),
@@ -322,6 +324,9 @@ def _write_head(
         head["calibration"] = calibration
     if multi_head:
         head["model_schema_version"] = 4
+        head["inference_contract"] = graph["inference_contract"]
+        head["tenant_id"] = graph["tenant_id"]
+        head["user_feature_columns"] = list(graph["user_feature_columns"])
         head["pattern_head_states"] = pattern_head_states or {}
         head["pattern_feature_contracts"] = {
             key: contract for key, contract, enabled in policy.pattern_heads if enabled
@@ -351,6 +356,8 @@ def _write_encoder(
     """Write one graph encoder as a restricted-deserialization-safe artifact."""
     torch.save({
         "encoder_state_dict": model.encoder.state_dict(),
+        **({"tenant_id": graph["tenant_id"], "inference_contract": graph["inference_contract"]}
+           if graph.get("inference_contract") else {}),
         "architecture": str(model.architecture),
         "model_version": model_version,
         "training_policy_id": policy.policy_id,
@@ -726,6 +733,30 @@ def _process_shared_multi_head(
     graph = G.build_serving_graph(
         users, nominations, causal_window_days=policy.window_days,
     )
+    from integrity_engine.gnn.live_graph import (
+        LIVE_ENCODING_CONTRACT, build_live_graph_inputs, preprocessing_from_graph,
+    )
+    # The selected decoder/encoder were fitted on fold scalers. Refitting these
+    # on the publication graph would silently change the model's input space.
+    for key in ("user_scaler", "nomination_scaler", "category_amount_stats"):
+        graph[key] = folds[-1][key]
+    graph["tenant_id"] = tenant_id
+    graph["inference_contract"] = LIVE_ENCODING_CONTRACT
+    publication_target = {
+        "NominationId": max(int(row["NominationId"]) for row in nominations) + 1,
+        "CreatedAt": graph["t_graph"],
+        "NominatorId": users[0]["UserId"], "BeneficiaryId": users[0]["UserId"],
+    }
+    publication_inputs = build_live_graph_inputs(
+        users, nominations, publication_target, preprocessing_from_graph(graph),
+    )
+    for node_type, values in publication_inputs.x_dict.items():
+        graph["data"][node_type].x = values
+    for relation, values in publication_inputs.edge_index_dict.items():
+        graph["data"][relation].edge_index = values
+    graph["user_index"] = publication_inputs.user_index
+    graph["category_index"] = publication_inputs.category_index
+    graph["graph_nomination_ids"] = publication_inputs.nomination_ids
     as_of = date.today()
     suffix = run_id.replace("-", "")[:8]
     model_version = f"gnn-v4-{as_of:%Y%m%d}-t{tenant_id}-{suffix}"
@@ -773,6 +804,7 @@ def _process_shared_multi_head(
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "artifact_type": "graph_neural_network",
         "model_schema_version": 4,
+        "inference_contract": LIVE_ENCODING_CONTRACT,
         "tenant_id": tenant_id,
         "model_version": model_version,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -805,6 +837,7 @@ def _process_shared_multi_head(
         "diagnostics_schema_version": 4,
         "model_version": model_version,
         "serving_mode": SERVING_MODE_SHARED_MULTI_HEAD,
+        "inference_contract": LIVE_ENCODING_CONTRACT,
         "selected_architecture": selected,
         "selection_reason": report["selection"].get("reason"),
         "validation_overall_pr_auc": report["selection"].get(

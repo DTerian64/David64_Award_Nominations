@@ -43,6 +43,7 @@ def build_snapshot(
 
     return {
         "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "inference_contract": graph.get("inference_contract"),
         "feature_schema_version": graph["feature_schema_version"],
         "tenant_id": int(tenant_id),
         "model_version": str(model_version),

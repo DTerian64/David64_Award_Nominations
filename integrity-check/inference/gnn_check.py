@@ -4,16 +4,11 @@ gnn_check.py — GNN fraud assessment for the integrity-check worker
 
 Structural twin of random_forest_check.py, for the third fraud model.
 
-What runs here is only the DECODER. The weekly fraud-analytics-job trains a
-the selected heterogeneous graph encoder, publishes per-user node embeddings to
-dbo.GNN_UserEmbeddings, and uploads the decoder as
-tenant_<N>/gnn/<ServingVersion>/serving/decoder.pt.
-Inference combines two keyed embedding lookups with a bounded query for raw
-nomination edges strictly before the target, then runs a small MLP forward
-pass. The shared causal-context builder converts those edges into the same
-topology vector used during training. There is no live graph traversal and no
-PyTorch Geometric dependency in this image (torch is already here via
-sentence-transformers).
+New v4 bundles execute the frozen ENCODER and DECODER. Tenant-owned raw history
+strictly before the target refreshes endpoint embeddings through exact local
+message passing. Training scalers and calibration remain frozen. Historical
+immutable artifacts without the live contract retain decoder-only rollback
+semantics; a failed live encoding never falls back to their SQL embeddings.
 
 Public API
 ----------
@@ -68,6 +63,7 @@ from integrity_engine.artifact_paths import (
     gnn_specialist_decoder_blob,
 )
 import json
+import hashlib
 import torch
 from integrity_engine.gnn import (
     CAUSAL_CONTEXT_FEATURE_COLUMNS,
@@ -244,6 +240,8 @@ def _stream_head_from_blob(
     try:
         import io
         head = torch.load(io.BytesIO(raw), map_location="cpu", weights_only=True)
+        head["_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+        head["_artifact_size_bytes"] = len(raw)
     except Exception as exc:
         logger.error(
             "GNN decoder for tenant %d failed to deserialise (%d bytes): %s",
@@ -394,8 +392,7 @@ def _build_decoder(head: dict):
     Reconstruct the decoder from its state_dict.
 
     Defined inline rather than imported from fraud-analytics-job/modeling/gnn/model.py:
-    that module imports torch_geometric at module scope, which is not installed
-    in this image and must not be. The architecture is duplicated deliberately —
+    the serving decoder remains pure Torch. The architecture is duplicated deliberately —
     the shape is asserted against the state_dict below, so a divergence fails
     loudly at load time rather than silently mis-scoring.
     """
@@ -887,7 +884,17 @@ def assess_gnn(
     never as "clean".
     """
     try:
-        return _assess_gnn_inner(details, tenant_id, component_status)
+        started = time.perf_counter()
+        result = _assess_gnn_inner(details, tenant_id, component_status)
+        live = result.get("live_encoding")
+        if live is not None:
+            result["inference_timings"] = {
+                "total_ms": round((time.perf_counter() - started) * 1000, 3),
+                **{key: value for key, value in live.items() if key.endswith("_ms")},
+            }
+            logger.info("GNN live inference nomination=%s timings=%s", details.get("nomination_id"),
+                        result["inference_timings"])
+        return result
     except Exception as exc:
         logger.error(
             "GNN assessment failed for nomination %s (tenant %d): %s",
@@ -948,9 +955,45 @@ def _assess_gnn_inner(
     # Version-matched lookup — see the module docstring. Selecting the newest
     # snapshot for THIS decoder version is what makes a decoder-only rollback
     # work; "newest overall" would leave a rolled-back decoder permanently dark.
-    embeddings = db.get_gnn_user_embeddings(
-        tenant_id=tenant_id, user_ids=wanted, model_version=model_version
-    )
+    live_history = None
+    live_encoding = None
+    if head.get("inference_contract") is not None:
+        from .gnn_live import load_encoder, refresh_embeddings
+        from azure.storage.blob import BlobServiceClient
+        started = time.perf_counter()
+        if _STORAGE_KEY:
+            client = BlobServiceClient.from_connection_string(
+                f"DefaultEndpointsProtocol=https;AccountName={_STORAGE_ACCOUNT};"
+                f"AccountKey={_STORAGE_KEY};EndpointSuffix=core.windows.net"
+            )
+        else:
+            from utils.azure_credential import credential
+            client = BlobServiceClient(f"https://{_STORAGE_ACCOUNT}.blob.core.windows.net", credential=credential)
+        def read_blob(path):
+            return client.get_blob_client(container=_MODEL_CONTAINER, blob=path).download_blob().readall()
+        encoder, cold = load_encoder(head, tenant_id, read_blob)
+        load_ms = (time.perf_counter() - started) * 1000
+        started = time.perf_counter()
+        users, live_history = db.get_gnn_live_graph_rows(
+            tenant_id, target_nomination_id=int(details["nomination_id"]),
+            target_time=details["nomination_date"], window_days=int(head["causal_context_window_days"]),
+        )
+        history_ms = (time.perf_counter() - started) * 1000
+        target = {"NominationId": details["nomination_id"], "NominatorId": nominator_id,
+                  "BeneficiaryId": beneficiary_id, "CreatedAt": details["nomination_date"]}
+        refreshed, live_encoding = refresh_embeddings(head, users, live_history, target, encoder)
+        live_encoding.update({"target_cutoff": details["nomination_date"],
+                              "window_days": int(head["causal_context_window_days"]),
+                              "encoder_cold_load": cold,
+                              "encoder_load_ms": round(load_ms, 3), "history_query_ms": round(history_ms, 3)})
+        # These are fresh encoder outputs, not a fallback to the SQL cache.
+        embedding_date = target["CreatedAt"].date()
+        embeddings = {uid: (value, embedding_date, model_version) for uid, value in refreshed.items()}
+    else:
+        # Immutable pre-live artifacts retain their original rollback contract.
+        embeddings = db.get_gnn_user_embeddings(
+            tenant_id=tenant_id, user_ids=wanted, model_version=model_version
+        )
 
     flags: list[str] = []
 
@@ -1029,8 +1072,8 @@ def _assess_gnn_inner(
     # Scaling asymmetry — deliberate, and easy to get wrong.
     #
     # User embeddings are ENCODER OUTPUT. The user_scaler in the artifact was
-    # applied to the raw user features on their way INTO the encoder, inside the
-    # weekly job. By the time a vector reaches dbo.GNN_UserEmbeddings that
+    # applied to raw user features on their way INTO the encoder, either during
+    # live graph assembly or in the legacy weekly job. On encoder outputs that
     # transform has already happened, and the decoder was trained on exactly
     # these values. Standardising them again here would place the decoder in a
     # feature space it has never seen.
@@ -1041,14 +1084,21 @@ def _assess_gnn_inner(
     causal_history_rows: list[dict] = []
     causal_values: dict[str, float] = {}
     if head.get("feature_schema_version") == CAUSAL_FEATURE_SCHEMA_VERSION:
-        causal_history_rows = db.get_gnn_causal_context_rows(
-            tenant_id,
-            target_nomination_id=int(details["nomination_id"]),
-            target_time=details["nomination_date"],
-            nominator_id=int(nominator_id),
-            beneficiary_id=int(beneficiary_id),
-            window_days=int(head["causal_context_window_days"]),
-        )
+        if live_history is not None:
+            from integrity_engine.gnn.live_graph import target_causal_history
+            causal_history_rows = target_causal_history(live_history, {
+                "NominationId": details["nomination_id"], "NominatorId": nominator_id,
+                "BeneficiaryId": beneficiary_id, "CreatedAt": details["nomination_date"],
+            }, int(head["causal_context_window_days"]))
+        else:
+            causal_history_rows = db.get_gnn_causal_context_rows(
+                tenant_id,
+                target_nomination_id=int(details["nomination_id"]),
+                target_time=details["nomination_date"],
+                nominator_id=int(nominator_id),
+                beneficiary_id=int(beneficiary_id),
+                window_days=int(head["causal_context_window_days"]),
+            )
         causal_values = causal_context_values(
             causal_history_rows,
             {
@@ -1075,6 +1125,7 @@ def _assess_gnn_inner(
         nomination_features,
     ], axis=1)
 
+    decoder_started = time.perf_counter()
     with torch.no_grad():
         logit = head["_module"](torch.from_numpy(z)).squeeze()
         if head.get("model_schema_version") == 4:
@@ -1142,6 +1193,8 @@ def _assess_gnn_inner(
         }
 
     fraud_score = int(round(fraud_prob * 100))
+    if live_encoding is not None:
+        live_encoding["decoder_ms"] = round((time.perf_counter() - decoder_started) * 1000, 3)
     thresholds = _thresholds(policy)
     risk = _risk_level(fraud_score, thresholds)
 
@@ -1153,6 +1206,7 @@ def _assess_gnn_inner(
         "warning_flags":    flags,
         "flagged":          risk in ("MEDIUM", "HIGH", "CRITICAL"),
         "model_version":    model_version,
+        "live_encoding": live_encoding,
         "embedding_as_of":  embedding_as_of,
         "graph_snapshot_id": head.get("graph_snapshot_id"),
         "graph_snapshot_as_of": head.get("graph_snapshot_as_of", embedding_as_of),

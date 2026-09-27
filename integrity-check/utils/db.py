@@ -351,6 +351,41 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
     }
 
 
+def get_gnn_live_graph_rows(tenant_id: int, *, target_nomination_id: int,
+                            target_time: datetime, window_days: int) -> tuple[list[dict], list[dict]]:
+    """Full tenant-owned causal graph; endpoint-only history is not an encoder graph.
+
+    SQL and the shared builder both enforce the strict target boundary. No
+    labels or Graph Analytics findings are returned as model inputs.
+    """
+    if window_days < 1:
+        raise ValueError("GNN live graph window must be positive")
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT UserId, TenantId FROM dbo.Users WHERE TenantId = ?", tenant_id)
+        columns = [column[0] for column in cursor.description]
+        users = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.execute("""
+            SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
+                   n.NominationDate AS CreatedAt, n.Amount, n.CategoryId, n.Status,
+                   CAST(1 AS BIT) AS IsBehaviorEligible
+            FROM dbo.Nominations n
+            JOIN dbo.Users u ON u.UserId = n.NominatorId
+            LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+            WHERE u.TenantId = ?
+              AND n.NominationDate >= DATEADD(DAY, -?, ?)
+              AND (n.NominationDate < ? OR
+                   (n.NominationDate = ? AND n.NominationId < ?))
+              AND (n.Status IN ('Pending', 'Approved', 'Paid') OR
+                   (n.Status = 'Rejected' AND idr.FinalRoute = 'HRBP_REVIEW'
+                    AND idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')
+                    AND idr.TrainingDisposition = 'FRAUD'))
+            ORDER BY n.NominationDate, n.NominationId
+        """, tenant_id, window_days, target_time, target_time, target_time, target_nomination_id)
+        columns = [column[0] for column in cursor.description]
+        return users, [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
 def get_gnn_causal_context_rows(
     tenant_id: int,
     *,

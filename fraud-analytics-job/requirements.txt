@@ -45,8 +45,8 @@ sentence-transformers>=2.6.0
 # — at ~13k nominations per tenant it is not.
 #
 # Adds ~40 MB to the image on top of the torch already pulled in by
-# sentence-transformers. NOT required by integrity-check: only the decoder head
-# ships to inference, and it is plain torch.nn.
+# sentence-transformers. Live GNN scoring also executes this same frozen
+# encoder in integrity-check; neither image needs the compiled extensions.
 torch-geometric>=2.5.0,<3.0.0
 
 # ── Azure ─────────────────────────────────────────────────────────────────────

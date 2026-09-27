@@ -142,6 +142,8 @@ def gnn_result(result: dict) -> dict:
         "specialists": result.get("specialists"),
         "aggregate": result.get("aggregate"),
         "pattern_heads": result.get("pattern_heads"),
+        "live_encoding": result.get("live_encoding"),
+        "inference_timings": result.get("inference_timings"),
         "evidence": result.get("evidence"),
         "explanation": result.get("explanation") or {
             "method": "GNNEXPLAINER",

@@ -1,8 +1,14 @@
 # Integrity Check Extension Design
 
-**Status:** Design draft; request publisher implemented, extension worker pending  
-**Applies to:** `integrity-check`, `integrity-check-extension`, `fraud-analytics-job`, Azure Service Bus, `dbo.IntegrityDecisionResults`, HRBP Review, Model Analysis  
-**Last updated:** 2026-09-11
+**Status:** Service/request foundation implemented; attribution execution pending E3
+
+**Applies to:** `integrity-check`, `integrity-check-extension`, `fraud-analytics-job`, Azure Service Bus, `dbo.IntegrityDecisionResults`, HRBP Review, Nomination Logs, Model Analysis
+
+**Last updated:** 2026-09-26
+
+The [GNNExplainer feature design](gnn_explainer_feature_design.md) defines the
+current v4 attribution scope, integration gaps, and E3 acceptance tests. It
+supersedes the original enable-flag and hidden-technical-details assumptions.
 
 ## 1. Purpose
 
@@ -15,10 +21,10 @@ nomination, participate in model fusion, route the nomination, or create a
 training label. Live integrity processing always completes before explanation
 work begins.
 
-The GNN training and architecture-selection contract remains authoritative in
-`Documentation_Misc/gnn_v2_training_strategy.md`. The broader GNN design remains
-in `Documentation_Misc/gnn_v2_and_integrity_check_extension_design.md`. This
-document is the implementation contract for the extension service itself.
+The current shared-model contract is defined in
+[GNN v4](gnn_v4_shared_encoder_multi_head_design.md); v2/v3 documents remain
+references for retained legacy artifacts. This document defines the service
+boundary, not a replacement model-admission or training strategy.
 
 ## 2. Scope
 
@@ -33,8 +39,8 @@ This implementation includes:
 - formatting safe node, relationship, and feature evidence;
 - atomically updating only `GnnResultJson.explanation`;
 - nomination-scoped logging, retry, dead-letter, reconciliation, and monitoring;
-- read-only rendering in HRBP Review and Model Analysis; and
-- dark deployment followed by tenant-specific activation.
+- read-only rendering in HRBP Review, Nomination Logs, and Model Analysis; and
+- consistent automatic request eligibility without a tenant enable switch.
 
 The following are out of scope:
 
@@ -58,9 +64,15 @@ The request side already exists in `integrity-check`:
   an inference retry; and
 - publish failures update only the matching nested explanation object.
 
-The default tenant policy keeps `ExplanationEnabled` false. No extension request
-should be published until the Service Bus subscription, worker, persistence
-contract, and non-production validation described here are deployed.
+`ExplanationEnabled` is now a legacy compatibility field, ignored by request
+production and worker validation. Eligible requests are automatic; the existing
+risk threshold and reproducibility checks remain. The detailed evidence UI is
+not hidden behind `showTechnicalDetails`.
+
+Artifact loading and reconstruction are implemented, but E3 attribution is not.
+The worker also needs its canonical probability-field integration corrected:
+persisted results use `model_probability`, not internal `fraud_prob`. Therefore
+successful attribution must not be inferred from the existence of requests.
 
 ## 4. Service boundary
 
@@ -103,19 +115,17 @@ integrity-check-extension/
   utils/
     azure_credential.py
     db.py
-    logging.py
-    model_artifacts.py
-    service_bus.py
   extensions/
     gnn_explainer/
       __init__.py
       contracts.py
-      handler.py
-      artifact_bundle.py
+      artifacts.py
+      errors.py
       model.py
-      explainer.py
-      fidelity.py
-      formatter.py
+      reproduction.py
+      explainer.py       # planned E3
+      quality.py         # planned E3
+      formatter.py       # planned E3
   tests/
     fixtures/
 ```
@@ -138,10 +148,9 @@ with the exact SQL filter:
 event_type = 'gnn.explanation.requested'
 ```
 
-The current `email-processor` subscription accepts every event except
-`nomination.submitted`. Before explanations are enabled, its filter must also
-exclude `gnn.explanation.requested`; otherwise the auxiliary email processor
-will receive internal explanation work.
+The email subscription must exclude `gnn.explanation.requested` as well as
+`nomination.submitted`; verify the deployed filter so internal explanation work
+does not reach the auxiliary email processor.
 
 The extension managed identity receives `Azure Service Bus Data Receiver` on
 the topic. It receives no sender permission unless reconciliation is later
@@ -216,7 +225,7 @@ eligible retry state to `RUNNING` and writes:
 A duplicate delivery behaves as follows:
 
 - matching `COMPLETED`: complete the message without recomputation;
-- matching fresh `RUNNING`: complete the duplicate because another worker owns it;
+- matching fresh `RUNNING`: defer delivery so another worker can complete it;
 - stale `RUNNING`: reclaim with a new attempt ID after the configured stale interval;
 - a newer persisted model/request: log the old request as superseded and complete
   it without changing the current result;
@@ -329,7 +338,9 @@ quality reason rather than as a misleading `COMPLETED` explanation.
 
 ## 12. Completed result contract
 
-Example `GnnResultJson.explanation`:
+Planned completed `GnnResultJson.explanation` contract (not yet emitted by the
+worker). The feature design adds explicit target, baseline, dependency, and
+quality-metric semantics; this illustrative example is not a recorded result:
 
 ```json
 {
@@ -413,7 +424,7 @@ object. They may not replace it with a newly generated `REQUESTED` placeholder.
 | Failure | Persisted result | Settlement |
 |---|---|---|
 | Duplicate already completed | unchanged | Complete |
-| Fresh concurrent `RUNNING` claim | unchanged | Complete duplicate |
+| Fresh concurrent `RUNNING` claim | unchanged | Defer |
 | Request superseded by a newer persisted model | unchanged | Complete |
 | SQL, Blob, or network timeout | non-terminal attempt detail/log | Abandon for retry |
 | Artifact temporarily absent | non-terminal until final delivery | Abandon for retry |
@@ -450,14 +461,15 @@ INTERNAL_ERROR
 
 Tenant policy remains in `dbo.GNNScoringPolicies`:
 
-- `ExplanationEnabled` is the activation switch;
+- `ExplanationEnabled` remains a legacy compatibility field, not a runtime switch;
 - `ExplanationMinimumRisk` is the request threshold; and
 - explanation algorithm parameters belong in an `explanation` object within
   `ConfigurationJson`, not in Terraform-managed container environment variables.
 
 The exact initial values for reproduction tolerance, explainer epochs and seeds,
 top evidence counts, minimum fidelity, minimum stability, and per-request timeout
-must be locked after offline fixture testing and before tenant activation.
+must be measured and locked after fixture and actual-artifact testing before
+declaring E3 attribution ready. No new numeric defaults are chosen here.
 
 Environment variables are limited to infrastructure bindings such as Service Bus
 namespace/subscription, storage account/container, SQL database, managed-identity
@@ -513,7 +525,8 @@ history access.
 
 ## 18. UI contract
 
-HRBP Review and Model Analysis display the persisted explanation asynchronously.
+HRBP Review, Nomination Logs, and Model Analysis display recorded explanation
+state asynchronously, with the same semantics and without hiding GNN details.
 They do not call the extension service directly.
 
 Supported states are:
@@ -526,16 +539,23 @@ Supported states are:
 
 Completed evidence appears under **GNN Model (GNNExplainer) Breakdown**.
 Relationships and candidate features are separate. Fidelity, stability, model
-version, snapshot, and architecture appear in an expandable technical section.
+version, snapshot, and architecture remain accessible without a technical-details
+gate. Persisted inputs are shown separately from attribution, including when
+explanation is skipped or fails. Missing historical attribution is labeled
+not recorded, never inferred from the score.
 No explanation state may imply that nomination routing is waiting.
 
 ## 19. Delivery phases
 
-Implementation status as of 2026-09-11: E1 and E2 are implemented for the
-sandbox environment. Tenant `ExplanationEnabled` must remain false for deployment;
-the E1/E2 worker fails closed with `EXPLANATION_ENGINE_NOT_DEPLOYED` if a request
-is introduced before E3. Production and development infrastructure remain
-intentionally unprovisioned until the sandbox path is validated.
+Code status as of 2026-09-26: E1 service/request plumbing and E2 reconstruction
+helpers exist. E2 still needs canonical-result integration and an actual v4
+artifact-backed check. Attribution remains unimplemented: eligible requests
+can fail during reproduction or with `EXPLANATION_ENGINE_NOT_DEPLOYED` after
+reproduction. The enable switch has been removed; it must not be reintroduced
+as a deployment mechanism. Code inspection does not verify deployed cloud state.
+
+The detailed E3 implementation sequence is in
+[GNNExplainer Feature Design](gnn_explainer_feature_design.md#11-implementation-sequence).
 
 ### Phase E1 — service and contract foundation
 
@@ -544,14 +564,14 @@ intentionally unprovisioned until the sandbox path is validated.
 - exclude explanation requests from `email-processor`;
 - implement validation, lock renewal, settlement, and conditional claims;
 - implement nomination-scoped logs; and
-- deploy with `ExplanationEnabled=false`.
+- provide explicit request/skipped lifecycle without an enable toggle.
 
 ### Phase E2 — artifact loading and score reproduction
 
 - validate the top-level manifest and artifact hashes;
 - load snapshot, selected encoder, and decoder safely;
 - support GraphSAGE, GCN-family, and GATv2;
-- reconstruct the scored case; and
+- reconstruct the canonical persisted scored case; and
 - enforce probability reproduction tolerance.
 
 ### Phase E3 — structured explanation
@@ -569,17 +589,18 @@ intentionally unprovisioned until the sandbox path is validated.
 - exercise retries, duplicate delivery, and rollback; and
 - publish operational dashboards and alerts.
 
-### Phase E5 — tenant validation and activation
+### Phase E5 — artifact-backed validation and release
 
 - train and select a valid tenant GNN;
 - manually request explanations for representative scored nominations;
 - lock quality thresholds and runtime limits;
 - review evidence with data-science and HRBP users; and
-- enable the tenant only after acceptance criteria pass.
+- declare completed attribution ready only after acceptance criteria pass;
+  validation in a synthetic tenant is not a tenant-exclusive feature rule.
 
 ## 20. Acceptance criteria
 
-The extension may be enabled for a tenant only when:
+The attribution implementation is ready for release when:
 
 1. scoring, persistence, and routing complete without waiting for explanation;
 2. requests are deterministic, tenant-scoped, versioned, and contain no PII;
@@ -598,7 +619,7 @@ The extension may be enabled for a tenant only when:
 15. dead-letter monitoring, reconciliation, and rollback are exercised; and
 16. representative real tenant scores produce useful, stable explanations.
 
-## 21. Decisions to lock before Phase E3 activation
+## 21. Decisions to lock before Phase E3 release
 
 The architecture and contracts above are fixed. These numeric operational
 values remain to be measured with fixture artifacts and then real tenant scores:
@@ -613,4 +634,5 @@ values remain to be measured with fixture artifacts and then real tenant scores:
 8. maximum Service Bus delivery count; and
 9. stale `REQUESTED` reconciliation interval.
 
-These values do not block Phase E1 or E2. They do block tenant activation.
+These values do not block service scaffolding. They must be established before
+declaring E3 attribution reliable; they do not restore a tenant activation flag.

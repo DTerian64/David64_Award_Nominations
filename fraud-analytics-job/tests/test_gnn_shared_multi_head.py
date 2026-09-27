@@ -191,3 +191,32 @@ def test_v4_evaluation_keeps_final_period_out_of_architecture_selection():
     assert len(report["validation_candidates"]["graphsage"]["validation_folds"]) == 2
     assert report["final_test"]["selected_architecture"] == "graphsage"
     assert "display_threshold_diagnostics" in report["final_test"]["head_states"]["RING"]["final_test"]
+
+
+def test_new_v4_encoder_decoder_artifacts_share_frozen_preprocessing(tmp_path):
+    from modeling import train_gnn_model as publisher
+    from integrity_engine.gnn.live_graph import LIVE_ENCODING_CONTRACT
+    users, nominations, labels = make_tenant(1, n_users=24, nominations_per_user=4, n_decoys=6)
+    folds = G.build_rolling_folds(users, nominations, n_folds=3)
+    frame = pd.DataFrame([
+        {"NominationId": row["NominationId"], "IsFraud": int(fraud),
+         "LabelSource": "synthetic_ground_truth", "ConfirmedPatterns": ("RING",) if fraud else ()}
+        for row, fraud in zip(nominations, labels)
+    ])
+    model, _ = _fit(folds, frame, "graphsage", {"RING": "ring-v1"}, hidden_dim=8, emb_dim=8,
+                    epochs=1, overall_weight=1., pattern_weight=1.)
+    graph = folds[-1]
+    graph.update(inference_contract=LIVE_ENCODING_CONTRACT, tenant_id=1)
+    policy = SimpleNamespace(policy_id=5, policy_version=1, hidden_dim=8,
+                             pattern_heads=(("RING", "ring-v1", True),))
+    encoder_path, decoder_path = tmp_path / "encoder.pt", tmp_path / "decoder.pt"
+    publisher._write_encoder(model, graph, "gnn-v4-test", "snapshot-test", encoder_path, policy)
+    publisher._write_head(model, graph, "gnn-v4-test", "snapshot-test", {}, decoder_path, policy,
+                          pattern_head_states={"RING": {"state": "ACTIVE"}},
+                          calibration={"OVERALL": {"slope": 1., "intercept": 0.}})
+    encoder = torch.load(encoder_path, weights_only=True)
+    decoder = torch.load(decoder_path, weights_only=True)
+    assert encoder["inference_contract"] == decoder["inference_contract"] == LIVE_ENCODING_CONTRACT
+    assert encoder["tenant_id"] == decoder["tenant_id"] == 1
+    np.testing.assert_array_equal(decoder["user_scaler_mean"], graph["user_scaler"]["mean"])
+    np.testing.assert_array_equal(decoder["nomination_scaler_mean"], graph["nomination_scaler"]["mean"])

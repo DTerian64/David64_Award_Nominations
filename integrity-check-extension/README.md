@@ -11,6 +11,14 @@ eligible automatic requests therefore record `FAILED` with
 `EXPLANATION_ENGINE_NOT_DEPLOYED` after successful score reproduction.
 The former tenant enable flag is no longer used by the producer or worker.
 
+See [GNNExplainer Feature Design](../Documentation_Misc/gnn_explainer_feature_design.md)
+for the remaining integration defect, attribution implementation, evidence
+semantics, and validation sequence, and
+[Integrity Check Extension Design](../Documentation_Misc/integrity_check_extension_design.md)
+for the service boundary. Canonical v4 score reproduction still needs correction
+from internal `fraud_prob` to persisted `model_probability`; requests can fail
+before reaching the attribution placeholder.
+
 Run tests from this directory with:
 
 ```powershell

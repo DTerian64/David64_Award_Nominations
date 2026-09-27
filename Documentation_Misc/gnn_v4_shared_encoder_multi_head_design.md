@@ -43,6 +43,12 @@ model.
 
 ## 1. Decision
 
+The normal live inference update is specified in
+[Normal live GNN encoding](gnn_live_encoding_design.md). New bundles refresh
+endpoint embeddings using the frozen encoder on causal nomination history;
+weekly cached embeddings are not their live scoring inputs. Historical bundles
+retain their original immutable inference contract for rollback.
+
 GNN v4 replaces the independently trained scenario-specialist model with one
 tenant-scoped graph encoder and several jointly trained output heads.
 
@@ -598,6 +604,12 @@ head is `0.92` does not silently replace the overall `0.81` probability.
 
 ## 15. Explanations
 
+The [GNNExplainer feature design](gnn_explainer_feature_design.md) defines the
+remaining implementation, canonical-score reproduction, attribution semantics,
+and validation. The request and UI enable gates have been removed; actual
+attribution execution remains pending. Requests are not proof of a completed
+explanation.
+
 GNNExplainer remains asynchronous. A request identifies:
 
 - tenant and nomination;
@@ -607,9 +619,11 @@ GNNExplainer remains asynchronous. A request identifies:
 - target head (`OVERALL` or one active pattern head); and
 - idempotency key.
 
-The default explanation target is the overall head plus the highest active
-material pattern head. Additional pattern explanations may be requested from
-the analysis UI but are not generated automatically for every head.
+The intended completed feature explains the overall head plus the highest
+active material pattern head. The current request contract handles the overall
+head; head-scoped requests and additional analysis-UI requests remain planned,
+not implemented. Validate overall attribution first, then add head-qualified
+request identities and per-head persistence without replacing the overall score.
 
 Explanation output remains inside `GNNResultJson`. No explanation table is
 introduced.
