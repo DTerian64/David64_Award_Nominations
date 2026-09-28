@@ -22,7 +22,7 @@ import os
 import struct
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import List, Optional, Tuple
 from urllib.parse import quote_plus
 
@@ -3297,6 +3297,108 @@ def update_category(category_id: int, tenant_id: int, description: str, min_amou
 
 GRAPH_WINDOW_KEYS = ("Ring", "BipartiteDenseBlock", "TemporalBurst", "SuperNominator",
                      "SuperBeneficiary", "CopyPasteFraud", "HiddenCandidate", "LowRecognitionNominator")
+
+INTEGRITY_ANALYTICS_JOB_CONFIG_KEY = "integrity_analytics_job"
+_LEGACY_FRAUD_ANALYTICS_JOB_CONFIG_KEY = "fraud_analytics_job"
+
+
+def _parse_integrity_config(raw, tenant_id: int) -> dict:
+    """Load tenant integrity JSON without allowing bad config to disable work."""
+    if not raw:
+        return {}
+    try:
+        configuration = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Tenant %d has malformed integrity_config; scheduled integrity "
+            "analytics remains enabled by default",
+            tenant_id,
+        )
+        return {}
+    if not isinstance(configuration, dict):
+        logger.warning(
+            "Tenant %d integrity_config is not an object; scheduled integrity "
+            "analytics remains enabled by default",
+            tenant_id,
+        )
+        return {}
+    return configuration
+
+
+def _integrity_analytics_job_response(configuration: dict) -> dict:
+    job = configuration.get(INTEGRITY_ANALYTICS_JOB_CONFIG_KEY)
+    if not isinstance(job, dict):
+        # Read the never-deployed legacy proposal defensively, but all writes use
+        # the forward-looking integrity terminology.
+        job = configuration.get(_LEGACY_FRAUD_ANALYTICS_JOB_CONFIG_KEY)
+    job = job if isinstance(job, dict) else {}
+    enabled = job.get("enabled", True)
+    enabled = enabled if isinstance(enabled, bool) else True
+    return {
+        "enabled": enabled,
+        "state": "ENABLED" if enabled else "PAUSED",
+        "updated_at": job.get("updated_at") if isinstance(job.get("updated_at"), str) else None,
+        "updated_by": job.get("updated_by") if isinstance(job.get("updated_by"), str) else None,
+        "takes_effect": "before_next_unclaimed_tenant",
+    }
+
+
+def get_integrity_analytics_job_settings(tenant_id: int) -> dict:
+    """Return scheduled integrity-analytics eligibility for one tenant.
+
+    Missing or malformed configuration is fail-open so adding this control does
+    not unexpectedly stop existing tenants from receiving analytics updates.
+    """
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT integrity_config FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+    configuration = _parse_integrity_config(row[0] if row else None, tenant_id)
+    return _integrity_analytics_job_response(configuration)
+
+
+def update_integrity_analytics_job_settings(
+    tenant_id: int,
+    enabled: bool,
+    actor: str,
+) -> None:
+    """Merge the admin-owned job switch without changing other integrity config."""
+    with get_db_context() as session:
+        row = session.execute(
+            text("SELECT integrity_config FROM dbo.Tenants WHERE TenantId = :tid"),
+            {"tid": tenant_id},
+        ).fetchone()
+        configuration = _parse_integrity_config(row[0] if row else None, tenant_id)
+        existing = configuration.get(INTEGRITY_ANALYTICS_JOB_CONFIG_KEY)
+        job = dict(existing) if isinstance(existing, dict) else {}
+        job.update({
+            "enabled": enabled,
+            "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "updated_by": actor,
+        })
+        configuration[INTEGRITY_ANALYTICS_JOB_CONFIG_KEY] = job
+        # Remove the pre-implementation proposal key if it was ever set by hand;
+        # one canonical namespace avoids conflicting switches.
+        configuration.pop(_LEGACY_FRAUD_ANALYTICS_JOB_CONFIG_KEY, None)
+
+        result = session.execute(
+            text("""
+                UPDATE dbo.Tenants
+                SET integrity_config = :configuration,
+                    updated_at       = SYSUTCDATETIME(),
+                    updated_by       = :actor
+                WHERE TenantId = :tid
+            """),
+            {
+                "configuration": json.dumps(configuration, separators=(",", ":")),
+                "actor": actor,
+                "tid": tenant_id,
+            },
+        )
+        if result.rowcount == 0:
+            raise ValueError(f"Tenant {tenant_id} was not found")
+        session.commit()
 
 
 def _graph_detector_windows(configuration: dict) -> dict:

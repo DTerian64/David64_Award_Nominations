@@ -23,7 +23,7 @@ import { EngineEvaluationModal } from './EngineEvaluationModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-type SubTab = 'organization' | 'roles' | 'categories' | 'email' | 'payroll' | 'audit';
+type SubTab = 'organization' | 'roles' | 'categories' | 'analyticsJobs' | 'email' | 'payroll' | 'audit';
 
 interface OrgSettings {
   tenant_name:          string;
@@ -44,6 +44,7 @@ const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
   { id: 'organization', label: 'Organization',     icon: <Settings className="w-4 h-4" /> },
   { id: 'roles',        label: 'Roles & Access',   icon: <UsersIcon className="w-4 h-4" /> },
   { id: 'categories',   label: 'Award Categories', icon: <Tag className="w-4 h-4" /> },
+  { id: 'analyticsJobs', label: 'Analytics Jobs',  icon: <RefreshCw className="w-4 h-4" /> },
   { id: 'email',        label: 'Email Templates',  icon: <Mail className="w-4 h-4" /> },
   { id: 'payroll',      label: 'Payroll',          icon: <DollarSign className="w-4 h-4" /> },
   { id: 'audit',        label: 'Audit & Access',   icon: <ShieldCheck className="w-4 h-4" /> },
@@ -76,9 +77,174 @@ export const SetupPanel: React.FC = () => {
       {sub === 'organization' && <OrganizationForm />}
       {sub === 'roles'        && <RolesPanel />}
       {sub === 'categories'   && <CategoriesPanel />}
+      {sub === 'analyticsJobs' && <AnalyticsJobsPanel />}
       {sub === 'email'        && <EmailTemplatesPanel />}
       {sub === 'payroll'      && <PayrollPanel />}
       {sub === 'audit'        && <AuditPanel />}
+    </div>
+  );
+};
+
+// ── Analytics Jobs ─────────────────────────────────────────────────────────
+
+interface AnalyticsJobSettings {
+  enabled: boolean;
+  state: 'ENABLED' | 'PAUSED';
+  updated_at: string | null;
+  updated_by: string | null;
+  takes_effect: 'before_next_unclaimed_tenant';
+}
+
+const AnalyticsJobsPanel: React.FC = () => {
+  const [data, setData] = useState<AnalyticsJobSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/analytics-job`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      setData(await res.json() as AnalyticsJobSettings);
+    } catch (error: unknown) {
+      setMsg({
+        type: 'err',
+        text: error instanceof Error ? error.message : 'Failed to load analytics job settings',
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async () => {
+    if (!data) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE_URL}/api/admin/setup/analytics-job`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled: data.enabled }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      setData(await res.json() as AnalyticsJobSettings);
+      setMsg({ type: 'ok', text: 'Scheduled integrity analytics setting saved.' });
+    } catch (error: unknown) {
+      setMsg({ type: 'err', text: error instanceof Error ? error.message : 'Save failed' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 text-gray-400 text-sm py-12">
+        <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
+      </div>
+    );
+  }
+
+  if (!data) return <div className="text-sm text-red-600 py-6">{msg?.text ?? 'No data.'}</div>;
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900">Scheduled integrity analytics</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Control whether this organization participates in scheduled Graph Analytics,
+          Tabular and GNN training, and forecasting.
+        </p>
+      </div>
+
+      <section className="rounded-xl border border-gray-200 p-4 sm:p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-medium text-gray-900">Run scheduled integrity analytics</h3>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                data.enabled ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+              }`}>
+                {data.enabled ? 'Enabled' : 'Paused'}
+              </span>
+            </div>
+            <p className="text-sm text-gray-500">
+              Existing serving models and live nomination checks remain active when this job is paused.
+            </p>
+          </div>
+
+          <label className="inline-flex cursor-pointer items-center gap-3 text-sm font-medium text-gray-700">
+            <input
+              type="checkbox"
+              aria-label="Run scheduled integrity analytics for this organization"
+              checked={data.enabled}
+              disabled={saving}
+              onChange={event => setData(current => current ? {
+                ...current,
+                enabled: event.target.checked,
+                state: event.target.checked ? 'ENABLED' : 'PAUSED',
+              } : current)}
+              className="h-5 w-5 rounded border-gray-300"
+            />
+            {data.enabled ? 'On' : 'Off'}
+          </label>
+        </div>
+
+        <div className={`mt-4 flex items-start gap-2 rounded-lg border p-3 text-sm ${
+          data.enabled
+            ? 'border-blue-100 bg-blue-50 text-blue-700'
+            : 'border-amber-200 bg-amber-50 text-amber-800'
+        }`}>
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{data.enabled
+            ? 'This organization will be included in the next scheduled or manually started analytics execution.'
+            : 'Future and unclaimed analytics work will be skipped. Work already in progress is allowed to finish.'}
+          </span>
+        </div>
+
+        {(data.updated_at || data.updated_by) && (
+          <p className="mt-3 text-xs text-gray-400">
+            Last changed{data.updated_by ? ` by ${data.updated_by}` : ''}
+            {data.updated_at ? ` on ${new Date(data.updated_at).toLocaleString()}` : ''}.
+          </p>
+        )}
+      </section>
+
+      {msg && (
+        <div className={`flex items-center gap-2 text-sm ${msg.type === 'ok' ? 'text-green-700' : 'text-red-700'}`}>
+          {msg.type === 'ok' ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+          {msg.text}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          onClick={() => void save()}
+          disabled={saving}
+          style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-primary-text)' }}
+          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium disabled:opacity-50"
+        >
+          <Save className={`h-4 w-4 ${saving ? 'animate-pulse' : ''}`} />
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          onClick={() => void load()}
+          disabled={saving}
+          className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Reset
+        </button>
+      </div>
     </div>
   );
 };

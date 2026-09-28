@@ -58,6 +58,7 @@ from integrity_engine.graph.finding_scoring import (
 from integrity_engine.graph.history_windows import detector_windows, filter_detector_history
 
 from utils.component_status import upsert_component_status
+from utils.tenant_model_config import get_tenants as get_enabled_tenants
 
 # Same .env loading as the other modeling jobs so this stage
 # can be run standalone locally. No-op in Container Apps (env injected).
@@ -426,9 +427,7 @@ def _load_ever_active_user_ids(conn: pyodbc.Connection, tenant_id: int) -> set[i
 
 
 def _load_tenants(conn: pyodbc.Connection) -> list[int]:
-    cur = conn.cursor()
-    cur.execute("SELECT TenantId FROM dbo.Tenants ORDER BY TenantId")
-    return [row[0] for row in cur.fetchall()]
+    return [tenant_id for tenant_id, _ in get_enabled_tenants(conn)]
 
 
 def _maximum_active_detection_window(

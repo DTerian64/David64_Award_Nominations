@@ -67,6 +67,7 @@ _HOLIDAY_SET: set = set()
 # ── DB ──────────────────────────────────────────────────────────────────────────
 
 from utils.db_conn import connect  # noqa: E402 - .env must load before credential setup
+from utils.tenant_model_config import get_tenants as get_enabled_tenants  # noqa: E402
 
 
 def get_db_connection():
@@ -75,9 +76,8 @@ def get_db_connection():
 
 
 def get_tenants(conn) -> list:
-    """Return [(TenantId, TenantName), ...] — we forecast each tenant separately."""
-    df = pd.read_sql("SELECT TenantId, TenantName FROM dbo.Tenants ORDER BY TenantId", conn)
-    return list(df.itertuples(index=False, name=None))
+    """Return enabled tenants; each forecast remains tenant-isolated."""
+    return get_enabled_tenants(conn)
 
 
 def load_nominations(conn, tenant_id: int) -> pd.DataFrame:

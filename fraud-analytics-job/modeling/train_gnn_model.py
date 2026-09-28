@@ -65,6 +65,7 @@ from .artifact_manifest import (  # noqa: E402
 )
 from utils.component_status import upsert_component_status  # noqa: E402
 from utils.db_conn import connect  # noqa: E402
+from utils.tenant_model_config import get_tenants as get_enabled_tenants  # noqa: E402
 from .gnn.model import (  # noqa: E402
     _RELATIONS,
     fit_candidate_rolling,
@@ -173,9 +174,7 @@ def _log_peak_rss(label: str) -> float | None:
 
 
 def _get_tenants(conn) -> list[int]:
-    cur = conn.cursor()
-    cur.execute("SELECT TenantId FROM dbo.Tenants ORDER BY TenantId")
-    return [r[0] for r in cur.fetchall()]
+    return [tenant_id for tenant_id, _ in get_enabled_tenants(conn)]
 
 
 # ── Persistence ───────────────────────────────────────────────────────────────

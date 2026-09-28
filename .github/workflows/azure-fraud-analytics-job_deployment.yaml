@@ -90,18 +90,6 @@ jobs:
           --resource-group ${{ vars.RESOURCE_GROUP }} \
           --image ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${SHA_TAG}
 
-    # ------------------------------------------------------------------
-    # Optional: trigger an immediate execution to validate the new image.
-    # Remove this step if you prefer the first run to happen on schedule.
-    # ------------------------------------------------------------------
-    - name: Trigger validation run
-      run: |
-        az containerapp job start \
-          --name ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }} \
-          --resource-group ${{ vars.RESOURCE_GROUP }}
-        echo "Validation run started — check Azure portal or:"
-        echo "  az containerapp job execution list --name ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }} --resource-group ${{ vars.RESOURCE_GROUP }}"
-
     - name: Deployment summary
       run: |
         SHA_TAG="${{ vars.IMAGE_TAG }}-${{ github.sha }}"
@@ -113,5 +101,6 @@ jobs:
         echo "**Job:** ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }}"                                       >> $GITHUB_STEP_SUMMARY
         echo "**Commit:** ${{ github.sha }}"                                                                 >> $GITHUB_STEP_SUMMARY
         echo ""                                                                                               >> $GITHUB_STEP_SUMMARY
+        echo "**Execution:** Not started automatically; configure tenant settings before running on demand." >> $GITHUB_STEP_SUMMARY
         echo "**Schedule:** Monday 02:00 UTC (override via \`fraud_analytics_cron\` Terraform variable)"    >> $GITHUB_STEP_SUMMARY
         echo "**On-demand:** \`az containerapp job start --name ${{ vars.CONTAINER_APP_JOB_FRAUD_ANALYTICS }} --resource-group ${{ vars.RESOURCE_GROUP }}\`" >> $GITHUB_STEP_SUMMARY

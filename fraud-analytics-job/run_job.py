@@ -87,7 +87,7 @@ Individual stages can be run in isolation for local analysis, e.g.:
     az containerapp job start `
     --name award-fraud-analytics-sandbox `
     --resource-group rg_award_nomination_sandbox `
-    --command "python" \
+    --command "python" `
     --args "run_job.py --only train_gnn_model --tenant 5"
 """
 

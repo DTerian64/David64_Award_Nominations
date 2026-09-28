@@ -35,8 +35,8 @@ class _Connection:
 
 def test_get_tenants_preserves_database_order(monkeypatch):
     frame = pd.DataFrame(
-        [(1, "Demo"), (5, "Synthetics Inc")],
-        columns=["TenantId", "TenantName"],
+        [(1, "Demo", None), (5, "Synthetics Inc", "{}")],
+        columns=["TenantId", "TenantName", "integrity_config"],
     )
     monkeypatch.setattr(tenant_model_config.pd, "read_sql", lambda *_: frame)
 
@@ -44,6 +44,35 @@ def test_get_tenants_preserves_database_order(monkeypatch):
         (1, "Demo"),
         (5, "Synthetics Inc"),
     ]
+
+
+def test_get_tenants_excludes_paused_integrity_analytics(monkeypatch):
+    frame = pd.DataFrame(
+        [
+            (1, "Demo", None),
+            (2, "Paused", json.dumps({"integrity_analytics_job": {"enabled": False}})),
+            (3, "Malformed", "not-json"),
+            (4, "Wrong type", json.dumps({"integrity_analytics_job": {"enabled": "false"}})),
+        ],
+        columns=["TenantId", "TenantName", "integrity_config"],
+    )
+    monkeypatch.setattr(tenant_model_config.pd, "read_sql", lambda *_: frame)
+
+    assert tenant_model_config.get_tenants(object()) == [
+        (1, "Demo"),
+        (3, "Malformed"),
+        (4, "Wrong type"),
+    ]
+
+
+def test_legacy_proposed_switch_is_read_but_new_name_takes_precedence():
+    assert tenant_model_config.is_integrity_analytics_enabled(
+        json.dumps({"fraud_analytics_job": {"enabled": False}}), 5
+    ) is False
+    assert tenant_model_config.is_integrity_analytics_enabled(json.dumps({
+        "integrity_analytics_job": {"enabled": True},
+        "fraud_analytics_job": {"enabled": False},
+    }), 5) is True
 
 
 def test_tenant_embed_model_reads_json_and_closes_connection(monkeypatch):

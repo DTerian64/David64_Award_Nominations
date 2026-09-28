@@ -17,7 +17,7 @@ import os
 from typing import Optional, Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 import utils.sqlhelper2 as sqlhelper
 from auth import get_current_user, is_admin
@@ -252,6 +252,10 @@ class FraudConfig(BaseModel):
     llm_fit_threshold:              float
     llm_instructions:               Optional[str] = None
     boilerplate_phrases:            list = []
+
+
+class AnalyticsJobUpdate(BaseModel):
+    enabled: StrictBool
 
 
 class GraphThresholds(BaseModel):
@@ -593,6 +597,32 @@ async def update_fraud(payload: FraudConfig, admin: dict = Depends(require_setup
     )
     logger.info("Fraud/integrity config updated", extra={"tenant_id": admin["TenantId"]})
     return sqlhelper.get_fraud_settings(admin["TenantId"])
+
+
+# ── Scheduled integrity analytics job ──────────────────────────────────────
+
+@router.get("/api/admin/setup/analytics-job")
+async def get_analytics_job(admin: dict = Depends(require_setup_admin)):
+    return sqlhelper.get_integrity_analytics_job_settings(admin["TenantId"])
+
+
+@router.put("/api/admin/setup/analytics-job")
+async def update_analytics_job(
+    payload: AnalyticsJobUpdate,
+    admin: dict = Depends(require_setup_admin),
+):
+    actor = admin.get("userPrincipalName", "unknown")
+    try:
+        sqlhelper.update_integrity_analytics_job_settings(
+            admin["TenantId"], payload.enabled, actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    logger.info(
+        "Scheduled integrity analytics setting updated",
+        extra={"tenant_id": admin["TenantId"], "enabled": payload.enabled, "by": actor},
+    )
+    return sqlhelper.get_integrity_analytics_job_settings(admin["TenantId"])
 
 
 # ── Detection Engines (read-only) ────────────────────────────────────────────
