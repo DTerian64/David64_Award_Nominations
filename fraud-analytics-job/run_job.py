@@ -24,6 +24,7 @@ import urllib.request
 import urllib.error
 import json
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -300,16 +301,20 @@ def run_tenant_stage(
     stage: dict,
     tenant_id: int,
     stage_run_id: str,
+    data_as_of_utc: datetime,
     lease_guard: Callable[[], None],
     lease_fence: Callable[[object], None],
 ) -> TenantStageResult:
     module = importlib.import_module(stage["module"])
-    result = module.process_tenant(
+    kwargs = dict(
         tenant_id=tenant_id,
         run_id=stage_run_id,
         lease_guard=lease_guard,
         lease_fence=lease_fence,
     )
+    if stage["stage"] == "GNN":
+        kwargs["data_as_of_utc"] = data_as_of_utc
+    result = module.process_tenant(**kwargs)
     if not isinstance(result, TenantStageResult):
         raise TypeError(
             f"{stage['module']}.process_tenant returned {type(result).__name__}, "
@@ -399,6 +404,7 @@ def _process_claim(
     coordinator: IntegrityAnalyticsCoordinator,
     claim,
     *,
+    data_as_of_utc: datetime,
     heartbeat_seconds: float,
 ) -> None:
     run_id = claim.run_id
@@ -450,6 +456,7 @@ def _process_claim(
                     stage,
                     tenant_id,
                     stage_run_id,
+                    data_as_of_utc,
                     heartbeat.assert_owned,
                     lambda connection: coordinator.fence_tenant_lease(
                         connection,
@@ -521,6 +528,7 @@ def _run_claim_loop(
     run_id: str,
     worker_id: str,
     *,
+    data_as_of_utc: datetime,
     heartbeat_seconds: float,
     poll_seconds: float,
 ) -> str:
@@ -534,6 +542,7 @@ def _run_claim_loop(
             _process_claim(
                 coordinator,
                 claim,
+                data_as_of_utc=data_as_of_utc,
                 heartbeat_seconds=heartbeat_seconds,
             )
             continue
@@ -578,10 +587,11 @@ def run_coordinated_job(
 ) -> str:
     run = coordinator.register_execution(execution_name, job_name)
     logger.info(
-        "COORDINATED RUN run=%s execution=%s worker=%s",
+        "COORDINATED RUN run=%s execution=%s worker=%s data_as_of_utc=%s",
         run.run_id,
         execution_name,
         worker_id,
+        run.data_as_of_utc,
     )
     if not _prepare_execution(
         coordinator,
@@ -595,6 +605,7 @@ def run_coordinated_job(
         coordinator,
         run.run_id,
         worker_id,
+        data_as_of_utc=run.data_as_of_utc,
         heartbeat_seconds=heartbeat_seconds,
         poll_seconds=poll_seconds,
     )

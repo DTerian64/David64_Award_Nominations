@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -68,6 +69,7 @@ def load_labels(
     conn,
     tenant_id: int,
     window_days: int | None = None,
+    data_as_of_utc: datetime | None = None,
 ) -> pd.DataFrame:
     """
     Return one row per in-scope nomination for the tenant.
@@ -91,8 +93,11 @@ def load_labels(
     IntegrityDecisionResults is the authoritative, model-neutral adjudication
     contract. Inference scores are retained for audit but never become labels.
     """
+    if window_days is not None and data_as_of_utc is None:
+        raise ValueError("data_as_of_utc is required when window_days is provided")
     window_clause = (
-        "AND n.NominationDate >= DATEADD(DAY, -?, GETDATE())"
+        "AND n.NominationDate >= DATEADD(DAY, -?, ?) "
+        "AND n.NominationDate <= ?"
         if window_days is not None else ""
     )
 
@@ -162,7 +167,17 @@ def load_labels(
         ORDER BY n.NominationDate
     """
 
-    params = [tenant_id] + ([window_days] if window_days is not None else [])
+    sql_as_of = None
+    if data_as_of_utc is not None:
+        sql_as_of = (
+            data_as_of_utc
+            if data_as_of_utc.tzinfo is None
+            else data_as_of_utc.astimezone(timezone.utc).replace(tzinfo=None)
+        )
+    params = [tenant_id] + (
+        [window_days, sql_as_of, sql_as_of]
+        if window_days is not None else []
+    )
     df = pd.read_sql(query, conn, params=params)
     if (
         "InvalidSyntheticSource" in df.columns

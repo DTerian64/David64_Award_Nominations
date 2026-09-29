@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ from utils.stage_result import TenantStageResult
 
 RUN_ID = "11111111-1111-1111-1111-111111111111"
 WORKER_ID = "22222222-2222-2222-2222-222222222222"
+DATA_AS_OF_UTC = datetime(2026, 9, 29, 2, 10, 11, tzinfo=timezone.utc)
 
 
 class _ClaimCoordinator:
@@ -86,7 +88,12 @@ def test_disabled_tenant_is_skipped_before_any_stage(monkeypatch):
         lambda *args, **kwargs: pytest.fail("disabled tenant ran a stage"),
     )
 
-    run_job._process_claim(coordinator, _claim(), heartbeat_seconds=60)
+    run_job._process_claim(
+        coordinator,
+        _claim(),
+        data_as_of_utc=DATA_AS_OF_UTC,
+        heartbeat_seconds=60,
+    )
 
     assert coordinator.skipped == [(RUN_ID, 7, WORKER_ID)]
     assert coordinator.started == []
@@ -95,8 +102,16 @@ def test_disabled_tenant_is_skipped_before_any_stage(monkeypatch):
 def test_stage_failure_does_not_block_later_tenant_stages(monkeypatch):
     coordinator = _ClaimCoordinator()
 
-    def run_stage(stage, tenant_id, stage_run_id, lease_guard, lease_fence):
+    def run_stage(
+        stage,
+        tenant_id,
+        stage_run_id,
+        data_as_of_utc,
+        lease_guard,
+        lease_fence,
+    ):
         assert tenant_id == 7
+        assert data_as_of_utc == DATA_AS_OF_UTC
         lease_guard()
         if stage["stage"] == "TABULAR":
             return TenantStageResult.skipped("NO_VALID_CANDIDATE")
@@ -108,7 +123,12 @@ def test_stage_failure_does_not_block_later_tenant_stages(monkeypatch):
 
     monkeypatch.setattr(run_job, "run_tenant_stage", run_stage)
 
-    run_job._process_claim(coordinator, _claim(), heartbeat_seconds=60)
+    run_job._process_claim(
+        coordinator,
+        _claim(),
+        data_as_of_utc=DATA_AS_OF_UTC,
+        heartbeat_seconds=60,
+    )
 
     assert [row[0] for row in coordinator.started] == [
         "GRAPH",
@@ -134,7 +154,12 @@ def test_lost_lease_leaves_attempt_for_reclaimer(monkeypatch):
 
     monkeypatch.setattr(run_job, "run_tenant_stage", lose_lease)
 
-    run_job._process_claim(coordinator, _claim(), heartbeat_seconds=60)
+    run_job._process_claim(
+        coordinator,
+        _claim(),
+        data_as_of_utc=DATA_AS_OF_UTC,
+        heartbeat_seconds=60,
+    )
 
     assert len(coordinator.started) == 1
     assert coordinator.finished == []
@@ -179,6 +204,7 @@ def test_barrier_finalizer_refreshes_cache_once_when_tabular_published(monkeypat
         Coordinator(),
         RUN_ID,
         WORKER_ID,
+        data_as_of_utc=DATA_AS_OF_UTC,
         heartbeat_seconds=60,
         poll_seconds=0.001,
     )

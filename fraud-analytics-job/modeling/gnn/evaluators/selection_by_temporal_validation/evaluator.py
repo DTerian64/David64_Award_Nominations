@@ -383,15 +383,39 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
     selected_pr = final_metrics[selected]["overall"]["pr_auc"]
     raw_pr = final_metrics["raw_feature_mlp"]["overall"]["pr_auc"]
     engineered_pr = final_metrics["engineered_graph_mlp"]["overall"]["pr_auc"]
-    overall_admitted = (
-        all(value is not None for value in (selected_pr, raw_pr, engineered_pr))
-        and calibration.get("OVERALL") is not None
-        and final_metrics[selected]["overall"]["brier_score"] is not None
-        and final_metrics[selected]["overall"]["brier_score"] <= policy.maximum_overall_holdout_brier_score
-        and final_metrics[selected]["inference_ms"] <= policy.maximum_holdout_inference_ms
-        and selected_pr >= raw_pr + policy.minimum_graph_value_over_raw_mlp
-        and selected_pr >= engineered_pr + policy.minimum_message_passing_value_over_engineered_graph_mlp
+    graph_value = (
+        selected_pr - raw_pr
+        if selected_pr is not None and raw_pr is not None else None
     )
+    message_passing_value = (
+        selected_pr - engineered_pr
+        if selected_pr is not None and engineered_pr is not None else None
+    )
+    selected_brier = final_metrics[selected]["overall"]["brier_score"]
+    admission_checks = {
+        "required_metrics_available": all(
+            value is not None for value in (selected_pr, raw_pr, engineered_pr)
+        ),
+        "overall_calibration_available": calibration.get("OVERALL") is not None,
+        "overall_brier_within_limit": (
+            selected_brier is not None
+            and selected_brier <= policy.maximum_overall_holdout_brier_score
+        ),
+        "inference_latency_within_limit": (
+            final_metrics[selected]["inference_ms"]
+            <= policy.maximum_holdout_inference_ms
+        ),
+        "graph_value_over_raw_mlp": (
+            graph_value is not None
+            and graph_value >= policy.minimum_graph_value_over_raw_mlp
+        ),
+        "message_passing_value_over_engineered_graph_mlp": (
+            message_passing_value is not None
+            and message_passing_value
+            >= policy.minimum_message_passing_value_over_engineered_graph_mlp
+        ),
+    }
+    overall_admitted = all(admission_checks.values())
     head_states = {}
     for key, _contract, enabled in policy.pattern_heads:
         if not enabled:
@@ -440,13 +464,9 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
     report["final_test"] = {
         "selected_architecture": selected,
         "models": final_metrics,
-        "graph_value_over_raw_mlp": (
-            selected_pr - raw_pr if selected_pr is not None and raw_pr is not None else None
-        ),
-        "message_passing_value_over_engineered_graph_mlp": (
-            selected_pr - engineered_pr
-            if selected_pr is not None and engineered_pr is not None else None
-        ),
+        "graph_value_over_raw_mlp": graph_value,
+        "message_passing_value_over_engineered_graph_mlp": message_passing_value,
+        "admission_checks": admission_checks,
         "admitted": overall_admitted,
         "head_states": head_states,
         "calibration": calibration,

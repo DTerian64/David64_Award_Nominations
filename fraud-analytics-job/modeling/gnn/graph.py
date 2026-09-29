@@ -51,7 +51,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Sequence
 
 import numpy as np
@@ -90,7 +90,19 @@ EDGE_TYPES = [
 
 # ── SQL ───────────────────────────────────────────────────────────────────────
 
-def fetch_tenant_rows(conn, tenant_id: int, window_days: int) -> tuple[list[dict], list[dict]]:
+def _sql_utc(value: datetime) -> datetime:
+    """Return a timezone-naive UTC value suitable for SQL Server DATETIME2."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def fetch_tenant_rows(
+    conn,
+    tenant_id: int,
+    window_days: int,
+    data_as_of_utc: datetime,
+) -> tuple[list[dict], list[dict]]:
     """
     Load users and nominations for one tenant, directly from the source tables.
 
@@ -126,12 +138,18 @@ def fetch_tenant_rows(conn, tenant_id: int, window_days: int) -> tuple[list[dict
         LEFT JOIN dbo.IntegrityDecisionResults idr
                ON idr.NominationId = n.NominationId
         WHERE  u.TenantId = ?
-          AND  n.NominationDate >= DATEADD(DAY, -?, GETDATE())
+          AND  n.NominationDate >= DATEADD(DAY, -?, ?)
+          AND  n.NominationDate <= ?
           AND (
               n.Status IN ('Pending', 'Approved', 'Paid')
               OR idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
           )
-    """, tenant_id, window_days)
+    """,
+        tenant_id,
+        window_days,
+        _sql_utc(data_as_of_utc),
+        _sql_utc(data_as_of_utc),
+    )
     cols = [c[0] for c in cur.description]
     nominations = [dict(zip(cols, row)) for row in cur.fetchall()]
 

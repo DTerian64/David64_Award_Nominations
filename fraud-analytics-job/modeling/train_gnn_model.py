@@ -885,10 +885,40 @@ def _fit_admitted_specialists(
     return models, serving, artifacts
 
 
+def _shared_admission_failure(
+    final: dict,
+    selected: str | None,
+    policy: GNNPolicy,
+) -> tuple[str, str]:
+    """Return the stable reason code and detail for a rejected shared model."""
+    if not selected:
+        return "NO_VALIDATION_CANDIDATE", "No GNN architecture completed validation."
+
+    graph_value = final.get("graph_value_over_raw_mlp")
+    if (
+        graph_value is not None
+        and graph_value < policy.minimum_graph_value_over_raw_mlp
+    ):
+        return (
+            "INSUFFICIENT_GRAPH_VALUE_OVER_RAW_MLP",
+            "V4 final temporal test graph value over raw-feature MLP was "
+            f"{graph_value:.6f}; policy requires at least "
+            f"{policy.minimum_graph_value_over_raw_mlp:.6f}. "
+            "The incumbent was preserved.",
+        )
+
+    return (
+        "NO_MESSAGE_PASSING_VALUE_OVER_BASELINES",
+        "V4 final temporal test did not pass the remaining admission checks; "
+        "incumbent preserved.",
+    )
+
+
 def _process_shared_multi_head(
     conn, *, tenant_id: int, run_id: str, policy: GNNPolicy,
     users: list, nominations: list, labelled, folds: list[dict],
     base_diagnostics: dict, label_source_counts: dict, started: float,
+    data_as_of_utc: datetime,
     lease_guard: Callable[[], None] | None = None,
     lease_fence: Callable[[object], None] | None = None,
 ) -> str:
@@ -939,7 +969,7 @@ def _process_shared_multi_head(
     graph["user_index"] = publication_inputs.user_index
     graph["category_index"] = publication_inputs.category_index
     graph["graph_nomination_ids"] = publication_inputs.nomination_ids
-    as_of = date.today()
+    as_of = data_as_of_utc.date()
     suffix = run_id.replace("-", "")[:8]
     model_version = f"gnn-v4-{as_of:%Y%m%d}-t{tenant_id}-{suffix}"
     graph_snapshot_id = f"gnn-graph-v4-{as_of:%Y%m%d}-t{tenant_id}-{suffix}"
@@ -990,6 +1020,7 @@ def _process_shared_multi_head(
         "tenant_id": tenant_id,
         "model_version": model_version,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "data_as_of_utc": data_as_of_utc.isoformat(),
         "graph_snapshot_id": graph_snapshot_id,
         "graph_snapshot_as_of": graph.get(
             "graph_snapshot_as_of", graph["t_graph"]
@@ -1062,11 +1093,21 @@ def _process_shared_multi_head(
         "artifact_bundle_prefix": prefix,
         "graph_snapshot_id": graph_snapshot_id,
         "admitted": admitted,
+        "graph_value_over_raw_mlp": final.get("graph_value_over_raw_mlp"),
+        "required_graph_value_over_raw_mlp": (
+            policy.minimum_graph_value_over_raw_mlp
+        ),
+        "message_passing_value_over_engineered_graph_mlp": final.get(
+            "message_passing_value_over_engineered_graph_mlp"
+        ),
+        "required_message_passing_value_over_engineered_graph_mlp": (
+            policy.minimum_message_passing_value_over_engineered_graph_mlp
+        ),
+        "admission_checks": final.get("admission_checks"),
     }
     if not admitted:
-        reason = (
-            "NO_VALIDATION_CANDIDATE" if not selected
-            else "NO_MESSAGE_PASSING_VALUE_OVER_BASELINES"
+        reason, reason_detail = _shared_admission_failure(
+            final, selected, policy
         )
 
         def publish_skip():
@@ -1075,10 +1116,7 @@ def _process_shared_multi_head(
             upsert_component_status(
                 conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
                 reason_code=reason,
-                reason_detail=(
-                    "V4 final temporal test did not pass both raw-feature and "
-                    "engineered-graph MLP admission margins; incumbent preserved."
-                ),
+                reason_detail=reason_detail,
                 diagnostics=diagnostics, run_id=run_id,
             )
 
@@ -1155,6 +1193,15 @@ def _guard_lease(lease_guard: Callable[[], None] | None) -> None:
         lease_guard()
 
 
+def _normalise_data_as_of_utc(value: datetime | None) -> datetime:
+    """Return one timezone-aware UTC cutoff for all reads in a tenant run."""
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _fence_lease(
     conn,
     lease_fence: Callable[[object], None] | None,
@@ -1169,9 +1216,11 @@ def _process_tenant(
     run_id: str | None = None,
     lease_guard: Callable[[], None] | None = None,
     lease_fence: Callable[[object], None] | None = None,
+    data_as_of_utc: datetime | None = None,
 ) -> str:
     t0 = time.monotonic()
     run_id = run_id or str(uuid.uuid4())
+    data_as_of_utc = _normalise_data_as_of_utc(data_as_of_utc)
     policy = load_active_policy(conn, tenant_id)
     if policy is None:
         _guard_lease(lease_guard)
@@ -1219,7 +1268,9 @@ def _process_tenant(
         if incumbent_selection else None
     )
 
-    users, nominations = G.fetch_tenant_rows(conn, tenant_id, policy.window_days)
+    users, nominations = G.fetch_tenant_rows(
+        conn, tenant_id, policy.window_days, data_as_of_utc
+    )
     behavior_nominations = [
         row for row in nominations
         if bool(row.get("IsBehaviorEligible", True))
@@ -1230,6 +1281,7 @@ def _process_tenant(
         "user_count": len(users),
         "gnn_policy_id": policy.policy_id,
         "gnn_policy_version": policy.policy_version,
+        "data_as_of_utc": data_as_of_utc.isoformat(),
         **({"selection": incumbent_selection} if incumbent_selection else {}),
     }
     if (len(behavior_nominations) < policy.minimum_training_samples
@@ -1251,7 +1303,12 @@ def _process_tenant(
         return (f"SKIPPED (below gate: {len(behavior_nominations)} nominations / {len(users)} users, "
                 f"need {policy.minimum_training_samples}/{policy.minimum_users})")
 
-    label_df = labels_mod.load_labels(conn, tenant_id, window_days=policy.window_days)
+    label_df = labels_mod.load_labels(
+        conn,
+        tenant_id,
+        window_days=policy.window_days,
+        data_as_of_utc=data_as_of_utc,
+    )
     labels_mod.summarise(label_df, tenant_id)
 
     # True training independence: only model-neutral outcomes may enter the GNN
@@ -1390,6 +1447,7 @@ def _process_tenant(
             users=users, nominations=nominations, labelled=labelled,
             folds=folds, base_diagnostics=base_diagnostics,
             label_source_counts=label_source_counts, started=t0,
+            data_as_of_utc=data_as_of_utc,
             lease_guard=lease_guard,
             lease_fence=lease_fence,
         )
@@ -1468,7 +1526,7 @@ def _process_tenant(
         nominations,
         causal_window_days=policy.window_days,
     )
-    as_of = date.today()
+    as_of = data_as_of_utc.date()
     run_suffix = run_id.replace("-", "")[:8]
     generation = "v3" if policy.serving_mode == SERVING_MODE_SPECIALISTS else "v2"
     model_version = f"gnn-{generation}-{as_of:%Y%m%d}-t{tenant_id}-{run_suffix}"
@@ -1818,12 +1876,18 @@ def process_tenant(
     run_id: str,
     lease_guard: Callable[[], None] | None = None,
     lease_fence: Callable[[object], None] | None = None,
+    data_as_of_utc: datetime | None = None,
 ) -> TenantStageResult:
     """Train one tenant and translate component status into stage history."""
     conn = RenewableConnection(connect, log_context=f"Tenant {tenant_id} GNN")
     try:
         result_text = _process_tenant(
-            conn, tenant_id, run_id, lease_guard, lease_fence
+            conn,
+            tenant_id,
+            run_id,
+            lease_guard,
+            lease_fence,
+            data_as_of_utc,
         )
         # Read the committed outcome through a separate short-lived session.
         conn.discard()
@@ -1895,6 +1959,7 @@ def process_tenant(
 def main(tenants_to_process: list | None = None) -> None:
     """Called by run_job.py. Signature matches every other stage."""
     run_id = str(uuid.uuid4())
+    data_as_of_utc = datetime.now(timezone.utc)
     logger.info("GNN MODEL TRAINING - Multi-Tenant")
     logger.info(
         "Each tenant's active dbo.GNNScoringPolicies row is read immediately "
@@ -1918,7 +1983,9 @@ def main(tenants_to_process: list | None = None) -> None:
     for tenant_id in tenants:
         logger.info("Tenant %d", tenant_id)
         try:
-            outcome = process_tenant(tenant_id, run_id)
+            outcome = process_tenant(
+                tenant_id, run_id, data_as_of_utc=data_as_of_utc
+            )
             results[tenant_id] = outcome.status
         except Exception as exc:
             logger.error("Tenant %d failed: %s", tenant_id, exc, exc_info=True)

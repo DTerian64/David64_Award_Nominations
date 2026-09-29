@@ -1,5 +1,6 @@
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -105,6 +106,31 @@ class HumanConfirmedLabelTests(unittest.TestCase):
 
         self.assertTrue(result.loc[0, "IsFraud"] is pd.NA)
         self.assertEqual(result.loc[0, "LabelSource"], labels.SOURCE_UNLABELLED)
+
+    @patch.object(labels.pd, "read_sql")
+    def test_windowed_labels_use_explicit_data_cutoff(self, read_sql):
+        read_sql.return_value = pd.DataFrame(columns=[
+            "NominationId", "IsFraud", "LabelSource",
+        ])
+        cutoff = datetime(2026, 9, 29, 2, 10, 11, tzinfo=timezone.utc)
+
+        labels.load_labels(
+            object(), tenant_id=3, window_days=365, data_as_of_utc=cutoff
+        )
+
+        query = read_sql.call_args.args[0]
+        self.assertIn("DATEADD(DAY, -?, ?)", query)
+        self.assertIn("n.NominationDate <= ?", query)
+        self.assertNotIn("GETDATE()", query)
+        self.assertEqual(
+            read_sql.call_args.kwargs["params"],
+            [
+                3,
+                365,
+                datetime(2026, 9, 29, 2, 10, 11),
+                datetime(2026, 9, 29, 2, 10, 11),
+            ],
+        )
 
     @patch.object(labels.pd, "read_sql")
     def test_synthetic_label_on_non_synthetic_tenant_is_rejected(self, read_sql):

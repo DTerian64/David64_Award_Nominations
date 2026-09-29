@@ -16,6 +16,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable
 
 
@@ -38,6 +39,7 @@ class LeaseLostError(CoordinationError):
 class JobRun:
     run_id: str
     execution_name: str
+    data_as_of_utc: datetime
     preparation_status: str
     finalization_status: str
     result_status: str
@@ -93,7 +95,8 @@ WHEN NOT MATCHED THEN INSERT (
     source.ExecutionName, source.JobName, ?, ?
 )
 OUTPUT inserted.RunId, inserted.ExecutionName, inserted.PreparationStatus,
-       inserted.FinalizationStatus, inserted.ResultStatus;
+       inserted.FinalizationStatus, inserted.ResultStatus,
+       inserted.DataAsOfUtc;
 """
 
 
@@ -348,7 +351,14 @@ class IntegrityAnalyticsCoordinator:
         )
         if row is None:
             raise CoordinationError("Execution registration returned no row")
-        return JobRun(str(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4]))
+        return JobRun(
+            run_id=str(row[0]),
+            execution_name=str(row[1]),
+            preparation_status=str(row[2]),
+            finalization_status=str(row[3]),
+            result_status=str(row[4]),
+            data_as_of_utc=row[5],
+        )
 
     def try_begin_preparation(self, run_id: str, worker_id: str) -> bool:
         return self._execute_one(

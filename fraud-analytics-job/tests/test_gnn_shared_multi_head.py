@@ -19,6 +19,7 @@ from modeling.gnn.evaluators.selection_by_temporal_validation.evaluator import (
 )
 from modeling.gnn.evaluators.metrics import display_threshold_metrics
 from modeling.gnn import graph as G
+from modeling.train_gnn_model import _shared_admission_failure
 from tests.synthetic import make_tenant
 
 
@@ -83,6 +84,18 @@ def test_architecture_selection_uses_overall_then_pattern_tie_breaker():
     }
     assert select_shared_architecture(candidates, 0.01)["selected_architecture"] == "gatv2"
     assert select_shared_architecture(candidates, 0.001)["selected_architecture"] == "graphsage"
+
+
+def test_raw_mlp_admission_margin_has_specific_skip_reason():
+    policy = SimpleNamespace(minimum_graph_value_over_raw_mlp=0.02)
+
+    reason, detail = _shared_admission_failure(
+        {"graph_value_over_raw_mlp": 0.008812}, "gatv2", policy
+    )
+
+    assert reason == "INSUFFICIENT_GRAPH_VALUE_OVER_RAW_MLP"
+    assert "0.008812" in detail
+    assert "0.020000" in detail
 
 
 def test_display_threshold_diagnostics_match_inference_score_rounding():

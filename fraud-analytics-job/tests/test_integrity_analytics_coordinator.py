@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -77,15 +78,25 @@ def _coordinator(row=None, error=None):
 
 
 def test_registration_is_idempotent_by_execution_name_and_returns_shared_run():
-    row = (RUN_ID, "execution-42", "PENDING", "PENDING", "RUNNING")
+    data_as_of = datetime(2026, 9, 29, 2, 10, 11, 467000)
+    row = (
+        RUN_ID,
+        "execution-42",
+        "PENDING",
+        "PENDING",
+        "RUNNING",
+        data_as_of,
+    )
     coordinator, connection = _coordinator(row)
 
     run = coordinator.register_execution("execution-42", "analytics-sandbox")
 
     assert run.run_id == RUN_ID
     assert run.result_status == "RUNNING"
+    assert run.data_as_of_utc == data_as_of
     assert "MERGE ops.IntegrityAnalyticsJobRuns WITH (HOLDLOCK)" in REGISTER_EXECUTION_SQL
     assert "ExecutionName" in REGISTER_EXECUTION_SQL
+    assert "inserted.DataAsOfUtc" in REGISTER_EXECUTION_SQL
     assert connection.cursor_value.sql.count("?") == len(connection.cursor_value.params)
     assert connection.committed and connection.closed
 

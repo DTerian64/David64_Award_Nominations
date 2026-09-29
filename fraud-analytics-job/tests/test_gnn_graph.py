@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -66,7 +66,13 @@ class _RecordingConnection:
 def test_loader_uses_p2p_behavior_statuses_and_canonical_label_targets():
     connection = _RecordingConnection()
 
-    G.fetch_tenant_rows(connection, tenant_id=3, window_days=180)
+    data_as_of = datetime(2026, 9, 29, 2, 10, 11, tzinfo=timezone.utc)
+    G.fetch_tenant_rows(
+        connection,
+        tenant_id=3,
+        window_days=180,
+        data_as_of_utc=data_as_of,
+    )
 
     sql, params = connection.recording_cursor.calls[0]
     assert "n.Status IN ('Pending', 'Approved', 'Paid')" in sql
@@ -75,7 +81,15 @@ def test_loader_uses_p2p_behavior_statuses_and_canonical_label_targets():
     assert "idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')" in sql
     assert "idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')" in sql
     assert "ApproverId" not in sql
-    assert params == (3, 180)
+    assert "DATEADD(DAY, -?, ?)" in sql
+    assert "n.NominationDate <= ?" in sql
+    assert "GETDATE()" not in sql
+    assert params == (
+        3,
+        180,
+        datetime(2026, 9, 29, 2, 10, 11),
+        datetime(2026, 9, 29, 2, 10, 11),
+    )
 
 
 def test_artifact_behavior_contract_includes_confirmed_rejected_history():
