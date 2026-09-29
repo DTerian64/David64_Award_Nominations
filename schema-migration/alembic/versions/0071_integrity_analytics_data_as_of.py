@@ -21,6 +21,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Keep each schema transition in its own SQL batch. SQL Server compiles an
+    # entire batch before executing it, so a later statement cannot safely
+    # reference a column added by an earlier statement in that same batch.
     op.execute("""
         IF COL_LENGTH(
             'ops.IntegrityAnalyticsJobRuns', 'DataAsOfUtc'
@@ -28,15 +31,35 @@ def upgrade() -> None:
         BEGIN
             ALTER TABLE ops.IntegrityAnalyticsJobRuns
                 ADD DataAsOfUtc DATETIME2(3) NULL;
+        END;
+    """)
 
+    op.execute("""
+        IF COL_LENGTH(
+            'ops.IntegrityAnalyticsJobRuns', 'DataAsOfUtc'
+        ) IS NOT NULL
+        BEGIN
             UPDATE ops.IntegrityAnalyticsJobRuns
             SET DataAsOfUtc = StartedAt
             WHERE DataAsOfUtc IS NULL;
+        END;
+    """)
 
+    op.execute("""
+        IF EXISTS (
+            SELECT 1
+            FROM sys.columns
+            WHERE object_id = OBJECT_ID(N'ops.IntegrityAnalyticsJobRuns')
+              AND name = N'DataAsOfUtc'
+              AND is_nullable = 1
+        )
+        BEGIN
             ALTER TABLE ops.IntegrityAnalyticsJobRuns
                 ALTER COLUMN DataAsOfUtc DATETIME2(3) NOT NULL;
         END;
+    """)
 
+    op.execute("""
         IF NOT EXISTS (
             SELECT 1
             FROM sys.default_constraints AS dc
@@ -70,7 +93,9 @@ def downgrade() -> None:
             ALTER TABLE ops.IntegrityAnalyticsJobRuns
                 DROP CONSTRAINT DF_IntegrityAnalyticsJobRuns_DataAsOfUtc;
         END;
+    """)
 
+    op.execute("""
         IF COL_LENGTH(
             'ops.IntegrityAnalyticsJobRuns', 'DataAsOfUtc'
         ) IS NOT NULL

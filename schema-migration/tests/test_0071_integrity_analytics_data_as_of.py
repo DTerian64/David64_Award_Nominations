@@ -31,6 +31,11 @@ def test_upgrade_adds_backfills_and_defaults_shared_cutoff():
     assert "SET DataAsOfUtc = StartedAt" in ddl
     assert "ALTER COLUMN DataAsOfUtc DATETIME2(3) NOT NULL" in ddl
     assert "DEFAULT SYSUTCDATETIME() FOR DataAsOfUtc" in ddl
+    assert len(executed) == 4
+    assert "ADD DataAsOfUtc" in executed[0]
+    assert "SET DataAsOfUtc = StartedAt" in executed[1]
+    assert "ALTER COLUMN DataAsOfUtc" in executed[2]
+    assert "DEFAULT SYSUTCDATETIME() FOR DataAsOfUtc" in executed[3]
 
 
 def test_downgrade_removes_default_before_column():
@@ -39,4 +44,5 @@ def test_downgrade_removes_default_before_column():
         migration.downgrade()
 
     ddl = "\n".join(executed)
+    assert len(executed) == 2
     assert ddl.index("DROP CONSTRAINT") < ddl.index("DROP COLUMN DataAsOfUtc")
