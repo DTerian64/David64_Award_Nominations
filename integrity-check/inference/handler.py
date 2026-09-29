@@ -6,7 +6,7 @@ Orchestrates the full fraud assessment lifecycle for a single nomination:
   2. Load nomination details + tenant desc_check_config from DB
   3. Run description_check (Check A + Check B) and retain its evidence
   4. Run RF, graph analytics, and GNN as separate component scorers
-  5. Persist the canonical dbo.IntegrityDecisionResults record
+  5. Persist the canonical integrity.IntegrityDecisionResults record
   6. Apply the explicit rules-based routing policy using all available evidence
   7. Re-publish nomination.created, nomination.fraud-flagged, or rejection
 

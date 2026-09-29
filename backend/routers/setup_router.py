@@ -230,7 +230,7 @@ async def update_category(category_id: int, payload: CategoryPayload,
 
 # ── Scoring & Routing ────────────────────────────────────────────────────────
 # Edits RF routing and semantic pre-check settings. GNN is independently owned
-# by the versioned dbo.GNNScoringPolicies contract below.
+# by the versioned integrity.GNNScoringPolicies contract below.
 
 class FraudConfig(BaseModel):
     graph_window_days: Optional[int] = Field(default=None, gt=0)

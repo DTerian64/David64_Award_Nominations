@@ -58,10 +58,10 @@ def load_request_context(request: ExplanationRequest) -> RequestContext:
                    decision.GnnResultJson, policy.ConfigurationJson
             FROM dbo.Nominations n
             JOIN dbo.Users owner ON owner.UserId = n.NominatorId
-            JOIN dbo.IntegrityDecisionResults decision
+            JOIN integrity.IntegrityDecisionResults decision
               ON decision.NominationId = n.NominationId
              AND decision.TenantId = owner.TenantId
-            JOIN dbo.GNNScoringPolicies policy
+            JOIN integrity.GNNScoringPolicies policy
               ON policy.TenantId = owner.TenantId AND policy.Status = 'ACTIVE'
             WHERE n.NominationId = ? AND owner.TenantId = ?
         """, request.nomination_id, request.tenant_id)
@@ -113,7 +113,7 @@ def claim_request(request: ExplanationRequest, delivery_count: int) -> bool:
     with _get_conn() as connection:
         cursor = connection.cursor()
         cursor.execute("""
-            UPDATE dbo.IntegrityDecisionResults
+            UPDATE integrity.IntegrityDecisionResults
             SET GnnResultJson = JSON_MODIFY(
                     GnnResultJson, '$.explanation', JSON_QUERY(?)
                 ),
@@ -154,7 +154,7 @@ def get_versioned_embeddings(
                            PARTITION BY UserId
                            ORDER BY AsOfDate DESC, LastUpdatedUtc DESC
                        ) AS row_rank
-                FROM dbo.GNN_UserEmbeddings
+                FROM integrity.GNN_UserEmbeddings
                 WHERE TenantId = ? AND ModelVersion = ?
                   AND UserId IN ({placeholders})
             )
@@ -172,7 +172,7 @@ def finish_request(request: ExplanationRequest, explanation: dict) -> bool:
     with _get_conn() as connection:
         cursor = connection.cursor()
         cursor.execute("""
-            UPDATE dbo.IntegrityDecisionResults
+            UPDATE integrity.IntegrityDecisionResults
             SET GnnResultJson = JSON_MODIFY(
                     GnnResultJson, '$.explanation', JSON_QUERY(?)
                 ),

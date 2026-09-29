@@ -38,7 +38,7 @@ SELECT n.NominationId, n.Amount,
        JSON_QUERY(idr.RfResultJson, '$.findings') AS FindingsJson
 FROM   dbo.Nominations n
 JOIN   dbo.Users u_nom ON u_nom.UserId = n.NominatorId
-LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+LEFT JOIN integrity.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
 WHERE  u_nom.TenantId = <TenantId>
   AND  n.NominatorId  = <UserId>
 ```

@@ -2,7 +2,7 @@
 
 Purpose:
     Ensure a structured reason, diagnostics, and serving/attempt state are sent
-    atomically to dbo.IntegrityComponentStatus.
+    atomically to integrity.IntegrityComponentStatus.
 
 Usage (PowerShell):
 
@@ -73,7 +73,7 @@ class ComponentStatusTests(unittest.TestCase):
         )
 
         self.assertTrue(conn.committed)
-        self.assertIn("MERGE dbo.IntegrityComponentStatus", conn.cursor_value.sql)
+        self.assertIn("MERGE integrity.IntegrityComponentStatus", conn.cursor_value.sql)
         self.assertEqual(conn.cursor_value.sql.count("?"), len(conn.cursor_value.params))
         self.assertIn("BELOW_MINIMUM_VOLUME", conn.cursor_value.params)
         diagnostic_values = [

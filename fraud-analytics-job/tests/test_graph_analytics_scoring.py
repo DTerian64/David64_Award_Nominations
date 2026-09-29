@@ -293,7 +293,7 @@ def test_clean_run_uses_status_as_marker_and_writes_no_user_rows():
         as_of_date="2026-08-31", run_id="run-clean",
     )
     sql = "\n".join(statement for statement, _params in connection.cursor_value.executions)
-    assert "DELETE FROM dbo.UserGraphFlags" in sql
+    assert "DELETE FROM integrity.UserGraphFlags" in sql
     assert "GraphSnapshotRuns" not in sql
     assert "ApproverPairFlags" not in sql
     assert connection.cursor_value.batches == []
@@ -332,7 +332,7 @@ def test_repeated_runs_match_existing_hash_without_run_or_policy_in_identity():
     for run_id in ('run-1', 'run-2'):
         finding = graph._finding(7, run_id, 'Ring', 'High', [1, 2, 3], [11, 12, 13],
                                  'Same recurring ring', policy=POLICY, signals={'exposure': 0.6})
-        graph._save_findings(connection, [finding, finding], 'dbo.GraphPatternFindings')
+        graph._save_findings(connection, [finding, finding], 'integrity.GraphPatternFindings')
     assert len(connection.cursor_value.batches) == 2
     assert all(len(rows) == 1 for _, rows in connection.cursor_value.batches)
     statement = connection.cursor_value.batches[0][0]
@@ -361,7 +361,7 @@ def test_evidence_identity_ignores_policy_but_latest_assessment_is_rescored():
     assert old['FindingScore'] != new['FindingScore']
     assert old['ScoringPolicyVersion'] != new['ScoringPolicyVersion']
     connection = _Connection()
-    graph._save_findings(connection, [new], 'dbo.GraphPatternFindings')
+    graph._save_findings(connection, [new], 'integrity.GraphPatternFindings')
     statement, rows = connection.cursor_value.batches[0]
     assert 'FindingScore=src.FindingScore' in statement
     assert rows[0][10] == new['FindingScore']

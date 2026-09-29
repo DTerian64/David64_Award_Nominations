@@ -86,7 +86,7 @@ _SELECT_ACTIVE = """
         p.ExplanationEnabled, p.ExplanationMinimumRisk,
         TRY_CONVERT(int, JSON_VALUE(CAST(t.integrity_config AS nvarchar(max)),
             '$.gnn.window_days'))
-    FROM dbo.GNNScoringPolicies p
+    FROM integrity.GNNScoringPolicies p
     JOIN dbo.Tenants t ON t.TenantId=p.TenantId
     WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
     ORDER BY p.PolicyVersion DESC

@@ -1278,7 +1278,7 @@ def get_pair_nomination_history(
                 JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
                 LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
-                LEFT JOIN dbo.IntegrityDecisionResults idr
+                LEFT JOIN integrity.IntegrityDecisionResults idr
                        ON idr.NominationId = n.NominationId
                 WHERE nom.TenantId = :tenant_id
                   AND n.NominationId != :exclude_id
@@ -1441,7 +1441,7 @@ def get_review_rate(tenant_id: int, days: int = 180) -> dict:
                         AS FlaggedNominations
                 FROM Nominations n
                 JOIN Users u ON n.NominatorId = u.UserId
-                LEFT JOIN dbo.IntegrityDecisionResults idr
+                LEFT JOIN integrity.IntegrityDecisionResults idr
                        ON idr.NominationId = n.NominationId
                 WHERE n.NominationDate >= DATEADD(DAY, :neg_days, CAST(GETDATE() AS DATE))
                   AND u.TenantId = :tenant_id
@@ -1648,7 +1648,7 @@ def get_fraud_alerts(tenant_id: int, limit: int = 20) -> List[Tuple]:
                     beneficiary.LastName  AS BeneficiaryLastName,
                     n.Amount,
                     n.NominationDate
-                FROM dbo.IntegrityDecisionResults idr
+                FROM integrity.IntegrityDecisionResults idr
                 JOIN Nominations n     ON idr.NominationId = n.NominationId
                 JOIN Users nominator   ON n.NominatorId    = nominator.UserId
                 JOIN Users beneficiary ON n.BeneficiaryId  = beneficiary.UserId
@@ -1786,7 +1786,7 @@ def get_integrity_runs(tenant_id: int) -> list[dict]:
                      COUNT(*)         AS TotalFindings,
                      MIN(CAST(SnapshotComplete AS INT)) AS SnapshotComplete,
                      MIN(ScoringPolicyVersion) AS PolicyVersion
-            FROM     dbo.GraphPatternFindings
+            FROM     integrity.GraphPatternFindings
             WHERE    TenantId = :tid
             GROUP BY RunId
             ORDER BY MIN(DetectedAt) DESC
@@ -1806,7 +1806,7 @@ def get_integrity_runs(tenant_id: int) -> list[dict]:
         # a successful run with zero findings. Failed refreshes retain it.
         marker = session.execute(text("""
             SELECT RunId, ServingAsOf, DiagnosticsJson, ServingStatus
-            FROM dbo.IntegrityComponentStatus WHERE TenantId=:tid AND Component='GRAPH'
+            FROM integrity.IntegrityComponentStatus WHERE TenantId=:tid AND Component='GRAPH'
         """), {"tid": tenant_id}).fetchone()
         if marker and marker[0] and marker[1] and marker[3] == 'AVAILABLE':
             try:
@@ -1828,8 +1828,8 @@ def get_integrity_runs(tenant_id: int) -> list[dict]:
                     current['snapshotComplete'] = True
         patterns = session.execute(text("""
             SELECT p.PolicyVersion, x.PatternType, x.DisplayOrder, x.Enabled, x.EnabledForRouting
-            FROM dbo.GraphScoringPolicies p
-            JOIN dbo.GraphScoringPatternParameters x ON x.PolicyId=p.PolicyId
+            FROM integrity.GraphScoringPolicies p
+            JOIN integrity.GraphScoringPatternParameters x ON x.PolicyId=p.PolicyId
             WHERE p.TenantId=:tid ORDER BY p.PolicyVersion, x.DisplayOrder
         """), {"tid": tenant_id}).fetchall()
         for run in runs:
@@ -1854,7 +1854,7 @@ def get_integrity_findings(tenant_id: int, run_id: str) -> list[dict]:
             SELECT FindingId, PatternType, Severity,
                    AffectedUsers, NominationIds, Detail, DetectedAt, TotalAmount,
                    FindingScore, ScoringPolicyVersion
-            FROM   dbo.GraphPatternFindings
+            FROM   integrity.GraphPatternFindings
             WHERE  TenantId = :tid
               AND  RunId    = :run_id
             ORDER BY
@@ -1901,7 +1901,7 @@ def get_finding_with_nominations(finding_id: int, tenant_id: int) -> dict | None
         finding_row = session.execute(text("""
             SELECT FindingId, PatternType, Severity,
                    AffectedUsers, NominationIds, Detail, DetectedAt, TotalAmount
-            FROM   dbo.GraphPatternFindings
+            FROM   integrity.GraphPatternFindings
             WHERE  FindingId = :fid
               AND  TenantId  = :tid
         """), {"fid": finding_id, "tid": tenant_id}).fetchone()
@@ -2333,7 +2333,7 @@ def apply_hrbp_adjudication(
         current = session.execute(
             text("""
                 SELECT ReviewScope, HumanReviewOutcome
-                FROM dbo.IntegrityDecisionResults
+                FROM integrity.IntegrityDecisionResults
                 WHERE NominationId = :nomination_id
             """),
             {"nomination_id": nomination_id},
@@ -2356,7 +2356,7 @@ def apply_hrbp_adjudication(
 
         integrity_result = session.execute(
             text("""
-                UPDATE dbo.IntegrityDecisionResults
+                UPDATE integrity.IntegrityDecisionResults
                 SET HumanReviewOutcome = :outcome,
                     TrainingDisposition = :training_disposition,
                     TrainingDispositionSource = 'HUMAN_INVESTIGATION',
@@ -2663,7 +2663,7 @@ def get_hrbp_queue(tenant_id: int) -> list[dict]:
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId      = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId      = n.BeneficiaryId
-                JOIN dbo.IntegrityDecisionResults idr
+                JOIN integrity.IntegrityDecisionResults idr
                     ON idr.NominationId = n.NominationId
                 WHERE n.Status    = 'PendingHRBPReview'
                   AND nom.TenantId = :tenant_id
@@ -2720,7 +2720,7 @@ def search_model_analysis_nominations(
                 FROM dbo.Nominations n
                 JOIN dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+                LEFT JOIN integrity.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
             """ + where),
             params,
         ).scalar_one()
@@ -2738,7 +2738,7 @@ def search_model_analysis_nominations(
                 JOIN dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
                 LEFT JOIN dbo.nomination_categories nc ON nc.id = n.CategoryId
-                LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+                LEFT JOIN integrity.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
             """ + where + """
                 ORDER BY n.NominationDate DESC, n.NominationId DESC
                 OFFSET :offset ROWS FETCH NEXT :page_size ROWS ONLY
@@ -2783,7 +2783,7 @@ def get_model_analysis_nomination(nomination_id: int, tenant_id: int) -> Optiona
                 FROM dbo.Nominations n
                 JOIN dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+                LEFT JOIN integrity.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
                 WHERE n.NominationId = :nid AND nom.TenantId = :tid
             """),
             {"nid": nomination_id, "tid": tenant_id},
@@ -2897,7 +2897,7 @@ def get_sla_breached_nominations(sla_hours: int) -> list[dict]:
                 FROM   dbo.Nominations n
                 JOIN   dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN   dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.IntegrityDecisionResults idr
+                LEFT JOIN integrity.IntegrityDecisionResults idr
                        ON idr.NominationId = n.NominationId
                 WHERE  n.Status = 'PendingHRBPReview'
                   AND  n.NominationDate < DATEADD(HOUR, :neg_hours, GETUTCDATE())
@@ -2952,7 +2952,7 @@ def get_nomination_details_for_hrbp(nomination_id: int) -> dict | None:
                 FROM  dbo.Nominations n
                 JOIN  dbo.Users nom ON nom.UserId = n.NominatorId
                 JOIN  dbo.Users ben ON ben.UserId = n.BeneficiaryId
-                LEFT JOIN dbo.IntegrityDecisionResults idr
+                LEFT JOIN integrity.IntegrityDecisionResults idr
                     ON idr.NominationId = n.NominationId
                 WHERE n.NominationId = :nomination_id
             """),
@@ -3623,7 +3623,7 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
                        serving.DetectorWindows AS ServingDetectorWindows
                 FROM dbo.Tenants t
                 CROSS JOIN (VALUES ('RF'), ('GRAPH'), ('GNN')) engine(Component)
-                LEFT JOIN dbo.IntegrityComponentStatus s
+                LEFT JOIN integrity.IntegrityComponentStatus s
                   ON s.TenantId=t.TenantId AND s.Component=engine.Component
                 OUTER APPLY (
                     SELECT TOP 1 TRY_CONVERT(int, JSON_VALUE(
@@ -3633,7 +3633,7 @@ def get_integrity_component_statuses(tenant_id: int) -> List[dict]:
                         JSON_QUERY(CASE WHEN ISJSON(CAST(h.DiagnosticsJson AS nvarchar(max)))=1
                             THEN CAST(h.DiagnosticsJson AS nvarchar(max)) ELSE '{}' END,
                             '$.detector_windows') AS DetectorWindows
-                    FROM dbo.IntegrityComponentStatus FOR SYSTEM_TIME ALL h
+                    FROM integrity.IntegrityComponentStatus FOR SYSTEM_TIME ALL h
                     WHERE h.TenantId=t.TenantId AND h.Component=engine.Component
                       AND h.ServingVersion=s.ServingVersion AND h.LastAttemptStatus='SUCCEEDED'
                       AND h.LastAttemptAt=s.LastSuccessfulAt
@@ -3735,7 +3735,7 @@ def get_gnn_training_runs(tenant_id: int, limit: int = 25) -> List[dict]:
                                PARTITION BY RunId
                                ORDER BY LastAttemptAt DESC, ValidFrom DESC
                            ) AS VersionRank
-                    FROM dbo.IntegrityComponentStatus FOR SYSTEM_TIME ALL
+                    FROM integrity.IntegrityComponentStatus FOR SYSTEM_TIME ALL
                     WHERE TenantId = :tid
                       AND Component = 'GNN'
                       AND RunId IS NOT NULL
@@ -3764,7 +3764,7 @@ def get_gnn_training_run(tenant_id: int, run_id: str) -> Optional[dict]:
                        LastAttemptStatus, ReasonCode, ReasonDetail,
                        DiagnosticsJson, LastAttemptAt, LastSuccessfulAt,
                        RunId, UpdatedAt, UpdatedBy, ValidFrom, ValidTo
-                FROM dbo.IntegrityComponentStatus FOR SYSTEM_TIME ALL
+                FROM integrity.IntegrityComponentStatus FOR SYSTEM_TIME ALL
                 WHERE TenantId = :tid
                   AND Component = 'GNN'
                   AND RunId = :run_id
@@ -3797,7 +3797,7 @@ def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
                    ) ELSE p.DetectionWindowDays END,
                    p.SnapshotMaxAgeDays,
                    p.CreatedAt, p.CreatedBy, p.UpdatedAt, p.UpdatedBy, p.PublishedAt, p.PublishedBy
-            FROM dbo.GraphScoringPolicies p
+            FROM integrity.GraphScoringPolicies p
             JOIN dbo.Tenants t ON t.TenantId=p.TenantId
             WHERE p.TenantId = :tid
             ORDER BY p.PolicyVersion DESC
@@ -3811,7 +3811,7 @@ def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
                 SELECT PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                        ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                        ParametersJson, CandidateEvaluationJson
-                FROM dbo.GraphScoringPatternParameters
+                FROM integrity.GraphScoringPatternParameters
                 WHERE PolicyId IN ({placeholders})
                 ORDER BY PolicyId, DisplayOrder
             """), params).fetchall()
@@ -3821,7 +3821,7 @@ def get_graph_scoring_policy_bundle(tenant_id: int) -> dict:
                    SuggestedParametersJson, SupportingNominationIdsJson,
                    Status, RequestedAt, RequestedBy, ReviewedAt, ReviewedBy,
                    AdminResponse
-            FROM dbo.GraphScoringChangeRequests
+            FROM integrity.GraphScoringChangeRequests
             WHERE TenantId = :tid
             ORDER BY RequestedAt DESC
         """), {"tid": tenant_id}).fetchall()
@@ -3907,14 +3907,14 @@ def create_graph_scoring_change_request(
                     "One or more supporting nominations are outside your organization"
                 )
         request_id = session.execute(text("""
-            INSERT INTO dbo.GraphScoringChangeRequests (
+            INSERT INTO integrity.GraphScoringChangeRequests (
                 TenantId, PolicyId, PatternType, RequestText,
                 SuggestedParametersJson, SupportingNominationIdsJson, RequestedBy
             )
             OUTPUT INSERTED.RequestId
             SELECT :tid, PolicyId, :pattern, :request_text,
                    :suggested, :nominations, :actor
-            FROM dbo.GraphScoringPolicies
+            FROM integrity.GraphScoringPolicies
             WHERE TenantId=:tid AND Status='ACTIVE'
         """), {
             "tid": tenant_id, "pattern": pattern_type,
@@ -3936,7 +3936,7 @@ def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
     """Clone the active policy; return the existing draft when one is present."""
     with get_db_context() as session:
         existing = session.execute(text("""
-            SELECT TOP 1 PolicyId FROM dbo.GraphScoringPolicies
+            SELECT TOP 1 PolicyId FROM integrity.GraphScoringPolicies
             WHERE TenantId=:tid AND Status='DRAFT'
         """), {"tid": tenant_id}).scalar_one_or_none()
         if existing is not None:
@@ -3948,7 +3948,7 @@ def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
                        CAST(t.integrity_config AS nvarchar(max)),
                        '$.graph_pattern.detection_window_days'
                    )), 180), p.SnapshotMaxAgeDays
-            FROM dbo.GraphScoringPolicies p
+            FROM integrity.GraphScoringPolicies p
             JOIN dbo.Tenants t ON t.TenantId=p.TenantId
             WHERE p.TenantId=:tid AND p.Status='ACTIVE'
         """), {"tid": tenant_id}).fetchone()
@@ -3956,7 +3956,7 @@ def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
             raise ValueError("No active Graph Analytics policy exists")
         next_version = int(active[1]) + 1
         draft_id = session.execute(text("""
-            INSERT INTO dbo.GraphScoringPolicies (
+            INSERT INTO integrity.GraphScoringPolicies (
                 TenantId, PolicyVersion, Status, ScoringStrategy,
                 LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
                 DetectionWindowDays, SnapshotMaxAgeDays, CreatedBy, UpdatedBy
@@ -3970,7 +3970,7 @@ def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
             "actor": actor,
         }).scalar_one()
         session.execute(text("""
-            INSERT INTO dbo.GraphScoringPatternParameters (
+            INSERT INTO integrity.GraphScoringPatternParameters (
                 PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                 ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                 ParametersJson, CandidateEvaluationJson, CreatedBy, UpdatedBy
@@ -3978,7 +3978,7 @@ def create_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
             SELECT :draft_id, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                    ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                    ParametersJson, CandidateEvaluationJson, :actor, :actor
-            FROM dbo.GraphScoringPatternParameters WHERE PolicyId=:active_id
+            FROM integrity.GraphScoringPatternParameters WHERE PolicyId=:active_id
         """), {"draft_id": draft_id, "active_id": active[0], "actor": actor})
         session.commit()
         return int(draft_id)
@@ -3991,14 +3991,14 @@ def update_graph_scoring_policy_draft(
 ) -> None:
     with get_db_context() as session:
         draft_id = session.execute(text("""
-            SELECT TOP 1 PolicyId FROM dbo.GraphScoringPolicies
+            SELECT TOP 1 PolicyId FROM integrity.GraphScoringPolicies
             WHERE TenantId=:tid AND Status='DRAFT'
         """), {"tid": tenant_id}).scalar_one_or_none()
         if draft_id is None:
             raise ValueError("Create a draft policy before editing")
         thresholds = payload["thresholds"]
         session.execute(text("""
-            UPDATE dbo.GraphScoringPolicies SET
+            UPDATE integrity.GraphScoringPolicies SET
                 LowThreshold=:low, MediumThreshold=:medium,
                 HighThreshold=:high, CriticalThreshold=:critical,
                 DetectionWindowDays=:window, SnapshotMaxAgeDays=:max_age,
@@ -4012,11 +4012,11 @@ def update_graph_scoring_policy_draft(
             "actor": actor, "policy_id": draft_id, "tid": tenant_id,
         })
         session.execute(text("""
-            DELETE FROM dbo.GraphScoringPatternParameters WHERE PolicyId=:policy_id
+            DELETE FROM integrity.GraphScoringPatternParameters WHERE PolicyId=:policy_id
         """), {"policy_id": draft_id})
         for pattern in payload["patterns"]:
             session.execute(text("""
-                INSERT INTO dbo.GraphScoringPatternParameters (
+                INSERT INTO integrity.GraphScoringPatternParameters (
                     PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                     ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                     ParametersJson, CandidateEvaluationJson, CreatedBy, UpdatedBy
@@ -4045,18 +4045,18 @@ def update_graph_scoring_policy_draft(
 def publish_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
     with get_db_context() as session:
         draft_id = session.execute(text("""
-            SELECT TOP 1 PolicyId FROM dbo.GraphScoringPolicies
+            SELECT TOP 1 PolicyId FROM integrity.GraphScoringPolicies
             WHERE TenantId=:tid AND Status='DRAFT'
         """), {"tid": tenant_id}).scalar_one_or_none()
         if draft_id is None:
             raise ValueError("No draft Graph Analytics policy exists")
         session.execute(text("""
-            UPDATE dbo.GraphScoringPolicies
+            UPDATE integrity.GraphScoringPolicies
             SET Status='RETIRED', UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
             WHERE TenantId=:tid AND Status='ACTIVE'
         """), {"tid": tenant_id, "actor": actor})
         session.execute(text("""
-            UPDATE dbo.GraphScoringPolicies
+            UPDATE integrity.GraphScoringPolicies
             SET Status='ACTIVE', PublishedAt=SYSUTCDATETIME(), PublishedBy=:actor,
                 UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
             WHERE PolicyId=:policy_id AND TenantId=:tid AND Status='DRAFT'
@@ -4073,7 +4073,7 @@ def publish_graph_scoring_policy_draft(tenant_id: int, actor: str) -> int:
                 ), '$.graph_pattern.detection_window_days', p.DetectionWindowDays
             )
             FROM dbo.Tenants t
-            JOIN dbo.GraphScoringPolicies p ON p.TenantId=t.TenantId
+            JOIN integrity.GraphScoringPolicies p ON p.TenantId=t.TenantId
             WHERE t.TenantId=:tid AND p.PolicyId=:policy_id
         """), {"tid": tenant_id, "policy_id": draft_id})
         session.commit()
@@ -4268,7 +4268,7 @@ def get_gnn_scoring_policy_bundle(tenant_id: int) -> dict:
                    p.ExplanationEnabled, p.ExplanationMinimumRisk,
                    p.CreatedAt, p.CreatedBy, p.UpdatedAt, p.UpdatedBy,
                    p.PublishedAt, p.PublishedBy
-            FROM dbo.GNNScoringPolicies p
+            FROM integrity.GNNScoringPolicies p
             JOIN dbo.Tenants t ON t.TenantId=p.TenantId
             WHERE p.TenantId=:tid
             ORDER BY p.PolicyVersion DESC
@@ -4289,13 +4289,13 @@ def create_gnn_scoring_policy_draft(tenant_id: int, actor: str) -> int:
     """Clone the active GNN policy; return an existing draft when present."""
     with get_db_context() as session:
         existing = session.execute(text("""
-            SELECT TOP 1 PolicyId FROM dbo.GNNScoringPolicies
+            SELECT TOP 1 PolicyId FROM integrity.GNNScoringPolicies
             WHERE TenantId=:tid AND Status='DRAFT'
         """), {"tid": tenant_id}).scalar_one_or_none()
         if existing is not None:
             return int(existing)
         draft_id = session.execute(text("""
-            INSERT INTO dbo.GNNScoringPolicies (
+            INSERT INTO integrity.GNNScoringPolicies (
                 TenantId, PolicyVersion, Status,
                 TrainingEnabled, InferenceEnabled,
                 ConfigurationJson,
@@ -4313,7 +4313,7 @@ def create_gnn_scoring_policy_draft(tenant_id: int, actor: str) -> int:
                    ),
                    p.ExplanationEnabled, p.ExplanationMinimumRisk,
                    :actor, :actor
-            FROM dbo.GNNScoringPolicies p
+            FROM integrity.GNNScoringPolicies p
             JOIN dbo.Tenants t ON t.TenantId=p.TenantId
             WHERE p.TenantId=:tid AND p.Status='ACTIVE'
         """), {"tid": tenant_id, "actor": actor}).scalar_one_or_none()
@@ -4331,7 +4331,7 @@ def update_gnn_scoring_policy_draft(
     )
     with get_db_context() as session:
         result = session.execute(text("""
-            UPDATE dbo.GNNScoringPolicies SET
+            UPDATE integrity.GNNScoringPolicies SET
                 TrainingEnabled=:training_enabled,
                 InferenceEnabled=:inference_enabled,
                 ConfigurationJson=:configuration,
@@ -4356,18 +4356,18 @@ def publish_gnn_scoring_policy_draft(tenant_id: int, actor: str) -> int:
     """Atomically retire the current policy and activate the tenant draft."""
     with get_db_context() as session:
         draft_id = session.execute(text("""
-            SELECT TOP 1 PolicyId FROM dbo.GNNScoringPolicies
+            SELECT TOP 1 PolicyId FROM integrity.GNNScoringPolicies
             WHERE TenantId=:tid AND Status='DRAFT'
         """), {"tid": tenant_id}).scalar_one_or_none()
         if draft_id is None:
             raise ValueError("No draft GNN policy exists")
         session.execute(text("""
-            UPDATE dbo.GNNScoringPolicies
+            UPDATE integrity.GNNScoringPolicies
             SET Status='RETIRED', UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
             WHERE TenantId=:tid AND Status='ACTIVE'
         """), {"tid": tenant_id, "actor": actor})
         session.execute(text("""
-            UPDATE dbo.GNNScoringPolicies
+            UPDATE integrity.GNNScoringPolicies
             SET Status='ACTIVE', PublishedAt=SYSUTCDATETIME(), PublishedBy=:actor,
                 UpdatedAt=SYSUTCDATETIME(), UpdatedBy=:actor
             WHERE PolicyId=:policy_id AND TenantId=:tid AND Status='DRAFT'
@@ -4386,7 +4386,7 @@ def publish_gnn_scoring_policy_draft(tenant_id: int, actor: str) -> int:
                 ))
             )
             FROM dbo.Tenants t
-            JOIN dbo.GNNScoringPolicies p ON p.TenantId=t.TenantId
+            JOIN integrity.GNNScoringPolicies p ON p.TenantId=t.TenantId
             WHERE t.TenantId=:tid AND p.PolicyId=:policy_id
         """), {"tid": tenant_id, "policy_id": draft_id})
         session.commit()
@@ -4402,7 +4402,7 @@ def review_graph_scoring_change_request(
 ) -> None:
     with get_db_context() as session:
         current_status = session.execute(text("""
-            SELECT Status FROM dbo.GraphScoringChangeRequests
+            SELECT Status FROM integrity.GraphScoringChangeRequests
             WHERE TenantId=:tid AND RequestId=:request_id
         """), {"tid": tenant_id, "request_id": request_id}).scalar_one_or_none()
         if current_status is None:
@@ -4421,11 +4421,11 @@ def review_graph_scoring_change_request(
         resolved_policy_id = None
         if status_value == "PUBLISHED":
             resolved_policy_id = session.execute(text("""
-                SELECT TOP 1 PolicyId FROM dbo.GraphScoringPolicies
+                SELECT TOP 1 PolicyId FROM integrity.GraphScoringPolicies
                 WHERE TenantId=:tid AND Status='ACTIVE'
             """), {"tid": tenant_id}).scalar_one_or_none()
         result = session.execute(text("""
-            UPDATE dbo.GraphScoringChangeRequests SET
+            UPDATE integrity.GraphScoringChangeRequests SET
                 Status=:status, AdminResponse=:response,
                 ReviewedAt=SYSUTCDATETIME(), ReviewedBy=:actor,
                 ResolvedPolicyId=COALESCE(:resolved_policy_id, ResolvedPolicyId)

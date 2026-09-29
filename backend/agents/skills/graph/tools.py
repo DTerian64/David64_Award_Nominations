@@ -39,7 +39,7 @@ async def _graph_search_user(name_fragment: str, tenant_id: int = 0) -> dict[str
         with sqlhelper.get_db_context() as session:
             rows = session.execute(text("""
                 SELECT TOP 20 p.UserId, p.FullName
-                FROM   dbo.NomGraph_Person p
+                FROM   integrity.NomGraph_Person p
                 WHERE  p.TenantId = :tid
                   AND  LOWER(p.FullName) LIKE LOWER(:pat)
                 ORDER BY p.FullName
@@ -61,7 +61,7 @@ async def _graph_get_nominations_sent(
                 SELECT TOP {min(limit, 200)}
                        p2.UserId, p2.FullName,
                        e.NominationId, e.Amount, e.Status, e.NomDate
-                FROM   dbo.NomGraph_Person p1, dbo.NomGraph_Nominated e, dbo.NomGraph_Person p2
+                FROM   integrity.NomGraph_Person p1, integrity.NomGraph_Nominated e, integrity.NomGraph_Person p2
                 WHERE  MATCH(p1-(e)->p2)
                   AND  p1.TenantId = :tid AND p1.UserId = :uid
                 ORDER BY e.NomDate DESC
@@ -87,7 +87,7 @@ async def _graph_get_nominations_received(
                 SELECT TOP {min(limit, 200)}
                        p1.UserId, p1.FullName,
                        e.NominationId, e.Amount, e.Status, e.NomDate
-                FROM   dbo.NomGraph_Person p1, dbo.NomGraph_Nominated e, dbo.NomGraph_Person p2
+                FROM   integrity.NomGraph_Person p1, integrity.NomGraph_Nominated e, integrity.NomGraph_Person p2
                 WHERE  MATCH(p1-(e)->p2)
                   AND  p2.TenantId = :tid AND p2.UserId = :uid
                 ORDER BY e.NomDate DESC
@@ -116,9 +116,9 @@ async def _graph_get_network(
                         LAST_VALUE(dest.UserId)   WITHIN GROUP (GRAPH PATH) AS DestUserId,
                         LAST_VALUE(dest.FullName) WITHIN GROUP (GRAPH PATH) AS DestFullName,
                         COUNT(e.NominationId)     WITHIN GROUP (GRAPH PATH) AS Hops
-                    FROM   dbo.NomGraph_Person src,
-                           dbo.NomGraph_Nominated FOR PATH e,
-                           dbo.NomGraph_Person    FOR PATH dest
+                    FROM   integrity.NomGraph_Person src,
+                           integrity.NomGraph_Nominated FOR PATH e,
+                           integrity.NomGraph_Person    FOR PATH dest
                     WHERE  MATCH(SHORTEST_PATH(src(-(e)->dest)+))
                       AND  src.UserId = :uid AND src.TenantId = :tid
                 ) sub WHERE Hops <= :depth ORDER BY Hops, DestUserId
@@ -145,9 +145,9 @@ async def _graph_find_path(
                             WITHIN GROUP (GRAPH PATH) AS Path,
                         COUNT(e.NominationId) WITHIN GROUP (GRAPH PATH) AS Hops,
                         LAST_VALUE(dest.UserId) WITHIN GROUP (GRAPH PATH) AS DestUserId
-                    FROM   dbo.NomGraph_Person src,
-                           dbo.NomGraph_Nominated FOR PATH e,
-                           dbo.NomGraph_Person    FOR PATH dest
+                    FROM   integrity.NomGraph_Person src,
+                           integrity.NomGraph_Nominated FOR PATH e,
+                           integrity.NomGraph_Person    FOR PATH dest
                     WHERE  MATCH(SHORTEST_PATH(src(-(e)->dest)+))
                       AND  src.UserId = :uid_a AND src.TenantId = :tid
                 ) sub WHERE DestUserId = :uid_b ORDER BY Hops
@@ -178,7 +178,7 @@ async def _graph_get_degree_leaders(
                        {pivot}.UserId, {pivot}.FullName,
                        COUNT(*)      AS NominationCount,
                        SUM(e.Amount) AS TotalAmount
-                FROM   dbo.NomGraph_Person p1, dbo.NomGraph_Nominated e, dbo.NomGraph_Person p2
+                FROM   integrity.NomGraph_Person p1, integrity.NomGraph_Nominated e, integrity.NomGraph_Person p2
                 WHERE  MATCH(p1-(e)->p2) AND p1.TenantId = :tid
                 GROUP BY {pivot}.UserId, {pivot}.FullName
                 ORDER BY NominationCount DESC, TotalAmount DESC
@@ -235,7 +235,7 @@ async def _graph_get_integrity_findings(
                        FindingId, PatternType, Severity,
                        AffectedUsers, NominationIds, TotalAmount,
                        Detail, DetectedAt, RunId, FindingScore, ScoringPolicyVersion
-                FROM   dbo.GraphPatternFindings
+                FROM   integrity.GraphPatternFindings
                 WHERE  {where}
                 ORDER BY
                     CASE Severity

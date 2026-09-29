@@ -69,7 +69,7 @@ WHERE  ur.Role     = 'HRBP'
 | ApprovedDate          | DATETIME2      |                                                  |
 | PayedDate             | DATETIME2      |                                                  |
 
-## dbo.IntegrityDecisionResults
+## integrity.IntegrityDecisionResults
 Canonical nomination-time record for RF, Graph, GNN, Semantic, composite
 routing, and subsequent HRBP adjudication. Component evidence is stored in
 `RfResultJson`, `GraphResultJson`, `GnnResultJson`, and `SemanticResultJson`.
@@ -78,21 +78,21 @@ load component JSON only for nomination detail or explanation views.
 
 ## Graph Analytics scoring
 
-- `dbo.GraphPatternFindings` stores weekly pattern evidence. Current rows include
+- `integrity.GraphPatternFindings` stores weekly pattern evidence. Current rows include
   continuous `FindingScore`, derived `Severity`, `ScoringPolicyVersion`, and
   `ScoreComponentsJson`. `ApproverAffinity` rows are historical audit records
   only and are not produced or routed.
-- `dbo.GraphScoringPolicies` stores immutable tenant policy versions. Exactly one
+- `integrity.GraphScoringPolicies` stores immutable tenant policy versions. Exactly one
   version is ACTIVE and at most one is DRAFT. The scoring strategy is
   `MAX_RELEVANT_FINDING`.
-- `dbo.GraphScoringPatternParameters` stores detector enablement, routing
+- `integrity.GraphScoringPatternParameters` stores detector enablement, routing
   participation, participant roles, base scores, weights, and parameters for
   one policy version. `CandidateEvaluationJson` separately stores bounded
   nomination-time search controls; it currently applies to the Ring detector.
-- `dbo.GraphScoringChangeRequests` stores Data Scientist fine-tuning requests
+- `integrity.GraphScoringChangeRequests` stores Data Scientist fine-tuning requests
   and the Admin review outcome.
 - Nomination-time Graph evidence and snapshot provenance are stored in
-  `dbo.IntegrityDecisionResults.GraphResultJson`.
+  `integrity.IntegrityDecisionResults.GraphResultJson`.
 
 All policy and request tables have `TenantId` directly or join to a policy that
 does. Always filter by the caller's tenant.

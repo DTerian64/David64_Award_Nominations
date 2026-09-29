@@ -7,7 +7,7 @@ name: Deploy Schema Migration (ACA Job)
 # This workflow does NOT connect to SQL. It only uses the ARM control plane
 # (always reachable): build + push the schema-migration image, point the job at
 # it, START the job, and poll for completion. The job itself runs in the VNet as
-# the sql-migrations MI (db_ddladmin) and reaches SQL over the private endpoint.
+# the sql-migrations MI (db_ddladmin + scoped schema control) and reaches SQL.
 # -----------------------------------------------------------------------------
 
 on:
@@ -88,5 +88,5 @@ jobs:
           echo "### Schema migration (ACA Job) :package:"                 >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ github.ref_name }}"                  >> $GITHUB_STEP_SUMMARY
           echo "**Job:** award-schema-migration-${{ vars.ENVIRONMENT }}"  >> $GITHUB_STEP_SUMMARY
-          echo "**Identity:** sql-migrations MI (db_ddladmin), in-VNet"    >> $GITHUB_STEP_SUMMARY
+          echo "**Identity:** sql-migrations MI (scoped schema migrator), in-VNet" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** ${{ github.sha }}"                            >> $GITHUB_STEP_SUMMARY

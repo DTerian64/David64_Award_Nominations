@@ -81,7 +81,7 @@ class HumanConfirmedLabelTests(unittest.TestCase):
         result = labels.load_labels(object(), tenant_id=3)
 
         query = read_sql.call_args.args[0]
-        self.assertIn("dbo.IntegrityDecisionResults", query)
+        self.assertIn("integrity.IntegrityDecisionResults", query)
         self.assertIn("JOIN       dbo.Tenants", query)
         self.assertIn("t.is_synthetic = 1", query)
         self.assertIn("SYNTHETIC_GROUND_TRUTH", query)

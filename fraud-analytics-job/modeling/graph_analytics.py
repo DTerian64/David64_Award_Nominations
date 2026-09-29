@@ -4,7 +4,7 @@ graph_analytics.py
 Stage 1 of the fraud-analytics-job pipeline.
 
 Detects eight structural, temporal, and semantic behavioural patterns in the Nominations
-graph for each tenant and refreshes unique evidence in dbo.GraphPatternFindings.
+graph for each tenant and refreshes unique evidence in integrity.GraphPatternFindings.
 
 Pattern catalogue
 -----------------
@@ -24,7 +24,6 @@ Environment variables (all injected by the Container Apps Job)
   SQL_DATABASE          Database name
   SQL_USER              SQL login
   SQL_PASSWORD          SQL password
-  GRAPH_FINDINGS_TABLE  Target table (default: dbo.GraphPatternFindings)
   LOGGING_LEVEL         Python log level (default: INFO)
 """
 
@@ -67,6 +66,10 @@ from utils.tenant_model_config import get_tenants as get_enabled_tenants
 JOB_DIR = Path(__file__).resolve().parents[1]
 env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
+
+# Permanent database contract. Schema migration 0072 moves this table from dbo
+# as part of the coordinated application/database cutover.
+GRAPH_FINDINGS_TABLE = "integrity.GraphPatternFindings"
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +128,7 @@ def _load_active_graph_policy(
                    '$.graph_pattern.detection_window_days'
                )), ?), p.SnapshotMaxAgeDays,
                JSON_QUERY(CAST(t.integrity_config AS nvarchar(max)), '$.graph_pattern.detector_windows')
-        FROM dbo.GraphScoringPolicies p
+        FROM integrity.GraphScoringPolicies p
         JOIN dbo.Tenants t ON t.TenantId = p.TenantId
         WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
         ORDER BY p.PolicyVersion DESC
@@ -155,7 +158,7 @@ def _load_active_graph_policy(
         SELECT PatternType, Enabled, EnabledForRouting, ApplicableRolesJson,
                BaseScore, MinimumScore, MaximumScore, ParametersJson,
                CandidateEvaluationJson
-        FROM dbo.GraphScoringPatternParameters
+        FROM integrity.GraphScoringPatternParameters
         WHERE PolicyId = ?
     """, policy["policy_id"])
     for item in cur.fetchall():
@@ -325,9 +328,9 @@ def sync_graph_tables(conn: pyodbc.Connection) -> None:
     cur = conn.cursor()
 
     logger.info("Syncing NomGraph_Person …")
-    cur.execute("DELETE FROM dbo.NomGraph_Person")
+    cur.execute("DELETE FROM integrity.NomGraph_Person")
     cur.execute("""
-        INSERT INTO dbo.NomGraph_Person (UserId, FullName, TenantId)
+        INSERT INTO integrity.NomGraph_Person (UserId, FullName, TenantId)
         SELECT UserId,
                ISNULL(FirstName + ' ' + LastName, CAST(UserId AS NVARCHAR)),
                TenantId
@@ -335,20 +338,20 @@ def sync_graph_tables(conn: pyodbc.Connection) -> None:
     """)
 
     logger.info("Syncing NomGraph_Nominated …")
-    cur.execute("DELETE FROM dbo.NomGraph_Nominated")
+    cur.execute("DELETE FROM integrity.NomGraph_Nominated")
     cur.execute("""
-        INSERT INTO dbo.NomGraph_Nominated
+        INSERT INTO integrity.NomGraph_Nominated
               ($from_id, $to_id, NominationId, Amount, Status, NomDate)
         SELECT
-            (SELECT $node_id FROM dbo.NomGraph_Person WHERE UserId = n.NominatorId),
-            (SELECT $node_id FROM dbo.NomGraph_Person WHERE UserId = n.BeneficiaryId),
+            (SELECT $node_id FROM integrity.NomGraph_Person WHERE UserId = n.NominatorId),
+            (SELECT $node_id FROM integrity.NomGraph_Person WHERE UserId = n.BeneficiaryId),
             n.NominationId,
             n.Amount,
             n.Status,
             CAST(n.NominationDate AS DATE)
         FROM   dbo.Nominations n
-        WHERE  EXISTS (SELECT 1 FROM dbo.NomGraph_Person WHERE UserId = n.NominatorId)
-          AND  EXISTS (SELECT 1 FROM dbo.NomGraph_Person WHERE UserId = n.BeneficiaryId)
+        WHERE  EXISTS (SELECT 1 FROM integrity.NomGraph_Person WHERE UserId = n.NominatorId)
+          AND  EXISTS (SELECT 1 FROM integrity.NomGraph_Person WHERE UserId = n.BeneficiaryId)
     """)
 
     conn.commit()
@@ -470,7 +473,7 @@ def _maximum_active_detection_window(
                 CAST(t.integrity_config AS nvarchar(max)), '$.graph_pattern.detector_windows')
         ) w
         WHERE EXISTS (
-            SELECT 1 FROM dbo.GraphScoringPolicies p
+            SELECT 1 FROM integrity.GraphScoringPolicies p
             WHERE p.TenantId = t.TenantId AND p.Status = 'ACTIVE'
         )
     """, fallback_days)
@@ -1381,7 +1384,7 @@ def _evict_stale_embeddings(conn: pyodbc.Connection, window_days: int) -> None:
     cur = conn.cursor()
     cur.execute("""
         DELETE e
-        FROM   dbo.NomGraph_NominationEmbedding e
+        FROM   integrity.NomGraph_NominationEmbedding e
         WHERE  NOT EXISTS (
             SELECT 1
             FROM   dbo.Nominations n
@@ -1419,7 +1422,7 @@ def _load_cached_embeddings(
         placeholders = ",".join("?" * len(batch))
         cur.execute(
             f"SELECT NominationId, Embedding "
-            f"FROM   dbo.NomGraph_NominationEmbedding "
+            f"FROM   integrity.NomGraph_NominationEmbedding "
             f"WHERE  NominationId IN ({placeholders})",
             batch,
         )
@@ -1450,10 +1453,10 @@ def _save_embeddings(
         for nom_id, vec in embeddings.items()
     ]
     cur.executemany("""
-        INSERT INTO dbo.NomGraph_NominationEmbedding (NominationId, Embedding, EmbeddedAt)
+        INSERT INTO integrity.NomGraph_NominationEmbedding (NominationId, Embedding, EmbeddedAt)
         SELECT ?, CAST(? AS VARBINARY(MAX)), GETUTCDATE()
         WHERE  NOT EXISTS (
-            SELECT 1 FROM dbo.NomGraph_NominationEmbedding WHERE NominationId = ?
+            SELECT 1 FROM integrity.NomGraph_NominationEmbedding WHERE NominationId = ?
         )
     """, rows)
     conn.commit()
@@ -1784,7 +1787,7 @@ def _populate_graph_flag_snapshots(
             user_flags[uid].append(evidence)
     # A same-day rerun is a full replacement, not a partial merge.
     cur.execute(
-        "DELETE FROM dbo.UserGraphFlags WHERE TenantId = ? AND AsOfDate = ?",
+        "DELETE FROM integrity.UserGraphFlags WHERE TenantId = ? AND AsOfDate = ?",
         (tenant_id, as_of_date),
     )
 
@@ -1800,7 +1803,7 @@ def _populate_graph_flag_snapshots(
         ]
 
         cur.executemany("""
-            INSERT INTO dbo.UserGraphFlags
+            INSERT INTO integrity.UserGraphFlags
                 (TenantId, UserId, AsOfDate, FindingsJson)
             VALUES (?, ?, ?, ?)
         """, rows_ugf)
@@ -1923,7 +1926,7 @@ def _process_tenant(
         lease_fence(conn)
     # Same lock order as inference: serving marker before user snapshot rows.
     conn.cursor().execute("""
-        SELECT TenantId FROM dbo.IntegrityComponentStatus WITH (UPDLOCK, HOLDLOCK)
+        SELECT TenantId FROM integrity.IntegrityComponentStatus WITH (UPDLOCK, HOLDLOCK)
         WHERE TenantId=? AND Component='GRAPH'
     """, (tenant_id,)).fetchall()
     _save_findings(conn, detected_findings, findings_table)
@@ -1971,13 +1974,12 @@ def process_tenant(
     lease_fence: Callable[[object], None] | None = None,
 ) -> TenantStageResult:
     """Run Graph analytics for exactly one tenant using a stable correlation ID."""
-    findings_table = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
     conn = _get_connection()
     try:
         finding_count = _process_tenant(
             conn,
             tenant_id,
-            findings_table,
+            GRAPH_FINDINGS_TABLE,
             180,
             run_id,
             lease_guard,
@@ -1986,7 +1988,7 @@ def process_tenant(
         row = conn.cursor().execute(
             """
             SELECT ServingVersion
-            FROM dbo.IntegrityComponentStatus
+            FROM integrity.IntegrityComponentStatus
             WHERE TenantId=? AND Component='GRAPH'
             """,
             (tenant_id,),
@@ -2034,11 +2036,10 @@ def main(tenants_to_process: list | None = None) -> None:
     )
     logger.info("graph_analytics — starting")
 
-    findings_table      = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
     default_window_days = 180
     run_id              = str(uuid.uuid4())
     logger.info("RunId: %s", run_id)
-    logger.info("Target table: %s", findings_table)
+    logger.info("Target table: %s", GRAPH_FINDINGS_TABLE)
     logger.info("Graph window source: Tenants.integrity_config (default %d days)", default_window_days)
 
     prepare_global()

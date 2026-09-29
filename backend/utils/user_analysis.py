@@ -97,7 +97,7 @@ def get_user_analysis(tenant_id, user_id, role='either', engine=None,
             FROM dbo.Nominations n
             JOIN dbo.Users nom ON nom.UserId = n.NominatorId AND nom.TenantId = :tid
             JOIN dbo.Users ben ON ben.UserId = n.BeneficiaryId AND ben.TenantId = :tid
-            LEFT JOIN dbo.IntegrityDecisionResults idr
+            LEFT JOIN integrity.IntegrityDecisionResults idr
                 ON idr.NominationId = n.NominationId AND idr.TenantId = :tid
             WHERE ((:role IN ('either', 'nominator') AND n.NominatorId = :uid)
                 OR (:role IN ('either', 'nominee') AND n.BeneficiaryId = :uid))

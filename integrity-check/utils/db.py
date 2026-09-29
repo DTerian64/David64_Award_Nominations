@@ -234,7 +234,7 @@ def get_tenant_integrity_config(tenant_id: int) -> dict:
     }
 
     GNN settings are deliberately excluded. They live in the versioned
-    dbo.GNNScoringPolicies table and are read independently for every score.
+    integrity.GNNScoringPolicies table and are read independently for every score.
     """
     with _get_conn() as conn:
         cursor = conn.cursor()
@@ -275,7 +275,7 @@ def get_active_gnn_scoring_policy(tenant_id: int) -> dict | None:
                 p.ExplanationEnabled, p.ExplanationMinimumRisk,
                 TRY_CONVERT(int, JSON_VALUE(CAST(t.integrity_config AS nvarchar(max)),
                     '$.gnn.window_days'))
-            FROM dbo.GNNScoringPolicies p
+            FROM integrity.GNNScoringPolicies p
             JOIN dbo.Tenants t ON t.TenantId=p.TenantId
             WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
             ORDER BY p.PolicyVersion DESC
@@ -371,7 +371,7 @@ def get_gnn_live_graph_rows(tenant_id: int, *, target_nomination_id: int,
                    CAST(1 AS BIT) AS IsBehaviorEligible
             FROM dbo.Nominations n
             JOIN dbo.Users u ON u.UserId = n.NominatorId
-            LEFT JOIN dbo.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
+            LEFT JOIN integrity.IntegrityDecisionResults idr ON idr.NominationId = n.NominationId
             WHERE u.TenantId = ?
               AND n.NominationDate >= DATEADD(DAY, -?, ?)
               AND (n.NominationDate < ? OR
@@ -415,7 +415,7 @@ def get_gnn_causal_context_rows(
                        CAST(1 AS BIT) AS IsBehaviorEligible
                 FROM dbo.Nominations n
                 JOIN dbo.Users nominator ON nominator.UserId = n.NominatorId
-                LEFT JOIN dbo.IntegrityDecisionResults idr
+                LEFT JOIN integrity.IntegrityDecisionResults idr
                        ON idr.NominationId = n.NominationId
                 WHERE nominator.TenantId = ?
                   AND n.NominationDate >= DATEADD(DAY, -?, ?)
@@ -482,7 +482,7 @@ def get_integrity_component_statuses(tenant_id: int) -> dict[str, dict]:
             SELECT Component, ServingStatus, ServingVersion, ServingAsOf,
                    LastAttemptStatus, ReasonCode, ReasonDetail, DiagnosticsJson,
                    LastAttemptAt, LastSuccessfulAt, RunId, UpdatedAt
-            FROM dbo.IntegrityComponentStatus
+            FROM integrity.IntegrityComponentStatus
             WHERE TenantId = ?
         """, tenant_id)
         rows = cursor.fetchall()
@@ -829,7 +829,7 @@ def get_graph_component_snapshot(
         # replacements. The read transaction holds this lock until connection close.
         cursor.execute("""
             SELECT ServingStatus, ServingAsOf, RunId, DiagnosticsJson
-            FROM dbo.IntegrityComponentStatus WITH (HOLDLOCK)
+            FROM integrity.IntegrityComponentStatus WITH (HOLDLOCK)
             WHERE TenantId=? AND Component='GRAPH'
         """, (tenant_id,))
         marker = cursor.fetchone()
@@ -850,7 +850,7 @@ def get_graph_component_snapshot(
             placeholders = ", ".join("?" for _ in unique_ids)
             cursor.execute(f"""
                 SELECT UserId, FindingsJson
-                FROM dbo.UserGraphFlags
+                FROM integrity.UserGraphFlags
                 WHERE TenantId = ?
                   AND AsOfDate = ?
                   AND UserId IN ({placeholders})
@@ -892,7 +892,7 @@ def get_graph_scoring_policy(
                 SELECT TOP 1 PolicyId, PolicyVersion, Status, ScoringStrategy,
                        LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
                        DetectionWindowDays, SnapshotMaxAgeDays
-                FROM dbo.GraphScoringPolicies
+                FROM integrity.GraphScoringPolicies
                 WHERE TenantId = ? AND Status = 'ACTIVE'
                 ORDER BY PolicyVersion DESC
             """, tenant_id)
@@ -901,7 +901,7 @@ def get_graph_scoring_policy(
                 SELECT TOP 1 PolicyId, PolicyVersion, Status, ScoringStrategy,
                        LowThreshold, MediumThreshold, HighThreshold, CriticalThreshold,
                        DetectionWindowDays, SnapshotMaxAgeDays
-                FROM dbo.GraphScoringPolicies
+                FROM integrity.GraphScoringPolicies
                 WHERE TenantId = ? AND PolicyVersion = ?
             """, tenant_id, policy_version)
         row = cursor.fetchone()
@@ -950,7 +950,7 @@ def save_integrity_decision_results(
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            MERGE dbo.IntegrityDecisionResults AS target
+            MERGE integrity.IntegrityDecisionResults AS target
             USING (
                 SELECT n.NominationId, u.TenantId, ? AS SourceMessageId,
                        CAST(? AS NVARCHAR(MAX)) AS IncomingGnnResultJson
@@ -1033,7 +1033,7 @@ def mark_gnn_explanation_publish_failed(
     with _get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            UPDATE dbo.IntegrityDecisionResults
+            UPDATE integrity.IntegrityDecisionResults
             SET GnnResultJson = JSON_MODIFY(
                     GnnResultJson,
                     '$.explanation',
@@ -1209,7 +1209,7 @@ def get_nomination_embedding_bytes(nomination_ids: list[int]) -> dict[int, bytes
             placeholders = ",".join("?" for _ in batch)
             cursor.execute(
                 "SELECT NominationId, Embedding "
-                "FROM dbo.NomGraph_NominationEmbedding "
+                "FROM integrity.NomGraph_NominationEmbedding "
                 f"WHERE NominationId IN ({placeholders})",
                 batch,
             )
@@ -1234,7 +1234,7 @@ def get_gnn_user_embeddings(
     decoder version — not the newest snapshot overall.
 
     That distinction makes a serving-pointer rollback work.
-    dbo.GNN_UserEmbeddings retains independently keyed model versions within its
+    integrity.GNN_UserEmbeddings retains independently keyed model versions within its
     retention window, so restoring an earlier IntegrityComponentStatus serving
     version also selects that decoder's own generation of embeddings. Matching
     on "newest overall" instead would mix incompatible versions.
@@ -1269,7 +1269,7 @@ def get_gnn_user_embeddings(
                        PARTITION BY UserId
                        ORDER BY AsOfDate DESC, LastUpdatedUtc DESC, ModelVersion DESC
                    ) AS version_rank
-            FROM dbo.GNN_UserEmbeddings
+            FROM integrity.GNN_UserEmbeddings
             WHERE TenantId = ?
               {version_filter}
               AND UserId IN ({placeholders})

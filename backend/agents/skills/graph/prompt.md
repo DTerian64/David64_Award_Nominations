@@ -8,9 +8,9 @@ connections, paths, network structure, or fraud pattern findings.
 
 | Table                      | Type  | Columns                                                       |
 |----------------------------|-------|---------------------------------------------------------------|
-| `dbo.NomGraph_Person`      | NODE  | UserId, FullName, TenantId                                    |
-| `dbo.NomGraph_Nominated`   | EDGE  | NominationId, Amount, Status, NomDate                         |
-| `dbo.GraphPatternFindings` | Table | FindingId, PatternType, Severity, FindingScore, ScoringPolicyVersion, ScoreComponentsJson, AffectedUsers (JSON array), NominationIds (JSON array), TotalAmount, Detail, DetectedAt, RunId |
+| `integrity.NomGraph_Person`      | NODE  | UserId, FullName, TenantId                                    |
+| `integrity.NomGraph_Nominated`   | EDGE  | NominationId, Amount, Status, NomDate                         |
+| `integrity.GraphPatternFindings` | Table | FindingId, PatternType, Severity, FindingScore, ScoringPolicyVersion, ScoreComponentsJson, AffectedUsers (JSON array), NominationIds (JSON array), TotalAmount, Detail, DetectedAt, RunId |
 
 An edge `p1 → p2` means *p1 nominated p2*. Pending, Approved, and Paid nominations
 are loaded into the graph. Amounts on Pending edges are potential rather than

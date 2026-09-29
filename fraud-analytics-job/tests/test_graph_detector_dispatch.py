@@ -35,7 +35,7 @@ def test_batch_dispatch_and_snapshot_keep_detector_specific_windows(monkeypatch)
     status = MagicMock()
     monkeypatch.setattr(graph, "upsert_component_status", status)
     connection = MagicMock()
-    assert graph._process_tenant(connection, 5, "dbo.GraphPatternFindings", 180, "run") == 0
+    assert graph._process_tenant(connection, 5, "integrity.GraphPatternFindings", 180, "run") == 0
     assert load.call_args.args[2] == 270
     for name in names:
         expected = [1] if name in ("Ring", "CopyPaste") else [1, 2, 3] if name == "HiddenCandidate" else [1, 2]

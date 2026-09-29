@@ -59,7 +59,7 @@ def upsert_component_status(
 
     cur = conn.cursor()
     cur.execute("""
-        MERGE dbo.IntegrityComponentStatus AS target
+        MERGE integrity.IntegrityComponentStatus AS target
         USING (SELECT ? AS TenantId, ? AS Component) AS source
             ON  target.TenantId = source.TenantId
             AND target.Component = source.Component

@@ -340,7 +340,7 @@ def get_integrity_review_evidence(nomination_id: int) -> Optional[dict]:
             SELECT CompositeScore, CompositeRiskLevel, DecisiveEnginesJson,
                    RfResultJson, GraphResultJson, GnnResultJson,
                    SemanticResultJson
-            FROM   dbo.IntegrityDecisionResults
+            FROM   integrity.IntegrityDecisionResults
             WHERE  NominationId = ?
         """, (nomination_id,))
         row = cursor.fetchone()

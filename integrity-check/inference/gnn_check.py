@@ -39,7 +39,7 @@ mismatch, and the model goes dark.
 
 So the registry selects an immutable serving bundle and the lookup selects the
 newest snapshot WHOSE ModelVersion MATCHES THAT DECODER. Because
-dbo.GNN_UserEmbeddings is version-addressable within its retention window, an
+integrity.GNN_UserEmbeddings is version-addressable within its retention window, an
 operator can roll back by restoring the previous
 IntegrityComponentStatus.ServingVersion; artifacts are never replaced in place.
 
@@ -1018,7 +1018,7 @@ def _assess_gnn_inner(
             logger.error(
                 "GNN version gap: nomination %s tenant %d — decoder is %s but the "
                 "only embeddings present are %s. Scoring suppressed; the decoder "
-                "and dbo.GNN_UserEmbeddings have diverged.",
+                "and integrity.GNN_UserEmbeddings have diverged.",
                 details.get("nomination_id"), tenant_id, model_version, have,
             )
             return _unavailable(

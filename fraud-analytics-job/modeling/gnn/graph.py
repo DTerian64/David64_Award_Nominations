@@ -14,7 +14,7 @@ Design constraints
    data; reading them would create an ordering dependency on
    graph_analytics for no modelling benefit.
 
-2. dbo.UserGraphFlags is NOT a feature source. The GNN must rediscover graph
+2. integrity.UserGraphFlags is NOT a feature source. The GNN must rediscover graph
    structure from raw topology. If it were handed the
    detectors' verdicts, its agreement with them would carry no information —
    which is the entire reason the model is being built.
@@ -135,7 +135,7 @@ def fetch_tenant_rows(
                     THEN 1 ELSE 0 END AS IsBehaviorEligible
         FROM   dbo.Nominations n
         JOIN   dbo.Users u ON u.UserId = n.NominatorId
-        LEFT JOIN dbo.IntegrityDecisionResults idr
+        LEFT JOIN integrity.IntegrityDecisionResults idr
                ON idr.NominationId = n.NominationId
         WHERE  u.TenantId = ?
           AND  n.NominationDate >= DATEADD(DAY, -?, ?)

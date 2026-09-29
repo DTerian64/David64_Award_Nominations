@@ -76,7 +76,7 @@ def test_loader_uses_p2p_behavior_statuses_and_canonical_label_targets():
 
     sql, params = connection.recording_cursor.calls[0]
     assert "n.Status IN ('Pending', 'Approved', 'Paid')" in sql
-    assert "dbo.IntegrityDecisionResults" in sql
+    assert "integrity.IntegrityDecisionResults" in sql
     assert "idr.FinalRoute = 'HRBP_REVIEW'" in sql
     assert "idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')" in sql
     assert "idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')" in sql

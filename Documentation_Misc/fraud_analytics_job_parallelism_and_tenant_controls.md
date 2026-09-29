@@ -330,6 +330,7 @@ execution.
 | `RunId` | Internal immutable identifier |
 | `ExecutionName` | Unique Container Apps execution name |
 | `JobName` | Container Apps Job name |
+| `DataAsOfUtc` | Immutable database-assigned cutoff shared by every replica and retry |
 | `PreparationStatus` | `PENDING`, `RUNNING`, `READY`, or `FAILED` |
 | `FinalizationStatus` | `PENDING`, `RUNNING`, or `COMPLETE` |
 | `ResultStatus` | `RUNNING`, `SUCCEEDED`, or `FAILED` |
@@ -599,6 +600,10 @@ Alert or dashboard conditions should include:
 
 ### Phase 2 — Coordination schema
 
+**Status:** Implemented 2026-09-28. Deployment and Azure SQL concurrency
+validation remain pending; the existing stage-major runner and one-replica
+Terraform settings are unchanged until later phases.
+
 1. Create the `ops` schema and the Job Runs, Tenant Runs, and Stage Attempts
    tables in one migration.
 2. Implement atomic registration, preparation leadership, tenant claiming,
@@ -606,7 +611,24 @@ Alert or dashboard conditions should include:
 3. Implement append-oriented stage-attempt recording, including reclaimed work.
 4. Add concurrency-focused database tests.
 
+Implementation locations:
+
+- Alembic revision `0070_integrity_analytics_coordination.py` creates
+  `ops.IntegrityAnalyticsJobRuns`, `ops.IntegrityAnalyticsTenantRuns`, and
+  `ops.IntegrityAnalyticsStageAttempts`.
+- `fraud-analytics-job/utils/integrity_analytics_coordinator.py` provides the
+  transactional registration, leadership, queue, lease, attempt-history,
+  barrier, summary, and finalization operations for the Phase 3 runner.
+- Unit and migration contract tests cover lock/skip claim semantics, strict
+  tenant eligibility, lease ownership, abandoned-attempt preservation, shared
+  final results, constraints, and supporting indexes. Two-replica behavior is
+  still an explicit sandbox acceptance test before parallelism is enabled.
+
 ### Phase 3 — Runner refactor
+
+**Status:** Implemented 2026-09-28 and validated by a successful single-replica
+sandbox execution on 2026-09-29. Phase 4 retains one replica in sandbox and
+raises its timeout to four hours.
 
 1. Extract Graph shared-table refresh and embedding retention into global
    preparation.
@@ -616,13 +638,80 @@ Alert or dashboard conditions should include:
 5. Pass stable run and tenant correlation values into stages.
 6. Move the cache-refresh callback into guarded finalization.
 
+Implementation notes:
+
+- A normal unfiltered execution now registers against the shared Container Apps
+  execution name, elects one preparation leader, and uses SQL tenant claims.
+- Preparation refreshes the shared Graph tables, performs Graph embedding
+  retention, synchronizes holidays, and only then initializes the enabled
+  tenant queue.
+- Claimed tenants run `GRAPH`, `TABULAR`, `GNN`, and `FORECAST` in that order.
+  A failed stage is recorded and later stages still run; policy/sample-gate
+  skips do not fail the tenant.
+- A background heartbeat renews each preparation or tenant lease. Every stage
+  also receives a synchronous lease guard before publishing visible serving or
+  forecast state. The guard acquires an update/hold lock on the owned tenant
+  lease using the same transaction as the publication, preventing reclaim from
+  interleaving with the commit. Reclaimed running stage attempts remain
+  `ABANDONED` through the Phase 2 claim operation.
+- Tenant-stage correlation IDs are deterministic UUIDs derived from the job
+  `RunId`, tenant, and stage. Forecast retries replace the same stable candidate
+  transactionally rather than inserting duplicate runs.
+- The finalization winner derives the execution summary from the `ops` tables,
+  calls the backend cache refresh once when at least one Tabular model was
+  published, and stores the shared result read by every replica.
+- Filtered `--only` and `--tenant` commands retain the standalone execution
+  harness for local analysis and operational recovery.
+
 ### Phase 4 — Timeout safety
+
+**Status:** Terraform implemented 2026-09-28. The four-hour, single-replica
+sandbox execution completed successfully on 2026-09-29. The `0071` cutoff
+migration and associated application changes must be deployed before Phase 5.
 
 1. Make timeout, retry, parallelism, and completion count Terraform variables.
 2. Deploy with parallelism still set to one and timeout set to four hours.
 3. Run one scheduled/manual execution and verify ledger, behavior, and duration.
 
+Implementation notes:
+
+- The reusable module now validates positive whole-number parallelism and
+  completion count, a whole-number timeout greater than the five-minute worker
+  lease, and a non-negative whole-number retry limit.
+- A resource precondition prevents the required completion count from exceeding
+  the configured parallelism.
+- During Phase 4, sandbox explicitly set parallelism and completion count to
+  `1`, timeout to `14400` seconds, and retry limit to `1`. Phase 5 changes the
+  first two values to `2` while retaining the validated timeout and retry limit.
+- The first four-hour validation run exposed an Azure SQL idle-connection
+  failure in GNN publication: model evaluation held its read connection idle
+  for longer than the gateway window, and both the activation write and its
+  rollback failed with `08S01`.
+- GNN now closes its read transaction and connection before CPU evaluation and
+  blob upload, opens a fresh lease-fenced connection for publication, and uses
+  fresh connections for failure recording and final outcome reads.
+- GNN publication is retried only as a bounded, idempotent transaction. After a
+  transient connection error, the worker first reconciles the stable run ID and
+  serving version in `dbo.IntegrityComponentStatus` in case the commit succeeded
+  but its acknowledgement was lost.
+- ODBC idle-connection retry settings provide defense in depth, while detailed
+  candidate, fit, scoring, upload, and publication timing logs make long GNN
+  compute periods distinguishable from database waits.
+- Revision `0071_integrity_analytics_data_as_of.py` adds a database-assigned
+  `DataAsOfUtc` to the shared execution row. Idempotent execution registration
+  returns the same cutoff to every replica and retry. GNN topology and label
+  queries bind that value instead of evaluating `GETDATE()` independently, so
+  a 365-day window is stable across workers and reruns of claimed work.
+- GNN shared-model evaluation now records each admission check and its measured
+  margins. A model that specifically misses the configured graph-over-raw-MLP
+  margin is recorded as `INSUFFICIENT_GRAPH_VALUE_OVER_RAW_MLP`; the existing
+  `NO_MESSAGE_PASSING_VALUE_OVER_BASELINES` remains the fallback for other
+  shared-model admission failures.
+
 ### Phase 5 — Enable two replicas
+
+**Status:** Terraform configured 2026-09-29. Sandbox apply, manual dual-replica
+execution, and performance/concurrency acceptance checks remain pending.
 
 1. Set `parallelism = 2` and `replica_completion_count = 2`.
 2. Run manually in the sandbox environment.

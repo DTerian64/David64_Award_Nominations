@@ -3,7 +3,7 @@ labels.py — one definition of "fraud" for every model
 ======================================================
 
 Both the Random Forest and the GNN need a training label. Model-neutral outcomes
-live in dbo.IntegrityDecisionResults so neither model owns the ground truth.
+live in integrity.IntegrityDecisionResults so neither model owns the ground truth.
 Component scores remain immutable evidence that can be compared with the
 adjudicated or synthetic outcome.
 
@@ -159,7 +159,7 @@ def load_labels(
         FROM       dbo.Nominations n
         JOIN       dbo.Users u   ON u.UserId       = n.NominatorId
         JOIN       dbo.Tenants t ON t.TenantId     = u.TenantId
-        LEFT JOIN  dbo.IntegrityDecisionResults idr
+        LEFT JOIN  integrity.IntegrityDecisionResults idr
                ON idr.NominationId = n.NominationId
         WHERE {_INCLUSION_SQL}
           AND u.TenantId = ?

@@ -108,7 +108,7 @@ def fetch_nominations(
           ON beneficiary.UserId = n.BeneficiaryId
         LEFT JOIN dbo.Users approver
           ON approver.UserId = n.ApproverId
-        LEFT JOIN dbo.IntegrityDecisionResults decision
+        LEFT JOIN integrity.IntegrityDecisionResults decision
           ON decision.NominationId = n.NominationId
         WHERE nominator.TenantId = ?
           AND n.NominationDate < ?

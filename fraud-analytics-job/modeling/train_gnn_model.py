@@ -11,7 +11,7 @@ Per tenant:
     4. Select one graph winner by the versioned operational policy.
     5. Refit the winner over all matured labels and publish its embeddings.
     6. Upload the immutable candidate and serving bundle.
-    7. Activate it through dbo.IntegrityComponentStatus as the final step.
+    7. Activate it through integrity.IntegrityComponentStatus as the final step.
 
 Ordering rationale
 ------------------
@@ -217,7 +217,7 @@ def _reconcile_gnn_status(
     row = connection.cursor().execute(
         """
         SELECT LastAttemptStatus, ServingVersion, DiagnosticsJson
-        FROM dbo.IntegrityComponentStatus
+        FROM integrity.IntegrityComponentStatus
         WHERE TenantId=? AND Component='GNN' AND RunId=?
         """,
         (tenant_id, run_id),
@@ -241,7 +241,7 @@ def _read_gnn_outcome_with_retry(
             row = connection.cursor().execute(
                 """
                 SELECT LastAttemptStatus, ReasonCode, ServingVersion
-                FROM dbo.IntegrityComponentStatus
+                FROM integrity.IntegrityComponentStatus
                 WHERE TenantId=? AND Component='GNN'
                 """,
                 (tenant_id,),
@@ -384,7 +384,7 @@ def _publish_embeddings(
         rows,
     )
     cur.execute("""
-        MERGE dbo.GNN_UserEmbeddings AS target
+        MERGE integrity.GNN_UserEmbeddings AS target
         USING (SELECT ? AS TenantId, UserId, AsOfDate, Embedding, EmbeddingDim, ModelVersion
                FROM #gnn_emb) AS src
             ON  target.TenantId = src.TenantId
@@ -408,7 +408,7 @@ def _evict_stale_embeddings(conn, tenant_id: int, retention_days: int) -> int:
     cutoff = date.today() - timedelta(days=retention_days)
     cur = conn.cursor()
     cur.execute(
-        "DELETE FROM dbo.GNN_UserEmbeddings WHERE TenantId = ? AND AsOfDate < ?",
+        "DELETE FROM integrity.GNN_UserEmbeddings WHERE TenantId = ? AND AsOfDate < ?",
         tenant_id, cutoff,
     )
     n = cur.rowcount
@@ -643,7 +643,7 @@ def _incumbent_selection(conn, tenant_id: int) -> dict | None:
     cur = conn.cursor()
     cur.execute("""
         SELECT DiagnosticsJson
-        FROM dbo.IntegrityComponentStatus
+        FROM integrity.IntegrityComponentStatus
         WHERE TenantId = ? AND Component = 'GNN'
     """, tenant_id)
     row = cur.fetchone()
@@ -669,7 +669,7 @@ def _incumbent_specialists(conn, tenant_id: int) -> dict[str, dict]:
     cur = conn.cursor()
     cur.execute("""
         SELECT ServingVersion, DiagnosticsJson
-        FROM dbo.IntegrityComponentStatus
+        FROM integrity.IntegrityComponentStatus
         WHERE TenantId = ? AND Component = 'GNN'
     """, tenant_id)
     row = cur.fetchone()
@@ -1228,7 +1228,7 @@ def _process_tenant(
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="NO_ACTIVE_POLICY",
-            reason_detail="No active dbo.GNNScoringPolicies row exists for this tenant.",
+            reason_detail="No active integrity.GNNScoringPolicies row exists for this tenant.",
             diagnostics={"gnn_policy_available": False},
             run_id=run_id,
         )
@@ -1962,7 +1962,7 @@ def main(tenants_to_process: list | None = None) -> None:
     data_as_of_utc = datetime.now(timezone.utc)
     logger.info("GNN MODEL TRAINING - Multi-Tenant")
     logger.info(
-        "Each tenant's active dbo.GNNScoringPolicies row is read immediately "
+        "Each tenant's active integrity.GNNScoringPolicies row is read immediately "
         "before that tenant is processed."
     )
 
