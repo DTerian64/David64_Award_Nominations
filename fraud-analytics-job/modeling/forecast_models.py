@@ -34,6 +34,7 @@ import uuid
 import warnings
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -67,6 +68,8 @@ _HOLIDAY_SET: set = set()
 # ── DB ──────────────────────────────────────────────────────────────────────────
 
 from utils.db_conn import connect  # noqa: E402 - .env must load before credential setup
+from utils.integrity_analytics_coordinator import LeaseLostError  # noqa: E402
+from utils.stage_result import TenantStageResult  # noqa: E402
 from utils.tenant_model_config import get_tenants as get_enabled_tenants  # noqa: E402
 
 
@@ -474,7 +477,13 @@ def _bakeoff(weekly: pd.DataFrame):
     return metrics, chosen, final
 
 
-def forecast_tenant(conn, tenant_id: int) -> int:
+def forecast_tenant(
+    conn,
+    tenant_id: int,
+    run_id: str | None = None,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
+) -> int:
     """End-to-end forecast for one tenant; writes one run and returns rows written.
 
     Pipeline: load nominations → aggregate to daily then weekly → bake off the
@@ -500,7 +509,7 @@ def forecast_tenant(conn, tenant_id: int) -> int:
     daily_spd = daily_frame(df["ds"], df["amount"].fillna(0), start, end)
     wk_cnt, wk_spd = to_weekly(daily_cnt), to_weekly(daily_spd)
 
-    run_id = str(uuid.uuid4())             # one RunId groups every row from this run
+    run_id = run_id or str(uuid.uuid4())   # one RunId groups every row from this run
     rows = []   # accumulator: (Series, Level, Dept, Grain, TargetDate, Horizon, Model, point, lo, up)
 
     def add_weekly(series_name, weekly_df, point, lo, up, model, level="total", dept=None):
@@ -574,6 +583,10 @@ def forecast_tenant(conn, tenant_id: int) -> int:
 
     metrics = {"nominations_total": m_cnt, "spend_total": m_spd,
                "departments": dept_metrics, "departments_spend": dept_spend_metrics}
+    if lease_guard is not None:
+        lease_guard()
+    if lease_fence is not None:
+        lease_fence(conn)
     _persist(conn, run_id, tenant_id, start, end, metrics, rows)
     logger.info("[Tenant %s] forecast run %s — %d rows (nom=%s, spend=%s)",
                 tenant_id, run_id[:8], len(rows), chosen_cnt, chosen_spd)
@@ -588,12 +601,23 @@ def _persist(conn, run_id, tenant_id, start, end, metrics, rows):
     most recent run per tenant, so old runs are simply left in place as history.
     """
     cur = conn.cursor()
-    # Header: one row per run, with the full per-model metrics blob.
+    # A reclaimed tenant reuses the stable stage RunId. Replace that candidate
+    # atomically instead of duplicating or exposing a partial forecast run.
+    cur.execute("DELETE FROM dbo.Forecasts WHERE RunId = ?", run_id)
     cur.execute("""
-        INSERT INTO dbo.ForecastRuns
-            (RunId, TenantId, GeneratedAt, HorizonWeeks, HistoryStart, HistoryEnd, Confidence, Metrics, Status)
-        VALUES (?, ?, GETDATE(), ?, ?, ?, ?, ?, 'complete')
-    """, run_id, tenant_id, HORIZON_WEEKS, start, end, CONFIDENCE, json.dumps(metrics))
+        UPDATE dbo.ForecastRuns
+        SET TenantId=?, GeneratedAt=GETDATE(), HorizonWeeks=?, HistoryStart=?,
+            HistoryEnd=?, Confidence=?, Metrics=?, Status='complete'
+        WHERE RunId=?
+    """, tenant_id, HORIZON_WEEKS, start, end, CONFIDENCE, json.dumps(metrics), run_id)
+    if cur.rowcount == 0:
+        # Header: one row per stable tenant-stage run.
+        cur.execute("""
+            INSERT INTO dbo.ForecastRuns
+                (RunId, TenantId, GeneratedAt, HorizonWeeks, HistoryStart,
+                 HistoryEnd, Confidence, Metrics, Status)
+            VALUES (?, ?, GETDATE(), ?, ?, ?, ?, ?, 'complete')
+        """, run_id, tenant_id, HORIZON_WEEKS, start, end, CONFIDENCE, json.dumps(metrics))
     # Detail: every forecast point (all series/levels/departments/grains) in one batch.
     cur.fast_executemany = True
     cur.executemany("""
@@ -603,6 +627,36 @@ def _persist(conn, run_id, tenant_id, start, end, metrics, rows):
     """, [(run_id, tenant_id, s, lvl, dep, grain, td, hz, mdl, pt, lo, up)
           for (s, lvl, dep, grain, td, hz, mdl, pt, lo, up) in rows])
     conn.commit()
+
+
+def process_tenant(
+    tenant_id: int,
+    run_id: str,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
+) -> TenantStageResult:
+    """Build and persist one tenant's idempotent forecast candidate."""
+    conn = get_db_connection()
+    try:
+        count = forecast_tenant(
+            conn, tenant_id, run_id, lease_guard, lease_fence
+        )
+        if count == 0:
+            return TenantStageResult.skipped(
+                "BELOW_MINIMUM_VOLUME",
+                diagnostics={"forecast_row_count": 0},
+            )
+        return TenantStageResult.succeeded(
+            diagnostics={"forecast_row_count": count},
+        )
+    except LeaseLostError:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # ── Entrypoint (called by run_job) ──────────────────────────────────────────────
@@ -619,12 +673,17 @@ def main(tenants_to_process: list | None = None) -> None:
                 return
         logger.info("Found %d tenant(s)", len(tenants))
         total = 0
+        failures: list[int] = []
         for tenant_id, name in tenants:
             try:
-                total += forecast_tenant(conn, tenant_id)
+                result = process_tenant(tenant_id, str(uuid.uuid4()))
+                total += int(result.diagnostics.get("forecast_row_count", 0))
             except Exception as exc:
                 logger.error("[Tenant %s] forecast failed: %s", tenant_id, exc, exc_info=True)
+                failures.append(tenant_id)
         logger.info("Forecast models stage complete — %d forecast rows written", total)
+        if failures:
+            raise RuntimeError(f"Forecasting failed for tenant(s): {failures}")
     finally:
         conn.close()
 

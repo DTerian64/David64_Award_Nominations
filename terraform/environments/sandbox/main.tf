@@ -730,7 +730,7 @@ module "payroll_broker" {
 }
 
 # ── 11. Fraud Analytics Job ───────────────────────────────────────────────────
-# Scheduled Container Apps Job: weekly RF retrain + graph pattern detection.
+# Scheduled Container Apps Job: coordinated weekly integrity analytics.
 # Runs in the primary CAE alongside the auxiliary worker (same environment,
 # separate isolation — job has its own MI, image, and resource allocation).
 module "fraud_analytics_job" {
@@ -761,7 +761,11 @@ module "fraud_analytics_job" {
   model_container_name = module.storage.ml_models_container_name
 
   # Schedule — override default here if needed per environment
-  cron_expression = var.fraud_analytics_cron
+  cron_expression            = var.fraud_analytics_cron
+  parallelism                = 1
+  replica_completion_count   = 1
+  replica_timeout_in_seconds = 14400
+  replica_retry_limit        = 1
 
   # Non-secret env vars
   environment_variables = [

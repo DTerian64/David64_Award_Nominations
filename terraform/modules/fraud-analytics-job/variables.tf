@@ -31,6 +31,50 @@ variable "cron_expression" {
   default     = "0 2 * * 1"
 }
 
+variable "parallelism" {
+  description = "Maximum number of job replicas that Azure may run concurrently for one execution."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.parallelism >= 1 && floor(var.parallelism) == var.parallelism
+    error_message = "parallelism must be a positive whole number."
+  }
+}
+
+variable "replica_completion_count" {
+  description = "Number of successful replica completions required for the Container Apps Job execution to succeed."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.replica_completion_count >= 1 && floor(var.replica_completion_count) == var.replica_completion_count
+    error_message = "replica_completion_count must be a positive whole number."
+  }
+}
+
+variable "replica_timeout_in_seconds" {
+  description = "Maximum runtime for each replica. Must exceed the runner's five-minute coordination lease."
+  type        = number
+  default     = 14400
+
+  validation {
+    condition     = var.replica_timeout_in_seconds > 300 && floor(var.replica_timeout_in_seconds) == var.replica_timeout_in_seconds
+    error_message = "replica_timeout_in_seconds must be a whole number greater than the 300-second worker lease."
+  }
+}
+
+variable "replica_retry_limit" {
+  description = "Maximum number of replica retries after a failed or timed-out attempt."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.replica_retry_limit >= 0 && floor(var.replica_retry_limit) == var.replica_retry_limit
+    error_message = "replica_retry_limit must be a non-negative whole number."
+  }
+}
+
 # ── Identity ──────────────────────────────────────────────────────────────────
 variable "analytics_identity_id" {
   description = "Resource ID of the User-Assigned Managed Identity for this job."
@@ -111,8 +155,8 @@ variable "workload_profile_name" {
     Set this to a Dedicated profile name if the GNN stage ever outgrows 4 / 8Gi -
     that is the only route above the Consumption ceiling.
   EOT
-  type    = string
-  default = "Consumption"
+  type        = string
+  default     = "Consumption"
 }
 
 # ── Compute ───────────────────────────────────────────────────────────────────

@@ -1,106 +1,31 @@
-"""
-run_job.py — Fraud Analytics Job entrypoint
-============================================
-Orchestrates the weekly analytics pipeline in dependency order. The registry
-below (STAGES) is the single source of truth; this list documents it.
+"""Integrity analytics Container Apps Job entry point.
 
-  Stage 1: modeling/graph_analytics.py
-      Syncs the Azure SQL Graph tables (NomGraph_Person, NomGraph_Nominated).
-      Runs ring, dense-block, temporal-burst, super-nominator,
-      super-beneficiary, nomination-desert, and hidden-candidate analysis.
-      Runs sentence-transformers for copy-paste analysis.
-      Upserts findings into dbo.GraphPatternFindings.
-      Materialises per-user graph flag snapshots into dbo.UserGraphFlags
-      for nomination-time graph analysis and audit use cases.
+A normal execution is coordinated through Azure SQL so multiple replicas share
+one execution record and dynamically claim tenants. One preparation leader
+refreshes the shared Graph tables, performs Graph embedding retention, and
+synchronizes holidays. Each claimed tenant then runs Graph, Tabular, GNN, and
+Forecast in that order. Stage failures are recorded but do not block later
+stages for the same tenant. One finalizer refreshes the backend model cache and
+publishes the shared execution result read by every replica.
 
-  Stage 2: modeling/train_tabular_model.py
-      Per-tenant RF and Tabular MLP comparison on one shared feature/label
-      contract. Publishes the immutable candidate bundle, refits the selected
-      architecture, then activates its versioned serving artifact.
-
-  Stage 3: modeling/train_gnn_model.py
-      Per-tenant operational bake-off of GraphSAGE, GCN-family, and GATv2 over
-      disjoint rolling-origin target windows, with a no-graph MLP admission
-      baseline. The eligible graph winner is refitted and supplies the one GNN
-      opinion; candidate architectures never become additional decision votes.
-
-      Split encoder/decoder by design: the encoder runs HERE and persists one
-      embedding per user to dbo.GNN_UserEmbeddings; only the ~15k-parameter
-      decoder head ships to integrity-check. That is what keeps PyTorch
-      Geometric out of the inference image.
-
-      Whenever a trained artifact and matching embeddings are available,
-      integrity-check includes the GNN opinion in nomination routing.
-
-      Reads graph topology straight from dbo.Nominations / dbo.Users, NOT from
-      dbo.UserGraphFlags. That independence is the point: a GNN fed the Random
-      Forest's engineered graph features would just be relearning the detector
-      it is meant to be a second opinion on.
-
-      Reads the tenant's active dbo.GNNScoringPolicies version immediately
-      before processing that tenant. Volume, label, architecture-selection,
-      training, retention, scoring, and explanation settings therefore change
-      without a Terraform run or image rebuild.
-
-      Skips a tenant rather than failing it when below its policy gates. Those
-      gates are empirical: the synthetic ablation found that a 50-user tenant
-      scored worse with message passing than without it, so training a small
-      tenant is not a neutral act.
-
-      Requires the tables through Alembic revision 0059.
-
-  Stage 4: misc_jobs/sync_holidays.py
-      Refreshes dbo.Holidays from the Nager.Date API, falling back to the
-      offline `holidays` library per country/year, so Stage 5's is_holiday
-      calendar feature stays correct per tenant locale.
-
-  Stage 5: modeling/forecast_models.py
-      Per-tenant bake-off (Seasonal-Naive vs ETS vs LightGBM, ranked by
-      rolling-origin MASE) writing to dbo.ForecastRuns / dbo.Forecasts.
-
-  ORDERING
-    Stage 1 and Stage 2 are model-independent. They remain sequenced for stable
-      operations, but the RF does not consume Graph Analytics findings.
-    Stage 2 before Stage 3 — stable operational ordering only. Both models read
-      human outcomes from dbo.IntegrityDecisionResults and remain independent.
-    Stage 4 before Stage 5 — the forecast reads the holiday calendar.
-
-  ISOLATION
-    run_stage() catches per-stage exceptions, so one failing stage does not stop
-    the others; the job still exits 1 at the end. A GNN failure can therefore
-    never block the Random Forest retrain.
-
-Exit codes:
-  0  — all stages succeeded
-  1  — one or more stages failed (Container Apps Job reports execution failure;
-       Azure Monitor alert rule fires on non-zero exit)
-
-Logging:
-  Structured stdout — picked up by the Container Apps Environment log stream
-  and forwarded to the Log Analytics workspace defined in the CAE.
-
-Individual stages can be run in isolation for local analysis, e.g.:
-    python run_job.py --only train_gnn_model --tenant 5 
-    
-    or on Azure Container Apps with: 
-    
-    az containerapp job start `
-    --name award-fraud-analytics-sandbox `
-    --resource-group rg_award_nomination_sandbox `
-    --command "python" `
-    --args "run_job.py --only train_gnn_model --tenant 5"
+Filtered ``--only`` or ``--tenant`` invocations retain the standalone harness
+for local analysis and operational recovery.
 """
 
 
 import argparse
+import importlib
 import logging
 import os
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
 import json
+import uuid
 from pathlib import Path
+from typing import Callable
 
 from dotenv import load_dotenv
 
@@ -129,6 +54,13 @@ logger = logging.getLogger("fraud_analytics_job")
 # image, so dotted package imports work without cross-directory COPY steps.
 JOB_DIR = Path(__file__).parent.resolve()   # /app  (same dir as this file)
 sys.path.insert(0, str(JOB_DIR))
+
+from utils.integrity_analytics_coordinator import (  # noqa: E402
+    IntegrityAnalyticsCoordinator,
+    LeaseLostError,
+    new_worker_id,
+)
+from utils.stage_result import TenantStageResult  # noqa: E402
 
 # Stage scripts are invoked as modules so they share the same process and
 # benefit from any cached state (DB connection pool, loaded model, etc.).
@@ -277,9 +209,16 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
         return False
 
 
-# ── Stage registry ───────────────────────────────────────────────────────────
-# Single source of truth. `key` is what --only accepts; `module` is its import path.
-# `post` is an optional hook run only if the stage succeeded.
+# ── Stage registries ─────────────────────────────────────────────────────────
+# Full executions use TENANT_STAGES in tenant-major order. STAGES preserves the
+# standalone --only/--tenant harness used for local analysis and recovery.
+TENANT_STAGES = [
+    {"key": "graph_analytics", "stage": "GRAPH", "label": "Graph Analytics", "module": "modeling.graph_analytics"},
+    {"key": "train_tabular_model", "stage": "TABULAR", "label": "Tabular model training", "module": "modeling.train_tabular_model"},
+    {"key": "train_gnn_model", "stage": "GNN", "label": "GNN model training", "module": "modeling.train_gnn_model"},
+    {"key": "forecast_models", "stage": "FORECAST", "label": "Forecast models", "module": "modeling.forecast_models"},
+]
+
 STAGES = [
     {"key": "graph_analytics", "label": "Graph Analytics",   "module": "modeling.graph_analytics", "post": None},
     {"key": "train_tabular_model", "label": "Tabular model training", "module": "modeling.train_tabular_model", "post": notify_api_refresh},
@@ -293,6 +232,90 @@ STAGES = [
     {"key": "forecast_models",        "label": "Forecast models",          "module": "modeling.forecast_models", "post": None},
 ]
 _STAGE_KEYS = [s["key"] for s in STAGES]
+
+
+class LeaseHeartbeat:
+    """Renew a SQL lease in the background and expose a publication guard."""
+
+    def __init__(
+        self,
+        renew: Callable[[], bool],
+        *,
+        interval_seconds: float,
+        label: str,
+    ) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("heartbeat interval must be positive")
+        self._renew = renew
+        self._interval_seconds = interval_seconds
+        self._label = label
+        self._stop = threading.Event()
+        self._lost = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"lease-heartbeat:{label}",
+            daemon=True,
+        )
+
+    def __enter__(self) -> "LeaseHeartbeat":
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self._stop.set()
+        self._thread.join(timeout=min(self._interval_seconds + 1, 10))
+
+    def assert_owned(self) -> None:
+        if self._lost.is_set() or not self._renew():
+            self._lost.set()
+            raise LeaseLostError(f"Lease lost for {self._label}")
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_seconds):
+            try:
+                if not self._renew():
+                    self._lost.set()
+                    logger.error("Lease heartbeat lost ownership: %s", self._label)
+                    return
+            except Exception as exc:
+                # A transient SQL failure is not proof of lease loss. Publication
+                # guards synchronously recheck ownership before visible writes.
+                logger.warning("Lease heartbeat failed for %s: %s", self._label, exc)
+
+
+def _stage_run_id(run_id: str, tenant_id: int, stage: str) -> str:
+    """Stable tenant-stage correlation ID, reused by reclaimed attempts."""
+    return str(uuid.uuid5(uuid.UUID(run_id), f"tenant:{tenant_id}:stage:{stage}"))
+
+
+def run_global_preparation(lease_guard: Callable[[], None]) -> None:
+    graph = importlib.import_module("modeling.graph_analytics")
+    holidays = importlib.import_module("misc_jobs.sync_holidays")
+    graph.prepare_global(lease_guard=lease_guard)
+    lease_guard()
+    holidays.prepare_global(lease_guard=lease_guard)
+
+
+def run_tenant_stage(
+    stage: dict,
+    tenant_id: int,
+    stage_run_id: str,
+    lease_guard: Callable[[], None],
+    lease_fence: Callable[[object], None],
+) -> TenantStageResult:
+    module = importlib.import_module(stage["module"])
+    result = module.process_tenant(
+        tenant_id=tenant_id,
+        run_id=stage_run_id,
+        lease_guard=lease_guard,
+        lease_fence=lease_fence,
+    )
+    if not isinstance(result, TenantStageResult):
+        raise TypeError(
+            f"{stage['module']}.process_tenant returned {type(result).__name__}, "
+            "expected TenantStageResult"
+        )
+    return result
 
 
 def _parse_args() -> argparse.Namespace:
@@ -309,10 +332,276 @@ def _parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def main() -> None:
-    args = _parse_args()
+def _run_legacy(args: argparse.Namespace) -> bool:
+    """Preserve the filtered stage harness for local analysis and recovery."""
     selected = [s for s in STAGES if args.only is None or s["key"] == args.only]
     tenants_to_process = [args.tenant] if args.tenant is not None else None
+
+    results: dict[str, bool] = {}
+    for stage in selected:
+        ok = run_stage(
+            name=f"{stage['label']}  ({stage['module']})",
+            module_path=stage["module"],
+            tenants_to_process=tenants_to_process,
+        )
+        results[stage["label"]] = ok
+        if ok and stage["post"] is not None:
+            stage["post"]()
+    return all(results.values())
+
+
+def _prepare_execution(
+    coordinator: IntegrityAnalyticsCoordinator,
+    run_id: str,
+    worker_id: str,
+    *,
+    heartbeat_seconds: float,
+    poll_seconds: float,
+) -> bool:
+    while True:
+        state = coordinator.get_run_state(run_id)
+        if state.preparation_status == "READY":
+            return True
+        if state.preparation_status == "FAILED" or state.result_status == "FAILED":
+            return False
+
+        if not coordinator.try_begin_preparation(run_id, worker_id):
+            time.sleep(poll_seconds)
+            continue
+
+        heartbeat = LeaseHeartbeat(
+            lambda: coordinator.heartbeat_preparation(run_id, worker_id),
+            interval_seconds=heartbeat_seconds,
+            label=f"preparation run={run_id} worker={worker_id}",
+        )
+        try:
+            with heartbeat:
+                run_global_preparation(heartbeat.assert_owned)
+                heartbeat.assert_owned()
+                queued = coordinator.initialize_tenant_queue(run_id, worker_id)
+                logger.info("GLOBAL PREPARATION queued %d enabled tenant(s)", queued)
+            coordinator.mark_preparation_ready(run_id, worker_id)
+            return True
+        except LeaseLostError:
+            logger.warning("Preparation lease was reclaimed; waiting for the new leader")
+            time.sleep(poll_seconds)
+        except Exception as exc:
+            logger.error("GLOBAL PREPARATION failed: %s", exc, exc_info=True)
+            try:
+                coordinator.mark_preparation_failed(run_id, worker_id, str(exc))
+                return False
+            except LeaseLostError:
+                logger.warning("Preparation failed after its lease was reclaimed")
+                time.sleep(poll_seconds)
+
+
+def _process_claim(
+    coordinator: IntegrityAnalyticsCoordinator,
+    claim,
+    *,
+    heartbeat_seconds: float,
+) -> None:
+    run_id = claim.run_id
+    tenant_id = claim.tenant_id
+    worker_id = claim.worker_id
+    logger.info(
+        "TENANT CLAIM tenant=%d attempt=%d worker=%s reclaimed=%s",
+        tenant_id,
+        claim.attempt_count,
+        worker_id,
+        claim.reclaimed,
+    )
+
+    if not coordinator.tenant_is_enabled(tenant_id):
+        try:
+            coordinator.mark_tenant_skipped_disabled(run_id, tenant_id, worker_id)
+            logger.info("TENANT SKIPPED tenant=%d reason=disabled", tenant_id)
+        except LeaseLostError:
+            logger.warning("Disabled tenant %d was reclaimed before skip persisted", tenant_id)
+        return
+
+    heartbeat = LeaseHeartbeat(
+        lambda: coordinator.heartbeat_tenant(run_id, tenant_id, worker_id),
+        interval_seconds=heartbeat_seconds,
+        label=f"tenant={tenant_id} run={run_id} worker={worker_id}",
+    )
+    failures: list[str] = []
+    lease_lost = False
+    with heartbeat:
+        for stage in TENANT_STAGES:
+            stage_run_id = _stage_run_id(run_id, tenant_id, stage["stage"])
+            attempt = None
+            try:
+                heartbeat.assert_owned()
+                attempt = coordinator.start_stage_attempt(
+                    run_id,
+                    tenant_id,
+                    worker_id,
+                    stage["stage"],
+                    stage_run_id=stage_run_id,
+                )
+                logger.info(
+                    "TENANT STAGE tenant=%d stage=%s attempt=%d",
+                    tenant_id,
+                    stage["stage"],
+                    attempt.attempt_number,
+                )
+                outcome = run_tenant_stage(
+                    stage,
+                    tenant_id,
+                    stage_run_id,
+                    heartbeat.assert_owned,
+                    lambda connection: coordinator.fence_tenant_lease(
+                        connection,
+                        run_id,
+                        tenant_id,
+                        worker_id,
+                    ),
+                )
+                heartbeat.assert_owned()
+                coordinator.finish_stage_attempt(
+                    run_id,
+                    tenant_id,
+                    worker_id,
+                    attempt.stage_attempt_id,
+                    outcome.status,
+                    reason_code=outcome.reason_code,
+                    published_version=outcome.published_version,
+                    diagnostics=outcome.diagnostics,
+                )
+            except LeaseLostError:
+                lease_lost = True
+                logger.error(
+                    "TENANT LEASE LOST tenant=%d stage=%s; publication stopped",
+                    tenant_id,
+                    stage["stage"],
+                )
+                break
+            except Exception as exc:
+                failures.append(f"{stage['stage']}: {exc}")
+                logger.error(
+                    "TENANT STAGE FAILED tenant=%d stage=%s: %s",
+                    tenant_id,
+                    stage["stage"],
+                    exc,
+                    exc_info=True,
+                )
+                if attempt is not None:
+                    try:
+                        heartbeat.assert_owned()
+                        coordinator.finish_stage_attempt(
+                            run_id,
+                            tenant_id,
+                            worker_id,
+                            attempt.stage_attempt_id,
+                            "FAILED",
+                            reason_code=f"{stage['stage']}_FAILED",
+                            failure_detail=str(exc),
+                        )
+                    except LeaseLostError:
+                        lease_lost = True
+                        break
+
+    if lease_lost:
+        return
+    try:
+        coordinator.complete_tenant(
+            run_id,
+            tenant_id,
+            worker_id,
+            "FAILED" if failures else "SUCCEEDED",
+            failure_detail="; ".join(failures) if failures else None,
+        )
+    except LeaseLostError:
+        logger.warning("Tenant %d was reclaimed before its result persisted", tenant_id)
+
+
+def _run_claim_loop(
+    coordinator: IntegrityAnalyticsCoordinator,
+    run_id: str,
+    worker_id: str,
+    *,
+    heartbeat_seconds: float,
+    poll_seconds: float,
+) -> str:
+    while True:
+        result = coordinator.get_result(run_id)
+        if result is not None:
+            return result
+
+        claim = coordinator.try_claim_tenant(run_id, worker_id)
+        if claim is not None:
+            _process_claim(
+                coordinator,
+                claim,
+                heartbeat_seconds=heartbeat_seconds,
+            )
+            continue
+
+        state = coordinator.get_run_state(run_id)
+        if state.result_status != "RUNNING":
+            return state.result_status
+        if state.pending_tenants or state.running_tenants:
+            time.sleep(poll_seconds)
+            continue
+        if not state.barrier_ready:
+            time.sleep(poll_seconds)
+            continue
+
+        if coordinator.try_begin_finalization(run_id, worker_id):
+            summary = coordinator.build_run_summary(run_id)
+            if summary["tabular_model_published"]:
+                notify_api_refresh()
+            final_result = "FAILED" if summary["failed_tenants"] else "SUCCEEDED"
+            coordinator.complete_finalization(
+                run_id,
+                worker_id,
+                final_result,
+                summary=summary,
+                failure_detail=(
+                    f"{summary['failed_tenants']} tenant(s) failed"
+                    if summary["failed_tenants"] else None
+                ),
+            )
+            return final_result
+        time.sleep(poll_seconds)
+
+
+def run_coordinated_job(
+    *,
+    execution_name: str,
+    job_name: str,
+    coordinator: IntegrityAnalyticsCoordinator,
+    worker_id: str,
+    heartbeat_seconds: float,
+    poll_seconds: float,
+) -> str:
+    run = coordinator.register_execution(execution_name, job_name)
+    logger.info(
+        "COORDINATED RUN run=%s execution=%s worker=%s",
+        run.run_id,
+        execution_name,
+        worker_id,
+    )
+    if not _prepare_execution(
+        coordinator,
+        run.run_id,
+        worker_id,
+        heartbeat_seconds=heartbeat_seconds,
+        poll_seconds=poll_seconds,
+    ):
+        return coordinator.get_result(run.run_id) or "FAILED"
+    return _run_claim_loop(
+        coordinator,
+        run.run_id,
+        worker_id,
+        heartbeat_seconds=heartbeat_seconds,
+        poll_seconds=poll_seconds,
+    )
+
+
+def main() -> None:
+    args = _parse_args()
 
     logger.info("WEEKLY ANALYTICS JOB - START")
     logger.info("Environment : %s", os.getenv("ENVIRONMENT", "unknown"))
@@ -330,35 +619,39 @@ def main() -> None:
         logger.error("Cannot proceed — database is unreachable: %s", exc)
         sys.exit(1)
 
-    results: dict[str, bool] = {}
-    for stage in selected:
-        ok = run_stage(
-            name                = f"{stage['label']}  ({stage['module']})",
-            module_path         = stage["module"],
-            tenants_to_process  = tenants_to_process,
-        )
-        results[stage["label"]] = ok
-        # Stage-specific post-hook, only on success.
-        if ok and stage["post"] is not None:
-            stage["post"]()
+    if args.only is not None or args.tenant is not None:
+        passed = _run_legacy(args)
+        logger.info("FILTERED ANALYTICS RUN result=%s", "SUCCEEDED" if passed else "FAILED")
+        sys.exit(0 if passed else 1)
 
-    # ── Summary ───────────────────────────────────────────────────────────────
-    logger.info("FRAUD ANALYTICS JOB - SUMMARY")
-    all_passed = True
-    for stage, passed in results.items():
-        status = "✓  PASS" if passed else "✗  FAIL"
-        logger.info("  %s  %s", status, stage)
-        if not passed:
-            all_passed = False
+    lease_seconds = int(os.getenv("COORDINATION_LEASE_SECONDS", "300"))
+    heartbeat_seconds = float(os.getenv("COORDINATION_HEARTBEAT_SECONDS", "60"))
+    poll_seconds = float(os.getenv("COORDINATION_POLL_SECONDS", "5"))
+    if heartbeat_seconds >= lease_seconds:
+        raise RuntimeError("COORDINATION_HEARTBEAT_SECONDS must be below the lease duration")
 
-    if all_passed:
-        logger.info("")
-        logger.info("All stages completed successfully.")
-        sys.exit(0)
-    else:
-        logger.error("")
-        logger.error("One or more stages failed — see logs above for details.")
-        sys.exit(1)
+    environment = os.getenv("ENVIRONMENT", "unknown")
+    execution_name = os.getenv("CONTAINER_APP_JOB_EXECUTION_NAME")
+    if not execution_name:
+        if environment not in {"unknown", "local", "test"}:
+            raise RuntimeError("CONTAINER_APP_JOB_EXECUTION_NAME is required in Azure")
+        execution_name = f"local-{uuid.uuid4()}"
+    job_name = (
+        os.getenv("CONTAINER_APP_JOB_NAME")
+        or os.getenv("OTEL_SERVICE_NAME")
+        or "fraud-analytics-job"
+    )
+    coordinator = IntegrityAnalyticsCoordinator(lease_seconds=lease_seconds)
+    result = run_coordinated_job(
+        execution_name=execution_name,
+        job_name=job_name,
+        coordinator=coordinator,
+        worker_id=new_worker_id(),
+        heartbeat_seconds=heartbeat_seconds,
+        poll_seconds=poll_seconds,
+    )
+    logger.info("INTEGRITY ANALYTICS JOB - SUMMARY result=%s", result)
+    sys.exit(0 if result == "SUCCEEDED" else 1)
 
 
 if __name__ == "__main__":

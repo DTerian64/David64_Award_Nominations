@@ -34,6 +34,7 @@ import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import torch
@@ -65,6 +66,8 @@ from .artifact_manifest import (  # noqa: E402
 )
 from utils.component_status import upsert_component_status  # noqa: E402
 from utils.db_conn import connect  # noqa: E402
+from utils.integrity_analytics_coordinator import LeaseLostError  # noqa: E402
+from utils.stage_result import TenantStageResult  # noqa: E402
 from utils.tenant_model_config import get_tenants as get_enabled_tenants  # noqa: E402
 from .gnn.model import (  # noqa: E402
     _RELATIONS,
@@ -723,6 +726,8 @@ def _process_shared_multi_head(
     conn, *, tenant_id: int, run_id: str, policy: GNNPolicy,
     users: list, nominations: list, labelled, folds: list[dict],
     base_diagnostics: dict, label_source_counts: dict, started: float,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
 ) -> str:
     """Publish one v4 bundle, preserving the incumbent on failed admission."""
     report, selected_model = evaluate_shared_model(folds, labelled, policy)
@@ -872,6 +877,8 @@ def _process_shared_multi_head(
             "NO_VALIDATION_CANDIDATE" if not selected
             else "NO_MESSAGE_PASSING_VALUE_OVER_BASELINES"
         )
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code=reason,
@@ -886,9 +893,15 @@ def _process_shared_multi_head(
     user_ids = sorted(graph["user_index"], key=graph["user_index"].get)
     with torch.no_grad():
         embeddings = selected_model.embed_users(graph["data"]).numpy().astype(np.float32)
+    _guard_lease(lease_guard)
+    _fence_lease(conn, lease_fence)
     count = _publish_embeddings(conn, tenant_id, user_ids, embeddings, as_of, model_version)
+    _guard_lease(lease_guard)
+    _fence_lease(conn, lease_fence)
     evicted = _evict_stale_embeddings(conn, tenant_id, policy.embedding_retention_days)
     # Only this last write makes the complete uploaded bundle visible to serving.
+    _guard_lease(lease_guard)
+    _fence_lease(conn, lease_fence)
     upsert_component_status(
         conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
         serving_status="AVAILABLE", serving_version=model_version,
@@ -899,11 +912,32 @@ def _process_shared_multi_head(
     return f"OK ({model_version}, {selected}, {count} embeddings; {time.monotonic() - started:.1f}s)"
 
 
-def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
+def _guard_lease(lease_guard: Callable[[], None] | None) -> None:
+    if lease_guard is not None:
+        lease_guard()
+
+
+def _fence_lease(
+    conn,
+    lease_fence: Callable[[object], None] | None,
+) -> None:
+    if lease_fence is not None:
+        lease_fence(conn)
+
+
+def _process_tenant(
+    conn,
+    tenant_id: int,
+    run_id: str | None = None,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
+) -> str:
     t0 = time.monotonic()
     run_id = run_id or str(uuid.uuid4())
     policy = load_active_policy(conn, tenant_id)
     if policy is None:
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="NO_ACTIVE_POLICY",
@@ -914,6 +948,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         return "SKIPPED (no active GNN scoring policy)"
     if not policy.training_enabled:
         incumbent_selection = _incumbent_selection(conn, tenant_id)
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="DISABLED",
             reason_code="DISABLED",
@@ -962,6 +998,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             or len(users) < policy.minimum_users):
         detail = (f"{len(behavior_nominations)} nominations / {len(users)} users; "
                   f"requires {policy.minimum_training_samples} / {policy.minimum_users}")
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="BELOW_MINIMUM_VOLUME", reason_detail=detail,
@@ -989,6 +1027,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
     }
     label_map = dict(zip(labelled["NominationId"], labelled["IsFraud"]))
     if not label_map:
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="NO_ELIGIBLE_SUPERVISED_LABELS",
@@ -1011,6 +1051,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             n_folds=policy.rolling_folds,
         )
     except ValueError as exc:
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn,
             tenant_id=tenant_id,
@@ -1056,6 +1098,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             f"rolling-train fraud labels {train_pos}, final-holdout fraud labels "
             f"{eval_pos}; requires {policy.minimum_positives_per_split} in each population"
         )
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="INSUFFICIENT_FRAUD_LABELS", reason_detail=detail,
@@ -1075,6 +1119,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             and (train_neg == 0 or eval_neg == 0)):
         detail = (f"train {train_pos} fraud/{train_neg} legitimate; "
                   f"eval {eval_pos} fraud/{eval_neg} legitimate")
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code="MISSING_LABEL_CLASS", reason_detail=detail,
@@ -1097,6 +1143,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             users=users, nominations=nominations, labelled=labelled,
             folds=folds, base_diagnostics=base_diagnostics,
             label_source_counts=label_source_counts, started=t0,
+            lease_guard=lease_guard,
+            lease_fence=lease_fence,
         )
 
     candidate_models: dict[str, object] = {}
@@ -1343,6 +1391,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         and active_specialist_count == 0
     ):
         reason = "NO_ACTIVE_SPECIALIST_MODEL"
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn,
             tenant_id=tenant_id,
@@ -1367,6 +1417,8 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
             "selection": incumbent_selection or selection,
             "last_candidate_selection": selection,
         }
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         upsert_component_status(
             conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
             reason_code=reason,
@@ -1390,20 +1442,28 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
         for _key, (model, specialist_version) in specialist_models.items():
             with torch.no_grad():
                 z = model.embed_users(graph["data"]).numpy().astype(np.float32)
+            _guard_lease(lease_guard)
+            _fence_lease(conn, lease_fence)
             n_emb += _publish_embeddings(
                 conn, tenant_id, user_ids, z, as_of, specialist_version
             )
     else:
         with torch.no_grad():
             z = serving_model.embed_users(graph["data"]).numpy().astype(np.float32)
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
         n_emb = _publish_embeddings(
             conn, tenant_id, user_ids, z, as_of, model_version
         )
+    _guard_lease(lease_guard)
+    _fence_lease(conn, lease_fence)
     n_evicted = _evict_stale_embeddings(
         conn, tenant_id, policy.embedding_retention_days
     )
 
     # This upsert is the activation pointer and therefore happens last.
+    _guard_lease(lease_guard)
+    _fence_lease(conn, lease_fence)
     upsert_component_status(
         conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
         serving_status="AVAILABLE",
@@ -1440,6 +1500,68 @@ def _process_tenant(conn, tenant_id: int, run_id: str | None = None) -> str:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def process_tenant(
+    tenant_id: int,
+    run_id: str,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
+) -> TenantStageResult:
+    """Train one tenant and translate component status into stage history."""
+    conn = connect()
+    try:
+        result_text = _process_tenant(
+            conn, tenant_id, run_id, lease_guard, lease_fence
+        )
+        row = conn.cursor().execute(
+            """
+            SELECT LastAttemptStatus, ReasonCode, ServingVersion
+            FROM dbo.IntegrityComponentStatus
+            WHERE TenantId=? AND Component='GNN'
+            """,
+            (tenant_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("GNN stage completed without component status")
+        attempt_status = str(row[0])
+        diagnostics = {"result": result_text}
+        if attempt_status == "SUCCEEDED":
+            return TenantStageResult.succeeded(
+                published_version=str(row[2]) if row[2] else None,
+                diagnostics=diagnostics,
+            )
+        return TenantStageResult.skipped(
+            str(row[1] or attempt_status),
+            diagnostics=diagnostics,
+        )
+    except LeaseLostError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        _guard_lease(lease_guard)
+        try:
+            _fence_lease(conn, lease_fence)
+            upsert_component_status(
+                conn,
+                tenant_id=tenant_id,
+                component="GNN",
+                attempt_status="FAILED",
+                reason_code="TRAINING_FAILED",
+                reason_detail=str(exc),
+                run_id=run_id,
+            )
+        except Exception:
+            logger.error(
+                "Tenant %d GNN failure status could not be persisted",
+                tenant_id,
+                exc_info=True,
+            )
+        raise
+    finally:
+        conn.close()
+        _log_peak_rss(f"after tenant {tenant_id}")
+
+
 def main(tenants_to_process: list | None = None) -> None:
     """Called by run_job.py. Signature matches every other stage."""
     run_id = str(uuid.uuid4())
@@ -1459,31 +1581,19 @@ def main(tenants_to_process: list | None = None) -> None:
                 return
         logger.info("Tenants: %s", tenants)
 
-        results, failed = {}, []
-        for tenant_id in tenants:
-            logger.info("Tenant %d", tenant_id)
-            try:
-                results[tenant_id] = _process_tenant(conn, tenant_id, run_id)
-            except Exception as exc:
-                logger.error("Tenant %d failed: %s", tenant_id, exc, exc_info=True)
-                results[tenant_id] = f"FAILED — {exc}"
-                failed.append(tenant_id)
-                try:
-                    conn.rollback()
-                    upsert_component_status(
-                        conn, tenant_id=tenant_id, component="GNN",
-                        attempt_status="FAILED", reason_code="TRAINING_FAILED",
-                        reason_detail=str(exc), run_id=run_id,
-                    )
-                except Exception:
-                    logger.error(
-                        "Tenant %d GNN failure status could not be persisted",
-                        tenant_id, exc_info=True,
-                    )
-            finally:
-                _log_peak_rss(f"after tenant {tenant_id}")
     finally:
         conn.close()
+
+    results, failed = {}, []
+    for tenant_id in tenants:
+        logger.info("Tenant %d", tenant_id)
+        try:
+            outcome = process_tenant(tenant_id, run_id)
+            results[tenant_id] = outcome.status
+        except Exception as exc:
+            logger.error("Tenant %d failed: %s", tenant_id, exc, exc_info=True)
+            results[tenant_id] = f"FAILED — {exc}"
+            failed.append(tenant_id)
 
     logger.info("")
     _log_peak_rss("stage total")

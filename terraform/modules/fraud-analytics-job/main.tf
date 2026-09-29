@@ -2,12 +2,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Fraud Analytics Container Apps Job
 #
-# Runs two scripts in sequence on a weekly cron schedule:
-#   1. modeling/train_tabular_model.py — per-tenant RF/MLP evaluation and serving refit
-#                               into dbo.FraudScores; uploads .pkl to Blob Storage.
-#   2. modeling/graph_analytics.py — Azure SQL Graph MATCH queries + networkx + NLP;
-#                               writes behavioural pattern findings to
-#                               dbo.GraphPatternFindings.
+# Runs the coordinated integrity analytics pipeline on a weekly cron schedule.
+# Global preparation runs once per execution, then enabled tenants are claimed
+# from the SQL-backed queue and processed through Graph, Tabular, GNN, and
+# Forecast stages. Multiple replicas share the same execution ledger.
 #
 # Trigger model:
 #   - Scheduled: cron "0 2 * * 1" — Monday 02:00 UTC every week.
@@ -24,10 +22,8 @@
 #   No connection strings or SAS tokens — all access via MI.
 #
 # Sizing:
-#   2 vCPU / 4 Gi — scikit-learn model training + graph MATCH queries + NLP
-#   inference can peak at ~3 Gi on 13 000 nominations. 4 Gi gives headroom.
-#   replica_timeout_in_seconds = 3600 — both scripts together finish well
-#   under 10 min; 1 hour is a generous ceiling for data growth.
+#   4 vCPU / 8 Gi per replica — the GNN stage is the current peak workload.
+#   Timeout, retry, parallelism, and required completions are caller-controlled.
 #
 # Lifecycle note:
 #   The image tag is managed by GitHub Actions (not Terraform). A placeholder
@@ -44,13 +40,13 @@ resource "azurerm_container_app_job" "fraud_analytics" {
   tags                         = var.tags
 
   # ── Trigger — weekly cron; job is also always manually startable ─────────
-  replica_timeout_in_seconds = 7200  # 2-hour ceiling: up to 60 min image pull on cold node + ~10 min actual run
-  replica_retry_limit        = 1     # fail fast — alert, don't silently retry
+  replica_timeout_in_seconds = var.replica_timeout_in_seconds
+  replica_retry_limit        = var.replica_retry_limit
 
   schedule_trigger_config {
-    cron_expression          = var.cron_expression   # default: "0 2 * * 1"
-    parallelism              = 1
-    replica_completion_count = 1
+    cron_expression          = var.cron_expression # default: "0 2 * * 1"
+    parallelism              = var.parallelism
+    replica_completion_count = var.replica_completion_count
   }
 
   # ── Identity — User-Assigned MI (pre-created before KV access policy) ─────
@@ -86,7 +82,7 @@ resource "azurerm_container_app_job" "fraud_analytics" {
 
   template {
     container {
-      name  = var.job_name
+      name = var.job_name
       # Placeholder image — GitHub Actions overwrites this on first deploy.
       image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
       cpu    = var.cpu
@@ -150,5 +146,10 @@ resource "azurerm_container_app_job" "fraud_analytics" {
     ignore_changes = [
       template[0].container[0].image,
     ]
+
+    precondition {
+      condition     = var.replica_completion_count <= var.parallelism
+      error_message = "replica_completion_count cannot exceed parallelism."
+    }
   }
 }

@@ -26,6 +26,7 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -133,7 +134,8 @@ def sync_country(conn, cc: str, years: list[int]) -> int:
     return len(by_date)
 
 
-def main(tenants_to_process: list | None = None) -> None:  # noqa: ARG001 — not tenant-scoped
+def prepare_global(lease_guard: Callable[[], None] | None = None) -> dict[str, int]:
+    """Refresh holidays once for the coordinated execution."""
     logger.info("Holiday sync stage starting")
     cy = date.today().year
     years = list(range(cy - YEARS_BACK, cy + YEARS_AHEAD + 1))
@@ -142,14 +144,27 @@ def main(tenants_to_process: list | None = None) -> None:  # noqa: ARG001 — no
         countries = get_tenant_countries(conn)
         logger.info("Syncing holidays for %d countries: %s", len(countries), sorted(countries))
         total = 0
+        failures: list[str] = []
         for cc in sorted(countries):
+            if lease_guard is not None:
+                lease_guard()
             try:
                 total += sync_country(conn, cc, years)
             except Exception as exc:
                 logger.error("[%s] holiday sync failed: %s", cc, exc, exc_info=True)
+                failures.append(cc)
+            if lease_guard is not None:
+                lease_guard()
         logger.info("Holiday sync complete — %d rows upserted across countries", total)
+        if failures:
+            raise RuntimeError(f"Holiday sync failed for country/countries: {failures}")
+        return {"country_count": len(countries), "holiday_row_count": total}
     finally:
         conn.close()
+
+
+def main(tenants_to_process: list | None = None) -> None:  # noqa: ARG001 — not tenant-scoped
+    prepare_global()
 
 
 if __name__ == "__main__":

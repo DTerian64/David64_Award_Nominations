@@ -40,7 +40,7 @@ import uuid
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from itertools import combinations
-from typing import Any
+from typing import Any, Callable
 
 import networkx as nx
 import numpy as np
@@ -58,6 +58,8 @@ from integrity_engine.graph.finding_scoring import (
 from integrity_engine.graph.history_windows import detector_windows, filter_detector_history
 
 from utils.component_status import upsert_component_status
+from utils.integrity_analytics_coordinator import LeaseLostError
+from utils.stage_result import TenantStageResult
 from utils.tenant_model_config import get_tenants as get_enabled_tenants
 
 # Same .env loading as the other modeling jobs so this stage
@@ -351,6 +353,26 @@ def sync_graph_tables(conn: pyodbc.Connection) -> None:
 
     conn.commit()
     logger.info("Graph tables synced.")
+
+
+def prepare_global(lease_guard: Callable[[], None] | None = None) -> None:
+    """Refresh shared Graph state and perform the one-per-execution retention sweep."""
+    conn = _get_connection()
+    try:
+        if lease_guard is not None:
+            lease_guard()
+        sync_graph_tables(conn)
+        if lease_guard is not None:
+            lease_guard()
+        window_days = _maximum_active_detection_window(conn, 180)
+        _evict_stale_embeddings(conn, window_days)
+        if lease_guard is not None:
+            lease_guard()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
@@ -1803,6 +1825,8 @@ def _process_tenant(
     findings_table: str,
     default_window_days: int,
     run_id: str,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
 ) -> int:
     """Detect and persist one tenant's graph snapshot and component status."""
     logger.info("Tenant %d", tenant_id)
@@ -1884,6 +1908,8 @@ def _process_tenant(
         ))
 
     detected_findings = list({f["FindingHash"]: f for f in detected_findings}.values())
+    if lease_guard is not None:
+        lease_guard()
     snapshot_artifact = _publish_graph_inference_snapshot(
         tenant_id=tenant_id,
         run_id=run_id,
@@ -1891,6 +1917,10 @@ def _process_tenant(
         policy=policy,
         nominations=nominations,
     )
+    if lease_guard is not None:
+        lease_guard()
+    if lease_fence is not None:
+        lease_fence(conn)
     # Same lock order as inference: serving marker before user snapshot rows.
     conn.cursor().execute("""
         SELECT TenantId FROM dbo.IntegrityComponentStatus WITH (UPDLOCK, HOLDLOCK)
@@ -1934,6 +1964,67 @@ def _process_tenant(
     return finding_count
 
 
+def process_tenant(
+    tenant_id: int,
+    run_id: str,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
+) -> TenantStageResult:
+    """Run Graph analytics for exactly one tenant using a stable correlation ID."""
+    findings_table = os.getenv("GRAPH_FINDINGS_TABLE", "dbo.GraphPatternFindings")
+    conn = _get_connection()
+    try:
+        finding_count = _process_tenant(
+            conn,
+            tenant_id,
+            findings_table,
+            180,
+            run_id,
+            lease_guard,
+            lease_fence,
+        )
+        row = conn.cursor().execute(
+            """
+            SELECT ServingVersion
+            FROM dbo.IntegrityComponentStatus
+            WHERE TenantId=? AND Component='GRAPH'
+            """,
+            (tenant_id,),
+        ).fetchone()
+        return TenantStageResult.succeeded(
+            published_version=str(row[0]) if row and row[0] else None,
+            diagnostics={"finding_count": finding_count},
+        )
+    except LeaseLostError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        try:
+            if lease_guard is not None:
+                lease_guard()
+            if lease_fence is not None:
+                lease_fence(conn)
+            upsert_component_status(
+                conn,
+                tenant_id=tenant_id,
+                component="GRAPH",
+                attempt_status="FAILED",
+                reason_code="ANALYTICS_FAILED",
+                reason_detail=str(exc),
+                run_id=run_id,
+            )
+        except Exception:
+            logger.error(
+                "Tenant %d Graph failure status could not be persisted",
+                tenant_id,
+                exc_info=True,
+            )
+        raise
+    finally:
+        conn.close()
+
+
 def main(tenants_to_process: list | None = None) -> None:
     log_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
     logging.basicConfig(
@@ -1950,17 +2041,9 @@ def main(tenants_to_process: list | None = None) -> None:
     logger.info("Target table: %s", findings_table)
     logger.info("Graph window source: Tenants.integrity_config (default %d days)", default_window_days)
 
+    prepare_global()
+
     conn = _get_connection()
-
-    # Refresh graph tables from live Nominations / Users
-    sync_graph_tables(conn)
-
-    # Evict only embeddings older than every active tenant policy requires.
-    embedding_window_days = _maximum_active_detection_window(
-        conn, default_window_days
-    )
-    _evict_stale_embeddings(conn, embedding_window_days)
-
     tenants = _load_tenants(conn)
     if tenants_to_process is not None:
         tenants = [t for t in tenants if t in tenants_to_process]
@@ -1975,25 +2058,11 @@ def main(tenants_to_process: list | None = None) -> None:
 
     for tenant_id in tenants:
         try:
-            total_findings += _process_tenant(
-                conn, tenant_id, findings_table, default_window_days,
-                run_id,
-            )
+            result = process_tenant(tenant_id, run_id)
+            total_findings += int(result.diagnostics.get("finding_count", 0))
         except Exception as exc:
             logger.error("Tenant %d graph analytics failed: %s", tenant_id, exc, exc_info=True)
             failed.append(tenant_id)
-            try:
-                conn.rollback()
-                upsert_component_status(
-                    conn, tenant_id=tenant_id, component="GRAPH",
-                    attempt_status="FAILED", reason_code="ANALYTICS_FAILED",
-                    reason_detail=str(exc), run_id=run_id,
-                )
-            except Exception:
-                logger.error(
-                    "Tenant %d Graph failure status could not be persisted",
-                    tenant_id, exc_info=True,
-                )
 
     conn.close()
     logger.info(
