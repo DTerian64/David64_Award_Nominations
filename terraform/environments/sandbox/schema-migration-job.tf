@@ -3,7 +3,7 @@
 # ADR-0001 -- migrations run as an in-VNet ACA Job (private-endpoint SQL is
 # unreachable from GitHub-hosted runners). The job authenticates to SQL with a
 # user-assigned Managed Identity that is a member of sql-migrations-<env>
-# (db_ddladmin). GitHub Actions only triggers it (az containerapp job start).
+# (db_ddladmin + award_schema_migrator). GitHub Actions only triggers it.
 # -----------------------------------------------------------------------------
 
 # Managed Identity for the migration job (maps to the sql-migrations-<env> DB user).
@@ -15,7 +15,8 @@ resource "azurerm_user_assigned_identity" "schema_migration" {
   depends_on          = [azurerm_resource_group.rg]
 }
 
-# Join it to sql-migrations-<env> -> db_ddladmin (the contained DB user maps to the group).
+# Join it to sql-migrations-<env>; the contained DB user maps that group to
+# db_ddladmin and the scoped award_schema_migrator database role.
 resource "azuread_group_member" "schema_migration_job" {
   group_object_id  = module.sql_access.migrations_group_object_id
   member_object_id = azurerm_user_assigned_identity.schema_migration.principal_id

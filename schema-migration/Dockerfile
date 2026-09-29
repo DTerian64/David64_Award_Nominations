@@ -1,7 +1,7 @@
 # schema-migration — standalone Alembic runner (ADR-0001)
 # Ephemeral, one-shot image: applies `alembic upgrade head` and exits.
 # Owned by no runtime service; run by the deploy-schema-migration pipeline
-# as the `sql-migrations` identity (db_ddladmin).
+# as the `sql-migrations` identity (db_ddladmin + scoped schema control).
 FROM python:3.11-slim-bookworm
 
 # Microsoft ODBC Driver 18 + unixODBC (required by pyodbc against Azure SQL).

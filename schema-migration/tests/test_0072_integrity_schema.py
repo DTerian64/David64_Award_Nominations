@@ -79,7 +79,7 @@ def test_preflight_rejects_unsafe_permissions_dependencies_and_identity():
     assert "HAS_PERMS_BY_NAME" in ddl
     assert "direct object permissions" in ddl
     assert "database module references" in ddl
-    assert "CONTROL on every source table" in ddl
+    assert "CONTROL on both source and destination schemas" in ddl
 
 
 def test_downgrade_moves_objects_back_and_removes_empty_schema():

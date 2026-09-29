@@ -8,8 +8,8 @@ variable "container_app_environment_id" {
   type        = string
 }
 
-# User-assigned MI, member of sql-migrations-<env> (db_ddladmin). Auth to SQL is
-# via this identity's Entra token -- no SQL_USER/PASSWORD.
+# User-assigned MI, member of sql-migrations-<env> (db_ddladmin plus the scoped
+# award_schema_migrator database role). Auth uses its Entra token.
 variable "identity_id" { type = string }
 variable "identity_client_id" { type = string }
 

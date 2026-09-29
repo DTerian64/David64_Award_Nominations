@@ -48,5 +48,6 @@ alembic revision -m "describe change"      # then hand-edit the generated file i
 
 `.github/workflows/deploy-schema-migration.yaml` builds this image and runs
 `alembic upgrade head` as the secretless `schema-migrations` identity (Entra group
-`sql-migrations-<env>` → `db_ddladmin`), gated by the GitHub Environment. Runtime
-identities never hold DDL rights.
+`sql-migrations-<env>` → `db_ddladmin` plus the scoped
+`award_schema_migrator` role), gated by the GitHub Environment. Runtime identities
+never hold DDL rights.

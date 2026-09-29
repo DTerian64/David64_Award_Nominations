@@ -144,21 +144,15 @@ def _preflight_sql(source_schema: str, destination_schema: str) -> str:
                 1;
         END;
 
-        IF EXISTS (
-            SELECT 1
-            FROM @Targets AS target
-            WHERE HAS_PERMS_BY_NAME(
-                QUOTENAME(N'{source_schema}') + N'.' + QUOTENAME(target.TableName),
-                N'OBJECT',
-                N'CONTROL'
-            ) <> 1
-        )
+        IF HAS_PERMS_BY_NAME(
+               N'{source_schema}', N'SCHEMA', N'CONTROL'
+           ) <> 1
            OR HAS_PERMS_BY_NAME(
-               N'{destination_schema}', N'SCHEMA', N'ALTER'
+               N'{destination_schema}', N'SCHEMA', N'CONTROL'
            ) <> 1
         BEGIN
             ;THROW 51005,
-                'Integrity schema migration requires CONTROL on every source table and ALTER on the destination schema.',
+                'Integrity schema migration requires CONTROL on both source and destination schemas.',
                 1;
         END;
     """

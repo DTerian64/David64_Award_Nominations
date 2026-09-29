@@ -6,6 +6,7 @@
 # users map to these groups:
 #   - sql-app-readwrite-<env>  : runtime Managed Identities  -> db_datareader + db_datawriter
 #   - sql-migrations-<env>     : the schema-migration ACA Job's MI -> db_ddladmin
+#                                + award_schema_migrator (in-database bootstrap)
 #   - sql-admins-<env>         : Entra admin on the SQL server (set in the sql module)
 #
 # Migrations run as an in-VNet ACA Job (its MI joins sql-migrations-<env>, wired
@@ -37,7 +38,7 @@ resource "azuread_group" "sql_app_readwrite" {
 
 resource "azuread_group" "sql_migrations" {
   display_name     = local.mig_group_name
-  description      = "Schema-migration SQL access (db_ddladmin) -- ${var.environment}. ADR-0001."
+  description      = "Schema-migration SQL access (db_ddladmin + scoped schema control) -- ${var.environment}. ADR-0001."
   security_enabled = true
   owners           = [data.azuread_client_config.current.object_id]
 

@@ -87,7 +87,7 @@ def _token_struct() -> bytes:
         logger.exception(
             "Failed to acquire an Entra token for %s (MI_CLIENT_ID=%s). Verify the "
             "migration Managed Identity is attached to the job and is a member of "
-            "the sql-migrations group (db_ddladmin).",
+            "the sql-migrations group (db_ddladmin + award_schema_migrator).",
             AZURE_SQL_SCOPE, MI_CLIENT_ID or "<unset>",
         )
         raise

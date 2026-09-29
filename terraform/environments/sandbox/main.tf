@@ -769,10 +769,9 @@ module "fraud_analytics_job" {
 
   # Non-secret env vars
   environment_variables = [
-    { name = "GRAPH_FINDINGS_TABLE", value = "dbo.GraphPatternFindings" },
     { name = "LOGGING_LEVEL", value = var.logging_level },
     { name = "DETECTION_WINDOW_DAYS", value = tostring(var.fraud_analytics_detection_window_days) },
-    # GNN modeling and serving policy lives in dbo.GNNScoringPolicies. The job
+    # GNN modeling and serving policy lives in integrity.GNNScoringPolicies. The job
     # reads the tenant's active version when it begins processing that tenant.
     # Post-training cache-refresh callback — job POSTs here after uploading new pkls.
     # Uses the primary app's internal FQDN (ACA-to-ACA routing within the same CAE).

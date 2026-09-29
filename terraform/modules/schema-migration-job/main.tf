@@ -4,7 +4,8 @@
 #
 # Runs `alembic upgrade head` from the schema-migration image, INSIDE the VNet
 # (via the CAE), as a user-assigned Managed Identity that is a member of
-# sql-migrations-<env> (db_ddladmin). It reaches the private-endpoint SQL server
+# sql-migrations-<env> (db_ddladmin + scoped schema control). It reaches the
+# private-endpoint SQL server
 # that GitHub-hosted runners cannot.
 #
 # Manual trigger only -- scale-to-zero. Nothing runs until:
