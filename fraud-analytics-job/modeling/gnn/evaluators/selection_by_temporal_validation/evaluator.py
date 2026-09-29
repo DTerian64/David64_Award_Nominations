@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 
@@ -9,7 +10,7 @@ import numpy as np
 import torch
 from sklearn.linear_model import LogisticRegression
 
-from ..metrics import binary_metrics, display_threshold_metrics, sigmoid
+from ..metrics import binary_metrics, display_threshold_metrics
 from .model import (
     PatternTargets, SharedMultiHeadModel, build_pattern_targets,
     masked_joint_loss,
@@ -18,6 +19,9 @@ from ...specialists.contracts import BEHAVIOR_TRACKS
 from integrity_engine.gnn.live_graph import (
     LIVE_ENCODING_CONTRACT, LiveGraphReplay, preprocessing_from_graph,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _targets(labelled, fold: dict, split: str) -> PatternTargets:
@@ -50,7 +54,17 @@ def _fit(
     if any(not len(part.overall) for part in targets):
         raise ValueError("A v4 training fold has no supervised targets")
     started = time.perf_counter()
-    for _ in range(epochs):
+    logger.info(
+        "GNN fit started architecture=%s folds=%d epochs=%d",
+        architecture,
+        len(folds),
+        epochs,
+    )
+    milestones = {
+        max(1, round(epochs * fraction))
+        for fraction in (0.25, 0.5, 0.75, 1.0)
+    }
+    for epoch in range(1, epochs + 1):
         model.train()
         optimizer.zero_grad()
         for fold, target in zip(folds, targets):
@@ -62,11 +76,28 @@ def _fit(
             )
             (loss / len(folds)).backward()
         optimizer.step()
+        if epoch in milestones:
+            logger.info(
+                "GNN fit progress architecture=%s folds=%d epoch=%d/%d elapsed=%.1fs",
+                architecture,
+                len(folds),
+                epoch,
+                epochs,
+                time.perf_counter() - started,
+            )
     model.eval()
     all_targets = _concat_targets(targets)
+    duration = time.perf_counter() - started
+    logger.info(
+        "GNN fit completed architecture=%s folds=%d epochs=%d duration=%.1fs",
+        architecture,
+        len(folds),
+        epochs,
+        duration,
+    )
     return model, {
         "epochs_run": epochs,
-        "training_duration_seconds": time.perf_counter() - started,
+        "training_duration_seconds": duration,
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "training_count": int(len(all_targets.overall)),
         "training_positive_count": int(all_targets.overall.sum()),
@@ -80,6 +111,13 @@ def _fit(
 def _score(model: SharedMultiHeadModel, fold: dict, split: str, targets: PatternTargets) -> tuple[dict, dict]:
     started = time.perf_counter()
     timings = []
+    target_count = len(targets.overall)
+    logger.info(
+        "GNN score started architecture=%s split=%s nominations=%d",
+        model.architecture,
+        split,
+        target_count,
+    )
     with torch.no_grad():
         if model.architecture == "raw_feature_mlp":
             output = model(fold["data"], fold[split]["pairs"], fold[split]["x"])
@@ -89,6 +127,7 @@ def _score(model: SharedMultiHeadModel, fold: dict, split: str, targets: Pattern
                                     num_layers=len(model.encoder.convs) if model.encoder is not None else None)
             rows = {int(row["NominationId"]): row for row in fold["live_history"]}
             parts = {}
+            progress_step = max(target_count // 4, 1)
             for index, nomination_id in enumerate(fold[split]["nom_ids"]):
                 tick = time.perf_counter()
                 target = rows[int(nomination_id)]
@@ -103,8 +142,27 @@ def _score(model: SharedMultiHeadModel, fold: dict, split: str, targets: Pattern
                 for key, value in logits.items():
                     parts.setdefault(key, []).append(value)
                 timings.append((time.perf_counter() - tick) * 1000)
+                completed = index + 1
+                if target_count >= 20 and (
+                    completed % progress_step == 0 or completed == target_count
+                ):
+                    logger.info(
+                        "GNN score progress architecture=%s split=%s nominations=%d/%d elapsed=%.1fs",
+                        model.architecture,
+                        split,
+                        completed,
+                        target_count,
+                        time.perf_counter() - started,
+                    )
             output = {key: torch.cat(values) for key, values in parts.items()}
     total_ms = (time.perf_counter() - started) * 1000
+    logger.info(
+        "GNN score completed architecture=%s split=%s nominations=%d duration=%.1fs",
+        model.architecture,
+        split,
+        target_count,
+        total_ms / 1000,
+    )
     latency_ms = float(np.percentile(timings, 95)) if timings else total_ms / max(len(targets.overall), 1)
     logits = {key: value.detach().numpy() for key, value in output.items()}
     metrics = {
@@ -206,6 +264,8 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
     # The final fold is withheld completely until this loop has selected an
     # architecture. Both candidate fits and tie-breaks use validation only.
     for architecture in policy.candidate_architectures:
+        candidate_started = time.perf_counter()
+        logger.info("GNN validation candidate started architecture=%s", architecture)
         periods = []
         samples: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {}
         try:
@@ -242,7 +302,18 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
                 "validation_inference_ms": float(np.mean([row["inference_ms"] for row in periods])),
             }
             validation_samples[architecture] = samples
+            logger.info(
+                "GNN validation candidate completed architecture=%s periods=%d duration=%.1fs",
+                architecture,
+                len(periods),
+                time.perf_counter() - candidate_started,
+            )
         except Exception as exc:
+            logger.exception(
+                "GNN validation candidate failed architecture=%s duration=%.1fs",
+                architecture,
+                time.perf_counter() - candidate_started,
+            )
             candidates[architecture] = {
                 "status": "FAILED", "reason": type(exc).__name__, "detail": str(exc)[:500]
             }
@@ -271,6 +342,8 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
     final_metrics = {}
     # Baselines use the identical training folds and final-test population.
     for architecture in ("raw_feature_mlp", "engineered_graph_mlp", selected):
+        final_started = time.perf_counter()
+        logger.info("GNN final-test model started architecture=%s", architecture)
         model, fit = _fit(folds, labelled, architecture, contracts, **fit_options)
         metrics, logits = _score(model, final, "eval", final_targets)
         if architecture == selected:
@@ -302,6 +375,11 @@ def evaluate_shared_model(folds: list[dict], labelled, policy) -> tuple[dict, Sh
                     )
         final_models[architecture] = model
         final_metrics[architecture] = {"fit": fit, **metrics}
+        logger.info(
+            "GNN final-test model completed architecture=%s duration=%.1fs",
+            architecture,
+            time.perf_counter() - final_started,
+        )
     selected_pr = final_metrics[selected]["overall"]["pr_auc"]
     raw_pr = final_metrics["raw_feature_mlp"]["overall"]["pr_auc"]
     engineered_pr = final_metrics["engineered_graph_mlp"]["overall"]["pr_auc"]

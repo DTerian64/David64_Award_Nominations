@@ -28,6 +28,7 @@ decoder itself on first use per tenant.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import time
@@ -65,7 +66,7 @@ from .artifact_manifest import (  # noqa: E402
     write_manifest,
 )
 from utils.component_status import upsert_component_status  # noqa: E402
-from utils.db_conn import connect  # noqa: E402
+from utils.db_conn import RenewableConnection, connect  # noqa: E402
 from utils.integrity_analytics_coordinator import LeaseLostError  # noqa: E402
 from utils.stage_result import TenantStageResult  # noqa: E402
 from utils.tenant_model_config import get_tenants as get_enabled_tenants  # noqa: E402
@@ -104,6 +105,168 @@ logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = JOB_DIR / "Output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+_PUBLICATION_MAX_ATTEMPTS = 3
+_PUBLICATION_RETRY_DELAY_SECONDS = 2.0
+_TRANSIENT_SQL_MARKERS = (
+    "08S01", "08001", "08003", "08006", "08007", "40001",
+    "40197", "40501", "40613", "49918", "49919", "49920",
+)
+
+
+def _is_transient_sql_error(exc: Exception) -> bool:
+    text = " ".join(str(value) for value in getattr(exc, "args", (exc,)))
+    return any(marker in text for marker in _TRANSIENT_SQL_MARKERS)
+
+
+def _run_publication_with_retry(
+    connection: RenewableConnection,
+    *,
+    tenant_id: int,
+    operation_name: str,
+    operation: Callable[[], object],
+    reconcile: Callable[[], tuple[bool, object]] | None = None,
+):
+    """Run an idempotent publication transaction with bounded reconnects.
+
+    The operation must make its activation/status upsert last so that its commit
+    atomically covers all earlier writes. Reconciliation handles the ambiguous
+    case where the server committed but the acknowledgement was lost.
+    """
+    for attempt in range(1, _PUBLICATION_MAX_ATTEMPTS + 1):
+        started = time.monotonic()
+        logger.info(
+            "Tenant %d: GNN publication started operation=%s attempt=%d/%d",
+            tenant_id,
+            operation_name,
+            attempt,
+            _PUBLICATION_MAX_ATTEMPTS,
+        )
+        try:
+            result = operation()
+            logger.info(
+                "Tenant %d: GNN publication completed operation=%s attempt=%d duration=%.1fs",
+                tenant_id,
+                operation_name,
+                attempt,
+                time.monotonic() - started,
+            )
+            return result
+        except LeaseLostError:
+            connection.discard()
+            raise
+        except Exception as exc:
+            try:
+                connection.rollback()
+            except Exception:
+                logger.warning(
+                    "Tenant %d: publication rollback failed; discarding connection",
+                    tenant_id,
+                    exc_info=True,
+                )
+            connection.discard()
+            if not _is_transient_sql_error(exc):
+                raise
+
+            if reconcile is not None:
+                try:
+                    matched, reconciled_result = reconcile()
+                    if matched:
+                        logger.warning(
+                            "Tenant %d: GNN publication commit reconciled after transient error "
+                            "operation=%s attempt=%d",
+                            tenant_id,
+                            operation_name,
+                            attempt,
+                        )
+                        return reconciled_result
+                except Exception:
+                    logger.warning(
+                        "Tenant %d: GNN publication reconciliation failed; retrying",
+                        tenant_id,
+                        exc_info=True,
+                    )
+                    connection.discard()
+
+            if attempt == _PUBLICATION_MAX_ATTEMPTS:
+                raise
+            delay = _PUBLICATION_RETRY_DELAY_SECONDS * attempt
+            logger.warning(
+                "Tenant %d: transient SQL publication failure operation=%s "
+                "attempt=%d/%d; retrying on a fresh connection in %.1fs: %s",
+                tenant_id,
+                operation_name,
+                attempt,
+                _PUBLICATION_MAX_ATTEMPTS,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+    raise AssertionError("publication retry loop exhausted unexpectedly")
+
+
+def _reconcile_gnn_status(
+    connection: RenewableConnection,
+    *,
+    tenant_id: int,
+    run_id: str,
+    expected_status: str,
+    expected_version: str | None = None,
+) -> tuple[bool, dict]:
+    """Check whether an activation commit succeeded before its ACK was lost."""
+    row = connection.cursor().execute(
+        """
+        SELECT LastAttemptStatus, ServingVersion, DiagnosticsJson
+        FROM dbo.IntegrityComponentStatus
+        WHERE TenantId=? AND Component='GNN' AND RunId=?
+        """,
+        (tenant_id, run_id),
+    ).fetchone()
+    connection.rollback()
+    if row is None or str(row[0]).upper() != expected_status.upper():
+        return False, {}
+    if expected_version is not None and str(row[1] or "") != expected_version:
+        return False, {}
+    diagnostics = json.loads(row[2]) if row[2] else {}
+    return True, diagnostics
+
+
+def _read_gnn_outcome_with_retry(
+    connection: RenewableConnection,
+    tenant_id: int,
+):
+    """Read the committed stage outcome without turning a transient into failure."""
+    for attempt in range(1, _PUBLICATION_MAX_ATTEMPTS + 1):
+        try:
+            row = connection.cursor().execute(
+                """
+                SELECT LastAttemptStatus, ReasonCode, ServingVersion
+                FROM dbo.IntegrityComponentStatus
+                WHERE TenantId=? AND Component='GNN'
+                """,
+                (tenant_id,),
+            ).fetchone()
+            connection.rollback()
+            return row
+        except Exception as exc:
+            connection.discard()
+            if (
+                not _is_transient_sql_error(exc)
+                or attempt == _PUBLICATION_MAX_ATTEMPTS
+            ):
+                raise
+            delay = _PUBLICATION_RETRY_DELAY_SECONDS * attempt
+            logger.warning(
+                "Tenant %d: transient SQL outcome-read failure attempt=%d/%d; "
+                "retrying on a fresh connection in %.1fs: %s",
+                tenant_id,
+                attempt,
+                _PUBLICATION_MAX_ATTEMPTS,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+    raise AssertionError("outcome read retry loop exhausted unexpectedly")
 
 
 # ── Tenant discovery ──────────────────────────────────────────────────────────
@@ -730,10 +893,25 @@ def _process_shared_multi_head(
     lease_fence: Callable[[object], None] | None = None,
 ) -> str:
     """Publish one v4 bundle, preserving the incumbent on failed admission."""
+    evaluation_started = time.monotonic()
+    logger.info(
+        "Tenant %d: shared multi-head GNN evaluation started candidates=%s folds=%d",
+        tenant_id,
+        list(policy.candidate_architectures),
+        len(folds),
+    )
     report, selected_model = evaluate_shared_model(folds, labelled, policy)
     final = report.get("final_test") or {}
     selected = report["selection"].get("selected_architecture")
     admitted = bool(final.get("admitted") and selected_model is not None)
+    logger.info(
+        "Tenant %d: shared multi-head GNN evaluation completed selected=%s "
+        "admitted=%s duration=%.1fs",
+        tenant_id,
+        selected,
+        admitted,
+        time.monotonic() - evaluation_started,
+    )
     graph = G.build_serving_graph(
         users, nominations, causal_window_days=policy.window_days,
     )
@@ -828,10 +1006,23 @@ def _process_shared_multi_head(
     artifacts.append((manifest_path, "operational_manifest"))
     prefix = gnn_bundle_prefix(tenant_id, model_version)
     uploaded = []
+    upload_started = time.monotonic()
+    logger.info(
+        "Tenant %d: GNN artifact upload started files=%d prefix=%s",
+        tenant_id,
+        len(artifacts),
+        prefix,
+    )
     for path, _role in artifacts:
         relative_parent = path.relative_to(bundle_dir).parent.as_posix()
         folder = prefix if relative_parent == "." else f"{prefix}/{relative_parent}"
         uploaded.append(upload_artifact(path, blob_folder=folder))
+    logger.info(
+        "Tenant %d: GNN artifact upload completed files=%d duration=%.1fs",
+        tenant_id,
+        len(artifacts),
+        time.monotonic() - upload_started,
+    )
     if os.getenv("AZURE_STORAGE_ACCOUNT") and not all(uploaded):
         raise RuntimeError("GNN v4 bundle upload incomplete; incumbent preserved")
 
@@ -877,37 +1068,84 @@ def _process_shared_multi_head(
             "NO_VALIDATION_CANDIDATE" if not selected
             else "NO_MESSAGE_PASSING_VALUE_OVER_BASELINES"
         )
-        _guard_lease(lease_guard)
-        _fence_lease(conn, lease_fence)
-        upsert_component_status(
-            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
-            reason_code=reason,
-            reason_detail=(
-                "V4 final temporal test did not pass both raw-feature and "
-                "engineered-graph MLP admission margins; incumbent preserved."
-            ),
-            diagnostics=diagnostics, run_id=run_id,
+
+        def publish_skip():
+            _guard_lease(lease_guard)
+            _fence_lease(conn, lease_fence)
+            upsert_component_status(
+                conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+                reason_code=reason,
+                reason_detail=(
+                    "V4 final temporal test did not pass both raw-feature and "
+                    "engineered-graph MLP admission margins; incumbent preserved."
+                ),
+                diagnostics=diagnostics, run_id=run_id,
+            )
+
+        def reconcile_skip():
+            matched, _diagnostics = _reconcile_gnn_status(
+                conn,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                expected_status="SKIPPED",
+            )
+            return matched, None
+
+        _run_publication_with_retry(
+            conn,
+            tenant_id=tenant_id,
+            operation_name="activate-skip",
+            operation=publish_skip,
+            reconcile=reconcile_skip,
         )
         return f"SKIPPED ({reason}; v4 manifest {model_version}; {time.monotonic() - started:.1f}s)"
 
     user_ids = sorted(graph["user_index"], key=graph["user_index"].get)
     with torch.no_grad():
         embeddings = selected_model.embed_users(graph["data"]).numpy().astype(np.float32)
-    _guard_lease(lease_guard)
-    _fence_lease(conn, lease_fence)
-    count = _publish_embeddings(conn, tenant_id, user_ids, embeddings, as_of, model_version)
-    _guard_lease(lease_guard)
-    _fence_lease(conn, lease_fence)
-    evicted = _evict_stale_embeddings(conn, tenant_id, policy.embedding_retention_days)
-    # Only this last write makes the complete uploaded bundle visible to serving.
-    _guard_lease(lease_guard)
-    _fence_lease(conn, lease_fence)
-    upsert_component_status(
-        conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
-        serving_status="AVAILABLE", serving_version=model_version,
-        serving_as_of=as_of, run_id=run_id,
-        diagnostics={**diagnostics, "embedding_count": count,
-                     "evicted_embedding_count": evicted},
+
+    def publish_success():
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
+        count = _publish_embeddings(
+            conn, tenant_id, user_ids, embeddings, as_of, model_version
+        )
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
+        evicted = _evict_stale_embeddings(
+            conn, tenant_id, policy.embedding_retention_days
+        )
+        # Only this last write makes the complete uploaded bundle visible to serving.
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
+            serving_status="AVAILABLE", serving_version=model_version,
+            serving_as_of=as_of, run_id=run_id,
+            diagnostics={**diagnostics, "embedding_count": count,
+                         "evicted_embedding_count": evicted},
+        )
+        return count, evicted
+
+    def reconcile_success():
+        matched, stored = _reconcile_gnn_status(
+            conn,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            expected_status="SUCCEEDED",
+            expected_version=model_version,
+        )
+        return matched, (
+            int(stored.get("embedding_count", len(user_ids))),
+            int(stored.get("evicted_embedding_count", 0)),
+        )
+
+    count, evicted = _run_publication_with_retry(
+        conn,
+        tenant_id=tenant_id,
+        operation_name="publish-and-activate",
+        operation=publish_success,
+        reconcile=reconcile_success,
     )
     return f"OK ({model_version}, {selected}, {count} embeddings; {time.monotonic() - started:.1f}s)"
 
@@ -1136,6 +1374,15 @@ def _process_tenant(
         return (f"SKIPPED (supervised labels need both classes: "
                 f"train {train_pos} fraud/{train_neg} legitimate, "
                 f"eval {eval_pos} fraud/{eval_neg} legitimate)")
+
+    # All policy, incumbent, graph-source, and label reads are now complete.
+    # Do not carry an idle Azure SQL session through the CPU-heavy evaluation
+    # and blob-upload phases; publication below will lazily open a fresh one.
+    conn.release()
+    logger.info(
+        "Tenant %d: SQL read phase complete; connection closed before model compute",
+        tenant_id,
+    )
 
     if policy.serving_mode == SERVING_MODE_SHARED_MULTI_HEAD:
         return _process_shared_multi_head(
@@ -1391,20 +1638,39 @@ def _process_tenant(
         and active_specialist_count == 0
     ):
         reason = "NO_ACTIVE_SPECIALIST_MODEL"
-        _guard_lease(lease_guard)
-        _fence_lease(conn, lease_fence)
-        upsert_component_status(
+
+        def publish_specialist_skip():
+            _guard_lease(lease_guard)
+            _fence_lease(conn, lease_fence)
+            upsert_component_status(
+                conn,
+                tenant_id=tenant_id,
+                component="GNN",
+                attempt_status="SKIPPED",
+                reason_code=reason,
+                reason_detail=(
+                    "No behavior track admitted a graph model; the current serving "
+                    "bundle was preserved."
+                ),
+                diagnostics=common_diagnostics,
+                run_id=run_id,
+            )
+
+        def reconcile_specialist_skip():
+            matched, _diagnostics = _reconcile_gnn_status(
+                conn,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                expected_status="SKIPPED",
+            )
+            return matched, None
+
+        _run_publication_with_retry(
             conn,
             tenant_id=tenant_id,
-            component="GNN",
-            attempt_status="SKIPPED",
-            reason_code=reason,
-            reason_detail=(
-                "No behavior track admitted a graph model; the current serving "
-                "bundle was preserved."
-            ),
-            diagnostics=common_diagnostics,
-            run_id=run_id,
+            operation_name="activate-specialist-skip",
+            operation=publish_specialist_skip,
+            reconcile=reconcile_specialist_skip,
         )
         return (
             f"SKIPPED ({reason}; incumbent bundle preserved; "
@@ -1417,17 +1683,36 @@ def _process_tenant(
             "selection": incumbent_selection or selection,
             "last_candidate_selection": selection,
         }
-        _guard_lease(lease_guard)
-        _fence_lease(conn, lease_fence)
-        upsert_component_status(
-            conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
-            reason_code=reason,
-            reason_detail=(
-                "The candidate run did not produce an eligible graph architecture; "
-                "the current serving model was preserved."
-            ),
-            diagnostics=skipped_diagnostics,
-            run_id=run_id,
+
+        def publish_candidate_skip():
+            _guard_lease(lease_guard)
+            _fence_lease(conn, lease_fence)
+            upsert_component_status(
+                conn, tenant_id=tenant_id, component="GNN", attempt_status="SKIPPED",
+                reason_code=reason,
+                reason_detail=(
+                    "The candidate run did not produce an eligible graph architecture; "
+                    "the current serving model was preserved."
+                ),
+                diagnostics=skipped_diagnostics,
+                run_id=run_id,
+            )
+
+        def reconcile_candidate_skip():
+            matched, _diagnostics = _reconcile_gnn_status(
+                conn,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                expected_status="SKIPPED",
+            )
+            return matched, None
+
+        _run_publication_with_retry(
+            conn,
+            tenant_id=tenant_id,
+            operation_name="activate-candidate-skip",
+            operation=publish_candidate_skip,
+            reconcile=reconcile_candidate_skip,
         )
         return (
             f"SKIPPED ({reason}; incumbent {incumbent or 'none'} preserved; "
@@ -1437,53 +1722,81 @@ def _process_tenant(
     user_ids = sorted(
         graph["user_index"], key=lambda user_id: graph["user_index"][user_id]
     )
-    n_emb = 0
+    embedding_batches = []
     if policy.serving_mode == SERVING_MODE_SPECIALISTS:
         for _key, (model, specialist_version) in specialist_models.items():
             with torch.no_grad():
                 z = model.embed_users(graph["data"]).numpy().astype(np.float32)
-            _guard_lease(lease_guard)
-            _fence_lease(conn, lease_fence)
-            n_emb += _publish_embeddings(
-                conn, tenant_id, user_ids, z, as_of, specialist_version
-            )
+            embedding_batches.append((specialist_version, z))
     else:
         with torch.no_grad():
             z = serving_model.embed_users(graph["data"]).numpy().astype(np.float32)
+        embedding_batches.append((model_version, z))
+
+    def publish_success():
+        n_emb = 0
+        for published_version, embeddings in embedding_batches:
+            _guard_lease(lease_guard)
+            _fence_lease(conn, lease_fence)
+            n_emb += _publish_embeddings(
+                conn,
+                tenant_id,
+                user_ids,
+                embeddings,
+                as_of,
+                published_version,
+            )
         _guard_lease(lease_guard)
         _fence_lease(conn, lease_fence)
-        n_emb = _publish_embeddings(
-            conn, tenant_id, user_ids, z, as_of, model_version
+        n_evicted = _evict_stale_embeddings(
+            conn, tenant_id, policy.embedding_retention_days
         )
-    _guard_lease(lease_guard)
-    _fence_lease(conn, lease_fence)
-    n_evicted = _evict_stale_embeddings(
-        conn, tenant_id, policy.embedding_retention_days
-    )
 
-    # This upsert is the activation pointer and therefore happens last.
-    _guard_lease(lease_guard)
-    _fence_lease(conn, lease_fence)
-    upsert_component_status(
-        conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
-        serving_status="AVAILABLE",
-        serving_version=model_version,
-        serving_as_of=as_of,
-        run_id=run_id,
-        diagnostics={
-            **common_diagnostics,
-            "embedding_count": n_emb,
-            "evicted_embedding_count": n_evicted,
-            "active_specialist_count": active_specialist_count,
-            **(
-                {
-                    "holdout_pr_auc": selection["selected_metric_value"],
-                    "serving_refit_training_count": serving_metrics["n_train"],
-                }
-                if policy.serving_mode != SERVING_MODE_SPECIALISTS
-                else {}
-            ),
-        },
+        # This upsert is the activation pointer and therefore happens last.
+        _guard_lease(lease_guard)
+        _fence_lease(conn, lease_fence)
+        upsert_component_status(
+            conn, tenant_id=tenant_id, component="GNN", attempt_status="SUCCEEDED",
+            serving_status="AVAILABLE",
+            serving_version=model_version,
+            serving_as_of=as_of,
+            run_id=run_id,
+            diagnostics={
+                **common_diagnostics,
+                "embedding_count": n_emb,
+                "evicted_embedding_count": n_evicted,
+                "active_specialist_count": active_specialist_count,
+                **(
+                    {
+                        "holdout_pr_auc": selection["selected_metric_value"],
+                        "serving_refit_training_count": serving_metrics["n_train"],
+                    }
+                    if policy.serving_mode != SERVING_MODE_SPECIALISTS
+                    else {}
+                ),
+            },
+        )
+        return n_emb, n_evicted
+
+    def reconcile_success():
+        matched, stored = _reconcile_gnn_status(
+            conn,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            expected_status="SUCCEEDED",
+            expected_version=model_version,
+        )
+        return matched, (
+            int(stored.get("embedding_count", len(user_ids) * len(embedding_batches))),
+            int(stored.get("evicted_embedding_count", 0)),
+        )
+
+    n_emb, n_evicted = _run_publication_with_retry(
+        conn,
+        tenant_id=tenant_id,
+        operation_name="publish-and-activate",
+        operation=publish_success,
+        reconcile=reconcile_success,
     )
 
     if policy.serving_mode == SERVING_MODE_SPECIALISTS:
@@ -1507,19 +1820,14 @@ def process_tenant(
     lease_fence: Callable[[object], None] | None = None,
 ) -> TenantStageResult:
     """Train one tenant and translate component status into stage history."""
-    conn = connect()
+    conn = RenewableConnection(connect, log_context=f"Tenant {tenant_id} GNN")
     try:
         result_text = _process_tenant(
             conn, tenant_id, run_id, lease_guard, lease_fence
         )
-        row = conn.cursor().execute(
-            """
-            SELECT LastAttemptStatus, ReasonCode, ServingVersion
-            FROM dbo.IntegrityComponentStatus
-            WHERE TenantId=? AND Component='GNN'
-            """,
-            (tenant_id,),
-        ).fetchone()
+        # Read the committed outcome through a separate short-lived session.
+        conn.discard()
+        row = _read_gnn_outcome_with_retry(conn, tenant_id)
         if row is None:
             raise RuntimeError("GNN stage completed without component status")
         attempt_status = str(row[0])
@@ -1534,21 +1842,43 @@ def process_tenant(
             diagnostics=diagnostics,
         )
     except LeaseLostError:
-        conn.rollback()
+        conn.discard()
         raise
     except Exception as exc:
-        conn.rollback()
+        # Never try to reuse a connection that may have raised 08S01 or have an
+        # unknown transaction state. Failure status gets its own fresh session.
+        failure_detail = str(exc)
+        conn.discard()
         _guard_lease(lease_guard)
         try:
-            _fence_lease(conn, lease_fence)
-            upsert_component_status(
+            def publish_failure():
+                _guard_lease(lease_guard)
+                _fence_lease(conn, lease_fence)
+                upsert_component_status(
+                    conn,
+                    tenant_id=tenant_id,
+                    component="GNN",
+                    attempt_status="FAILED",
+                    reason_code="TRAINING_FAILED",
+                    reason_detail=failure_detail,
+                    run_id=run_id,
+                )
+
+            def reconcile_failure():
+                matched, _diagnostics = _reconcile_gnn_status(
+                    conn,
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    expected_status="FAILED",
+                )
+                return matched, None
+
+            _run_publication_with_retry(
                 conn,
                 tenant_id=tenant_id,
-                component="GNN",
-                attempt_status="FAILED",
-                reason_code="TRAINING_FAILED",
-                reason_detail=str(exc),
-                run_id=run_id,
+                operation_name="record-failure",
+                operation=publish_failure,
+                reconcile=reconcile_failure,
             )
         except Exception:
             logger.error(
