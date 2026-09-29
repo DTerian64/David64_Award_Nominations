@@ -762,8 +762,8 @@ module "fraud_analytics_job" {
 
   # Schedule — override default here if needed per environment
   cron_expression            = var.fraud_analytics_cron
-  parallelism                = 1
-  replica_completion_count   = 1
+  parallelism                = 2
+  replica_completion_count   = 2
   replica_timeout_in_seconds = 14400
   replica_retry_limit        = 1
 
