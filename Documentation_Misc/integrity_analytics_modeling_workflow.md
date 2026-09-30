@@ -1,17 +1,18 @@
 # Integrity Analytics Modeling Workflow
 
-**Status:** T1-T5 implemented through tenant-first Tabular candidate publication and versioned serving cutover
+**Status:** Option 2 database boundary implemented for Award Nomination, Integrity Sentinel, Graph, Tabular, and GNN processing
 **Owner:** Integrity modeling  
 **Applies to:** `fraud-analytics-job`, source-system adapters, feature builders, model-family trainers, artifact publication, and live inference integration  
-**Last updated:** 2026-09-17
+**Last updated:** 2026-09-30
 
 ## 1. Purpose
 
-Before the Tabular-v1 cutover, model implementations read Award Nomination
-tables directly and Random Forest extraction lived inside
-`modeling/train_rf_model.py`. Tabular extraction now flows through the Award
-Nomination adapter and canonical feature builder; GNN extraction remains in
-`modeling/gnn/graph.py` pending its corresponding migration.
+Before the source boundary cutover, model implementations read Award Nomination
+tables directly and integrity-owned processing assumed that `dbo`, `integrity`,
+and `ops` lived in one database. Award source extraction now terminates in
+`source_adapters/award_nominations`, while integrity-owned enrichment,
+coordination, Graph processing, and GNN processing live in
+`fraud-analytics-job/integrity_sentinel`.
 
 This design introduces an explicit workflow:
 
@@ -47,7 +48,7 @@ This document defines boundaries without requiring both changes in one release.
 ```mermaid
 flowchart LR
     subgraph Sources[Source systems]
-        AN["Award Nomination<br/>Users + Nominations + Decisions"]
+        AN["Award Nomination<br/>Users + Nominations"]
         PY["Payroll<br/>People + Payroll Events + Outcomes"]
         OS["Other system"]
     end
@@ -56,6 +57,12 @@ flowchart LR
         ANA["Award Nomination adapter"]
         PYA["Payroll adapter"]
         OSA["System-specific adapter"]
+    end
+
+    subgraph Sentinel[Integrity Sentinel]
+        OUT["Reviewed outcomes<br/>integrity.*"]
+        OPS["Run coordination<br/>ops.*"]
+        ASM["Canonical dataset assembly"]
     end
 
     subgraph Data[Canonical integrity data layer]
@@ -88,9 +95,12 @@ flowchart LR
     AN --> ANA
     PY --> PYA
     OS --> OSA
-    ANA --> MAP
-    PYA --> MAP
-    OSA --> MAP
+    ANA --> ASM
+    PYA --> ASM
+    OSA --> ASM
+    OUT --> ASM
+    OPS -. coordinates .-> ASM
+    ASM --> MAP
     MAP --> ACT
     MAP --> EVT
     MAP --> REL
@@ -110,8 +120,8 @@ flowchart LR
     EV --> SEL --> ART --> REG
 ```
 
-No model package queries a source database. No source adapter selects a model
-or calculates a model score.
+No model package contains source-system SQL. No source adapter queries
+`integrity.*` or `ops.*`, selects a model, or calculates a model score.
 
 ## 4. Layer responsibilities
 
@@ -122,22 +132,42 @@ identifiers. It:
 
 - extracts tenant-scoped rows under an explicit time boundary;
 - maps source identities into namespaced canonical identities;
-- maps source records into canonical events, participants, relationships, and
-  outcomes;
+- maps source records into canonical actors, events, participants, and
+  relationships;
 - declares source capabilities;
 - records extraction watermark and adapter version; and
 - rejects incomplete, cross-tenant, or semantically invalid mappings.
 
-The initial Award Nomination adapter reads:
+The initial Award Nomination adapter reads only Award-owned `dbo` data:
 
 - `dbo.Users`;
 - `dbo.Nominations`;
-- nomination categories and tenant context required by approved features;
-- `dbo.IntegrityDecisionResults` label disposition and provenance; and
-- time-valid status or review information explicitly allowed by the label
+- nomination categories and tenant context required by approved features; and
+- time-valid source status information explicitly allowed by the feature
   contract.
 
 Raw SQL and Award Nomination column names terminate at this layer.
+
+#### 4.1.1 Integrity Sentinel layer
+
+`fraud-analytics-job/integrity_sentinel` owns all runtime SQL against
+`integrity.*` and `ops.*`. It loads model-neutral reviewed outcomes, enriches a
+source adapter's canonical snapshot, coordinates multi-replica job execution,
+maintains integrity projections, and persists integrity model state and run
+history. Graph and GNN stage entry points live in this package because their
+database state is Sentinel-owned.
+
+The two connection boundaries are explicit:
+
+| Boundary | Environment variables | Current sandbox target |
+|---|---|---|
+| Award source | `AWARD_SQL_SERVER`, `AWARD_SQL_DATABASE` | Award Nomination database |
+| Integrity Sentinel | `IS_SQL_SERVER`, `IS_SQL_DATABASE` | Same physical database during transition |
+
+The shared target is temporary topology, not shared ownership. Moving
+`integrity.*` and `ops.*` to an Integrity Sentinel database should require
+changing the `IS_SQL_*` values and deploying/migrating that database, without
+changing Award source extraction or model feature code.
 
 ### 4.2 Canonical integrity data layer
 
@@ -246,9 +276,10 @@ The Tabular family produces at most one selected live Tabular verdict. The GNN
 family produces at most one aggregated live GNN verdict, composed from admitted
 behavior tracks. Internal candidates never become extra routing votes.
 
-Graph Analytics may later consume the same canonical snapshot, but it remains a
-deterministic integrity engine rather than a fitted model family. Forecasting
-and unrelated `misc_jobs` are outside this workflow unless separately adapted.
+Graph Analytics consumes the same canonical snapshot but remains a deterministic
+integrity engine rather than a fitted model family. Award-specific forecasting
+and holiday synchronization are source-owned operations and therefore live
+under the Award Nomination adapter rather than under Integrity Sentinel.
 
 ### 4.6 Evaluation and publication layer
 
@@ -287,19 +318,21 @@ result, not zeros, null-filled training data, or guessed semantics.
 
 The initial Award Nomination run follows these stages:
 
-1. **Extract** tenant users, nominations, categories, permitted status history,
-   and model-neutral reviewed outcomes.
+1. **Extract** tenant users, nominations, categories, and permitted source
+   status history through the Award Nomination connection.
 2. **Map** users to `Actor`, nominations to `IntegrityEvent`, nominator and
-   beneficiary to `EventParticipant`, and review outcomes to `OutcomeLabel`.
-3. **Validate** tenant isolation, timestamps, role bindings, outcome maturity,
-   source capabilities, and the immutable dataset snapshot.
-4. **Build Tabular features** using the approved nomination feature contract.
-5. **Build GNN inputs** using time-valid actors, events, edges, folds, and causal
+   beneficiary to `EventParticipant`.
+3. **Enrich** the source snapshot with model-neutral `OutcomeLabel` records
+   loaded through the Integrity Sentinel connection.
+4. **Validate** tenant isolation, timestamps, role bindings, outcome maturity,
+   source capabilities, and the immutable assembled dataset snapshot.
+5. **Build Graph and Tabular features** from canonical records.
+6. **Build GNN inputs** using time-valid actors, events, edges, folds, and causal
    context without inserting a target into its own history.
-6. **Train and evaluate** the Tabular and GNN candidate families independently.
-7. **Select and refit** eligible winners under their separate policies.
-8. **Publish** immutable bundles and update serving state atomically.
-9. **Record** nomination counts, label provenance, feature schemas, candidate
+7. **Train and evaluate** the Tabular and GNN candidate families independently.
+8. **Select and refit** eligible winners under their separate policies.
+9. **Publish** immutable bundles and update serving state atomically.
+10. **Record** nomination counts, label provenance, feature schemas, candidate
    metrics, selection reasons, artifacts, and source snapshot identity.
 
 This replaces the eventual steady-state pattern in which each trainer issues
@@ -312,7 +345,7 @@ A payroll integration supplies:
 1. a payroll source adapter;
 2. explicit actor and participant-role mappings;
 3. event-time and `known_at` semantics;
-4. reviewed outcome and provenance mapping;
+4. an Integrity Sentinel outcome-identity mapping for that source system;
 5. declared capabilities;
 6. one or more payroll feature contracts; and
 7. a tenant- and source-specific evaluation and activation policy.

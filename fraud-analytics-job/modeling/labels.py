@@ -37,166 +37,31 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 
 import pandas as pd
+from integrity_data import IntegrityDataset
+from feature_builders.source_views import label_frame
 
 logger = logging.getLogger(__name__)
 
-# SOURCE_MODEL remains only so parity/audit callers can classify legacy frames;
-# load_labels() never emits it.
+# SOURCE_MODEL remains only so parity/audit callers can classify legacy frames.
 SOURCE_HRBP       = "hrbp"
 SOURCE_SYNTHETIC  = "synthetic_ground_truth"
 SOURCE_EXCLUDED   = "excluded"
 SOURCE_MODEL      = "model"
 SOURCE_UNLABELLED = "unlabelled"
 
-# Shared inclusion rules for model-neutral supervised outcomes.
-#
-#   PendingHRBPReview                     excluded — no confirmed label yet
-#   Rejected by 'Fraud Detection (Description)'
-#                                         excluded — Check A description quality
-#                                         gate, not a fraud signal
-#   Rejected by 'HRBP Review'             INCLUDED — the most valuable labels there are
-#   everything else                       included
-_INCLUSION_SQL = """
-      n.Status NOT IN ('PendingHRBPReview')
-  AND NOT (n.Status = 'Rejected' AND n.RejectionActor = 'Fraud Detection (Description)')
-"""
-
-
 def load_labels(
-    conn,
-    tenant_id: int,
-    window_days: int | None = None,
-    data_as_of_utc: datetime | None = None,
+    dataset: IntegrityDataset,
 ) -> pd.DataFrame:
-    """
-    Return one row per in-scope nomination for the tenant.
+    """Project canonical outcomes into the established model label frame."""
 
-    Columns
-    -------
-    NominationId  int
-    IsFraud       nullable int — 0/1 for human labels, NULL otherwise
-    LabelSource   str   'hrbp' | 'synthetic_ground_truth' | 'excluded' |
-                        'model' | 'unlabelled'
-    RiskLevel     str   the model's own risk level, preserved even where a
-                        human has overridden the label
-    ConfirmedBy   str   HRBP actor when reviewed, else None
-    ConfirmedAt   datetime | None
-    TrainingDisposition str | None
-    ScenarioFamily str | None  explicit synthetic diagnostic metadata
-
-    window_days=None loads the tenant's full history, matching load_data(), which
-    has no date filter. The GNN passes a window; the Random Forest does not.
-
-    IntegrityDecisionResults is the authoritative, model-neutral adjudication
-    contract. Inference scores are retained for audit but never become labels.
-    """
-    if window_days is not None and data_as_of_utc is None:
-        raise ValueError("data_as_of_utc is required when window_days is provided")
-    window_clause = (
-        "AND n.NominationDate >= DATEADD(DAY, -?, ?) "
-        "AND n.NominationDate <= ?"
-        if window_days is not None else ""
-    )
-
-    query = f"""
-        SELECT
-            n.NominationId,
-            idr.CompositeRiskLevel AS RiskLevel,
-            idr.ReviewedBy AS ConfirmedBy,
-            idr.ReviewedAt AS ConfirmedAt,
-            idr.TrainingDisposition,
-            idr.TrainingDispositionSource,
-            idr.TrainingDispositionMetadataJson,
-            CASE WHEN ISJSON(idr.TrainingDispositionMetadataJson) = 1
-                 THEN JSON_VALUE(
-                     idr.TrainingDispositionMetadataJson, '$.scenario_family'
-                 ) END AS ScenarioFamily,
-            CASE WHEN ISJSON(idr.TrainingDispositionMetadataJson) = 1
-                 THEN JSON_VALUE(
-                     idr.TrainingDispositionMetadataJson, '$.scenario_variant'
-                 ) END AS ScenarioVariant,
-            CAST(t.is_synthetic AS INT) AS IsSyntheticTenant,
-            CASE
-                WHEN idr.TrainingDisposition = 'FRAUD'
-                 AND (
-                    idr.TrainingDispositionSource IN (
-                        'HUMAN_INVESTIGATION', 'RANDOM_AUDIT'
-                    )
-                    OR (idr.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
-                        AND t.is_synthetic = 1)
-                 ) THEN 1
-                WHEN idr.TrainingDisposition = 'LEGITIMATE'
-                 AND (
-                    idr.TrainingDispositionSource IN (
-                        'HUMAN_INVESTIGATION', 'RANDOM_AUDIT'
-                    )
-                    OR (idr.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
-                        AND t.is_synthetic = 1)
-                 ) THEN 0
-                ELSE NULL
-            END AS IsFraud,
-            CASE
-                WHEN idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
-                 AND idr.TrainingDispositionSource IN (
-                    'HUMAN_INVESTIGATION', 'RANDOM_AUDIT'
-                 )
-                    THEN '{SOURCE_HRBP}'
-                WHEN idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
-                 AND idr.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
-                 AND t.is_synthetic = 1
-                    THEN '{SOURCE_SYNTHETIC}'
-                WHEN idr.TrainingDisposition = 'EXCLUDED'
-                    THEN '{SOURCE_EXCLUDED}'
-                ELSE '{SOURCE_UNLABELLED}'
-            END AS LabelSource,
-            CASE
-                WHEN idr.TrainingDispositionSource = 'SYNTHETIC_GROUND_TRUTH'
-                 AND t.is_synthetic = 0 THEN 1 ELSE 0
-            END AS InvalidSyntheticSource
-        FROM       dbo.Nominations n
-        JOIN       dbo.Users u   ON u.UserId       = n.NominatorId
-        JOIN       dbo.Tenants t ON t.TenantId     = u.TenantId
-        LEFT JOIN  integrity.IntegrityDecisionResults idr
-               ON idr.NominationId = n.NominationId
-        WHERE {_INCLUSION_SQL}
-          AND u.TenantId = ?
-          {window_clause}
-        ORDER BY n.NominationDate
-    """
-
-    sql_as_of = None
-    if data_as_of_utc is not None:
-        sql_as_of = (
-            data_as_of_utc
-            if data_as_of_utc.tzinfo is None
-            else data_as_of_utc.astimezone(timezone.utc).replace(tzinfo=None)
-        )
-    params = [tenant_id] + (
-        [window_days, sql_as_of, sql_as_of]
-        if window_days is not None else []
-    )
-    df = pd.read_sql(query, conn, params=params)
-    if (
-        "InvalidSyntheticSource" in df.columns
-        and pd.to_numeric(df["InvalidSyntheticSource"], errors="coerce")
-        .fillna(0)
-        .astype(bool)
-        .any()
-    ):
-        raise ValueError(
-            f"Tenant {tenant_id} contains SYNTHETIC_GROUND_TRUTH labels but is not "
-            "marked is_synthetic; refusing to train."
-        )
-    df["IsFraud"] = pd.to_numeric(df["IsFraud"], errors="coerce").astype("Int64")
-    df["ConfirmedPatterns"] = df.apply(_confirmed_patterns, axis=1)
-    return df
+    return label_frame(dataset)
 
 
 def _confirmed_patterns(row) -> tuple[str, ...]:
-    """Return only directly persisted, independently adjudicated labels."""
+    """Validate directly persisted pattern labels for compatibility callers."""
+
     raw = row.get("TrainingDispositionMetadataJson")
     metadata = {}
     if isinstance(raw, str) and raw.strip():
@@ -208,16 +73,15 @@ def _confirmed_patterns(row) -> tuple[str, ...]:
             raise ValueError("TrainingDispositionMetadataJson must be an object")
     elif isinstance(raw, dict):
         metadata = raw
-
     values = metadata.get("confirmed_patterns")
     if values is not None:
         if not isinstance(values, list) or not all(
             isinstance(value, str) for value in values
         ):
             raise ValueError("confirmed_patterns must be an array of strings")
-        normalized = tuple(sorted({
-            value.strip().upper() for value in values if value.strip()
-        }))
+        normalized = tuple(
+            sorted({value.strip().upper() for value in values if value.strip()})
+        )
         if (
             row.get("LabelSource") == SOURCE_SYNTHETIC
             and metadata.get("generator_version") == "synthetics-inc-v4.0"
@@ -240,7 +104,6 @@ def _confirmed_patterns(row) -> tuple[str, ...]:
         and metadata.get("generator_version") == "synthetics-inc-v4.0"
     ):
         raise ValueError("v4 synthetic labels require confirmed_patterns")
-
     return ()
 
 

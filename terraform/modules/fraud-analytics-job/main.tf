@@ -70,9 +70,15 @@ resource "azurerm_container_app_job" "fraud_analytics" {
   # ── Key Vault secret references ───────────────────────────────────────────
   # Each ACA secret resolves its value from KV at job startup via the MI.
   # The actual secret value never appears in Terraform state.
-  # Convention: kv_secret_name UPPER-HYPHEN → ACA secret name lower-hyphen.
+  # Convention: env_name UPPER_UNDERSCORE → ACA secret name lower-hyphen.
   dynamic "secret" {
-    for_each = { for ref in var.kv_secret_references : lower(ref.kv_secret_name) => ref }
+    # Key by the logical environment variable, not by Key Vault secret name.
+    # Award and Integrity Sentinel connections intentionally share secrets
+    # during the one-database transition and therefore duplicate KV names.
+    for_each = {
+      for ref in var.kv_secret_references :
+      lower(replace(ref.env_name, "_", "-")) => ref
+    }
     content {
       name                = secret.key
       key_vault_secret_id = "${trimsuffix(var.key_vault_uri, "/")}/secrets/${secret.value.kv_secret_name}"
@@ -135,7 +141,7 @@ resource "azurerm_container_app_job" "fraud_analytics" {
         for_each = var.kv_secret_references
         content {
           name        = env.value.env_name
-          secret_name = lower(env.value.kv_secret_name)
+          secret_name = lower(replace(env.value.env_name, "_", "-"))
         }
       }
     }

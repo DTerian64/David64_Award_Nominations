@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -230,7 +231,8 @@ def test_preparation_leader_runs_global_work_before_queue(monkeypatch):
         def heartbeat_preparation(self, run_id, worker_id):
             return True
 
-        def initialize_tenant_queue(self, run_id, worker_id):
+        def initialize_tenant_queue(self, run_id, worker_id, tenant_ids):
+            assert tenant_ids == [1, 2, 3, 4]
             events.append("queue")
             return 4
 
@@ -242,6 +244,13 @@ def test_preparation_leader_runs_global_work_before_queue(monkeypatch):
         events.append("global")
 
     monkeypatch.setattr(run_job, "run_global_preparation", prepare)
+    source = MagicMock()
+    monkeypatch.setattr(run_job, "connect_award_source", lambda: source)
+    monkeypatch.setattr(
+        run_job,
+        "get_tenants",
+        lambda connection: [(value, str(value)) for value in (1, 2, 3, 4)],
+    )
 
     assert run_job._prepare_execution(
         Coordinator(),

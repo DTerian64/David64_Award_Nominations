@@ -3,16 +3,15 @@ graph.py — per-tenant heterogeneous graph construction for the GNN stage
 ========================================================================
 Stage 3 of the fraud-analytics-job pipeline.
 
-Turns rows from dbo.Nominations / dbo.Users into a PyTorch Geometric
-HeteroData object, and applies the temporal split that keeps message passing
-from seeing the future.
+Turns canonical source-adapter records into a PyTorch Geometric HeteroData
+object, and applies the temporal split that keeps message passing from seeing
+the future.
 
 Design constraints
 ------------------
-1. Topology is read DIRECTLY from dbo.Nominations and dbo.Users. The
-   NomGraph_Person / NomGraph_Nominated tables are a verbatim copy of the same
-   data; reading them would create an ordering dependency on
-   graph_analytics for no modelling benefit.
+1. Topology is supplied by a source-neutral canonical dataset. The
+   NomGraph_Person / NomGraph_Nominated tables remain a serving projection and
+   are never used as model input.
 
 2. integrity.UserGraphFlags is NOT a feature source. The GNN must rediscover graph
    structure from raw topology. If it were handed the
@@ -21,12 +20,12 @@ Design constraints
 
 Separation of concerns
 ----------------------
-    fetch_tenant_rows()   SQL — untestable without a database
+    source adapter        database-specific extraction and canonical mapping
     build_hetero_data()   pure — fully testable from dicts
 
-Everything below fetch_tenant_rows() is deterministic and free of I/O, so the
-graph construction, the temporal split, and the tenant-isolation guarantee are
-all unit-testable without a database connection.
+This module is deterministic and free of I/O, so graph construction, temporal
+splitting, and the tenant-isolation guarantee are unit-testable without a
+database connection.
 
 Temporal split
 --------------
@@ -49,18 +48,22 @@ node features, which is the subtler half of the same leak.
 from __future__ import annotations
 
 import logging
-import math
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Any, Sequence
 
 import numpy as np
 import torch
 from torch_geometric.data import HeteroData
 from integrity_engine.gnn import (
-    CAUSAL_CONTEXT_FEATURE_COLUMNS,
     CAUSAL_FEATURE_SCHEMA_VERSION,
-    causal_context_matrix,
+)
+from integrity_engine.gnn.features import (
+    BASE_NOMINATION_FEATURE_COLUMNS,  # noqa: F401 - public compatibility export
+    NOMINATION_FEATURE_COLUMNS,
+    USER_FEATURE_COLUMNS,
+    build_nomination_features,
+    build_user_features,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,96 +75,15 @@ logger = logging.getLogger(__name__)
 
 FEATURE_SCHEMA_VERSION = CAUSAL_FEATURE_SCHEMA_VERSION
 
-# Rejected rows are eligible only under the canonical HRBP-confirmed FRAUD
-# predicate in fetch_tenant_rows(); status alone never admits them.
+# Rejected rows are eligible only when the canonical source view marks them as
+# HRBP-confirmed fraud; status alone never admits them.
 BEHAVIOR_STATUSES = ("Pending", "Approved", "Paid", "Rejected")
-
-from integrity_engine.gnn.features import (
-    USER_FEATURE_COLUMNS, BASE_NOMINATION_FEATURE_COLUMNS,
-    NOMINATION_FEATURE_COLUMNS, build_user_features, build_nomination_features,
-)
 
 EDGE_TYPES = [
     ("user", "nominates", "nomination"),
     ("nomination", "benefits", "user"),
     ("nomination", "belongs_to", "category"),
 ]
-
-
-# ── SQL ───────────────────────────────────────────────────────────────────────
-
-def _sql_utc(value: datetime) -> datetime:
-    """Return a timezone-naive UTC value suitable for SQL Server DATETIME2."""
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def fetch_tenant_rows(
-    conn,
-    tenant_id: int,
-    window_days: int,
-    data_as_of_utc: datetime,
-) -> tuple[list[dict], list[dict]]:
-    """
-    Load users and nominations for one tenant, directly from the source tables.
-
-    Tenant scoping mirrors graph_analytics._load_nominations(): the
-    nomination is attributed to the NOMINATOR's tenant, because dbo.Nominations
-    carries no TenantId of its own.
-
-    That scoping is not airtight — a nomination whose beneficiary
-    belongs to a different tenant would drag a foreign user into the graph.
-    assert_single_tenant() below exists to catch exactly that; it is called by
-    build_hetero_data() on every run rather than left as a test-only check.
-
-    The operational topology contains Pending, Approved, and Paid nominations.
-    A rejected nomination is also historical behavior when the canonical
-    decision shows that HRBP reviewed a fraud concern and confirmed it.  This
-    preserves known fraudulent topology for later message passing while still
-    excluding semantic and other non-fraud rejections.
-    """
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT n.NominationId, n.NominatorId, n.BeneficiaryId,
-               n.Status, n.Amount, n.CategoryId, n.NominationDate AS CreatedAt,
-               CASE WHEN n.Status IN ('Pending', 'Approved', 'Paid')
-                         OR (
-                            n.Status = 'Rejected'
-                            AND idr.FinalRoute = 'HRBP_REVIEW'
-                            AND idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')
-                            AND idr.TrainingDisposition = 'FRAUD'
-                         )
-                    THEN 1 ELSE 0 END AS IsBehaviorEligible
-        FROM   dbo.Nominations n
-        JOIN   dbo.Users u ON u.UserId = n.NominatorId
-        LEFT JOIN integrity.IntegrityDecisionResults idr
-               ON idr.NominationId = n.NominationId
-        WHERE  u.TenantId = ?
-          AND  n.NominationDate >= DATEADD(DAY, -?, ?)
-          AND  n.NominationDate <= ?
-          AND (
-              n.Status IN ('Pending', 'Approved', 'Paid')
-              OR idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')
-          )
-    """,
-        tenant_id,
-        window_days,
-        _sql_utc(data_as_of_utc),
-        _sql_utc(data_as_of_utc),
-    )
-    cols = [c[0] for c in cur.description]
-    nominations = [dict(zip(cols, row)) for row in cur.fetchall()]
-
-    cur.execute("""
-        SELECT u.UserId, u.TenantId, u.ManagerId
-        FROM   dbo.Users u
-        WHERE  u.TenantId = ?
-    """, tenant_id)
-    cols = [c[0] for c in cur.description]
-    users = [dict(zip(cols, row)) for row in cur.fetchall()]
-
-    return users, nominations
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

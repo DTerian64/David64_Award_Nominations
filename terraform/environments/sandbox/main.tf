@@ -780,8 +780,13 @@ module "fraud_analytics_job" {
 
   # Secrets from Key Vault — SQL + Storage + callback secret
   kv_secret_references = [
-    { env_name = "SQL_SERVER", kv_secret_name = "SQL-SERVER" },
-    { env_name = "SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
+    # These pairs intentionally resolve to the same secrets today. Keeping the
+    # logical connections distinct makes a later Integrity Sentinel database
+    # split an environment-only change.
+    { env_name = "AWARD_SQL_SERVER", kv_secret_name = "SQL-SERVER" },
+    { env_name = "AWARD_SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
+    { env_name = "IS_SQL_SERVER", kv_secret_name = "SQL-SERVER" },
+    { env_name = "IS_SQL_DATABASE", kv_secret_name = "SQL-DATABASE" },
     { env_name = "AZURE_STORAGE_KEY", kv_secret_name = "AZURE-STORAGE-KEY" },
     { env_name = "APPLICATIONINSIGHTS_CONNECTION_STRING", kv_secret_name = "APPINSIGHTS-CONNECTION-STRING-BACKEND" },
     # Shared secret for /api/internal/refresh-fraud-model — must match FRAUD_ANALYTICS_JOB_WEBHOOK_SECRET on the API.

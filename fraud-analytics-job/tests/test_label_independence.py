@@ -1,6 +1,5 @@
 import sys
 import unittest
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -62,93 +61,18 @@ class HumanConfirmedLabelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             labels.human_confirmed(pd.DataFrame([{"NominationId": 1}]))
 
-    @patch.object(labels.pd, "read_sql")
-    def test_loader_uses_model_neutral_decision_and_preserves_exclusion(
-        self, read_sql
-    ):
-        read_sql.return_value = pd.DataFrame([
-            {
-                "NominationId": 9,
-                "RiskLevel": "CRITICAL",
-                "ConfirmedBy": "HRBP:77",
-                "ConfirmedAt": "2026-08-26",
-                "TrainingDisposition": "EXCLUDED",
-                "IsFraud": None,
-                "LabelSource": labels.SOURCE_EXCLUDED,
-            }
-        ])
-
-        result = labels.load_labels(object(), tenant_id=3)
-
-        query = read_sql.call_args.args[0]
-        self.assertIn("integrity.IntegrityDecisionResults", query)
-        self.assertIn("JOIN       dbo.Tenants", query)
-        self.assertIn("t.is_synthetic = 1", query)
-        self.assertIn("SYNTHETIC_GROUND_TRUTH", query)
-        self.assertIn("idr.TrainingDisposition = 'EXCLUDED'", query)
-        self.assertNotIn("dbo.FraudDecisionResults", query)
-        self.assertNotIn("dbo.P2P_FraudScores", query)
-        self.assertTrue(result.loc[0, "IsFraud"] is pd.NA)
-
-    @patch.object(labels.pd, "read_sql")
-    def test_unreviewed_inference_result_is_not_a_training_label(self, read_sql):
-        read_sql.return_value = pd.DataFrame([{
-            "NominationId": 10,
-            "RiskLevel": "CRITICAL",
-            "ConfirmedBy": None,
-            "ConfirmedAt": None,
-            "TrainingDisposition": None,
-            "IsFraud": None,
-            "LabelSource": labels.SOURCE_UNLABELLED,
-        }])
-
-        result = labels.load_labels(object(), tenant_id=3)
-
-        self.assertTrue(result.loc[0, "IsFraud"] is pd.NA)
-        self.assertEqual(result.loc[0, "LabelSource"], labels.SOURCE_UNLABELLED)
-
-    @patch.object(labels.pd, "read_sql")
-    def test_windowed_labels_use_explicit_data_cutoff(self, read_sql):
-        read_sql.return_value = pd.DataFrame(columns=[
-            "NominationId", "IsFraud", "LabelSource",
-        ])
-        cutoff = datetime(2026, 9, 29, 2, 10, 11, tzinfo=timezone.utc)
-
-        labels.load_labels(
-            object(), tenant_id=3, window_days=365, data_as_of_utc=cutoff
+    @patch.object(labels, "label_frame")
+    def test_loader_projects_an_already_canonical_dataset(self, project):
+        dataset = object()
+        expected = pd.DataFrame(
+            [{"NominationId": 9, "IsFraud": pd.NA, "LabelSource": "excluded"}]
         )
+        project.return_value = expected
 
-        query = read_sql.call_args.args[0]
-        self.assertIn("DATEADD(DAY, -?, ?)", query)
-        self.assertIn("n.NominationDate <= ?", query)
-        self.assertNotIn("GETDATE()", query)
-        self.assertEqual(
-            read_sql.call_args.kwargs["params"],
-            [
-                3,
-                365,
-                datetime(2026, 9, 29, 2, 10, 11),
-                datetime(2026, 9, 29, 2, 10, 11),
-            ],
-        )
+        result = labels.load_labels(dataset)
 
-    @patch.object(labels.pd, "read_sql")
-    def test_synthetic_label_on_non_synthetic_tenant_is_rejected(self, read_sql):
-        read_sql.return_value = pd.DataFrame([{
-            "NominationId": 11,
-            "RiskLevel": None,
-            "ConfirmedBy": None,
-            "ConfirmedAt": None,
-            "TrainingDisposition": "FRAUD",
-            "TrainingDispositionSource": "SYNTHETIC_GROUND_TRUTH",
-            "IsSyntheticTenant": 0,
-            "IsFraud": None,
-            "LabelSource": labels.SOURCE_UNLABELLED,
-            "InvalidSyntheticSource": 1,
-        }])
-
-        with self.assertRaisesRegex(ValueError, "not marked is_synthetic"):
-            labels.load_labels(object(), tenant_id=3)
+        project.assert_called_once_with(dataset)
+        self.assertIs(result, expected)
 
     def test_tabular_feature_frame_receives_same_shared_labels(self):
         features = pd.DataFrame([

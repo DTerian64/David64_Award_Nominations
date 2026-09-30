@@ -17,5 +17,16 @@ cannot reach it for data-plane work, so the grants are run from a
 2. From a whitelisted machine, open `db-access-grants.sql`, set `@env` at the top
    (e.g. `sandbox`), and run it against the app DB connected as the Entra admin --
    in SSMS / Azure Data Studio / sqlcmd (no SQLCMD mode needed). The verification
-   query at the end must show `sql-migrations-<env> -> db_ddladmin` and
-   `sql-app-readwrite-<env> -> db_datareader/db_datawriter` only.
+   queries at the end must show:
+
+   - `sql-app-readwrite-<env> -> db_datareader/db_datawriter`
+   - `sql-migrations-<env> -> db_ddladmin/db_datareader/db_datawriter`
+   - `sql-migrations-<env> -> award_schema_migrator`
+   - `award_schema_migrator -> CONTROL` on the `dbo`, `integrity`, and `ops` schemas
+
+`award_schema_migrator` exists because SQL Server requires `CONTROL` on both
+tables when enabling or disabling temporal system versioning, and `CONTROL` on
+the source object plus authority on the destination schema for `ALTER SCHEMA
+... TRANSFER`. The role is intentionally narrower than `db_owner` and does not
+grant server-level authority or authority on schemas outside these three
+application-managed namespaces.

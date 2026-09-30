@@ -154,7 +154,6 @@ def map_award_nomination_rows(
         "NominatorTenantId",
         "BeneficiaryTenantId",
         "ApproverTenantId",
-        "DecisionTenantId",
     )
     for row in nominations:
         event_id = str(row["NominationId"])
@@ -171,7 +170,18 @@ def map_award_nomination_rows(
             tenant_id=tenant_id,
             source_system=SOURCE_SYSTEM,
             actor_id=str(row["UserId"]),
-            attributes={"title": row.get("Title")},
+            attributes={
+                "title": row.get("Title"),
+                "display_name": row.get("FullName") or str(row["UserId"]),
+                "manager_actor_id": (
+                    str(row["ManagerId"])
+                    if row.get("ManagerId") is not None
+                    else None
+                ),
+                "ever_active_before_as_of": bool(
+                    row.get("EverActiveBeforeAsOf", False)
+                ),
+            },
         )
         for row in sorted(users, key=lambda item: int(item["UserId"]))
     )

@@ -112,6 +112,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--config", type=Path, help="Versioned v6 JSON profile; omit to reproduce the existing v5 corpus.")
+    parser.add_argument("--audit", action="store_true", help="Run offline production detector and feature audits for v6.")
+    parser.add_argument("--semantic-audit", action="store_true", help="Include full-corpus semantic features and CopyPaste using cached local model weights.")
+    parser.add_argument("--graph-policy", type=Path, help="Published inference-snapshot JSON/gzip, or its scoring_policy JSON, for v6 audit parity.")
+    parser.add_argument("--export-graph-policy", type=Path, help="Read Tenant 5's active SQL Graph policy into a fresh local JSON file; no SQL writes.")
+    parser.add_argument("--bundle-out", type=Path, help="Fresh directory for configuration, corpus, manifest and audit report together.")
     parser.add_argument(
         "--as-of",
         type=date.fromisoformat,
@@ -128,6 +134,29 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    if args.export_graph_policy:
+        if args.apply or args.apply_corpus or args.apply_configuration or args.config or args.audit or args.bundle_out:
+            raise ValueError("Export the Graph policy as a separate read-only command")
+        if args.export_graph_policy.exists():
+            raise ValueError("Refusing to overwrite an exported policy")
+        _load_environment()
+        from .audit_v6 import _production_imports
+        _production_imports()
+        from .database import connect_from_environment, inspect_existing_configuration
+        from modeling.graph_analytics import _load_active_graph_policy
+        connection = connect_from_environment()
+        try:
+            destination = inspect_existing_configuration(connection)
+            policy = _load_active_graph_policy(connection, destination.tenant_id, 180)
+        finally:
+            connection.close()
+        args.export_graph_policy.write_text(json.dumps(policy, indent=2, sort_keys=True), encoding="utf-8")
+        print(f"Exported Tenant {destination.tenant_id} Graph policy to {args.export_graph_policy}")
+        return 0
+    if args.config:
+        return _run_v6(args)
+    if args.audit or args.semantic_audit or args.graph_policy or args.bundle_out:
+        raise ValueError("v6 audit/bundle options require --config")
     if args.apply or args.apply_corpus or args.apply_configuration:
         _load_environment()
     if (args.apply or args.apply_corpus) and not args.manifest_out:
@@ -253,6 +282,69 @@ def main() -> int:
         if key not in ("identity_map", "sql_identity_map")
     }
     print(json.dumps(console_manifest, indent=2, sort_keys=True))
+    return 0
+
+
+def _run_v6(args) -> int:
+    from .configuration import load_configuration, configuration_hash
+    from .generator_v6 import generate
+    from .audit_v6 import audit, validate, write_bundle, _production_imports
+    configuration = load_configuration(args.config)
+    if args.apply or args.apply_configuration:
+        raise ValueError("v6 uses --apply-corpus to preserve the existing directory and configuration; full directory/configuration provisioning remains a separate operation")
+    if args.apply_corpus and not args.bundle_out:
+        raise ValueError("v6 corpus apply requires --bundle-out")
+    if args.manifest_out:
+        raise ValueError("v6 publishes its manifest with --bundle-out, not as a separate file")
+    if args.bundle_out and args.bundle_out.exists():
+        raise ValueError("Bundle output must be a fresh directory")
+    if args.semantic_audit and not args.audit:
+        raise ValueError("--semantic-audit requires --audit")
+    policy = None
+    if args.graph_policy:
+        import gzip
+        raw = gzip.decompress(args.graph_policy.read_bytes()).decode() if args.graph_policy.suffix == ".gz" else args.graph_policy.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+        policy = payload.get("scoring_policy", payload)
+    users, nominations, design = generate(configuration, args.seed, args.as_of)
+    validation = validate(users, nominations, configuration, args.as_of)
+    digest = corpus_hash(users, nominations)
+    run_id = str(uuid.uuid5(GENERATOR_NAMESPACE, f"v6:{digest}"))
+    report = (audit(users, nominations, design, configuration, args.as_of, policy=policy, semantic=args.semantic_audit)
+              if args.audit else {"audit_status": "NOT_RUN", "acceptance_passed": False})
+    manifest = {"generator_version": configuration["generator_version"], "pattern_taxonomy_version": PATTERN_TAXONOMY_VERSION,
+                "configuration_sha256": configuration_hash(configuration), "corpus_sha256": digest,
+                "directory_seed": configuration["population"]["directory_seed"], "seed": args.seed, "as_of": args.as_of.isoformat(),
+                "generation_run_id": run_id, "validation": validation, "design": design, "persistence": "NOT_REQUESTED",
+                "audit_status": report["audit_status"], "acceptance_passed": report["acceptance_passed"]}
+    if args.apply_corpus:
+        if not report["acceptance_passed"]:
+            raise ValueError("v6 apply requires a complete, accepted audit against a supplied published policy and local semantic model")
+        if len(users) != 400 or configuration["population"]["directory_seed"] != DIRECTORY_SEED:
+            raise ValueError("Tenant 5 apply must preserve its approved 400-user roster; larger/custom populations are offline only")
+        _load_environment()
+        from .database import connect_from_environment, inspect_existing_configuration, provision_corpus
+        _production_imports()
+        from modeling.graph_analytics import _load_active_graph_policy
+        connection = connect_from_environment()
+        try:
+            result = inspect_existing_configuration(connection)
+            current_policy = _load_active_graph_policy(connection, result.tenant_id, 180)
+            if current_policy != policy:
+                raise ValueError("Supplied audit policy does not match the current SQL policy; export the new snapshot and audit again")
+            corpus = provision_corpus(connection, tenant_id=result.tenant_id, users=users, nominations=nominations,
+                                      corpus_sha256=digest, seed=args.seed, generation_run_id=run_id,
+                                      generator_version=configuration["generator_version"], require_existing_sql_users=True, progress=_progress)
+            manifest["persistence"] = "CORPUS_APPLIED"
+            manifest["sql_corpus"] = {"tenant_id": result.tenant_id, "user_count": corpus.sql_user_count,
+                                      "nomination_count": corpus.nomination_count, "decision_count": corpus.decision_count}
+        finally:
+            connection.close()
+    if args.bundle_out:
+        if policy is not None:
+            report["published_scoring_policy"] = policy
+        write_bundle(args.bundle_out, configuration, manifest, report, users, nominations)
+    print(json.dumps({key: value for key, value in manifest.items() if key != "design"}, indent=2, sort_keys=True))
     return 0
 
 

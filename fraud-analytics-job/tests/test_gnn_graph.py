@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -28,6 +29,7 @@ sys.path.insert(
 )
 
 from modeling.gnn import graph as G
+from feature_builders.source_views import gnn_nomination_rows
 from tests.synthetic import make_tenant, make_two_tenants
 
 
@@ -64,32 +66,27 @@ class _RecordingConnection:
 # ── Tenant isolation ──────────────────────────────────────────────────────────
 
 def test_loader_uses_p2p_behavior_statuses_and_canonical_label_targets():
-    connection = _RecordingConnection()
-
-    data_as_of = datetime(2026, 9, 29, 2, 10, 11, tzinfo=timezone.utc)
-    G.fetch_tenant_rows(
-        connection,
-        tenant_id=3,
-        window_days=180,
-        data_as_of_utc=data_as_of,
+    events = (
+        SimpleNamespace(event_id="1", status="Pending", amount=1, category="2", occurred_at=datetime.now(timezone.utc)),
+        SimpleNamespace(event_id="2", status="Rejected", amount=1, category="2", occurred_at=datetime.now(timezone.utc)),
     )
-
-    sql, params = connection.recording_cursor.calls[0]
-    assert "n.Status IN ('Pending', 'Approved', 'Paid')" in sql
-    assert "integrity.IntegrityDecisionResults" in sql
-    assert "idr.FinalRoute = 'HRBP_REVIEW'" in sql
-    assert "idr.ReviewScope IN ('FRAUD', 'FRAUD_AND_SEMANTIC')" in sql
-    assert "idr.TrainingDisposition IN ('FRAUD', 'LEGITIMATE')" in sql
-    assert "ApproverId" not in sql
-    assert "DATEADD(DAY, -?, ?)" in sql
-    assert "n.NominationDate <= ?" in sql
-    assert "GETDATE()" not in sql
-    assert params == (
-        3,
-        180,
-        datetime(2026, 9, 29, 2, 10, 11),
-        datetime(2026, 9, 29, 2, 10, 11),
+    participants = tuple(
+        SimpleNamespace(event_id=event_id, normalized_role=role, actor_id=actor)
+        for event_id in ("1", "2")
+        for role, actor in (("INITIATOR", "10"), ("SUBJECT", "11"))
     )
+    labels = (
+        SimpleNamespace(
+            event_id="2",
+            disposition="FRAUD",
+            metadata={"final_route": "HRBP_REVIEW", "review_scope": "FRAUD"},
+        ),
+    )
+    rows = gnn_nomination_rows(
+        SimpleNamespace(events=events, participants=participants, labels=labels)
+    )
+    assert [row["NominationId"] for row in rows] == [1, 2]
+    assert all(row["IsBehaviorEligible"] == 1 for row in rows)
 
 
 def test_artifact_behavior_contract_includes_confirmed_rejected_history():

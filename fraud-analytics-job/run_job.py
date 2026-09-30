@@ -56,10 +56,18 @@ logger = logging.getLogger("fraud_analytics_job")
 JOB_DIR = Path(__file__).parent.resolve()   # /app  (same dir as this file)
 sys.path.insert(0, str(JOB_DIR))
 
-from utils.integrity_analytics_coordinator import (  # noqa: E402
+from integrity_sentinel.analytics_coordinator import (  # noqa: E402
     IntegrityAnalyticsCoordinator,
     LeaseLostError,
     new_worker_id,
+)
+from integrity_sentinel.db import connect as connect_integrity_sentinel  # noqa: E402
+from source_adapters.award_nominations.connection import (  # noqa: E402
+    connect as connect_award_source,
+)
+from source_adapters.award_nominations.tenant_config import (  # noqa: E402
+    get_tenants,
+    tenant_is_enabled,
 )
 from utils.stage_result import TenantStageResult  # noqa: E402
 
@@ -73,63 +81,63 @@ def wake_database(
     attempt_timeout_s: int = 120,
     retry_delay_s: float = 20.0,
 ) -> None:
-    """
-    Ensure the Azure SQL Serverless database is awake before running any stage.
+    """Wake each distinct source and Sentinel database before stage execution."""
 
-    The database auto-pauses after 60 minutes of inactivity. This job fires at
-    2 AM UTC Monday, so the DB is almost always paused on arrival. Resuming a
-    serverless database takes 60–90 seconds. We poll with a lightweight
-    SELECT 1 query until it responds, logging progress at each attempt.
-
-    Raises RuntimeError if the database cannot be reached after all attempts.
-    Total wait budget: max_attempts × (attempt_timeout_s + retry_delay_s)
-                     = 8 × (120 + 20) = ~18 minutes
-    """
-    server   = os.getenv("SQL_SERVER", "(not set)")
-    database = os.getenv("SQL_DATABASE", "(not set)")
-    from utils.db_conn import connect  # Managed Identity token auth
-
-    logger.info("DB WAKE-UP  server=%s  database=%s", server, database)
-    logger.info("  Serverless auto-pause means the DB may be cold.")
-    logger.info("  Will poll up to %d times (timeout %ds each).", max_attempts, attempt_timeout_s)
-
-    t_start = time.monotonic()
-    last_exc: Exception | None = None
-
-    for attempt in range(1, max_attempts + 1):
-        t_attempt = time.monotonic()
-        logger.info("DB WAKE-UP  attempt %d/%d — connecting...", attempt, max_attempts)
-        try:
-            conn = connect(attempt_timeout_s)
-            conn.execute("SELECT 1").fetchone()
-            conn.close()
-            elapsed = time.monotonic() - t_start
-            logger.info(
-                "DB WAKE-UP  ✓ database is awake  (total wait: %.1f s, attempts: %d)",
-                elapsed, attempt,
-            )
-            return
-        except Exception as exc:
-            last_exc = exc
-            elapsed_attempt = time.monotonic() - t_attempt
-            elapsed_total   = time.monotonic() - t_start
-            logger.warning(
-                "DB WAKE-UP  attempt %d/%d failed after %.1f s (total elapsed: %.1f s): %s",
-                attempt, max_attempts, elapsed_attempt, elapsed_total, exc,
-            )
-            if attempt < max_attempts:
-                logger.info("DB WAKE-UP  waiting %.0f s before next attempt...", retry_delay_s)
-                time.sleep(retry_delay_s)
-
-    elapsed = time.monotonic() - t_start
-    logger.error(
-        "DB WAKE-UP  ✗ database did not respond after %d attempts (%.1f s total).",
-        max_attempts, elapsed,
+    targets = (
+        (
+            "Award source",
+            os.getenv("AWARD_SQL_SERVER", "(not set)"),
+            os.getenv("AWARD_SQL_DATABASE", "(not set)"),
+            connect_award_source,
+        ),
+        (
+            "Integrity Sentinel",
+            os.getenv("IS_SQL_SERVER", "(not set)"),
+            os.getenv("IS_SQL_DATABASE", "(not set)"),
+            connect_integrity_sentinel,
+        ),
     )
-    raise RuntimeError(
-        f"SQL database did not wake up after {max_attempts} attempts ({elapsed:.0f}s). "
-        f"Last error: {last_exc}"
-    )
+    seen: set[tuple[str, str]] = set()
+    for label, server, database, connection_factory in targets:
+        address = (server, database)
+        if address in seen:
+            logger.info("DB WAKE-UP  %s shares the already-awake database", label)
+            continue
+        seen.add(address)
+        logger.info("DB WAKE-UP  %s server=%s database=%s", label, server, database)
+        started = time.monotonic()
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            attempt_started = time.monotonic()
+            try:
+                connection = connection_factory(attempt_timeout_s)
+                connection.execute("SELECT 1").fetchone()
+                connection.close()
+                logger.info(
+                    "DB WAKE-UP  ✓ %s is awake (%.1f s, attempts: %d)",
+                    label,
+                    time.monotonic() - started,
+                    attempt,
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "DB WAKE-UP  %s attempt %d/%d failed after %.1f s: %s",
+                    label,
+                    attempt,
+                    max_attempts,
+                    time.monotonic() - attempt_started,
+                    exc,
+                )
+                if attempt < max_attempts:
+                    time.sleep(retry_delay_s)
+        else:
+            elapsed = time.monotonic() - started
+            raise RuntimeError(
+                f"{label} database did not wake up after {max_attempts} attempts "
+                f"({elapsed:.0f}s). Last error: {last_exc}"
+            )
 
 
 def notify_api_refresh() -> None:
@@ -214,23 +222,23 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
 # Full executions use TENANT_STAGES in tenant-major order. STAGES preserves the
 # standalone --only/--tenant harness used for local analysis and recovery.
 TENANT_STAGES = [
-    {"key": "graph_analytics", "stage": "GRAPH", "label": "Graph Analytics", "module": "modeling.graph_analytics"},
+    {"key": "graph_analytics", "stage": "GRAPH", "label": "Graph Analytics", "module": "integrity_sentinel.graph_analytics"},
     {"key": "train_tabular_model", "stage": "TABULAR", "label": "Tabular model training", "module": "modeling.train_tabular_model"},
-    {"key": "train_gnn_model", "stage": "GNN", "label": "GNN model training", "module": "modeling.train_gnn_model"},
-    {"key": "forecast_models", "stage": "FORECAST", "label": "Forecast models", "module": "modeling.forecast_models"},
+    {"key": "train_gnn_model", "stage": "GNN", "label": "GNN model training", "module": "integrity_sentinel.train_gnn_model"},
+    {"key": "forecast_models", "stage": "FORECAST", "label": "Forecast models", "module": "source_adapters.award_nominations.forecast_models"},
 ]
 
 STAGES = [
-    {"key": "graph_analytics", "label": "Graph Analytics",   "module": "modeling.graph_analytics", "post": None},
+    {"key": "graph_analytics", "label": "Graph Analytics",   "module": "integrity_sentinel.graph_analytics", "post": None},
     {"key": "train_tabular_model", "label": "Tabular model training", "module": "modeling.train_tabular_model", "post": notify_api_refresh},
     # GNN training follows the independent Tabular stage so a failure in either
     # model family cannot block the other — run_stage()'s per-stage try/except
     # gives that isolation. No post-hook: the backend does not consume the GNN, so
     # /api/internal/refresh-fraud-model is irrelevant to it; integrity-check streams
     # the decoder itself on first use per tenant.
-    {"key": "train_gnn_model",        "label": "GNN model training",       "module": "modeling.train_gnn_model", "post": None},
-    {"key": "sync_holidays",          "label": "Holiday sync",             "module": "misc_jobs.sync_holidays", "post": None},
-    {"key": "forecast_models",        "label": "Forecast models",          "module": "modeling.forecast_models", "post": None},
+    {"key": "train_gnn_model",        "label": "GNN model training",       "module": "integrity_sentinel.train_gnn_model", "post": None},
+    {"key": "sync_holidays",          "label": "Holiday sync",             "module": "source_adapters.award_nominations.sync_holidays", "post": None},
+    {"key": "forecast_models",        "label": "Forecast models",          "module": "source_adapters.award_nominations.forecast_models", "post": None},
 ]
 _STAGE_KEYS = [s["key"] for s in STAGES]
 
@@ -290,8 +298,8 @@ def _stage_run_id(run_id: str, tenant_id: int, stage: str) -> str:
 
 
 def run_global_preparation(lease_guard: Callable[[], None]) -> None:
-    graph = importlib.import_module("modeling.graph_analytics")
-    holidays = importlib.import_module("misc_jobs.sync_holidays")
+    graph = importlib.import_module("integrity_sentinel.graph_analytics")
+    holidays = importlib.import_module("source_adapters.award_nominations.sync_holidays")
     graph.prepare_global(lease_guard=lease_guard)
     lease_guard()
     holidays.prepare_global(lease_guard=lease_guard)
@@ -312,7 +320,7 @@ def run_tenant_stage(
         lease_guard=lease_guard,
         lease_fence=lease_fence,
     )
-    if stage["stage"] == "GNN":
+    if stage["stage"] in {"GRAPH", "TABULAR", "GNN"}:
         kwargs["data_as_of_utc"] = data_as_of_utc
     result = module.process_tenant(**kwargs)
     if not isinstance(result, TenantStageResult):
@@ -383,7 +391,16 @@ def _prepare_execution(
             with heartbeat:
                 run_global_preparation(heartbeat.assert_owned)
                 heartbeat.assert_owned()
-                queued = coordinator.initialize_tenant_queue(run_id, worker_id)
+                source = connect_award_source()
+                try:
+                    tenant_ids = [tenant_id for tenant_id, _ in get_tenants(source)]
+                finally:
+                    source.close()
+                queued = coordinator.initialize_tenant_queue(
+                    run_id,
+                    worker_id,
+                    tenant_ids,
+                )
                 logger.info("GLOBAL PREPARATION queued %d enabled tenant(s)", queued)
             coordinator.mark_preparation_ready(run_id, worker_id)
             return True
@@ -418,7 +435,8 @@ def _process_claim(
         claim.reclaimed,
     )
 
-    if not coordinator.tenant_is_enabled(tenant_id):
+    enabled_check = getattr(coordinator, "tenant_is_enabled", tenant_is_enabled)
+    if not enabled_check(tenant_id):
         try:
             coordinator.mark_tenant_skipped_disabled(run_id, tenant_id, worker_id)
             logger.info("TENANT SKIPPED tenant=%d reason=disabled", tenant_id)
@@ -616,7 +634,8 @@ def main() -> None:
 
     logger.info("WEEKLY ANALYTICS JOB - START")
     logger.info("Environment : %s", os.getenv("ENVIRONMENT", "unknown"))
-    logger.info("SQL Server  : %s", os.getenv("SQL_SERVER", "(not set)"))
+    logger.info("Award SQL   : %s / %s", os.getenv("AWARD_SQL_SERVER", "(not set)"), os.getenv("AWARD_SQL_DATABASE", "(not set)"))
+    logger.info("Sentinel SQL: %s / %s", os.getenv("IS_SQL_SERVER", "(not set)"), os.getenv("IS_SQL_DATABASE", "(not set)"))
     logger.info("Storage acct: %s", os.getenv("AZURE_STORAGE_ACCOUNT", "(not set)"))
     logger.info("Stages      : %s", args.only or "ALL (%s)" % ", ".join(_STAGE_KEYS))
     logger.info("Tenant      : %s", args.tenant or "ALL")

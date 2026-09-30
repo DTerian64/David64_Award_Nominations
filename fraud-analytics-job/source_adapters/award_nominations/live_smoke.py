@@ -121,13 +121,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--window-days must be positive")
 
     _load_environment()
-    missing = [name for name in ("SQL_SERVER", "SQL_DATABASE") if not os.getenv(name)]
+    missing = [
+        name
+        for name in ("AWARD_SQL_SERVER", "AWARD_SQL_DATABASE")
+        if not os.getenv(name)
+    ]
     if missing:
         raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
 
     # Import only after .env loading because db_conn constructs its credential at
     # module import time. This command performs SELECTs only and never commits.
-    from utils.db_conn import connect
+    from source_adapters.award_nominations.connection import connect
 
     as_of = args.as_of or datetime.now(timezone.utc)
     adapter = AwardNominationAdapter()

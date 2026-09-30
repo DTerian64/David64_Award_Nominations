@@ -17,10 +17,19 @@ def test_batch_dispatch_and_snapshot_keep_detector_specific_windows(monkeypatch)
               "detector_windows": {"Ring": 60, "CopyPasteFraud": 30, "HiddenCandidate": 270},
               "patterns": {name: {"enabled": True} for name in [*names, "Desert"]}}
     monkeypatch.setattr(graph, "_load_active_graph_policy", lambda *args: policy)
+    source = MagicMock()
+    monkeypatch.setattr(graph, "connect_award", lambda: source)
+    monkeypatch.setattr(graph, "get_tenant_integrity_config", lambda *args: {})
+    monkeypatch.setattr(graph, "load_award_nomination_dataset", lambda *args, **kwargs: object())
+    monkeypatch.setattr(graph, "replace_tenant_graph_projection", lambda *args: None)
     load = MagicMock(return_value=rows)
-    monkeypatch.setattr(graph, "_load_nominations", load)
-    monkeypatch.setattr(graph, "_load_users", lambda *args: [])
-    monkeypatch.setattr(graph, "_load_ever_active_user_ids", lambda *args: {999})
+    monkeypatch.setattr(graph, "graph_nomination_rows", load)
+    monkeypatch.setattr(
+        graph,
+        "actor_rows",
+        lambda *args: [{"UserId": 999, "FullName": "Test", "ManagerId": None,
+                        "EverActiveBeforeAsOf": True}],
+    )
     mocks = {}
     for name, function in names.items():
         mocks[name] = MagicMock(return_value=[])
@@ -36,7 +45,7 @@ def test_batch_dispatch_and_snapshot_keep_detector_specific_windows(monkeypatch)
     monkeypatch.setattr(graph, "upsert_component_status", status)
     connection = MagicMock()
     assert graph._process_tenant(connection, 5, "integrity.GraphPatternFindings", 180, "run") == 0
-    assert load.call_args.args[2] == 270
+    assert load.call_count == 1
     for name in names:
         expected = [1] if name in ("Ring", "CopyPaste") else [1, 2, 3] if name == "HiddenCandidate" else [1, 2]
         assert [row["NominationId"] for row in mocks[name].call_args.args[0]] == expected

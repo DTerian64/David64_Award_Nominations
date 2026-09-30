@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "generator_version": "synthetics-inc-v6.0",
+  "population": {"user_count": 400, "directory_seed": 20260912, "quiet_teams": 4, "low_recognition_users": 12},
+  "corpus": {"nomination_count": 15000, "window_days": 365, "fraud_rate": 0.02, "fraud_rejected_fraction": 0.1},
+  "background": {"working_partners": 4, "department_affinity": 0.7, "activity_spread": 0.35, "weekend_weight": 0.15},
+  "tabular_signals": {"fraud_high_amount_fraction": 0.25, "legitimate_high_amount_fraction": 0.02},
+  "scenarios": {
+    "RING": {"episodes": 25, "targets_per_episode": 2, "sizes": [3, 4], "span_days": 7},
+    "RECIPROCAL": {"episodes": 25, "targets_per_episode": 2, "span_days": 7},
+    "TEMPORAL_BURST": {"episodes": 5, "targets_per_episode": 10, "event_count": 180, "span_days": 1, "burst_hours": 6},
+    "SUPER_NOMINATOR": {"episodes": 5, "targets_per_episode": 10, "event_count": 90, "span_days": 7},
+    "SUPER_BENEFICIARY": {"episodes": 5, "targets_per_episode": 10, "event_count": 90, "span_days": 7},
+    "BIPARTITE_DENSE_BLOCK": {"episodes": 10, "targets_per_episode": 5, "left_size": 3, "right_size": 4, "repeats": 2, "span_days": 7}
+  },
+  "controls_per_episode": 1,
+  "description_reuse": {"groups": 50, "group_size": 3, "fraud_linked_groups": 10},
+  "engine_windows": {
+    "graph_pattern": {"detection_window_days": 180, "detector_windows": {"Ring": 60, "BipartiteDenseBlock": 180, "TemporalBurst": 180, "SuperNominator": 180, "SuperBeneficiary": 180, "CopyPasteFraud": 180, "HiddenCandidate": 180, "LowRecognitionNominator": 180}},
+    "gnn": {"window_days": 365},
+    "tabular": {"window_days": 365}
+  },
+  "audit": {"minimum_episode_recall": 0.8, "maximum_incidental_rings": 1000}
+}

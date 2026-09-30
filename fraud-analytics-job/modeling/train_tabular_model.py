@@ -19,14 +19,20 @@ from modeling.tabular import (
 )
 from modeling.tabular.artifacts import write_tabular_bundle
 from modeling.tabular.serving import fit_selected_for_serving
-from source_adapters.award_nominations import AwardNominationAdapter
 from source_adapters.contracts import SourceReadRequest
-from utils.component_status import upsert_component_status
-from utils.db_conn import connect
-from utils.integrity_analytics_coordinator import LeaseLostError
+from integrity_sentinel.datasets import load_award_nomination_dataset
+from integrity_sentinel.component_status import upsert_component_status
+from integrity_sentinel.db import connect as connect_sentinel
+from integrity_sentinel.analytics_coordinator import LeaseLostError
+from source_adapters.award_nominations.connection import connect as connect_award
 from utils.model_artifacts import upload_artifact
 from utils.stage_result import TenantStageResult
-from utils.tenant_model_config import get_tenant_embed_model, get_tenants, get_tenant_tabular_window
+from source_adapters.award_nominations.tenant_config import (
+    get_tenant_embed_model,
+    get_tenant_name,
+    get_tenants,
+    get_tenant_tabular_window,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -64,7 +70,7 @@ def _record_status(
     lease_fence: Callable[[object], None] | None = None,
     **kwargs,
 ) -> None:
-    connection = connect()
+    connection = connect_sentinel()
     try:
         if lease_fence is not None:
             lease_fence(connection)
@@ -80,22 +86,22 @@ def process_tenant(
     run_id: str,
     lease_guard: Callable[[], None] | None = None,
     lease_fence: Callable[[object], None] | None = None,
+    data_as_of_utc: datetime | None = None,
 ) -> TenantStageResult:
     """Evaluate, publish, and activate the Tabular winner for one tenant."""
     try:
-        as_of = datetime.now(timezone.utc)
-        source = connect()
+        as_of = data_as_of_utc or datetime.now(timezone.utc)
+        if as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=timezone.utc)
+        else:
+            as_of = as_of.astimezone(timezone.utc)
+        source = connect_award()
         try:
-            row = source.cursor().execute(
-                "SELECT TenantName FROM dbo.Tenants WHERE TenantId=?",
-                (tenant_id,),
-            ).fetchone()
-            if row is None:
-                raise ValueError(f"Tenant {tenant_id} does not exist")
-            tenant_name = str(row[0])
+            tenant_name = get_tenant_name(source, tenant_id)
             window_days = get_tenant_tabular_window(source, tenant_id)
-            dataset = AwardNominationAdapter().load(
-                source,
+            sentinel = connect_sentinel()
+            try:
+                dataset = load_award_nomination_dataset(
                 SourceReadRequest(
                     tenant_id=tenant_id,
                     as_of_exclusive=as_of,
@@ -103,7 +109,11 @@ def process_tenant(
                     # build features but are not fitted/evaluated.
                     window_days=2 * window_days,
                 ),
-            )
+                    source_connection=source,
+                    sentinel_connection=sentinel,
+                )
+            finally:
+                sentinel.close()
         finally:
             source.close()
 
@@ -213,7 +223,7 @@ def process_tenant(
 
 def main(tenants_to_process: list | None = None) -> None:
     """Standalone multi-tenant entry point; coordinated runs call process_tenant."""
-    discovery = connect()
+    discovery = connect_award()
     try:
         tenants = get_tenants(discovery)
     finally:

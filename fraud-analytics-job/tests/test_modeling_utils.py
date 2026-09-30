@@ -6,6 +6,7 @@ import json
 
 import pandas as pd
 
+from source_adapters.award_nominations import tenant_config as award_tenant_config
 from utils import model_artifacts, tenant_model_config
 
 
@@ -79,7 +80,7 @@ def test_tenant_embed_model_reads_json_and_closes_connection(monkeypatch):
     connection = _Connection(
         (json.dumps({"embed_model": "tenant-embedding-model"}),)
     )
-    monkeypatch.setattr(tenant_model_config, "connect", lambda: connection)
+    monkeypatch.setattr(award_tenant_config, "connect", lambda: connection)
 
     assert (
         tenant_model_config.get_tenant_embed_model(5)
@@ -90,7 +91,7 @@ def test_tenant_embed_model_reads_json_and_closes_connection(monkeypatch):
 
 def test_tenant_embed_model_falls_back_for_malformed_json(monkeypatch):
     connection = _Connection(("not-json",))
-    monkeypatch.setattr(tenant_model_config, "connect", lambda: connection)
+    monkeypatch.setattr(award_tenant_config, "connect", lambda: connection)
 
     assert (
         tenant_model_config.get_tenant_embed_model(5)

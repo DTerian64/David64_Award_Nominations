@@ -26,13 +26,15 @@ def test_loader_rejects_nonpositive_window():
 
 def test_job_loads_warmup_history_and_passes_configured_window_to_shared_builder(monkeypatch):
     connection = MagicMock()
-    monkeypatch.setattr(trainer, "connect", lambda: connection)
+    monkeypatch.setattr(trainer, "connect_award", lambda: connection)
+    monkeypatch.setattr(trainer, "connect_sentinel", lambda: MagicMock())
     monkeypatch.setattr(trainer, "get_tenants", lambda conn: [(5, "Synthetics Inc")])
+    monkeypatch.setattr(trainer, "get_tenant_name", lambda conn, tenant: "Synthetics Inc")
     monkeypatch.setattr(trainer, "get_tenant_tabular_window", lambda conn, tenant: 270)
     monkeypatch.setattr(trainer, "get_tenant_embed_model", lambda tenant: "test-encoder")
     monkeypatch.setattr(trainer, "SentenceTransformer", lambda name: object())
-    adapter = MagicMock()
-    monkeypatch.setattr(trainer, "AwardNominationAdapter", lambda: adapter)
+    loader = MagicMock(return_value=SimpleNamespace())
+    monkeypatch.setattr(trainer, "load_award_nomination_dataset", loader)
     builder = MagicMock()
     builder.build.return_value = SimpleNamespace(source_snapshot_id="fixture")
     monkeypatch.setattr(trainer, "AwardNominationTabularV1FeatureBuilder", lambda: builder)
@@ -41,7 +43,7 @@ def test_job_loads_warmup_history_and_passes_configured_window_to_shared_builder
     record = MagicMock()
     monkeypatch.setattr(trainer, "_record_status", record)
     trainer.main([5])
-    request = adapter.load.call_args.args[1]
+    request = loader.call_args.args[0]
     assert request.tenant_id == 5
     assert request.window_days == 540
     assert builder.build.call_args.kwargs["window_days"] == 270

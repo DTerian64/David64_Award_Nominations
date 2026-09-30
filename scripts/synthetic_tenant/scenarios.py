@@ -406,15 +406,17 @@ def _upn_part(value: str) -> str:
     return re.sub(r"[^a-z0-9-]", "", value.lower())
 
 
-def generate_users(seed: int) -> list[SyntheticUser]:
+def generate_users(seed: int, user_count: int = CORPUS_USER_COUNT) -> list[SyntheticUser]:
     """Generate the stable 400-person Armenian corpus and manager hierarchy."""
     first_names, last_names = _load_names()
     combinations = [(first, last) for first in first_names for last in last_names]
     rng = random.Random(seed)
     rng.shuffle(combinations)
-    selected = combinations[:CORPUS_USER_COUNT]
+    if user_count < 54 or user_count > len(combinations):
+        raise ValueError("User count is outside the supported Armenian roster")
+    selected = combinations[:user_count]
 
-    logical_ids = [f"SYN-U{index:04d}" for index in range(1, 401)]
+    logical_ids = [f"SYN-U{index:04d}" for index in range(1, user_count + 1)]
     # One executive, eight division leads, and 45 people managers. Remaining
     # staff report to a manager in their own department.
     department_managers: dict[str, list[str]] = {dept: [] for dept in DEPARTMENTS}

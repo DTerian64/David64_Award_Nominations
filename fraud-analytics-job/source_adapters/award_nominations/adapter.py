@@ -7,7 +7,7 @@ from typing import Any
 from integrity_data import IntegrityDataset
 from source_adapters.contracts import SourceReadRequest
 
-from .capabilities import AWARD_NOMINATION_CAPABILITIES
+from .capabilities import AWARD_NOMINATION_SOURCE_CAPABILITIES
 from .extract import fetch_nominations, fetch_tenant, fetch_users
 from .map import ADAPTER_NAME, ADAPTER_VERSION, SOURCE_SYSTEM, map_award_nomination_rows
 
@@ -18,11 +18,11 @@ class AwardNominationAdapter:
     source_system = SOURCE_SYSTEM
     adapter_name = ADAPTER_NAME
     adapter_version = ADAPTER_VERSION
-    capabilities = AWARD_NOMINATION_CAPABILITIES
+    capabilities = AWARD_NOMINATION_SOURCE_CAPABILITIES
 
     def load(self, connection: Any, request: SourceReadRequest) -> IntegrityDataset:
         tenant = fetch_tenant(connection, request.tenant_id)
-        users = fetch_users(connection, request.tenant_id)
+        users = fetch_users(connection, request)
         nominations = fetch_nominations(connection, request)
         return map_award_nomination_rows(
             tenant=tenant,

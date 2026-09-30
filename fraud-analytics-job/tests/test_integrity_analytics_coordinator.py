@@ -125,12 +125,10 @@ def test_no_claim_is_normal_while_another_worker_owns_work():
     assert coordinator.try_claim_tenant(RUN_ID, WORKER_ID) is None
 
 
-def test_queue_and_enable_check_require_a_strict_json_boolean_false():
+def test_queue_accepts_an_explicit_source_owned_tenant_list():
     assert "OPENJSON" in INITIALIZE_TENANT_QUEUE_SQL
-    assert "setting.[type] = 3" in INITIALIZE_TENANT_QUEUE_SQL
-    assert "setting.[value] = 'false'" in INITIALIZE_TENANT_QUEUE_SQL
-    assert "ISJSON(tenant.integrity_config)" in INITIALIZE_TENANT_QUEUE_SQL
-    assert "fraud_analytics_job" in INITIALIZE_TENANT_QUEUE_SQL
+    assert "dbo.Tenants" not in INITIALIZE_TENANT_QUEUE_SQL
+    assert "WITH (TenantId INT '$')" in INITIALIZE_TENANT_QUEUE_SQL
 
 
 def test_stage_attempt_is_append_oriented_and_requires_current_lease_owner():
@@ -221,15 +219,10 @@ def test_run_summary_exposes_finalizer_cache_refresh_signal():
     assert connection.cursor_value.sql.count("?") == len(connection.cursor_value.params)
 
 
-def test_missing_run_and_tenant_are_reported():
+def test_missing_run_is_reported():
     coordinator, _ = _coordinator(None)
     with pytest.raises(CoordinationError, match="does not exist"):
         coordinator.get_run_state(RUN_ID)
-
-    coordinator, _ = _coordinator(None)
-    with pytest.raises(CoordinationError, match="Tenant 77"):
-        coordinator.tenant_is_enabled(77)
-
 
 def test_diagnostics_stay_valid_json_when_bounded():
     encoded = _diagnostics_json({"payload": "x" * 5000})

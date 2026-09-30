@@ -13,7 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "integrity-engine-core" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modeling import train_gnn_model as gnn  # noqa: E402
-from utils import db_conn  # noqa: E402
+from utils import sql_connection as db_conn  # noqa: E402
 
 
 class _Connection:
@@ -200,12 +200,12 @@ def test_sql_connection_enables_odbc_idle_resilience(monkeypatch):
         captured["kwargs"] = kwargs
         return object()
 
-    monkeypatch.setenv("SQL_SERVER", "example.database.windows.net")
-    monkeypatch.setenv("SQL_DATABASE", "analytics")
+    monkeypatch.setenv("IS_SQL_SERVER", "example.database.windows.net")
+    monkeypatch.setenv("IS_SQL_DATABASE", "analytics")
     monkeypatch.setattr(db_conn, "_credential", _Credential())
     monkeypatch.setattr(db_conn.pyodbc, "connect", fake_connect)
 
-    db_conn.connect()
+    db_conn.connect_from_environment("IS_SQL_SERVER", "IS_SQL_DATABASE")
 
     assert "ConnectRetryCount=3;" in captured["connection_string"]
     assert "ConnectRetryInterval=10;" in captured["connection_string"]

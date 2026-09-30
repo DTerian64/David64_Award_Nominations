@@ -2,9 +2,12 @@
 
 import json
 from datetime import date, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from modeling import graph_analytics as graph
+from feature_builders.source_views import graph_nomination_rows
+from source_adapters.award_nominations.tenant_config import get_maximum_graph_window
 
 
 POLICY = {
@@ -78,23 +81,28 @@ def test_active_policy_reads_tenant_window_not_legacy_policy_window():
     cursor = connection.cursor.return_value
     cursor.fetchone.return_value = (4, 2, "MAX_RELEVANT_FINDING", 25, 50, 75, 100, 180, 14)
     cursor.fetchall.return_value = []
-    policy = graph._load_active_graph_policy(connection, 5, 180)
-    assert policy["detection_window_days"] == 180
+    policy = graph._load_active_graph_policy(
+        connection,
+        5,
+        180,
+        {"graph_pattern": {"detection_window_days": 270}},
+    )
+    assert policy["detection_window_days"] == 270
     query = cursor.execute.call_args_list[0].args[0]
-    assert "'$.graph_pattern.detection_window_days'" in query
-    assert "CAST(t.integrity_config AS nvarchar(max))" in query
-    assert "p.DetectionWindowDays" not in query
-    assert cursor.execute.call_args_list[0].args[1:] == (180, 5)
+    assert "dbo.Tenants" not in query
+    assert "p.DetectionWindowDays" in query
+    assert cursor.execute.call_args_list[0].args[1:] == (5,)
 
 
 def test_embedding_retention_uses_longest_tenant_window_not_legacy_policy():
     connection = MagicMock()
     cursor = connection.cursor.return_value
-    cursor.fetchone.return_value = (180,)
-    assert graph._maximum_active_detection_window(connection, 365) == 180
-    query = cursor.execute.call_args.args[0]
-    assert "'$.graph_pattern.detection_window_days'" in query
-    assert "MAX(DetectionWindowDays)" not in query
+    cursor.fetchall.return_value = [
+        (5, '{"graph_pattern":{"detection_window_days":180,'
+            '"detector_windows":{"Desert":540}}}')
+    ]
+    assert get_maximum_graph_window(connection, 365) == 540
+    assert "FROM dbo.Tenants" in cursor.execute.call_args.args[0]
 
 
 
@@ -130,29 +138,6 @@ class _Connection:
         self.committed = True
 
 
-class _LoadCursor:
-    def __init__(self):
-        self.sql = None
-        self.params = None
-        self.description = []
-
-    def execute(self, sql, *params):
-        self.sql = sql
-        self.params = params
-        return self
-
-    def fetchall(self):
-        return []
-
-
-class _LoadConnection:
-    def __init__(self):
-        self.cursor_value = _LoadCursor()
-
-    def cursor(self):
-        return self.cursor_value
-
-
 def _nomination(
     nomination_id, nominator, beneficiary, amount=1000, description="",
     created_at=None,
@@ -165,12 +150,19 @@ def _nomination(
 
 
 def test_graph_loader_uses_pending_approved_and_paid_population():
-    connection = _LoadConnection()
-
-    graph._load_nominations(connection, tenant_id=3, window_days=365)
-
-    assert "n.Status IN ('Pending', 'Approved', 'Paid')" in connection.cursor_value.sql
-    assert connection.cursor_value.params == (3, 365)
+    dataset = SimpleNamespace(
+        events=(
+            SimpleNamespace(event_id="1", status="Pending", amount=1, text="a", occurred_at=date.today()),
+            SimpleNamespace(event_id="2", status="Rejected", amount=1, text="b", occurred_at=date.today()),
+        ),
+        participants=(
+            SimpleNamespace(event_id="1", normalized_role="INITIATOR", actor_id="10"),
+            SimpleNamespace(event_id="1", normalized_role="SUBJECT", actor_id="11"),
+            SimpleNamespace(event_id="2", normalized_role="INITIATOR", actor_id="10"),
+            SimpleNamespace(event_id="2", normalized_role="SUBJECT", actor_id="11"),
+        ),
+    )
+    assert [row["NominationId"] for row in graph_nomination_rows(dataset)] == [1]
 
 
 def test_ring_score_increases_with_financial_exposure():

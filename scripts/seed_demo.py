@@ -635,7 +635,7 @@ def reset_demo(conn, tenant_id: int, dry_run: bool) -> None:
     demo_upns = [row[0] for row in cur.fetchall()]
 
     # Count before deleting
-    cur.execute("SELECT COUNT(*) FROM dbo.GraphPatternFindings WHERE TenantId = ?", (tenant_id,))
+    cur.execute("SELECT COUNT(*) FROM integrity.GraphPatternFindings WHERE TenantId = ?", (tenant_id,))
     n_findings = int(cur.fetchone()[0])
 
     cur.execute(
@@ -693,7 +693,7 @@ def reset_demo(conn, tenant_id: int, dry_run: bool) -> None:
 
     # 2. GraphPatternFindings
     cur.execute(
-        "DELETE FROM dbo.GraphPatternFindings WHERE TenantId = ?",
+        "DELETE FROM integrity.GraphPatternFindings WHERE TenantId = ?",
         (tenant_id,),
     )
 
@@ -1187,7 +1187,7 @@ def seed_graph_findings(
     detected  = datetime.now(timezone.utc)
     findings: list[tuple] = []
 
-    table = "dbo.GraphPatternFindings"
+    table = "integrity.GraphPatternFindings"
 
     # Retrieve name map for detail strings
     cur = conn.cursor()

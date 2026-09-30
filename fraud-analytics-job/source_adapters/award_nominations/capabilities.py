@@ -2,13 +2,18 @@
 
 from source_adapters.contracts import SourceCapability
 
-AWARD_NOMINATION_CAPABILITIES = frozenset(capability.value for capability in (
+AWARD_NOMINATION_SOURCE_CAPABILITIES = frozenset(capability.value for capability in (
     SourceCapability.DIRECTED_ACTOR_PAIR,
     SourceCapability.AMOUNT,
     SourceCapability.CURRENCY,
     SourceCapability.CATEGORY,
     SourceCapability.TEXT,
     SourceCapability.EVENT_STATUS,
-    SourceCapability.REVIEWED_OUTCOMES,
-    SourceCapability.BEHAVIOR_LABELS,
 ))
+
+AWARD_NOMINATION_CAPABILITIES = AWARD_NOMINATION_SOURCE_CAPABILITIES | frozenset(
+    {
+        SourceCapability.REVIEWED_OUTCOMES.value,
+        SourceCapability.BEHAVIOR_LABELS.value,
+    }
+)

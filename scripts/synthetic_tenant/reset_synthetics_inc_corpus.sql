@@ -1,14 +1,14 @@
 /*
 Purpose
 =======
-Tenant-scoped removal of all Synthetics Inc. nomination data so the v5.0
-participation corpus can be loaded with the Python seeder.
+Tenant-scoped removal of all Synthetics Inc. nomination data so an approved
+replacement corpus can be loaded with the Python seeder.
 
 This script preserves dbo.Tenants, dbo.Users, roles, categories, email
 templates, Graph/GNN scoring policies, Entra identities, DNS, and application
 configuration. It removes every nomination owned by TenantId 5 and all
 nomination-derived data for that tenant, including test nominations created
-after the deployed v4 corpus.
+after the deployed synthetic corpus.
 
 Safety and usage
 ================
@@ -18,7 +18,8 @@ Safety and usage
    rolls it back.
 4. Review the inventory result sets and all preflight checks.
 5. Change @CommitChanges to 1 and run the entire file again to commit.
-6. Run the v5.0 seeder --apply-corpus command documented in README.md.
+6. Run the approved seeder --apply-corpus command documented in README.md.
+   For v6, review a complete accepted policy/semantic audit before this reset.
 
 Do not change TenantId 5, the organization ID, tenant name, domain, or expected
 user count merely to bypass a failed preflight. Investigate the difference
@@ -113,10 +114,11 @@ IF EXISTS (
     WHERE foreign_key_column.referenced_object_id =
           OBJECT_ID(N'dbo.Nominations')
       AND NOT (
-          child_schema.name = N'dbo'
-          AND child_table.name IN (
-              N'IntegrityDecisionResults', N'payroll_submissions'
-          )
+          (child_schema.name = N'integrity'
+           AND child_table.name = N'IntegrityDecisionResults')
+          OR
+          (child_schema.name = N'dbo'
+           AND child_table.name = N'payroll_submissions')
       )
 )
 BEGIN
@@ -131,10 +133,11 @@ BEGIN
     WHERE foreign_key_column.referenced_object_id =
           OBJECT_ID(N'dbo.Nominations')
       AND NOT (
-          child_schema.name = N'dbo'
-          AND child_table.name IN (
-              N'IntegrityDecisionResults', N'payroll_submissions'
-          )
+          (child_schema.name = N'integrity'
+           AND child_table.name = N'IntegrityDecisionResults')
+          OR
+          (child_schema.name = N'dbo'
+           AND child_table.name = N'payroll_submissions')
       );
     THROW 51000, 'An unexpected nomination FK child requires reset review.', 1;
 END;
@@ -145,8 +148,8 @@ FROM dbo.Nominations AS item
 INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId
 UNION ALL
-SELECT N'dbo.IntegrityDecisionResults', COUNT_BIG(*)
-FROM dbo.IntegrityDecisionResults AS item
+SELECT N'integrity.IntegrityDecisionResults', COUNT_BIG(*)
+FROM integrity.IntegrityDecisionResults AS item
 WHERE item.TenantId = @TenantId
 UNION ALL
 SELECT N'dbo.Nomination_Logs', COUNT_BIG(*)
@@ -159,30 +162,30 @@ FROM dbo.ProcessedEvents AS item
 INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId
 UNION ALL
-SELECT N'dbo.NomGraph_Nominated', COUNT_BIG(*)
-FROM dbo.NomGraph_Nominated AS item
+SELECT N'integrity.NomGraph_Nominated', COUNT_BIG(*)
+FROM integrity.NomGraph_Nominated AS item
 INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId
 UNION ALL
-SELECT N'dbo.NomGraph_NominationEmbedding', COUNT_BIG(*)
-FROM dbo.NomGraph_NominationEmbedding AS item
+SELECT N'integrity.NomGraph_NominationEmbedding', COUNT_BIG(*)
+FROM integrity.NomGraph_NominationEmbedding AS item
 INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId
 UNION ALL
-SELECT N'dbo.GraphPatternFindings', COUNT_BIG(*)
-FROM dbo.GraphPatternFindings WHERE TenantId = @TenantId
+SELECT N'integrity.GraphPatternFindings', COUNT_BIG(*)
+FROM integrity.GraphPatternFindings WHERE TenantId = @TenantId
 UNION ALL
-SELECT N'dbo.UserGraphFlags', COUNT_BIG(*)
-FROM dbo.UserGraphFlags WHERE TenantId = @TenantId
+SELECT N'integrity.UserGraphFlags', COUNT_BIG(*)
+FROM integrity.UserGraphFlags WHERE TenantId = @TenantId
 UNION ALL
-SELECT N'dbo.ApproverPairFlags', COUNT_BIG(*)
-FROM dbo.ApproverPairFlags WHERE TenantId = @TenantId
+SELECT N'integrity.ApproverPairFlags', COUNT_BIG(*)
+FROM integrity.ApproverPairFlags WHERE TenantId = @TenantId
 UNION ALL
-SELECT N'dbo.GNN_UserEmbeddings', COUNT_BIG(*)
-FROM dbo.GNN_UserEmbeddings WHERE TenantId = @TenantId
+SELECT N'integrity.GNN_UserEmbeddings', COUNT_BIG(*)
+FROM integrity.GNN_UserEmbeddings WHERE TenantId = @TenantId
 UNION ALL
-SELECT N'dbo.GraphScoringChangeRequests', COUNT_BIG(*)
-FROM dbo.GraphScoringChangeRequests WHERE TenantId = @TenantId
+SELECT N'integrity.GraphScoringChangeRequests', COUNT_BIG(*)
+FROM integrity.GraphScoringChangeRequests WHERE TenantId = @TenantId
 ORDER BY TableName;
 
 /* FK and non-FK nomination children, then tenant-level derived data. */
@@ -203,22 +206,22 @@ INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId;
 
 DELETE item
-FROM dbo.NomGraph_NominationEmbedding AS item
+FROM integrity.NomGraph_NominationEmbedding AS item
 INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId;
 
 DELETE item
-FROM dbo.NomGraph_Nominated AS item
+FROM integrity.NomGraph_Nominated AS item
 INNER JOIN #TenantNominationIds AS owned
     ON owned.NominationId = item.NominationId;
 
-DELETE FROM dbo.GraphScoringChangeRequests WHERE TenantId = @TenantId;
-DELETE FROM dbo.GraphPatternFindings WHERE TenantId = @TenantId;
-DELETE FROM dbo.UserGraphFlags WHERE TenantId = @TenantId;
-DELETE FROM dbo.ApproverPairFlags WHERE TenantId = @TenantId;
-DELETE FROM dbo.GNN_UserEmbeddings WHERE TenantId = @TenantId;
+DELETE FROM integrity.GraphScoringChangeRequests WHERE TenantId = @TenantId;
+DELETE FROM integrity.GraphPatternFindings WHERE TenantId = @TenantId;
+DELETE FROM integrity.UserGraphFlags WHERE TenantId = @TenantId;
+DELETE FROM integrity.ApproverPairFlags WHERE TenantId = @TenantId;
+DELETE FROM integrity.GNN_UserEmbeddings WHERE TenantId = @TenantId;
 
-DELETE FROM dbo.IntegrityDecisionResults WHERE TenantId = @TenantId;
+DELETE FROM integrity.IntegrityDecisionResults WHERE TenantId = @TenantId;
 
 DELETE nomination
 FROM dbo.Nominations AS nomination
@@ -230,14 +233,14 @@ Invalidate all old serving pointers. Blob artifacts remain immutable, but no
 component can serve a model or snapshot trained from the removed corpus.
 Temporal history remains available as an audit trail.
 */
-UPDATE dbo.IntegrityComponentStatus
+UPDATE integrity.IntegrityComponentStatus
 SET ServingStatus = 'UNAVAILABLE',
     ServingVersion = NULL,
     ServingAsOf = NULL,
     LastAttemptStatus = 'SKIPPED',
     ReasonCode = 'SYNTHETIC_CORPUS_RESET',
-    ReasonDetail = N'Awaiting analytics rebuild from synthetics-inc-v4.0',
-    DiagnosticsJson = N'{"reset_reason":"synthetics-inc-v4.0 direct specialist-label corpus replacement"}',
+    ReasonDetail = N'Awaiting analytics rebuild after synthetic corpus replacement',
+    DiagnosticsJson = N'{"reset_reason":"synthetic corpus replacement awaiting analytics rebuild"}',
     LastAttemptAt = SYSUTCDATETIME(),
     LastSuccessfulAt = NULL,
     RunId = NULL,
@@ -255,7 +258,7 @@ IF EXISTS (
     THROW 51000, 'Post-delete check found remaining tenant nominations.', 1;
 
 IF EXISTS (
-    SELECT 1 FROM dbo.IntegrityDecisionResults WHERE TenantId = @TenantId
+    SELECT 1 FROM integrity.IntegrityDecisionResults WHERE TenantId = @TenantId
 )
     THROW 51000, 'Post-delete check found remaining tenant decisions.', 1;
 
@@ -274,7 +277,7 @@ SELECT
         ON nominator.UserId = nomination.NominatorId
      WHERE nominator.TenantId = @TenantId) AS RemainingNominations,
     (SELECT COUNT(*)
-     FROM dbo.IntegrityDecisionResults
+     FROM integrity.IntegrityDecisionResults
      WHERE TenantId = @TenantId) AS RemainingDecisions,
     CASE WHEN @CommitChanges = 1 THEN N'COMMIT' ELSE N'ROLLBACK PREVIEW' END
         AS RequestedOutcome;

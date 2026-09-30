@@ -232,7 +232,7 @@ def test_nomination_extraction_is_source_scoped_and_uses_explicit_cutoffs():
     assert "n.NominationDate < ?" in sql
     assert "n.Status <> ?" in sql
     assert "n.NominationDate >= ?" in sql
-    assert "integrity.IntegrityDecisionResults" in sql
+    assert "integrity.IntegrityDecisionResults" not in sql
     assert "GraphPatternFindings" not in sql
     assert "GNN_UserEmbeddings" not in sql
     assert "RfResultJson" not in sql

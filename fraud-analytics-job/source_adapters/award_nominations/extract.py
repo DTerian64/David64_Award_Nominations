@@ -39,17 +39,30 @@ def fetch_tenant(connection: Any, tenant_id: int) -> dict[str, Any]:
     return rows[0]
 
 
-def fetch_users(connection: Any, tenant_id: int) -> list[dict[str, Any]]:
+def fetch_users(
+    connection: Any,
+    request: SourceReadRequest,
+) -> list[dict[str, Any]]:
     cursor = connection.cursor()
     cursor.execute(
         """
-        SELECT u.UserId, u.TenantId, u.Title,
-               u.created_at AS CreatedAt, u.updated_at AS UpdatedAt
+        SELECT u.UserId, u.TenantId, u.Title, u.ManagerId,
+               ISNULL(u.FirstName + ' ' + u.LastName,
+                      CAST(u.UserId AS NVARCHAR)) AS FullName,
+               u.created_at AS CreatedAt, u.updated_at AS UpdatedAt,
+               CAST(CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM dbo.Nominations activity
+                   WHERE (activity.NominatorId = u.UserId
+                          OR activity.BeneficiaryId = u.UserId)
+                     AND activity.NominationDate < ?
+               ) THEN 1 ELSE 0 END AS INT) AS EverActiveBeforeAsOf
         FROM dbo.Users u
         WHERE u.TenantId = ?
         ORDER BY u.UserId
         """,
-        tenant_id,
+        _database_datetime(request.as_of_exclusive),
+        request.tenant_id,
     )
     return _fetch_dicts(cursor)
 
@@ -92,15 +105,7 @@ def fetch_nominations(
             n.updated_at AS NominationUpdatedAt,
             nominator.TenantId AS NominatorTenantId,
             beneficiary.TenantId AS BeneficiaryTenantId,
-            approver.TenantId AS ApproverTenantId,
-            decision.TenantId AS DecisionTenantId,
-            decision.TrainingDisposition,
-            decision.TrainingDispositionSource,
-            decision.TrainingDispositionMetadataJson,
-            decision.ReviewedBy,
-            decision.ReviewedAt,
-            decision.CreatedAt AS DecisionCreatedAt,
-            decision.UpdatedAt AS DecisionUpdatedAt
+            approver.TenantId AS ApproverTenantId
         FROM dbo.Nominations n
         JOIN dbo.Users nominator
           ON nominator.UserId = n.NominatorId
@@ -108,8 +113,6 @@ def fetch_nominations(
           ON beneficiary.UserId = n.BeneficiaryId
         LEFT JOIN dbo.Users approver
           ON approver.UserId = n.ApproverId
-        LEFT JOIN integrity.IntegrityDecisionResults decision
-          ON decision.NominationId = n.NominationId
         WHERE nominator.TenantId = ?
           AND n.NominationDate < ?
           AND (n.Status IS NULL OR n.Status <> ?)

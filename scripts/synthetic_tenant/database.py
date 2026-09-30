@@ -49,6 +49,13 @@ REQUIRED_COLUMNS = {
     },
 }
 
+INTEGRITY_TABLES = {
+    "IntegrityDecisionResults",
+    "GraphScoringPolicies",
+    "GraphScoringPatternParameters",
+    "GNNScoringPolicies",
+}
+
 
 @dataclass(frozen=True)
 class ConfigurationResult:
@@ -105,9 +112,11 @@ def _row(cursor) -> dict[str, Any] | None:
 
 
 def _columns(cursor, table: str) -> set[str]:
+    schema = "integrity" if table in INTEGRITY_TABLES else "dbo"
     cursor.execute(
         "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-        "WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME=?",
+        "WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",
+        schema,
         table,
     )
     return {str(row[0]) for row in cursor.fetchall()}
@@ -119,8 +128,10 @@ def assert_schema(cursor) -> None:
         available = _columns(cursor, table)
         missing = required - available
         if missing:
+            schema = "integrity" if table in INTEGRITY_TABLES else "dbo"
             raise RuntimeError(
-                f"dbo.{table} is missing {sorted(missing)}; migration 0060 is required"
+                f"{schema}.{table} is missing {sorted(missing)}; "
+                "the required migrations have not completed"
             )
     for table in (
         "nomination_categories",
@@ -130,7 +141,8 @@ def assert_schema(cursor) -> None:
         "GNNScoringPolicies",
     ):
         if not _columns(cursor, table):
-            raise RuntimeError(f"Required table dbo.{table} does not exist")
+            schema = "integrity" if table in INTEGRITY_TABLES else "dbo"
+            raise RuntimeError(f"Required table {schema}.{table} does not exist")
 
 
 def _sha256(value: Any) -> str:
@@ -368,7 +380,7 @@ def _clone_graph_policy(cursor, tenant_id: int) -> int:
         "CriticalThreshold", "DetectionWindowDays", "SnapshotMaxAgeDays",
     )
     cursor.execute(
-        f"SELECT PolicyId, {', '.join(fields)} FROM dbo.GraphScoringPolicies "
+        f"SELECT PolicyId, {', '.join(fields)} FROM integrity.GraphScoringPolicies "
         "WHERE TenantId=? AND Status='ACTIVE'",
         SOURCE_TENANT_ID,
     )
@@ -376,7 +388,7 @@ def _clone_graph_policy(cursor, tenant_id: int) -> int:
     if source is None:
         raise RuntimeError("Tenant 1 has no active Graph policy")
     cursor.execute(
-        f"SELECT PolicyId, {', '.join(fields)} FROM dbo.GraphScoringPolicies "
+        f"SELECT PolicyId, {', '.join(fields)} FROM integrity.GraphScoringPolicies "
         "WHERE TenantId=? AND Status='ACTIVE'",
         tenant_id,
     )
@@ -389,7 +401,7 @@ def _clone_graph_policy(cursor, tenant_id: int) -> int:
         values = [source[field] for field in fields]
         cursor.execute(
             f"""
-            INSERT INTO dbo.GraphScoringPolicies (
+            INSERT INTO integrity.GraphScoringPolicies (
                 TenantId, PolicyVersion, Status, {', '.join(fields)},
                 CreatedBy, UpdatedBy, PublishedAt, PublishedBy
             ) OUTPUT INSERTED.PolicyId
@@ -405,7 +417,7 @@ def _clone_graph_policy(cursor, tenant_id: int) -> int:
         SELECT PatternType, DisplayOrder, Enabled, EnabledForRouting,
                ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                ParametersJson, CandidateEvaluationJson
-        FROM dbo.GraphScoringPatternParameters WHERE PolicyId=? ORDER BY PatternType
+        FROM integrity.GraphScoringPatternParameters WHERE PolicyId=? ORDER BY PatternType
         """,
         source["PolicyId"],
     )
@@ -415,7 +427,7 @@ def _clone_graph_policy(cursor, tenant_id: int) -> int:
         SELECT PatternType, DisplayOrder, Enabled, EnabledForRouting,
                ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                ParametersJson, CandidateEvaluationJson
-        FROM dbo.GraphScoringPatternParameters WHERE PolicyId=? ORDER BY PatternType
+        FROM integrity.GraphScoringPatternParameters WHERE PolicyId=? ORDER BY PatternType
         """,
         policy_id,
     )
@@ -431,7 +443,7 @@ def _clone_graph_policy(cursor, tenant_id: int) -> int:
         for row in patterns:
             cursor.execute(
                 """
-                INSERT INTO dbo.GraphScoringPatternParameters (
+                INSERT INTO integrity.GraphScoringPatternParameters (
                     PolicyId, PatternType, DisplayOrder, Enabled, EnabledForRouting,
                     ApplicableRolesJson, BaseScore, MinimumScore, MaximumScore,
                     ParametersJson, CandidateEvaluationJson, CreatedBy, UpdatedBy
@@ -471,7 +483,7 @@ def _configuration_hashes(cursor, tenant_id: int) -> dict[str, str]:
             """
             SELECT ScoringStrategy, LowThreshold, MediumThreshold, HighThreshold,
                    CriticalThreshold, DetectionWindowDays, SnapshotMaxAgeDays
-            FROM dbo.GraphScoringPolicies
+            FROM integrity.GraphScoringPolicies
             WHERE TenantId=? AND Status='ACTIVE'
             """,
             SOURCE_TENANT_ID,
@@ -481,8 +493,8 @@ def _configuration_hashes(cursor, tenant_id: int) -> dict[str, str]:
             SELECT x.PatternType, x.DisplayOrder, x.Enabled, x.EnabledForRouting,
                    x.ApplicableRolesJson, x.BaseScore, x.MinimumScore,
                    x.MaximumScore, x.ParametersJson, x.CandidateEvaluationJson
-            FROM dbo.GraphScoringPatternParameters x
-            JOIN dbo.GraphScoringPolicies p ON p.PolicyId=x.PolicyId
+            FROM integrity.GraphScoringPatternParameters x
+            JOIN integrity.GraphScoringPolicies p ON p.PolicyId=x.PolicyId
             WHERE p.TenantId=? AND p.Status='ACTIVE'
             ORDER BY x.PatternType
             """,
@@ -508,7 +520,7 @@ def _configuration_hashes(cursor, tenant_id: int) -> dict[str, str]:
             """
             SELECT ScoringStrategy, LowThreshold, MediumThreshold, HighThreshold,
                    CriticalThreshold, DetectionWindowDays, SnapshotMaxAgeDays
-            FROM dbo.GraphScoringPolicies
+            FROM integrity.GraphScoringPolicies
             WHERE TenantId=? AND Status='ACTIVE'
             """,
             tenant_id,
@@ -518,8 +530,8 @@ def _configuration_hashes(cursor, tenant_id: int) -> dict[str, str]:
             SELECT x.PatternType, x.DisplayOrder, x.Enabled, x.EnabledForRouting,
                    x.ApplicableRolesJson, x.BaseScore, x.MinimumScore,
                    x.MaximumScore, x.ParametersJson, x.CandidateEvaluationJson
-            FROM dbo.GraphScoringPatternParameters x
-            JOIN dbo.GraphScoringPolicies p ON p.PolicyId=x.PolicyId
+            FROM integrity.GraphScoringPatternParameters x
+            JOIN integrity.GraphScoringPolicies p ON p.PolicyId=x.PolicyId
             WHERE p.TenantId=? AND p.Status='ACTIVE'
             ORDER BY x.PatternType
             """,
@@ -560,7 +572,7 @@ def _clone_gnn_policy(cursor, tenant_id: int) -> str:
         """
         SELECT PolicyId, TrainingEnabled, InferenceEnabled, ConfigurationJson,
                ExplanationEnabled, ExplanationMinimumRisk
-        FROM dbo.GNNScoringPolicies
+        FROM integrity.GNNScoringPolicies
         WHERE TenantId=? AND Status='ACTIVE'
         """,
         SOURCE_TENANT_ID,
@@ -573,7 +585,7 @@ def _clone_gnn_policy(cursor, tenant_id: int) -> str:
         """
         SELECT PolicyId, TrainingEnabled, InferenceEnabled, ConfigurationJson,
                ExplanationEnabled, ExplanationMinimumRisk
-        FROM dbo.GNNScoringPolicies
+        FROM integrity.GNNScoringPolicies
         WHERE TenantId=? AND Status='ACTIVE'
         """,
         tenant_id,
@@ -601,7 +613,7 @@ def _clone_gnn_policy(cursor, tenant_id: int) -> str:
     else:
         cursor.execute(
             """
-            INSERT INTO dbo.GNNScoringPolicies (
+            INSERT INTO integrity.GNNScoringPolicies (
                 TenantId, PolicyVersion, Status, TrainingEnabled,
                 InferenceEnabled, ConfigurationJson, ExplanationEnabled,
                 ExplanationMinimumRisk, CreatedBy, UpdatedBy,
@@ -689,7 +701,7 @@ def inspect_existing_configuration(conn) -> ConfigurationResult:
         SELECT PolicyId, ScoringStrategy, LowThreshold, MediumThreshold,
                HighThreshold, CriticalThreshold, DetectionWindowDays,
                SnapshotMaxAgeDays
-        FROM dbo.GraphScoringPolicies
+        FROM integrity.GraphScoringPolicies
         WHERE TenantId=? AND Status='ACTIVE'
         """,
         tenant_id,
@@ -702,7 +714,7 @@ def inspect_existing_configuration(conn) -> ConfigurationResult:
         SELECT x.PatternType, x.DisplayOrder, x.Enabled, x.EnabledForRouting,
                x.ApplicableRolesJson, x.BaseScore, x.MinimumScore,
                x.MaximumScore, x.ParametersJson, x.CandidateEvaluationJson
-        FROM dbo.GraphScoringPatternParameters AS x
+        FROM integrity.GraphScoringPatternParameters AS x
         WHERE x.PolicyId=?
         ORDER BY x.PatternType
         """,
@@ -713,7 +725,7 @@ def inspect_existing_configuration(conn) -> ConfigurationResult:
         """
         SELECT PolicyId, TrainingEnabled, InferenceEnabled, ConfigurationJson,
                ExplanationEnabled, ExplanationMinimumRisk
-        FROM dbo.GNNScoringPolicies
+        FROM integrity.GNNScoringPolicies
         WHERE TenantId=? AND Status='ACTIVE'
         """,
         tenant_id,
@@ -896,6 +908,7 @@ def _corpus_stage_values(
     generation_run_id: str,
     corpus_sha256: str,
     seed: int,
+    generator_version: str = GENERATOR_VERSION,
 ) -> tuple[Any, ...]:
     timestamp = datetime.fromisoformat(row.nomination_time_utc)
     if timestamp.tzinfo is not None:
@@ -908,7 +921,7 @@ def _corpus_stage_values(
     rejection_actor = "Synthetic Ground Truth" if row.status == "Rejected" else None
     metadata = json.dumps({
         "schema_version": 3,
-        "generator_version": GENERATOR_VERSION,
+        "generator_version": generator_version,
         "pattern_taxonomy_version": PATTERN_TAXONOMY_VERSION,
         "generation_run_id": generation_run_id,
         "corpus_sha256": corpus_sha256,
@@ -976,6 +989,7 @@ def provision_corpus(
     corpus_sha256: str,
     seed: int,
     generation_run_id: str,
+    generator_version: str = GENERATOR_VERSION,
     require_existing_sql_users: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> CorpusResult:
@@ -1032,7 +1046,7 @@ def provision_corpus(
             """
             SELECT SourceMessageId, NominationId, TrainingDisposition,
                    TrainingDispositionMetadataJson
-            FROM dbo.IntegrityDecisionResults
+            FROM integrity.IntegrityDecisionResults
             WHERE TenantId=? AND SourceMessageId LIKE 'synthetic:%'
             """,
             tenant_id,
@@ -1098,6 +1112,7 @@ def provision_corpus(
                     generation_run_id=generation_run_id,
                     corpus_sha256=corpus_sha256,
                     seed=seed,
+                    generator_version=generator_version,
                 ))
                 staged_count += 1
                 if len(staged_rows) == 100:
@@ -1149,7 +1164,7 @@ def provision_corpus(
             unavailable = _engine_not_run()
             cursor.execute(
                 """
-                INSERT INTO dbo.IntegrityDecisionResults (
+                INSERT INTO integrity.IntegrityDecisionResults (
                     NominationId, TenantId, DecisionSchemaVersion,
                     PolicyVersion, SourceMessageId, RfResultJson,
                     GraphResultJson, GnnResultJson, SemanticResultJson,
@@ -1198,7 +1213,7 @@ def provision_corpus(
                 ReviewScope = CASE WHEN nomination.Status = 'Rejected'
                                    THEN 'FRAUD' ELSE NULL END,
                 UpdatedAt = SYSUTCDATETIME()
-            FROM dbo.IntegrityDecisionResults AS decision_result
+            FROM integrity.IntegrityDecisionResults AS decision_result
             INNER JOIN dbo.Nominations AS nomination
                 ON nomination.NominationId = decision_result.NominationId
             WHERE decision_result.TenantId = ?
@@ -1225,7 +1240,7 @@ def provision_corpus(
         cursor.execute(
             """
             SELECT COUNT(*)
-            FROM dbo.IntegrityDecisionResults
+            FROM integrity.IntegrityDecisionResults
             WHERE TenantId=? AND TrainingDispositionSource='SYNTHETIC_GROUND_TRUTH'
             """,
             tenant_id,

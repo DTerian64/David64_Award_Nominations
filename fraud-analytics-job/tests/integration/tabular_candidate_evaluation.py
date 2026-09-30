@@ -19,9 +19,15 @@ from typing import Any, Sequence
 from sentence_transformers import SentenceTransformer
 
 from feature_builders.tabular import AwardNominationTabularV1FeatureBuilder
+from integrity_sentinel.datasets import load_award_nomination_dataset
+from integrity_sentinel.db import connect as connect_sentinel
 from modeling.tabular import evaluate_tabular_candidates
-from source_adapters.award_nominations import AwardNominationAdapter
+from source_adapters.award_nominations.connection import connect as connect_award
 from source_adapters.award_nominations.live_smoke import _load_environment
+from source_adapters.award_nominations.tenant_config import (
+    get_tenant_embed_model,
+    get_tenant_tabular_window,
+)
 from source_adapters.contracts import SourceReadRequest
 
 
@@ -59,22 +65,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     _load_environment()
 
-    from utils.db_conn import connect
-    from utils.tenant_model_config import get_tenant_embed_model, get_tenant_tabular_window
-
-    connection = connect()
+    source_connection = connect_award()
+    sentinel_connection = connect_sentinel()
     try:
-        window_days = get_tenant_tabular_window(connection, args.tenant)
-        dataset = AwardNominationAdapter().load(
-            connection,
+        window_days = get_tenant_tabular_window(source_connection, args.tenant)
+        dataset = load_award_nomination_dataset(
             SourceReadRequest(
                 tenant_id=args.tenant,
                 as_of_exclusive=datetime.now(timezone.utc),
                 window_days=2 * window_days,
             ),
+            source_connection=source_connection,
+            sentinel_connection=sentinel_connection,
         )
     finally:
-        connection.close()
+        source_connection.close()
+        sentinel_connection.close()
 
     embed_model_name = get_tenant_embed_model(args.tenant)
     feature_dataset = AwardNominationTabularV1FeatureBuilder().build(

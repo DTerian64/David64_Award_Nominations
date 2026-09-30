@@ -1,5 +1,24 @@
 # Synthetics Inc. corpus generator
 
+## Configurable v6 experiments
+
+See [Synthetic Generator v6 design](../../Documentation_Misc/synthetic_generator_v6_design.md)
+for the configuration, audit, acceptance criteria and manual application workflow.
+The initial v6 profile is provisional: its local audit still reports dense-block
+misses. Do not reset/reseed from it until the complete tenant-policy audit passes
+and you have reviewed its findings.
+
+```powershell
+python -m scripts.synthetic_tenant.seed_synthetics_inc --config scripts/synthetic_tenant/profiles/v6-balanced.json --seed 20260926 --as-of 2026-09-27 --audit --bundle-out Output/synthetics-inc-v6-preview
+```
+
+This is offline and read-only. Configuration, corpus, manifest and audit are
+published together into a new directory. Add `--semantic-audit` to use cached
+production description embeddings, and `--graph-policy` to supply the actual
+active policy. Partial audits cannot authorize `--apply-corpus`.
+
+## Historical v5 replay (no configuration argument)
+
 This package generates and provisions the deterministic Synthetics Inc. GNN
 validation tenant. Its default and `--validate` modes create the logical
 400-user and 15,000-nomination plan in memory, validate all exact quotas, and

@@ -68,7 +68,9 @@ Write-Host ""
 # ── Set GitHub 'sandbox' secrets for backend workflow ────────────────────────
 # These are needed so the backend GitHub Actions workflow can push correct
 # SQL credentials into the Container App secrets (which otherwise override
-# the Key Vault references with empty strings).
+# the Key Vault references with empty strings). The fraud analytics job reads
+# its AWARD_SQL_* and IS_SQL_* variables directly from Key Vault references
+# managed by Terraform; those values do not need to be GitHub secrets.
 Write-Host "Setting GitHub 'sandbox' environment secrets for backend workflow..." -ForegroundColor Yellow
 if ($ghInstalled) {
     # Read SQL config from terraform outputs
@@ -80,17 +82,17 @@ if ($ghInstalled) {
     $sqlUser = if ($tfvarsContent -match 'sql_admin_login\s*=\s*"([^"]+)"')     { $Matches[1] } else { "" }
     $sqlPass = if ($tfvarsContent -match 'sql_admin_password\s*=\s*"([^"]+)"') { $Matches[1] } else { "" }
 
-    gh secret set SQL_SERVER   --env sandbox --body $sqlServer
-    gh secret set SQL_DATABASE --env sandbox --body $sqlDatabase
-    gh secret set SQL_USER     --env sandbox --body $sqlUser
-    gh secret set SQL_PASSWORD --env sandbox --body $sqlPass
+    gh secret set SQL_SERVER         --env sandbox --body $sqlServer
+    gh secret set SQL_DATABASE       --env sandbox --body $sqlDatabase
+    gh secret set SQL_USER           --env sandbox --body $sqlUser
+    gh secret set SQL_PASSWORD       --env sandbox --body $sqlPass
     Write-Host "  GitHub sandbox SQL secrets updated" -ForegroundColor Green
 } else {
     Write-Host "  gh CLI not found — set these manually in GitHub → repo Settings → Environments → sandbox → Secrets:" -ForegroundColor DarkYellow
-    Write-Host "  SQL_SERVER   = <sql-server>.database.windows.net" -ForegroundColor DarkYellow
-    Write-Host "  SQL_DATABASE = AwardNominationsSandbox" -ForegroundColor DarkYellow
-    Write-Host "  SQL_USER     = <sql_admin_login from terraform.tfvars>" -ForegroundColor DarkYellow
-    Write-Host "  SQL_PASSWORD = <sql_admin_password from terraform.tfvars>" -ForegroundColor DarkYellow
+    Write-Host "  SQL_SERVER         = <sql-server>.database.windows.net" -ForegroundColor DarkYellow
+    Write-Host "  SQL_DATABASE       = AwardNominationsSandbox" -ForegroundColor DarkYellow
+    Write-Host "  SQL_USER            = <sql_admin_login from terraform.tfvars>" -ForegroundColor DarkYellow
+    Write-Host "  SQL_PASSWORD        = <sql_admin_password from terraform.tfvars>" -ForegroundColor DarkYellow
 }
 Write-Host ""
 

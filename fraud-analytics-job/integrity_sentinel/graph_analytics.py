@@ -1,0 +1,1948 @@
+"""
+integrity_sentinel/graph_analytics.py
+==================
+Stage 1 of the fraud-analytics-job pipeline.
+
+Detects eight structural, temporal, and semantic behavioural patterns in the Nominations
+graph for each tenant and refreshes unique evidence in integrity.GraphPatternFindings.
+
+Pattern catalogue
+-----------------
+1. Ring                — directed cycles ≥ 3 hops (networkx simple_cycles)
+2. BipartiteDenseBlock — highly overlapping many-to-few or few-to-many groups
+3. TemporalBurst       — nomination volume compressed into an anomalous short window
+4. SuperNominator      — out-degree distribution outlier
+5. SuperBeneficiary    — in-degree distribution outlier with broad support
+6. CopyPaste           — cosine similarity ≥ 0.92 between descriptions, min cluster 3
+7. HiddenCandidate     — name appears ≥ 5× in descriptions but never a BeneficiaryId
+8. Desert              — whole team absent from both sides of the graph
+9. LowRecognitionNominator — frequent nominator, seldom nominated (analytics-only)
+
+Environment variables (all injected by the Container Apps Job)
+--------------------------------------------------------------
+  AWARD_SQL_SERVER      Award Nominations Azure SQL FQDN
+  AWARD_SQL_DATABASE    Award Nominations database name
+  IS_SQL_SERVER         Integrity Sentinel Azure SQL FQDN
+  IS_SQL_DATABASE       Integrity Sentinel database name
+  SQL_USER              SQL login
+  SQL_PASSWORD          SQL password
+  LOGGING_LEVEL         Python log level (default: INFO)
+"""
+
+from __future__ import annotations
+
+import gc
+import gzip
+import hashlib
+import json
+import logging
+import os
+import uuid
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta, timezone
+from itertools import combinations
+from typing import Any, Callable
+
+import networkx as nx
+import numpy as np
+import pyodbc
+from pathlib import Path
+from dotenv import load_dotenv
+
+from integrity_engine import GraphInferenceSnapshot, SnapshotNomination
+from integrity_engine.artifact_paths import graph_inference_snapshot_blob
+from integrity_engine.graph.finding_scoring import (
+    calculate_graph_finding_score,
+    calculate_ring_compactness,
+    derive_graph_finding_severity,
+)
+from integrity_engine.graph.history_windows import detector_windows, filter_detector_history
+
+from integrity_sentinel.component_status import upsert_component_status
+from integrity_sentinel.analytics_coordinator import LeaseLostError
+from integrity_sentinel.datasets import load_award_nomination_dataset
+from integrity_sentinel.graph_projection import replace_tenant_graph_projection
+from feature_builders.source_views import actor_rows, graph_nomination_rows
+from source_adapters.award_nominations.connection import connect as connect_award
+from source_adapters.award_nominations.tenant_config import (
+    get_maximum_graph_window,
+    get_tenant_integrity_config,
+    get_tenants as get_enabled_tenants,
+)
+from source_adapters.contracts import SourceReadRequest
+from utils.stage_result import TenantStageResult
+
+# Same .env loading as the other modeling jobs so this stage
+# can be run standalone locally. No-op in Container Apps (env injected).
+JOB_DIR = Path(__file__).resolve().parents[1]
+env_path = JOB_DIR.parent / ".env"
+load_dotenv(env_path)
+
+# Permanent database contract. Schema migration 0072 moves this table from dbo
+# as part of the coordinated application/database cutover.
+GRAPH_FINDINGS_TABLE = "integrity.GraphPatternFindings"
+
+logger = logging.getLogger(__name__)
+
+_SEVERITY_SCORE = {"Low": 25.0, "Medium": 50.0, "High": 75.0, "Critical": 100.0}
+
+
+def _derive_graph_finding_severity(
+    finding_score: float,
+    thresholds: dict[str, float],
+) -> str:
+    return derive_graph_finding_severity(finding_score, thresholds).title()
+
+
+def _pattern_config(policy: dict | None, pattern_type: str) -> dict:
+    if not policy:
+        return {}
+    return (policy.get("patterns") or {}).get(pattern_type, {})
+
+
+def _score_graph_detector_finding(
+    policy: dict,
+    pattern_type: str,
+    signals: dict[str, float],
+) -> tuple[float, str, dict]:
+    """Score one finding from normalized 0..1 signals and policy weights."""
+    pattern = _pattern_config(policy, pattern_type)
+    parameters = pattern.get("parameters") or {}
+    base = float(pattern.get("base_score", 0))
+    score, score_components = calculate_graph_finding_score(
+        base_score=base,
+        minimum_score=float(pattern.get("minimum_score", 0)),
+        maximum_score=float(pattern.get("maximum_score", 100)),
+        parameters=parameters,
+        signals=signals,
+    )
+    severity = _derive_graph_finding_severity(score, policy["thresholds"])
+    return score, severity, score_components
+
+
+def _load_active_graph_policy(
+    conn: pyodbc.Connection,
+    tenant_id: int,
+    default_window_days: int,
+    tenant_integrity_config: dict | None = None,
+) -> dict:
+    """Load scoring parameters plus the tenant's current Graph history window.
+
+    DetectionWindowDays in the policy table is legacy/staged policy data;
+    Tenants.integrity_config owns the operational detection window.
+    """
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT TOP 1 p.PolicyId, p.PolicyVersion, p.ScoringStrategy,
+               p.LowThreshold, p.MediumThreshold, p.HighThreshold, p.CriticalThreshold,
+               p.DetectionWindowDays, p.SnapshotMaxAgeDays
+        FROM integrity.GraphScoringPolicies p
+        WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
+        ORDER BY p.PolicyVersion DESC
+    """, tenant_id)
+    row = cur.fetchone()
+    if not row:
+        raise RuntimeError(
+            f"Tenant {tenant_id} has no active Graph Analytics scoring policy"
+        )
+    tenant_integrity_config = tenant_integrity_config or {}
+    graph_config = tenant_integrity_config.get("graph_pattern")
+    if not isinstance(graph_config, dict):
+        graph_config = {}
+    configured_window = graph_config.get("detection_window_days")
+    window_days = (
+        configured_window
+        if isinstance(configured_window, int)
+        else int(row[7] or default_window_days)
+    )
+    if window_days <= 0:
+        raise ValueError(f"Tenant {tenant_id} Graph detection window must be positive")
+    policy = {
+        "policy_id": int(row[0]),
+        "version": int(row[1]),
+        "strategy": str(row[2]),
+        "thresholds": {
+            "low": float(row[3]), "medium": float(row[4]),
+            "high": float(row[5]), "critical": float(row[6]),
+        },
+        "detection_window_days": window_days,
+        "snapshot_max_age_days": int(row[8] or 14),
+        "patterns": {},
+    }
+    raw_detector_windows = graph_config.get("detector_windows")
+    policy["detector_windows"] = (
+        raw_detector_windows if isinstance(raw_detector_windows, dict) else {}
+    )
+    detector_windows(policy)
+    cur.execute("""
+        SELECT PatternType, Enabled, EnabledForRouting, ApplicableRolesJson,
+               BaseScore, MinimumScore, MaximumScore, ParametersJson,
+               CandidateEvaluationJson
+        FROM integrity.GraphScoringPatternParameters
+        WHERE PolicyId = ?
+    """, policy["policy_id"])
+    for item in cur.fetchall():
+        try:
+            roles = json.loads(item[3]) if item[3] else []
+            parameters = json.loads(item[7]) if item[7] else {}
+            candidate_evaluation = json.loads(item[8]) if item[8] else {}
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise RuntimeError(
+                f"Invalid Graph policy JSON for tenant {tenant_id}, pattern {item[0]}"
+            ) from exc
+        policy["patterns"][str(item[0])] = {
+            "enabled": bool(item[1]),
+            "enabled_for_routing": bool(item[2]),
+            "applicable_roles": roles,
+            "base_score": float(item[4]),
+            "minimum_score": float(item[5]),
+            "maximum_score": float(item[6]),
+            "parameters": parameters,
+            "candidate_evaluation": candidate_evaluation,
+        }
+    return policy
+
+# ── Database helpers ──────────────────────────────────────────────────────────
+
+from integrity_sentinel.db import connect  # noqa: E402 - .env must load first
+
+
+def _get_connection() -> pyodbc.Connection:
+    """Connect to Azure SQL via Managed Identity (see utils.db_conn.connect)."""
+    return connect()
+
+
+def _graph_snapshot_blob_name(tenant_id: int, run_id: str) -> str:
+    """Return the tenant-scoped immutable Graph inference snapshot path."""
+    return graph_inference_snapshot_blob(tenant_id, run_id)
+
+
+def _publish_graph_inference_snapshot(
+    *,
+    tenant_id: int,
+    run_id: str,
+    window_days: int,
+    policy: dict,
+    nominations: list[dict],
+) -> dict[str, Any]:
+    """Upload one immutable, checksummed snapshot for candidate evaluation.
+
+    The blob is written before the SQL serving marker is committed. A failed
+    upload therefore cannot advertise an incomplete snapshot; a later SQL
+    failure may leave an unreferenced blob, which is safe to prune.
+    """
+    account = os.getenv("AZURE_STORAGE_ACCOUNT")
+    container = os.getenv("MODEL_CONTAINER", "ml-models")
+    if not account:
+        raise RuntimeError(
+            "AZURE_STORAGE_ACCOUNT is required to publish the Graph inference snapshot"
+        )
+
+    generated_at = datetime.now(timezone.utc)
+    snapshot = GraphInferenceSnapshot(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        policy_version=int(policy["version"]),
+        generated_at=generated_at,
+        window_days=window_days,
+        scoring_policy=policy,
+        nominations=tuple(
+            SnapshotNomination(
+                nomination_id=int(item["NominationId"]),
+                nominator_id=int(item["NominatorId"]),
+                beneficiary_id=int(item["BeneficiaryId"]),
+                amount=float(item.get("Amount") or 0.0),
+                status=str(item["Status"]),
+                created_at=item["CreatedAt"],
+                description=str(item.get("Description") or ""),
+            )
+            for item in nominations
+        ),
+    )
+    serialized = json.dumps(
+        snapshot.to_dict(), separators=(",", ":"), sort_keys=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    compressed = gzip.compress(serialized, compresslevel=6, mtime=0)
+    digest = hashlib.sha256(compressed).hexdigest()
+    blob_name = _graph_snapshot_blob_name(tenant_id, run_id)
+
+    from azure.storage.blob import BlobServiceClient, ContentSettings
+    storage_key = os.getenv("AZURE_STORAGE_KEY")
+    if storage_key:
+        client = BlobServiceClient(
+            account_url=f"https://{account}.blob.core.windows.net",
+            credential=storage_key,
+        )
+    else:
+        from azure.identity import DefaultAzureCredential
+        client = BlobServiceClient(
+            account_url=f"https://{account}.blob.core.windows.net",
+            credential=DefaultAzureCredential(
+                managed_identity_client_id=os.getenv("MI_CLIENT_ID")
+            ),
+        )
+    blob = client.get_blob_client(container=container, blob=blob_name)
+    blob.upload_blob(
+        compressed,
+        overwrite=False,
+        # Keep the correct HTTP representation metadata. integrity-check asks
+        # the SDK for the raw stored bytes before validating this gzip checksum.
+        content_settings=ContentSettings(
+            content_type="application/json", content_encoding="gzip"
+        ),
+        metadata={
+            "tenant_id": str(tenant_id),
+            "run_id": run_id,
+            "schema_version": str(snapshot.schema_version),
+            "sha256": digest,
+        },
+    )
+    logger.info(
+        "  Graph inference snapshot published: %s (%d bytes, sha256=%s)",
+        blob_name, len(compressed), digest[:12],
+    )
+    return {
+        "blob_name": blob_name,
+        "sha256": digest,
+        "schema_version": snapshot.schema_version,
+        "size_bytes": len(compressed),
+        "generated_at": generated_at.isoformat(),
+    }
+
+
+def prepare_global(lease_guard: Callable[[], None] | None = None) -> None:
+    """Perform the one-per-execution graph embedding retention sweep."""
+    conn = _get_connection()
+    source = connect_award()
+    try:
+        if lease_guard is not None:
+            lease_guard()
+        window_days = get_maximum_graph_window(source, 180)
+        _evict_stale_embeddings(conn, window_days)
+        if lease_guard is not None:
+            lease_guard()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        source.close()
+        conn.close()
+
+
+# ── Finding helpers ───────────────────────────────────────────────────────────
+
+def _fingerprint(
+    tenant_id: int,
+    pattern_type: str,
+    affected_users: list[int],   # must already be sorted
+    nomination_ids: list[int],   # must already be sorted
+) -> str:
+    """
+    Deterministic SHA-256 fingerprint (64 hex chars) of a finding's content.
+
+    Inputs are sorted here so the hash is stable regardless of detection
+    order. Scoring policy is deliberately not part of finding identity.
+    The fingerprint is stored in FindingHash and used to prevent
+    duplicate inserts across runs.
+
+    Same content → same hash → not re-inserted (idempotent).
+    Evolved content (e.g. new nominations added to a ring) → new hash → inserted.
+    """
+    key = (
+        f"{tenant_id}|{pattern_type}|{json.dumps(sorted(set(affected_users)))}|"
+        f"{json.dumps(sorted(set(nomination_ids)))}"
+    )
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def _finding(
+    tenant_id: int,
+    run_id: str,
+    pattern_type: str,
+    severity: str,
+    affected_users: list[int],   # must already be sorted
+    nomination_ids: list[int],   # must already be sorted
+    detail: str,
+    total_amount: int = 0,
+    *,
+    policy: dict | None = None,
+    signals: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    if policy:
+        score, severity, score_components = _score_graph_detector_finding(
+            policy, pattern_type, signals or {}
+        )
+        policy_version = int(policy["version"])
+        pattern = _pattern_config(policy, pattern_type)
+    else:
+        score = _SEVERITY_SCORE.get(severity, 0.0)
+        score_components = {
+            "legacy_severity_mapping": True,
+            "finding_score": score,
+        }
+        policy_version = None
+        pattern = {}
+    return {
+        "TenantId":      tenant_id,
+        "PatternType":   pattern_type,
+        "Severity":      severity,
+        "AffectedUsers": json.dumps(affected_users),
+        "NominationIds": json.dumps(nomination_ids),
+        "Detail":        detail[:1000],
+        "DetectedAt":    datetime.now(timezone.utc),
+        "RunId":         run_id,
+        "FindingHash":   _fingerprint(
+            tenant_id, pattern_type, affected_users, nomination_ids
+        ),
+        "TotalAmount":   total_amount,
+        "FindingScore":  score,
+        "ScoringPolicyVersion": policy_version,
+        "ScoreComponentsJson": json.dumps(score_components, separators=(",", ":")),
+        "EnabledForRouting": bool(pattern.get("enabled_for_routing", True)),
+        "ApplicableRoles": list(pattern.get(
+            "applicable_roles", ["nominator", "beneficiary"]
+        )),
+    }
+
+
+def _save_findings(
+    conn: pyodbc.Connection,
+    findings: list[dict],
+    table: str,
+) -> None:
+    """
+    Refresh existing evidence by hash; insert only previously unseen evidence.
+    RunId and DetectedAt identify the latest assessment, not an immutable archive.
+    The caller
+    commits it atomically with user snapshots and the completed-run status.
+    """
+    if not findings:
+        return
+
+    # Reassess recurring findings without adding another stored copy.
+    seen_this_run: set[str] = set()
+    new_findings:  list[dict] = []
+
+    for f in findings:
+        h = f["FindingHash"]
+        if h in seen_this_run:
+            continue          # duplicate within this run
+        seen_this_run.add(h)
+        new_findings.append(f)
+
+    skipped = len(findings) - len(new_findings)
+    logger.info(
+        "  Complete snapshot: %d candidate(s), %d unique, %d duplicates skipped.",
+        len(findings), len(new_findings), skipped,
+    )
+    if not new_findings:
+        logger.info("  No new findings to save.")
+        return
+
+    cur = conn.cursor()
+    sql = f"""
+        MERGE {table} WITH (HOLDLOCK) AS target
+        USING (SELECT ? AS TenantId, ? AS PatternType, ? AS Severity,
+                      ? AS AffectedUsers, ? AS NominationIds, ? AS Detail,
+                      ? AS DetectedAt, ? AS RunId, ? AS FindingHash,
+                      ? AS TotalAmount, ? AS FindingScore, ? AS ScoringPolicyVersion,
+                      ? AS ScoreComponentsJson) AS src
+        ON target.TenantId=src.TenantId AND target.FindingHash=src.FindingHash
+        WHEN MATCHED THEN UPDATE SET
+            Severity=src.Severity, Detail=src.Detail, DetectedAt=src.DetectedAt,
+            RunId=src.RunId, TotalAmount=src.TotalAmount, FindingScore=src.FindingScore,
+            ScoringPolicyVersion=src.ScoringPolicyVersion,
+            ScoreComponentsJson=src.ScoreComponentsJson, SnapshotComplete=0
+        WHEN NOT MATCHED THEN INSERT
+            (TenantId, PatternType, Severity, AffectedUsers, NominationIds, Detail,
+             DetectedAt, RunId, FindingHash, TotalAmount, FindingScore,
+             ScoringPolicyVersion, ScoreComponentsJson, SnapshotComplete)
+        VALUES (src.TenantId, src.PatternType, src.Severity, src.AffectedUsers,
+                src.NominationIds, src.Detail, src.DetectedAt, src.RunId, src.FindingHash,
+                src.TotalAmount, src.FindingScore, src.ScoringPolicyVersion,
+                src.ScoreComponentsJson, 0);
+    """
+    rows = [
+        (
+            f["TenantId"],
+            f["PatternType"],
+            f["Severity"],
+            f["AffectedUsers"],
+            f["NominationIds"],
+            f["Detail"],
+            f["DetectedAt"],
+            f["RunId"],
+            f["FindingHash"],
+            f.get("TotalAmount", 0),
+            f.get("FindingScore"),
+            f.get("ScoringPolicyVersion"),
+            f.get("ScoreComponentsJson"),
+        )
+        for f in new_findings
+    ]
+    cur.executemany(sql, rows)
+    logger.info("  Refreshed %d unique finding(s) in %s; existing hashes are updated, not inserted.", len(new_findings), table)
+
+
+# ── Rings ─────────────────────────────────────────────────────────────────────
+
+def detect_rings(
+    nominations: list[dict],
+    users: list[dict],
+    tenant_id: int,
+    run_id: str,
+    max_cluster_size: int = 0,
+    policy: dict | None = None,
+) -> list[dict]:
+    """
+    Detects nomination rings using simple_cycles() with frozenset deduplication.
+
+    Algorithm
+    ---------
+    For each ring size from max_cluster_size down to 3:
+      1. Use simple_cycles(G, length_bound=size) to find all cycles up to
+         that length, filtered to exactly `size` nodes.
+      2. For each cycle, compute frozenset(cycle) as the dedup key.
+         This collapses all permutations of the same user group:
+           [A,B,C], [B,C,A], [C,A,B], [A,C,B] → frozenset({A,B,C})
+         Each unique user group is reported exactly once regardless of
+         how many directed paths exist through it.
+      3. Retain distinct overlapping groups, including a 3-node ring contained
+         in a 4-node ring. Only identical user sets are deduplicated.
+
+    Why not SCC?
+      strongly_connected_components() on a dense graph (291 users, 11 K
+      nominations) produces one giant 282-node cluster that is analytically
+      useless.  simple_cycles() with length_bound + frozenset dedup finds
+      the genuine tight rings the seeder planted.
+
+    max_cluster_size: largest ring size to report. The caller supplies the
+      tenant's active Ring candidate-evaluation limit (3 or 4).
+
+    Severity — nominated amount across the in-scope P2P population:
+      TotalAmount ≥ 10 000 → Critical
+      TotalAmount ≥  5 000 → High
+      TotalAmount ≥  1 000 → Medium
+      TotalAmount  <  1 000 → Low
+    """
+    # Ring membership is deliberately limited to tight 3- or 4-person cycles.
+    HARD_CAP = 4
+    upper = min(max_cluster_size, HARD_CAP) if max_cluster_size > 0 else HARD_CAP
+
+    G = nx.DiGraph()
+    # Map edge → list of (NominationId, Amount) for TotalAmount computation
+    edge_nominations: dict[tuple, list[tuple[int, int]]] = defaultdict(list)
+
+    for nom in nominations:
+        src, dst = nom["NominatorId"], nom["BeneficiaryId"]
+        G.add_edge(src, dst)
+        edge_nominations[(src, dst)].append(
+            (nom["NominationId"], nom["Amount"] or 0)
+        )
+
+    # Build user ID → display name lookup so ring descriptions are human-readable
+    user_name: dict[int, str] = {u["UserId"]: u["FullName"] for u in users}
+
+    findings:       list[dict]        = []
+    seen_user_sets: set[frozenset]    = set()
+
+    # Iterate largest → smallest so that if {A,B,C,D} is found first,
+    # the subset {A,B,C} is still reported — they are distinct rings.
+    # Users already in a seen frozenset are NOT suppressed for smaller
+    # rings; only the identical frozenset is deduplicated.
+    for size in range(upper, 2, -1):   # e.g. 4, 3
+        for cycle in nx.simple_cycles(G, length_bound=size):
+            if len(cycle) != size:
+                continue  # length_bound yields cycles UP TO size; skip shorter
+
+            key = frozenset(cycle)
+            if key in seen_user_sets:
+                continue  # same user group already reported at this or larger size
+            seen_user_sets.add(key)
+
+            members = sorted(key)
+
+            # Collect nomination IDs and amounts on edges that form this cycle
+            nom_ids:      list[int] = []
+            total_amount: int       = 0
+            for i in range(size):
+                src = cycle[i]
+                dst = cycle[(i + 1) % size]
+                for nom_id, amount in edge_nominations.get((src, dst), []):
+                    nom_ids.append(nom_id)
+                    total_amount += amount
+
+            # Severity uses total nominated amount as an exposure proxy. Pending
+            # amounts are potential rather than committed exposure.
+            if total_amount >= 10_000:
+                severity = "Critical"
+            elif total_amount >= 5_000:
+                severity = "High"
+            elif total_amount >= 1_000:
+                severity = "Medium"
+            else:
+                severity = "Low"
+
+            member_names = [user_name.get(u, str(u)) for u in cycle]
+            findings.append(_finding(
+                tenant_id, run_id, "Ring", severity,
+                members, sorted(set(nom_ids)),
+                f"{size}-person directed nomination ring detected. "
+                f"Members: {' → '.join(member_names)} → {member_names[0]}. "
+                f"Each member nominates the next in a closed cycle, consistent with "
+                f"coordinated reciprocal recognition. "
+                f"(Total nominated amount: ${total_amount:,})",
+                total_amount=total_amount,
+                policy=policy,
+                signals={
+                    "exposure": min(total_amount / max(float(
+                        _pattern_config(policy, "Ring").get("parameters", {})
+                        .get("amount_reference", 10_000)
+                    ), 1.0), 1.0),
+                    "repeat": min(len(nom_ids) / max(size * 3, 1), 1.0),
+                    "compactness": calculate_ring_compactness(
+                        size,
+                        _pattern_config(policy, "Ring").get("parameters", {}),
+                    ),
+                },
+            ))
+
+    logger.info(
+        "  Rings: %d detected (sizes 3–%d, frozenset dedup).",
+        len(findings), upper,
+    )
+    return findings
+
+
+# ── Super-nominators ──────────────────────────────────────────────────────────
+
+def detect_super_nominators(
+    nominations: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """
+    Users whose out-degree (nominations sent) is a statistical outlier.
+    Threshold: mean + 2σ AND at least 3× the median.
+    Minimum absolute count: 5 nominations sent.
+    """
+    out_degree:  dict[int, list[int]] = defaultdict(list)
+    out_amounts: dict[int, int]       = defaultdict(int)
+    for nom in nominations:
+        out_degree[nom["NominatorId"]].append(nom["NominationId"])
+        out_amounts[nom["NominatorId"]] += nom["Amount"] or 0
+
+    if len(out_degree) < 3:
+        return []
+
+    counts = np.array([len(v) for v in out_degree.values()], dtype=float)
+    mean   = counts.mean()
+    std    = counts.std()
+    median = float(np.median(counts))
+
+    parameters = _pattern_config(policy, "SuperNominator").get("parameters", {})
+    threshold = max(
+        mean + float(parameters.get("standard_deviations", 2.0)) * std,
+        float(parameters.get("median_multiplier", 3.0)) * median,
+        float(parameters.get("minimum_count", 5)),
+    )
+
+    findings: list[dict] = []
+    for user_id, nom_ids in out_degree.items():
+        cnt = len(nom_ids)
+        if cnt >= threshold:
+            total_amount = out_amounts[user_id]
+            severity = "High" if cnt >= threshold * 1.5 else "Medium"
+            findings.append(_finding(
+                tenant_id, run_id, "SuperNominator", severity,
+                [user_id], nom_ids,
+                f"User {user_id} sent {cnt} nominations "
+                f"(tenant mean={mean:.1f}, threshold={threshold:.1f}, "
+                f"total nominated amount: ${total_amount:,})",
+                total_amount=total_amount,
+                policy=policy,
+                signals={
+                    "excess": min(max((cnt / max(threshold, 1)) - 1.0, 0.0), 1.0),
+                    "volume": min(cnt / max(threshold * 2.0, 1.0), 1.0),
+                    "exposure": min(total_amount / max(float(
+                        parameters.get("amount_reference", 10_000)
+                    ), 1.0), 1.0),
+                },
+            ))
+
+    logger.info("  SuperNominators: %d detected", len(findings))
+    return findings
+
+
+def _as_date(value: Any) -> date | None:
+    """Normalize SQL, Python, and ISO timestamp values for temporal detectors."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+# ── Super beneficiaries ───────────────────────────────────────────────────────
+
+def detect_super_beneficiaries(
+    nominations: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """Find unusually frequent beneficiaries supported by several nominators."""
+    incoming: dict[int, list[dict]] = defaultdict(list)
+    for nomination in nominations:
+        incoming[nomination["BeneficiaryId"]].append(nomination)
+    if len(incoming) < 3:
+        return []
+
+    counts = np.array([len(items) for items in incoming.values()], dtype=float)
+    mean = float(counts.mean())
+    std = float(counts.std())
+    median = float(np.median(counts))
+    parameters = _pattern_config(policy, "SuperBeneficiary").get("parameters", {})
+    threshold = max(
+        mean + float(parameters.get("standard_deviations", 2.0)) * std,
+        float(parameters.get("median_multiplier", 3.0)) * median,
+        float(parameters.get("minimum_count", 5)),
+    )
+    minimum_unique = int(parameters.get("minimum_unique_nominators", 4))
+    unique_reference = max(float(parameters.get("unique_reference", 10)), 1.0)
+    compactness_reference = max(
+        float(parameters.get("compactness_reference_days", 14)), 1.0
+    )
+
+    findings: list[dict] = []
+    for beneficiary_id, items in incoming.items():
+        count = len(items)
+        nominators = [int(item["NominatorId"]) for item in items]
+        unique_nominators = len(set(nominators))
+        if count < threshold or unique_nominators < minimum_unique:
+            continue
+
+        dates = [
+            parsed for parsed in (_as_date(item.get("CreatedAt")) for item in items)
+            if parsed is not None
+        ]
+        span_days = (
+            (max(dates) - min(dates)).days + 1 if dates else compactness_reference + 1
+        )
+        total_amount = sum(float(item.get("Amount") or 0) for item in items)
+        nomination_ids = sorted({int(item["NominationId"]) for item in items})
+        dominant_count = max(Counter(nominators).values())
+        concentration_floor = 1.0 / unique_nominators
+        dominant_share = dominant_count / count
+        repeat_concentration = max(
+            0.0,
+            min(
+                (dominant_share - concentration_floor)
+                / max(1.0 - concentration_floor, 0.001),
+                1.0,
+            ),
+        )
+        severity = "High" if count >= threshold * 1.5 else "Medium"
+        findings.append(_finding(
+            tenant_id, run_id, "SuperBeneficiary", severity,
+            [beneficiary_id], nomination_ids,
+            f"User {beneficiary_id} received {count} nominations from "
+            f"{unique_nominators} distinct nominators "
+            f"(tenant mean={mean:.1f}, threshold={threshold:.1f}, "
+            f"activity span={span_days:.0f} day(s), "
+            f"total nominated amount: USD {total_amount:,.0f})",
+            total_amount=total_amount,
+            policy=policy,
+            signals={
+                "excess": min(max((count / max(threshold, 1)) - 1.0, 0.0), 1.0),
+                "breadth": min(unique_nominators / unique_reference, 1.0),
+                "repeat_concentration": repeat_concentration,
+                "compactness": max(
+                    0.0, 1.0 - ((span_days - 1) / compactness_reference)
+                ),
+                "exposure": min(total_amount / max(float(
+                    parameters.get("amount_reference", 10_000)
+                ), 1.0), 1.0),
+            },
+        ))
+
+    logger.info("  SuperBeneficiaries: %d detected", len(findings))
+    return findings
+
+
+# ── Temporal bursts ───────────────────────────────────────────────────────────
+
+def detect_temporal_bursts(
+    nominations: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """Find non-overlapping short windows with anomalous nomination volume."""
+    dated = [
+        (parsed, nomination)
+        for nomination in nominations
+        if (parsed := _as_date(nomination.get("CreatedAt"))) is not None
+    ]
+    if not dated:
+        return []
+
+    parameters = _pattern_config(policy, "TemporalBurst").get("parameters", {})
+    burst_days = max(int(parameters.get("burst_window_days", 3)), 1)
+    baseline_days = max(int(parameters.get("minimum_baseline_days", 21)), burst_days)
+    minimum_count = max(int(parameters.get("minimum_nominations", 8)), 1)
+    standard_deviations = float(parameters.get("standard_deviations", 3.0))
+    overlap_suppression = float(parameters.get("overlap_suppression", 0.6))
+
+    first_date = min(item[0] for item in dated)
+    last_date = max(item[0] for item in dated)
+    observed_days = (last_date - first_date).days + 1
+    if observed_days < baseline_days:
+        return []
+
+    by_date: dict[date, list[dict]] = defaultdict(list)
+    for nomination_date, nomination in dated:
+        by_date[nomination_date].append(nomination)
+
+    starts = [
+        first_date + timedelta(days=offset)
+        for offset in range(max(observed_days - burst_days + 1, 1))
+    ]
+    rolling_counts = np.array([
+        sum(
+            len(by_date.get(start + timedelta(days=offset), []))
+            for offset in range(burst_days)
+        )
+        for start in starts
+    ], dtype=float)
+    expected = float(np.median(rolling_counts))
+    median_absolute_deviation = float(
+        np.median(np.abs(rolling_counts - expected))
+    )
+    robust_deviation = max(
+        1.4826 * median_absolute_deviation,
+        float(np.sqrt(max(expected, 1.0))),
+    )
+    threshold = max(
+        minimum_count,
+        expected + standard_deviations * robust_deviation,
+    )
+
+    candidates: list[tuple[int, date, list[dict]]] = []
+    for start, count_value in zip(starts, rolling_counts):
+        count = int(count_value)
+        if count < threshold:
+            continue
+        items = [
+            nomination
+            for offset in range(burst_days)
+            for nomination in by_date.get(start + timedelta(days=offset), [])
+        ]
+        candidates.append((count, start, items))
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    accepted_sets: list[set[int]] = []
+    findings: list[dict] = []
+    for count, start, items in candidates:
+        nomination_ids = {int(item["NominationId"]) for item in items}
+        if any(
+            len(nomination_ids & existing)
+            / max(min(len(nomination_ids), len(existing)), 1)
+            >= overlap_suppression
+            for existing in accepted_sets
+        ):
+            continue
+        accepted_sets.append(nomination_ids)
+
+        nominators = [int(item["NominatorId"]) for item in items]
+        beneficiaries = [int(item["BeneficiaryId"]) for item in items]
+        affected_users = sorted(set(nominators) | set(beneficiaries))
+        total_amount = sum(float(item.get("Amount") or 0) for item in items)
+        daily_peak = max(
+            len(by_date.get(start + timedelta(days=offset), []))
+            for offset in range(burst_days)
+        )
+        dominant_participant_count = max(
+            max(Counter(nominators).values()),
+            max(Counter(beneficiaries).values()),
+        )
+        participant_concentration = dominant_participant_count / count
+        end = start + timedelta(days=burst_days - 1)
+        severity = "High" if count >= threshold * 1.5 else "Medium"
+        findings.append(_finding(
+            tenant_id, run_id, "TemporalBurst", severity,
+            affected_users, sorted(nomination_ids),
+            f"{count} nominations occurred from {start.isoformat()} through "
+            f"{end.isoformat()} (expected rolling count={expected:.1f}, "
+            f"threshold={threshold:.1f}, {len(set(nominators))} nominators, "
+            f"{len(set(beneficiaries))} beneficiaries, "
+            f"total nominated amount: USD {total_amount:,.0f})",
+            total_amount=total_amount,
+            policy=policy,
+            signals={
+                "excess": min(max((count / max(threshold, 1)) - 1.0, 0.0), 1.0),
+                "volume": min(count / max(float(
+                    parameters.get("count_reference", 20)
+                ), 1.0), 1.0),
+                "participant_concentration": participant_concentration,
+                "temporal_compactness": min(daily_peak / max(count, 1), 1.0),
+                "exposure": min(total_amount / max(float(
+                    parameters.get("amount_reference", 10_000)
+                ), 1.0), 1.0),
+            },
+        ))
+
+    logger.info("  TemporalBursts: %d detected", len(findings))
+    return findings
+
+
+def _average_pairwise_jaccard(
+    members: set[int],
+    neighbors: dict[int, set[int]],
+) -> float:
+    values = []
+    for left, right in combinations(sorted(members), 2):
+        union = neighbors[left] | neighbors[right]
+        if union:
+            values.append(len(neighbors[left] & neighbors[right]) / len(union))
+    return float(np.mean(values)) if values else 0.0
+
+
+def _overlap_components(
+    neighbors: dict[int, set[int]],
+    minimum_shared: int,
+    similarity_threshold: float,
+) -> list[set[int]]:
+    """Generate bounded dense-block candidates from neighbor-set overlap."""
+    graph = nx.Graph()
+    eligible = [
+        member for member, values in neighbors.items()
+        if len(values) >= minimum_shared
+    ]
+    graph.add_nodes_from(eligible)
+    for left, right in combinations(eligible, 2):
+        intersection = neighbors[left] & neighbors[right]
+        union = neighbors[left] | neighbors[right]
+        similarity = len(intersection) / len(union) if union else 0.0
+        if len(intersection) >= minimum_shared and similarity >= similarity_threshold:
+            graph.add_edge(left, right)
+    return [
+        set(component) for component in nx.connected_components(graph)
+        if len(component) >= 2
+    ]
+
+
+def _dense_neighbor_core(
+    members: set[int],
+    neighbors: dict[int, set[int]],
+    minimum_density: float,
+) -> set[int]:
+    """Remove incidental neighbors that are not shared by most block members."""
+    counts: dict[int, int] = defaultdict(int)
+    for member in members:
+        for neighbor in neighbors[member]:
+            counts[neighbor] += 1
+    return {
+        neighbor for neighbor, count in counts.items()
+        if count / max(len(members), 1) >= minimum_density
+    }
+
+
+# ── Bipartite dense blocks ────────────────────────────────────────────────────
+
+def detect_bipartite_dense_blocks(
+    nominations: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """Detect dense, overlapping nominator-to-beneficiary campaign blocks."""
+    outgoing: dict[int, set[int]] = defaultdict(set)
+    incoming: dict[int, set[int]] = defaultdict(set)
+    edge_items: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    for nomination in nominations:
+        left = int(nomination["NominatorId"])
+        right = int(nomination["BeneficiaryId"])
+        outgoing[left].add(right)
+        incoming[right].add(left)
+        edge_items[(left, right)].append(nomination)
+
+    parameters = _pattern_config(policy, "BipartiteDenseBlock").get(
+        "parameters", {}
+    )
+    minimum_side = max(int(parameters.get("minimum_side_size", 2)), 2)
+    minimum_large_side = max(
+        int(parameters.get("minimum_large_side_size", 3)), minimum_side
+    )
+    minimum_shared = max(int(parameters.get("minimum_shared_neighbors", 2)), 1)
+    similarity_threshold = float(parameters.get("overlap_threshold", 0.6))
+    minimum_density = float(parameters.get("minimum_density", 0.65))
+    minimum_edges = max(int(parameters.get("minimum_edges", 6)), 1)
+
+    candidate_keys: set[tuple[frozenset[int], frozenset[int]]] = set()
+    for left_group in _overlap_components(
+        outgoing, minimum_shared, similarity_threshold
+    ):
+        right_group = _dense_neighbor_core(
+            left_group, outgoing, minimum_density
+        )
+        candidate_keys.add((frozenset(left_group), frozenset(right_group)))
+    for right_group in _overlap_components(
+        incoming, minimum_shared, similarity_threshold
+    ):
+        left_group = _dense_neighbor_core(
+            right_group, incoming, minimum_density
+        )
+        candidate_keys.add((frozenset(left_group), frozenset(right_group)))
+
+    candidate_records: list[dict] = []
+    for frozen_left, frozen_right in candidate_keys:
+        left_group, right_group = set(frozen_left), set(frozen_right)
+        if (
+            len(left_group) < minimum_side
+            or len(right_group) < minimum_side
+            or max(len(left_group), len(right_group)) < minimum_large_side
+        ):
+            continue
+        internal_edges = {
+            (left, right)
+            for left in left_group for right in right_group
+            if (left, right) in edge_items
+        }
+        density = len(internal_edges) / max(
+            len(left_group) * len(right_group), 1
+        )
+        if len(internal_edges) < minimum_edges or density < minimum_density:
+            continue
+        items = [
+            item for edge in internal_edges for item in edge_items[edge]
+        ]
+        candidate_records.append({
+            "left": left_group,
+            "right": right_group,
+            "edges": internal_edges,
+            "items": items,
+            "density": density,
+        })
+
+    candidate_records.sort(
+        key=lambda item: (-item["density"], -len(item["edges"]))
+    )
+    accepted_edges: list[set[tuple[int, int]]] = []
+    findings: list[dict] = []
+    for candidate in candidate_records:
+        internal_edges = candidate["edges"]
+        if any(
+            len(internal_edges & existing)
+            / max(min(len(internal_edges), len(existing)), 1) >= 0.8
+            for existing in accepted_edges
+        ):
+            continue
+        accepted_edges.append(internal_edges)
+
+        left_group = candidate["left"]
+        right_group = candidate["right"]
+        items = candidate["items"]
+        nomination_ids = sorted({int(item["NominationId"]) for item in items})
+        total_amount = sum(float(item.get("Amount") or 0) for item in items)
+        overlap = max(
+            _average_pairwise_jaccard(left_group, outgoing),
+            _average_pairwise_jaccard(right_group, incoming),
+        )
+        exclusivity_values = [
+            len(outgoing[user] & right_group) / max(len(outgoing[user]), 1)
+            for user in left_group
+        ] + [
+            len(incoming[user] & left_group) / max(len(incoming[user]), 1)
+            for user in right_group
+        ]
+        exclusivity = float(np.mean(exclusivity_values))
+        repeat_rate = max(
+            (len(items) / max(len(internal_edges), 1)) - 1.0, 0.0
+        )
+        dates = [
+            parsed for parsed in (_as_date(item.get("CreatedAt")) for item in items)
+            if parsed is not None
+        ]
+        span_days = (max(dates) - min(dates)).days + 1 if dates else 0
+        compactness_reference = max(float(
+            parameters.get("compactness_reference_days", 14)
+        ), 1.0)
+        density = float(candidate["density"])
+        severity = "High" if density >= 0.85 else "Medium"
+        findings.append(_finding(
+            tenant_id, run_id, "BipartiteDenseBlock", severity,
+            sorted(left_group | right_group), nomination_ids,
+            f"Dense nomination block with {len(left_group)} nominators, "
+            f"{len(right_group)} beneficiaries, {len(internal_edges)} distinct "
+            f"edges, density={density:.3f}, overlap={overlap:.3f}, "
+            f"activity span={span_days} day(s), "
+            f"total nominated amount: USD {total_amount:,.0f}",
+            total_amount=total_amount,
+            policy=policy,
+            signals={
+                "density": min(max(
+                    (density - minimum_density)
+                    / max(1.0 - minimum_density, 0.001), 0.0
+                ), 1.0),
+                "overlap": min(overlap, 1.0),
+                "exclusivity": min(exclusivity, 1.0),
+                "repeat": min(repeat_rate / max(float(
+                    parameters.get("repeat_reference", 2)
+                ), 1.0), 1.0),
+                "compactness": (
+                    max(0.0, 1.0 - ((span_days - 1) / compactness_reference))
+                    if span_days else 0.0
+                ),
+                "exposure": min(total_amount / max(float(
+                    parameters.get("amount_reference", 10_000)
+                ), 1.0), 1.0),
+            },
+        ))
+
+    logger.info("  BipartiteDenseBlocks: %d detected", len(findings))
+    return findings
+
+
+# ── Nomination deserts ────────────────────────────────────────────────────────
+
+def detect_deserts(
+    ever_active_ids: set[int],
+    users: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """
+    Teams (grouped by ManagerId) where no member has ever appeared on either
+    side of any nomination — neither nominator nor beneficiary.
+    Minimum team size: 3 members (singletons and pairs excluded).
+
+    Uses ever_active_ids (all-time, no date filter) rather than the rolling
+    window nominations list.  A user who nominated someone 8 months ago should
+    not be flagged as a desert just because that nomination falls outside the
+    current detection window.
+    """
+    all_participants = ever_active_ids
+
+    # Group by manager
+    teams: dict[Any, list[int]] = defaultdict(list)
+    for user in users:
+        if user["ManagerId"] is not None:
+            teams[user["ManagerId"]].append(user["UserId"])
+
+    parameters = _pattern_config(policy, "Desert").get("parameters", {})
+    minimum_team_size = int(parameters.get("minimum_team_size", 3))
+    team_reference = max(float(parameters.get("team_size_reference", 10)), 1.0)
+    findings: list[dict] = []
+    for manager_id, members in teams.items():
+        if len(members) < minimum_team_size:
+            continue
+        absent = [m for m in members if m not in all_participants]
+        if len(absent) == len(members):  # entire team is absent
+            findings.append(_finding(
+                tenant_id, run_id, "Desert", "Medium",
+                members, [],
+                f"Team under manager {manager_id} ({len(members)} members) "
+                "has zero nomination activity on either side.",
+                policy=policy,
+                signals={"team_size": min(len(members) / team_reference, 1.0)},
+            ))
+
+    logger.info("  Deserts: %d detected", len(findings))
+    return findings
+
+
+def detect_low_recognition_nominators(
+    nominations: list[dict],
+    users: list[dict],
+    tenant_id: int,
+    run_id: str,
+    policy: dict | None = None,
+) -> list[dict]:
+    """Identify generous nominators who rarely receive recognition themselves.
+
+    This is a participation observation, not fraud evidence. The active policy
+    must keep it disabled for nomination routing.
+    """
+    parameters = _pattern_config(policy, "LowRecognitionNominator").get(
+        "parameters", {}
+    )
+    minimum_made = int(parameters.get("minimum_nominations_made", 8))
+    minimum_distinct = int(parameters.get("minimum_distinct_beneficiaries", 4))
+    maximum_received = int(parameters.get("maximum_nominations_received", 1))
+    made: dict[int, list[dict]] = defaultdict(list)
+    received: Counter[int] = Counter()
+    eligible_to_receive = {
+        int(user["UserId"]) for user in users if user.get("ManagerId") is not None
+    }
+    for nomination in nominations:
+        made[int(nomination["NominatorId"])].append(nomination)
+        received[int(nomination["BeneficiaryId"])] += 1
+    findings: list[dict] = []
+    for user_id, rows in sorted(made.items()):
+        if user_id not in eligible_to_receive:
+            continue
+        beneficiaries = {int(row["BeneficiaryId"]) for row in rows}
+        if (
+            len(rows) < minimum_made
+            or len(beneficiaries) < minimum_distinct
+            or received[user_id] > maximum_received
+        ):
+            continue
+        nominations_made = len(rows)
+        findings.append(_finding(
+            tenant_id, run_id, "LowRecognitionNominator", "Low",
+            [user_id], sorted(int(row["NominationId"]) for row in rows),
+            f"User {user_id} made {nominations_made} nominations for "
+            f"{len(beneficiaries)} distinct people but received "
+            f"{received[user_id]} in the {policy['detection_window_days'] if policy else 365}-day window. "
+            "This is a participation finding, not a fraud determination.",
+            policy=policy,
+            signals={
+                "activity": min(nominations_made / max(float(
+                    parameters.get("nominations_reference", 20)
+                ), 1.0), 1.0),
+                "breadth": min(len(beneficiaries) / max(float(
+                    parameters.get("beneficiaries_reference", 10)
+                ), 1.0), 1.0),
+            },
+        ))
+    logger.info("  LowRecognitionNominator: %d detected", len(findings))
+    return findings
+
+
+# ── Embedding cache helpers ───────────────────────────────────────────────────
+
+def _evict_stale_embeddings(conn: pyodbc.Connection, window_days: int) -> None:
+    """
+    Delete cached embeddings older than the longest active detection window.
+
+    Called once per job run — before per-tenant processing — to keep the
+    NomGraph_NominationEmbedding table bounded to roughly
+    Tenant Graph window × eligible nomination rate rows.
+    """
+    cur = conn.cursor()
+    cur.execute("""
+        DELETE FROM integrity.NomGraph_NominationEmbedding
+        WHERE EmbeddedAt < DATEADD(DAY, -?, SYSUTCDATETIME())
+    """, window_days)
+    deleted = cur.rowcount
+    conn.commit()
+    if deleted:
+        logger.info("Evicted %d stale embedding(s) from cache.", deleted)
+
+
+def _load_cached_embeddings(
+    conn: pyodbc.Connection,
+    nom_ids: list[int],
+) -> dict[int, np.ndarray]:
+    """
+    Return {NominationId: embedding_vector} for all IDs that already have a
+    cached row in NomGraph_NominationEmbedding.
+
+    Chunked into batches of 2 000 to stay within SQL Server's 2 100-parameter
+    limit per statement.
+    """
+    if not nom_ids:
+        return {}
+
+    result: dict[int, np.ndarray] = {}
+    cur = conn.cursor()
+    CHUNK = 2_000
+
+    for i in range(0, len(nom_ids), CHUNK):
+        batch = nom_ids[i : i + CHUNK]
+        placeholders = ",".join("?" * len(batch))
+        cur.execute(
+            f"SELECT NominationId, Embedding "
+            f"FROM   integrity.NomGraph_NominationEmbedding "
+            f"WHERE  NominationId IN ({placeholders})",
+            batch,
+        )
+        for row in cur.fetchall():
+            # pyodbc returns VARBINARY as memoryview; bytes() converts it
+            result[row[0]] = np.frombuffer(bytes(row[1]), dtype=np.float32).copy()
+
+    return result
+
+
+def _save_embeddings(
+    conn: pyodbc.Connection,
+    embeddings: dict[int, np.ndarray],
+) -> None:
+    """
+    Persist newly computed embedding vectors to the cache table.
+
+    Uses INSERT … WHERE NOT EXISTS so a re-run that encounters a race
+    condition (two job instances starting simultaneously) is safe.
+    Each vector is stored as raw float32 bytes via tobytes().
+    """
+    if not embeddings:
+        return
+
+    cur = conn.cursor()
+    rows = [
+        (nom_id, vec.astype(np.float32).tobytes(), nom_id)
+        for nom_id, vec in embeddings.items()
+    ]
+    cur.executemany("""
+        INSERT INTO integrity.NomGraph_NominationEmbedding (NominationId, Embedding, EmbeddedAt)
+        SELECT ?, CAST(? AS VARBINARY(MAX)), GETUTCDATE()
+        WHERE  NOT EXISTS (
+            SELECT 1 FROM integrity.NomGraph_NominationEmbedding WHERE NominationId = ?
+        )
+    """, rows)
+    conn.commit()
+    logger.info("  Cached %d new embedding(s).", len(embeddings))
+
+
+# ── Copy-paste fraud ──────────────────────────────────────────────────────────
+
+def detect_copy_paste(
+    nominations: list[dict],
+    tenant_id: int,
+    run_id: str,
+    conn: pyodbc.Connection,
+    similarity_threshold: float = 0.92,
+    min_cluster_size: int = 3,
+    chunk_size: int = 512,
+    policy: dict | None = None,
+    embedding_vectors: dict[int, np.ndarray] | None = None,
+) -> list[dict]:
+    """
+    Clusters of nominations whose description embeddings are mutually similar
+    (cosine ≥ similarity_threshold). Uses sentence-transformers for embeddings
+    and union-find for cluster formation.
+
+    Embedding cache
+    ---------------
+    In-scope nomination text is immutable, so embeddings computed on a
+    previous run are valid forever.  On each run the detector:
+
+      1. Queries NomGraph_NominationEmbedding for all eligible NominationIds.
+      2. Encodes only the *delta* — nominations with no cached row.
+         At steady state this is typically one week's worth of new approvals,
+         reducing encoding work by ~96 % compared to a cold start.
+      3. Persists the new vectors to the cache for future runs.
+      4. Assembles the full embedding matrix from cached + new vectors.
+
+    Memory strategy
+    ---------------
+    Instead of materialising the full N×N similarity matrix (which is ~500 MB
+    at 11 K nominations), we process row-chunks of `chunk_size` at a time.
+    Each chunk produces a (chunk_size × N) slice that is discarded after the
+    pairs above the threshold are recorded.
+    Peak extra memory per chunk: chunk_size × N × 4 bytes
+    = 512 × 11 196 × 4 ≈ 23 MB — manageable inside 4 Gi.
+
+    The sentence-transformers model (~500 MB resident) is only loaded when
+    there are uncached nominations to encode, and is explicitly deleted and
+    garbage-collected immediately after encoding.
+
+    Only clusters of ≥ min_cluster_size nominations are flagged.
+    """
+    parameters = _pattern_config(policy, "CopyPaste").get("parameters", {})
+    similarity_threshold = float(
+        parameters.get("similarity_threshold", similarity_threshold)
+    )
+    min_cluster_size = int(
+        parameters.get("minimum_cluster_size", min_cluster_size)
+    )
+
+    # Filter to nominations with non-trivial descriptions
+    eligible = [
+        n for n in nominations
+        if n.get("Description") and len(n["Description"].strip()) > 20
+    ]
+    if len(eligible) < min_cluster_size:
+        return []
+
+    # ── Step 1: load cached embeddings ───────────────────────────────────────
+    nom_ids = [n["NominationId"] for n in eligible]
+    if embedding_vectors is not None and any(key not in embedding_vectors for key in nom_ids):
+        raise ValueError("Offline CopyPaste embeddings do not cover all eligible nominations")
+    cached = ({key: embedding_vectors[key] for key in nom_ids} if embedding_vectors is not None
+              else _load_cached_embeddings(conn, nom_ids))
+    n_cached = len(cached)
+    n_total  = len(eligible)
+    logger.info(
+        "  Embedding cache: %d/%d hits (%.0f%% cached).",
+        n_cached, n_total,
+        100 * n_cached / n_total if n_total else 0,
+    )
+
+    # ── Step 2: encode only the delta ────────────────────────────────────────
+    to_embed = [n for n in eligible if n["NominationId"] not in cached]
+    new_embeddings: dict[int, np.ndarray] = {}
+
+    if to_embed:
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+        except ImportError:
+            logger.warning("sentence-transformers not available — skipping CopyPaste")
+            return []
+        texts = [n["Description"] for n in to_embed]
+        logger.info("  Encoding %d new description(s) …", len(texts))
+
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        vecs  = model.encode(
+            texts,
+            normalize_embeddings=True,
+            batch_size=64,
+            show_progress_bar=False,
+        )
+        vecs = np.array(vecs, dtype=np.float32)
+
+        # Free the ~500 MB PyTorch model immediately after encoding
+        del model
+        gc.collect()
+
+        for i, n in enumerate(to_embed):
+            new_embeddings[n["NominationId"]] = vecs[i]
+
+        # ── Step 3: persist new vectors to cache ─────────────────────────────
+        _save_embeddings(conn, new_embeddings)
+
+    # ── Step 4: assemble full embedding matrix in eligible order ─────────────
+    # NOTE: do NOT use cached.get(key, new_embeddings[key]) here.
+    # dict.get() eagerly evaluates its default argument, so new_embeddings[key]
+    # is always executed — raising KeyError when new_embeddings is empty
+    # (i.e. 100% cache hit).  Use a conditional expression instead.
+    all_vecs = np.stack([
+        cached[n["NominationId"]] if n["NominationId"] in cached
+        else new_embeddings[n["NominationId"]]
+        for n in eligible
+    ])  # shape: (len(eligible), 384)
+
+    # Rename to match the rest of the function
+    embeddings = all_vecs
+    del all_vecs, cached, new_embeddings
+    gc.collect()
+
+    # ── Chunked union-find ────────────────────────────────────────────────────
+    # For each row-chunk, compute a (chunk × N) similarity slice and union
+    # pairs that exceed the threshold.  We never hold the full N×N matrix.
+    n = len(eligible)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        parent[find(x)] = find(y)
+
+    # Track per-pair similarity for avg_sim calculation later (only above-threshold pairs)
+    pair_sims: dict[tuple[int, int], float] = {}
+
+    for start in range(0, n, chunk_size):
+        end = min(start + chunk_size, n)
+        chunk = embeddings[start:end]            # (chunk_size × 384)
+        sims  = chunk @ embeddings.T             # (chunk_size × N)
+
+        for local_i, global_i in enumerate(range(start, end)):
+            # Only check j > global_i to avoid double-processing
+            row = sims[local_i, global_i + 1:]
+            hits = np.where(row >= similarity_threshold)[0]
+            for offset in hits:
+                global_j = global_i + 1 + int(offset)
+                union(global_i, global_j)
+                pair_sims[(global_i, global_j)] = float(sims[local_i, global_j])
+
+        del sims  # release chunk slice immediately
+
+    del embeddings
+    gc.collect()
+
+    # ── Collect clusters ──────────────────────────────────────────────────────
+    clusters: dict[int, list[int]] = defaultdict(list)
+    for idx in range(n):
+        clusters[find(idx)].append(idx)
+
+    findings: list[dict] = []
+    for _root, members in clusters.items():
+        if len(members) < min_cluster_size:
+            continue
+        nom_ids      = [eligible[i]["NominationId"] for i in members]
+        user_ids     = list({eligible[i]["NominatorId"] for i in members})
+        total_amount = sum(eligible[i]["Amount"] or 0 for i in members)
+
+        # avg_sim from recorded above-threshold pairs within this cluster
+        cluster_set = set(members)
+        cluster_pairs = [
+            v for (a, b), v in pair_sims.items()
+            if a in cluster_set and b in cluster_set
+        ]
+        avg_sim  = float(np.mean(cluster_pairs)) if cluster_pairs else similarity_threshold
+        severity = "High" if avg_sim >= 0.97 else "Medium"
+
+        findings.append(_finding(
+            tenant_id, run_id, "CopyPaste", severity,
+            sorted(user_ids), sorted(nom_ids),
+            f"Cluster of {len(members)} nominations with avg cosine "
+            f"similarity {avg_sim:.3f} (threshold {similarity_threshold}, "
+            f"total nominated amount: ${total_amount:,})",
+            total_amount=total_amount,
+            policy=policy,
+            signals={
+                "similarity": min(max(
+                    (avg_sim - similarity_threshold) /
+                    max(1.0 - similarity_threshold, 0.001), 0.0
+                ), 1.0),
+                "cluster_size": min(
+                    len(members) / max(float(
+                        parameters.get("cluster_size_reference", 8)
+                    ), 1.0), 1.0
+                ),
+                "exposure": min(
+                    total_amount / max(float(
+                        parameters.get("amount_reference", 10_000)
+                    ), 1.0), 1.0
+                ),
+            },
+        ))
+
+    logger.info("  CopyPaste: %d clusters detected", len(findings))
+    return findings
+
+
+# ── Hidden candidate ──────────────────────────────────────────────────────────
+
+def detect_hidden_candidate(
+    nominations: list[dict],
+    users: list[dict],
+    tenant_id: int,
+    run_id: str,
+    min_text_mentions: int = 5,
+    policy: dict | None = None,
+) -> list[dict]:
+    """
+    Users whose full name appears frequently in nomination description text
+    but who never appear as a BeneficiaryId — suggesting they are being
+    benefited informally without being formally nominated.
+
+    Only active users (those who appear at least once as NominatorId or
+    BeneficiaryId) are considered as candidates, to avoid matching
+    ex-employees mentioned in historical text.
+    """
+    parameters = _pattern_config(policy, "HiddenCandidate").get("parameters", {})
+    min_text_mentions = int(parameters.get("minimum_mentions", min_text_mentions))
+    mention_reference = max(float(parameters.get("mention_reference", 15)), 1.0)
+    active_user_ids = set()
+    for nom in nominations:
+        active_user_ids.add(nom["NominatorId"])
+        active_user_ids.add(nom["BeneficiaryId"])
+
+    beneficiaries = {nom["BeneficiaryId"] for nom in nominations}
+    all_text = " ".join(
+        (nom.get("Description") or "") for nom in nominations
+    ).lower()
+
+    # Build name → user_id map for active users not already a beneficiary
+    name_map = {
+        user["FullName"].lower(): user["UserId"]
+        for user in users
+        if user["UserId"] in active_user_ids
+        and user["UserId"] not in beneficiaries
+        and len(user["FullName"].strip()) > 3
+    }
+
+    findings: list[dict] = []
+    for name, user_id in name_map.items():
+        count = all_text.count(name)
+        if count >= min_text_mentions:
+            severity = "Medium" if count < 10 else "High"
+            findings.append(_finding(
+                tenant_id, run_id, "HiddenCandidate", severity,
+                [user_id], [],
+                f"User {user_id} ('{name}') mentioned {count}× in nomination "
+                "descriptions but never appears as a formal BeneficiaryId.",
+                policy=policy,
+                signals={"mention": min(count / mention_reference, 1.0)},
+            ))
+
+    logger.info("  HiddenCandidate: %d detected", len(findings))
+    return findings
+
+
+# ── Complete Graph snapshot ──────────────────────────────────────────────────
+
+def _populate_graph_flag_snapshots(
+    conn: pyodbc.Connection,
+    tenant_id: int,
+    findings: list[dict],
+    as_of_date: str,
+    run_id: str,
+) -> None:
+    """Materialise one complete, evidence-rich Graph snapshot.
+
+    IntegrityComponentStatus is published in the same transaction and identifies
+    the latest successful run, including a clean run with zero findings.
+    UserGraphFlags contains only affected nominators and beneficiaries.
+    """
+    cur = conn.cursor()
+
+    active_findings = [
+        finding for finding in findings
+        if finding.get("PatternType") != "ApproverAffinity"
+    ]
+
+    user_flags: dict[int, list] = defaultdict(list)
+
+    for f in active_findings:
+        ptype    = f["PatternType"]
+        severity = f["Severity"]
+        users    = json.loads(f["AffectedUsers"])
+        nom_ids  = json.loads(f.get("NominationIds") or "[]")
+
+        evidence = {
+            "snapshot_run_id": run_id,
+            "finding_hash": f.get("FindingHash"),
+            "pattern_type": ptype,
+            "severity": severity,
+            "nomination_ids": nom_ids,
+            "detail": f.get("Detail"),
+            "total_amount": f.get("TotalAmount", 0),
+            "finding_score": float(f.get("FindingScore") or 0),
+            "scoring_policy_version": f.get("ScoringPolicyVersion"),
+            "score_components": json.loads(
+                f.get("ScoreComponentsJson") or "{}"
+            ),
+            "enabled_for_routing": bool(f.get("EnabledForRouting", True)),
+            "applicable_roles": list(f.get(
+                "ApplicableRoles", ["nominator", "beneficiary"]
+            )),
+        }
+
+        for uid in users:
+            user_flags[uid].append(evidence)
+    # A same-day rerun is a full replacement, not a partial merge.
+    cur.execute(
+        "DELETE FROM integrity.UserGraphFlags WHERE TenantId = ? AND AsOfDate = ?",
+        (tenant_id, as_of_date),
+    )
+
+    if user_flags:
+        rows_ugf = [
+            (
+                tenant_id,
+                uid,
+                as_of_date,
+                json.dumps(uf, separators=(",", ":"), allow_nan=False),
+            )
+            for uid, uf in user_flags.items()
+        ]
+
+        cur.executemany("""
+            INSERT INTO integrity.UserGraphFlags
+                (TenantId, UserId, AsOfDate, FindingsJson)
+            VALUES (?, ?, ?, ?)
+        """, rows_ugf)
+
+        logger.info(
+            "  UserGraphFlags: inserted %d affected-user row(s) for AsOfDate=%s",
+            len(rows_ugf), as_of_date,
+        )
+
+    logger.info(
+        "  Complete Graph snapshot staged for AsOfDate=%s (%d finding(s)); "
+        "component status will commit it atomically",
+        as_of_date, len(active_findings),
+    )
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def _process_tenant(
+    conn,
+    tenant_id: int,
+    findings_table: str,
+    default_window_days: int,
+    run_id: str,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
+    data_as_of_utc: datetime | None = None,
+) -> int:
+    """Detect and persist one tenant's graph snapshot and component status."""
+    logger.info("Tenant %d", tenant_id)
+
+    as_of = data_as_of_utc or datetime.now(timezone.utc)
+    source = connect_award()
+    try:
+        tenant_config = get_tenant_integrity_config(source, tenant_id)
+        policy = _load_active_graph_policy(
+            conn,
+            tenant_id,
+            default_window_days,
+            tenant_config,
+        )
+        windows = detector_windows(policy)
+        window_days = max(windows.values())
+        dataset = load_award_nomination_dataset(
+            SourceReadRequest(
+                tenant_id=tenant_id,
+                as_of_exclusive=as_of,
+                window_days=window_days,
+            ),
+            source_connection=source,
+            sentinel_connection=conn,
+        )
+        replace_tenant_graph_projection(conn, dataset)
+    finally:
+        source.close()
+    logger.info(
+        "  Graph policy: v%d, %s; detection window: %d days",
+        policy["version"], policy["strategy"], window_days,
+    )
+
+    nominations = graph_nomination_rows(dataset)
+    nominations = filter_detector_history(nominations, window_days, as_of)
+    scoped = {name: filter_detector_history(nominations, days, as_of)
+              for name, days in windows.items()}
+    logger.info("  Graph detector windows: %s", windows)
+    users = actor_rows(dataset)
+    ever_active_ids = {
+        user["UserId"] for user in users if user["EverActiveBeforeAsOf"]
+    }
+    logger.info(
+        "  Nominations (last %d days): %d  |  Users: %d  |  Ever-active: %d",
+        window_days, len(nominations), len(users), len(ever_active_ids),
+    )
+    if not nominations:
+        logger.info(
+            "  No Pending/Approved/Paid nominations in window — recording a complete "
+            "snapshot after non-nomination detectors run."
+        )
+
+    detected_findings: list[dict] = []
+
+    def enabled(pattern_type: str) -> bool:
+        return bool(_pattern_config(policy, pattern_type).get("enabled", False))
+
+    if enabled("Ring"):
+        ring_policy = _pattern_config(policy, "Ring")
+        ring_candidate_policy = ring_policy.get("candidate_evaluation") or {}
+        ring_max_cluster = int(ring_candidate_policy.get("max_ring_size", 4))
+        if not 3 <= ring_max_cluster <= 4:
+            raise ValueError(
+                "Ring candidate max_ring_size must be between 3 and 4"
+            )
+        detected_findings.extend(detect_rings(
+            scoped["Ring"], users, tenant_id, run_id, ring_max_cluster, policy
+        ))
+    if enabled("BipartiteDenseBlock"):
+        detected_findings.extend(detect_bipartite_dense_blocks(
+            scoped["BipartiteDenseBlock"], tenant_id, run_id, policy
+        ))
+    if enabled("TemporalBurst"):
+        detected_findings.extend(detect_temporal_bursts(
+            scoped["TemporalBurst"], tenant_id, run_id, policy
+        ))
+    if enabled("SuperNominator"):
+        detected_findings.extend(detect_super_nominators(
+            scoped["SuperNominator"], tenant_id, run_id, policy
+        ))
+    if enabled("SuperBeneficiary"):
+        detected_findings.extend(detect_super_beneficiaries(
+            scoped["SuperBeneficiary"], tenant_id, run_id, policy
+        ))
+    if enabled("CopyPaste"):
+        detected_findings.extend(detect_copy_paste(
+            scoped["CopyPaste"], tenant_id, run_id, conn, policy=policy
+        ))
+    if enabled("HiddenCandidate"):
+        detected_findings.extend(detect_hidden_candidate(
+            scoped["HiddenCandidate"], users, tenant_id, run_id, policy=policy
+        ))
+    if enabled("Desert"):
+        detected_findings.extend(detect_deserts(
+            ever_active_ids, users, tenant_id, run_id, policy
+        ))
+    if enabled("LowRecognitionNominator"):
+        detected_findings.extend(detect_low_recognition_nominators(
+            scoped["LowRecognitionNominator"], users, tenant_id, run_id,
+            {**policy, "detection_window_days": windows["LowRecognitionNominator"]}
+        ))
+
+    detected_findings = list({f["FindingHash"]: f for f in detected_findings}.values())
+    if lease_guard is not None:
+        lease_guard()
+    snapshot_artifact = _publish_graph_inference_snapshot(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        window_days=window_days,
+        policy=policy,
+        nominations=nominations,
+    )
+    if lease_guard is not None:
+        lease_guard()
+    if lease_fence is not None:
+        lease_fence(conn)
+    # Same lock order as inference: serving marker before user snapshot rows.
+    conn.cursor().execute("""
+        SELECT TenantId FROM integrity.IntegrityComponentStatus WITH (UPDLOCK, HOLDLOCK)
+        WHERE TenantId=? AND Component='GRAPH'
+    """, (tenant_id,)).fetchall()
+    _save_findings(conn, detected_findings, findings_table)
+    logger.info("  Tenant %d total findings: %d", tenant_id, len(detected_findings))
+
+    as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    _populate_graph_flag_snapshots(
+        conn, tenant_id, detected_findings, as_of_date, run_id
+    )
+    upsert_component_status(
+        conn, tenant_id=tenant_id, component="GRAPH", attempt_status="SUCCEEDED",
+        serving_status="AVAILABLE",
+        serving_version=f"graph-policy-v{policy['version']}",
+        serving_as_of=as_of_date,
+        diagnostics={
+            "snapshot_schema_version": 2,
+            "nomination_count": len(nominations), "user_count": len(users),
+            "finding_count": len(detected_findings), "window_days": window_days,
+            "detector_windows": windows,
+            "detector_nomination_counts": {name: len(rows) for name, rows in scoped.items()},
+            "scoring_policy_version": policy["version"],
+            "scoring_strategy": policy["strategy"],
+            "snapshot_max_age_days": policy["snapshot_max_age_days"],
+            "inference_snapshot_blob": snapshot_artifact["blob_name"],
+            "inference_snapshot_sha256": snapshot_artifact["sha256"],
+            "inference_snapshot_schema_version": snapshot_artifact["schema_version"],
+            "inference_snapshot_size_bytes": snapshot_artifact["size_bytes"],
+            "inference_snapshot_generated_at": snapshot_artifact["generated_at"],
+            "candidate_evaluation_ready": True,
+        },
+        run_id=run_id,
+    )
+
+    finding_count = len(detected_findings)
+    del nominations, users, detected_findings
+    gc.collect()
+    logger.info("  Tenant %d memory freed.", tenant_id)
+    return finding_count
+
+
+def process_tenant(
+    tenant_id: int,
+    run_id: str,
+    lease_guard: Callable[[], None] | None = None,
+    lease_fence: Callable[[object], None] | None = None,
+    data_as_of_utc: datetime | None = None,
+) -> TenantStageResult:
+    """Run Graph analytics for exactly one tenant using a stable correlation ID."""
+    conn = _get_connection()
+    try:
+        finding_count = _process_tenant(
+            conn,
+            tenant_id,
+            GRAPH_FINDINGS_TABLE,
+            180,
+            run_id,
+            lease_guard,
+            lease_fence,
+            data_as_of_utc,
+        )
+        row = conn.cursor().execute(
+            """
+            SELECT ServingVersion
+            FROM integrity.IntegrityComponentStatus
+            WHERE TenantId=? AND Component='GRAPH'
+            """,
+            (tenant_id,),
+        ).fetchone()
+        return TenantStageResult.succeeded(
+            published_version=str(row[0]) if row and row[0] else None,
+            diagnostics={"finding_count": finding_count},
+        )
+    except LeaseLostError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        try:
+            if lease_guard is not None:
+                lease_guard()
+            if lease_fence is not None:
+                lease_fence(conn)
+            upsert_component_status(
+                conn,
+                tenant_id=tenant_id,
+                component="GRAPH",
+                attempt_status="FAILED",
+                reason_code="ANALYTICS_FAILED",
+                reason_detail=str(exc),
+                run_id=run_id,
+            )
+        except Exception:
+            logger.error(
+                "Tenant %d Graph failure status could not be persisted",
+                tenant_id,
+                exc_info=True,
+            )
+        raise
+    finally:
+        conn.close()
+
+
+def main(tenants_to_process: list | None = None) -> None:
+    log_level = os.getenv("LOGGING_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    logger.info("graph_analytics — starting")
+
+    default_window_days = 180
+    run_id              = str(uuid.uuid4())
+    logger.info("RunId: %s", run_id)
+    logger.info("Target table: %s", GRAPH_FINDINGS_TABLE)
+    logger.info("Graph window source: Tenants.integrity_config (default %d days)", default_window_days)
+
+    prepare_global()
+
+    source = connect_award()
+    try:
+        tenants = [tenant_id for tenant_id, _ in get_enabled_tenants(source)]
+    finally:
+        source.close()
+    conn = _get_connection()
+    if tenants_to_process is not None:
+        tenants = [t for t in tenants if t in tenants_to_process]
+        if not tenants:
+            logger.warning("Tenant(s) %s not found in database. Exiting.", tenants_to_process)
+            conn.close()
+            return
+    logger.info("Tenants to process: %s", tenants)
+
+    total_findings = 0
+    failed: list[int] = []
+
+    for tenant_id in tenants:
+        try:
+            result = process_tenant(tenant_id, run_id)
+            total_findings += int(result.diagnostics.get("finding_count", 0))
+        except Exception as exc:
+            logger.error("Tenant %d graph analytics failed: %s", tenant_id, exc, exc_info=True)
+            failed.append(tenant_id)
+
+    conn.close()
+    logger.info(
+        "graph_analytics — done. RunId=%s  Total findings=%d",
+        run_id, total_findings,
+    )
+    if failed:
+        raise RuntimeError(f"Graph analytics failed for tenant(s): {failed}")
+
+
+if __name__ == "__main__":
+    main()
