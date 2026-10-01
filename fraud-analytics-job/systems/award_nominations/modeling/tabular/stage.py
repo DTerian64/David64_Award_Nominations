@@ -15,12 +15,12 @@ from sentence_transformers import SentenceTransformer
 from systems.award_nominations.features.tabular import (
     AwardNominationTabularV1FeatureBuilder,
 )
-from modeling.tabular import (
+from . import (
     TabularTrainingPolicy,
     evaluate_tabular_candidates,
 )
-from modeling.tabular.artifacts import write_tabular_bundle
-from modeling.tabular.serving import fit_selected_for_serving
+from .artifacts import write_tabular_bundle
+from .serving import fit_selected_for_serving
 from source_adapters.contracts import SourceReadRequest
 from systems.award_nominations.dataset import load_award_nomination_dataset
 from integrity_sentinel.component_status import upsert_component_status
@@ -38,7 +38,7 @@ from systems.award_nominations.source.tenant_config import (
 
 
 logger = logging.getLogger(__name__)
-OUTPUT_DIR = Path(__file__).resolve().parents[3] / "Output"
+OUTPUT_DIR = Path(__file__).resolve().parents[4] / "Output"
 
 
 def _publish_bundle(

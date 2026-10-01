@@ -391,7 +391,8 @@ def _build_decoder(head: dict):
     """
     Reconstruct the decoder from its state_dict.
 
-    Defined inline rather than imported from fraud-analytics-job/modeling/gnn/model.py:
+    Defined inline rather than imported from
+    fraud-analytics-job/systems/award_nominations/modeling/gnn/model.py:
     the serving decoder remains pure Torch. The architecture is duplicated deliberately —
     the shape is asserted against the state_dict below, so a divergence fails
     loudly at load time rather than silently mis-scoring.

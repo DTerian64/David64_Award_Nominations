@@ -2,8 +2,12 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import average_precision_score
-from feature_builders.tabular.category_encoding import CategoryFraudRateEncoder
-from modeling.tabular.metrics import holdout_permutation_importance
+from systems.award_nominations.features.tabular.category_encoding import (
+    CategoryFraudRateEncoder,
+)
+from systems.award_nominations.modeling.tabular.metrics import (
+    holdout_permutation_importance,
+)
 
 
 def test_balanced_categories_no_longer_encode_the_rows_own_class():

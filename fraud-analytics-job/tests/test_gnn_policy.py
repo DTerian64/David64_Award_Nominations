@@ -5,7 +5,7 @@ Run:  python -m pytest tests/test_gnn_policy.py -v
 
 import json
 
-from modeling.gnn.policy import load_active_policy
+from integrity_sentinel.gnn_policy import load_active_policy
 
 
 class Cursor:

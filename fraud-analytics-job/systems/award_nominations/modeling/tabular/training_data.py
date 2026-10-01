@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import pandas as pd
 
 from feature_builders import TabularFeatureDataset
-from feature_builders.tabular.category_encoding import CategoryFraudRateEncoder
+from systems.award_nominations.features.tabular.category_encoding import (
+    CategoryFraudRateEncoder,
+)
 
 from .contracts import TabularTrainingPolicy, TemporalHoldout
 from .splits import supervised_temporal_holdout

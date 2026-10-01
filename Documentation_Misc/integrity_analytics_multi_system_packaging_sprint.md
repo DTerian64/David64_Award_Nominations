@@ -247,11 +247,11 @@ follow this mapping.
 | `source_adapters/award_nominations/*` | `systems/award_nominations/source/*` |
 | `feature_builders/source_views.py` | `systems/award_nominations/features/source_views.py` |
 | `feature_builders/tabular/award_nomination_tabular_v1.py` | `systems/award_nominations/features/tabular/` |
-| Award-specific category encoding | `systems/award_nominations/features/tabular/` |
+| `feature_builders/tabular/category_encoding.py` | `systems/award_nominations/features/tabular/category_encoding.py` |
 | `integrity_sentinel/datasets.py` | `systems/award_nominations/pipeline.py` or `dataset.py` |
 | Award Graph stage orchestration | `systems/award_nominations/modeling/graph.py` |
-| `modeling/train_tabular_model.py` | `systems/award_nominations/modeling/tabular.py` |
-| Award GNN stage orchestration | `systems/award_nominations/modeling/gnn.py` |
+| Award Tabular stage, algorithms, selection, and artifacts | `systems/award_nominations/modeling/tabular/` |
+| Award GNN stage, algorithms, evaluators, and artifacts | `systems/award_nominations/modeling/gnn/` |
 | Award forecasting and holiday sync | `systems/award_nominations/forecasting/` |
 
 The following remain shared:
@@ -261,16 +261,17 @@ The following remain shared:
 | `integrity_data` contracts, snapshots, and validation | Canonical source-neutral data model |
 | `integrity_sentinel/db.py` | Sentinel connection boundary |
 | Sentinel outcome, status, policy, and coordination services | Shared database ownership |
-| `modeling/tabular` algorithms | Reusable candidate training and selection |
-| `modeling/gnn` algorithms and evaluators | Reusable GNN implementation |
 | model artifact utilities | Shared publication mechanics |
 | stage-result and SQL connection primitives | Shared infrastructure |
 
-Large current stage modules mix orchestration with reusable algorithms. During
-this sprint, moving the complete stage entry point into the Award package is
-acceptable. Generic detector or training code should be extracted only when
-the separation is clear and can be covered by tests; speculative abstractions
-are not required.
+Database-free model code is not necessarily system-neutral. The Tabular
+implementation assumes Award nomination identities, timestamps, category
+encoding, and label sources. The GNN implementation assumes the Award
+user/nomination/category topology, nominator and beneficiary endpoints, and the
+Award behavior taxonomy. Both complete implementations therefore belong to the
+Award system package. Generic numerical or evaluation primitives should be
+extracted only after another system demonstrates a matching contract;
+speculative shared abstractions are not required.
 
 ## 9. Cutover strategy
 
@@ -280,11 +281,12 @@ through `systems.award_nominations`. The former Award-specific modules under
 `source_adapters`, `feature_builders`, `modeling`, `misc_jobs`, and
 `integrity_sentinel` are removed rather than retained as compatibility aliases.
 
-Model classes that are serialized into serving artifacts must not be moved
-merely for package symmetry. Python pickle records module paths; moving a
-serialized class can make existing artifacts impossible to load. Shared fitted
-model and preprocessing classes remain at stable import paths unless an
-explicit artifact migration is designed.
+Model classes serialized directly into serving artifacts must not be moved
+merely for package symmetry. The current Tabular bundle serializes the fitted
+scikit-learn model and preprocessing state rather than the Award training
+wrapper classes, while GNN bundles are weights-only tensor contracts. Tests
+verify that these package moves do not add the training package path to serving
+artifacts.
 
 ## 10. Acceptance criteria
 

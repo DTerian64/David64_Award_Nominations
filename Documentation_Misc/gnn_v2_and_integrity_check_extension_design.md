@@ -152,9 +152,9 @@ The current implementation is a real heterogeneous GNN, not merely an RF wrapper
 
 The main current code is in:
 
-- `fraud-analytics-job/modeling/gnn/graph.py`
-- `fraud-analytics-job/modeling/gnn/model.py`
-- `fraud-analytics-job/systems/award_nominations/modeling/gnn.py`
+- `fraud-analytics-job/systems/award_nominations/features/gnn/graph.py`
+- `fraud-analytics-job/systems/award_nominations/modeling/gnn/model.py`
+- `fraud-analytics-job/systems/award_nominations/modeling/gnn/stage.py`
 - `integrity-check/inference/gnn_check.py`
 
 However, much of the feature set mirrors RF feature engineering:
@@ -405,7 +405,7 @@ The implementation packages evaluators by the decision they make, rather than
 under generic `admission` or `diagnostics` folders:
 
 ```text
-modeling/gnn/evaluators/
+systems/award_nominations/modeling/gnn/evaluators/
   contracts.py
   metrics.py
   selection_by_holdout_pr_auc/

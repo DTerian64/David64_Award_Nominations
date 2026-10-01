@@ -1,1 +1,1 @@
-"""Shared, database-free model algorithms and artifact contracts."""
+"""Cross-system model artifact contracts."""

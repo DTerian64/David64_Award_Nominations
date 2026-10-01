@@ -11,15 +11,19 @@ import json
 import math
 from dataclasses import asdict, dataclass
 
-from modeling.gnn.evaluators.selection_by_holdout_pr_auc import GRAPH_ARCHITECTURES
-from modeling.gnn.specialists.contracts import (
+from systems.award_nominations.modeling.gnn.evaluators.selection_by_holdout_pr_auc import (
+    GRAPH_ARCHITECTURES,
+)
+from systems.award_nominations.modeling.gnn.specialists.contracts import (
     BEHAVIOR_TRACKS,
     SERVING_MODES,
     SERVING_MODE_V2,
     SERVING_MODE_SHARED_MULTI_HEAD,
     SpecialistTrackPolicy,
 )
-from modeling.gnn.specialists.feature_contracts import FEATURE_CONTRACTS
+from systems.award_nominations.modeling.gnn.specialists.feature_contracts import (
+    FEATURE_CONTRACTS,
+)
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 import pytest
-from systems.award_nominations.modeling import tabular as trainer
+from systems.award_nominations.modeling.tabular import stage as trainer
 from systems.award_nominations.source.tenant_config import get_tenant_tabular_window
 
 

@@ -3,9 +3,15 @@
 import numpy as np
 import pandas as pd
 
-from modeling.gnn.specialists.contracts import SpecialistTrackPolicy
-from modeling.gnn.specialists.evaluator import evaluate_specialist
-from modeling.gnn.specialists.labels import build_specialist_label_maps
+from systems.award_nominations.modeling.gnn.specialists.contracts import (
+    SpecialistTrackPolicy,
+)
+from systems.award_nominations.modeling.gnn.specialists.evaluator import (
+    evaluate_specialist,
+)
+from systems.award_nominations.modeling.gnn.specialists.labels import (
+    build_specialist_label_maps,
+)
 
 
 def test_other_fraud_patterns_are_excluded_not_negative():

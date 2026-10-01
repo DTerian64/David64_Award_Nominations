@@ -270,18 +270,20 @@ The T4 package boundary is:
 
 ```text
 fraud-analytics-job/
-├── feature_builders/tabular/
-│   ├── award_nomination_tabular_v1.py
-│   └── category_encoding.py
-└── modeling/tabular/
-    ├── contracts.py
-    ├── metrics.py
-    ├── preprocessing.py
-    ├── splits.py
-    ├── training_data.py
-    ├── random_forest.py
-    ├── tabular_mlp.py
-    └── selection.py
+└── systems/award_nominations/
+    ├── features/tabular/
+    │   ├── award_nomination_tabular_v1.py
+    │   └── category_encoding.py
+    └── modeling/tabular/
+        ├── stage.py
+        ├── contracts.py
+        ├── metrics.py
+        ├── preprocessing.py
+        ├── splits.py
+        ├── training_data.py
+        ├── random_forest.py
+        ├── tabular_mlp.py
+        └── selection.py
 ```
 
 T4 established the in-memory candidate comparison without changing serving

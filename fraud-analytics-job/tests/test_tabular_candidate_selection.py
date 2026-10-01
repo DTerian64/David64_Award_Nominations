@@ -11,13 +11,13 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from modeling.tabular import (
+from systems.award_nominations.modeling.tabular import (
     TabularSelectionPolicy,
     TabularTrainingPolicy,
     evaluate_tabular_candidates,
     train_tabular_mlp_candidate,
 )
-from modeling.tabular import tabular_mlp as mlp_module
+from systems.award_nominations.modeling.tabular import tabular_mlp as mlp_module
 from tests.test_tabular_random_forest_candidate import _feature_dataset
 
 

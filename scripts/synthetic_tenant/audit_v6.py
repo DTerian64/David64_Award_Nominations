@@ -63,7 +63,9 @@ def audit(users, rows, design, c, as_of: date, *, policy: dict | None = None, se
     from integrity_engine.gnn.causal_context import causal_context_matrix, CAUSAL_CONTEXT_FEATURE_COLUMNS
     from systems.award_nominations.features.tabular.award_nomination_tabular_v1 import extract_features, add_semantic_features
     from systems.award_nominations.features.tabular import AWARD_NOMINATION_TABULAR_V1_SCHEMA
-    from feature_builders.tabular.category_encoding import CategoryFraudRateEncoder
+    from systems.award_nominations.features.tabular.category_encoding import (
+        CategoryFraudRateEncoder,
+    )
 
     end = datetime.combine(as_of, datetime.min.time(), tzinfo=timezone.utc)
     mapping = {u.logical_id: i + 1 for i, u in enumerate(users)}

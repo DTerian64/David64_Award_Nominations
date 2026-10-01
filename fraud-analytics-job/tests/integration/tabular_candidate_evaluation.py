@@ -23,7 +23,7 @@ from systems.award_nominations.features.tabular import (
 )
 from systems.award_nominations.dataset import load_award_nomination_dataset
 from integrity_sentinel.db import connect as connect_sentinel
-from modeling.tabular import evaluate_tabular_candidates
+from systems.award_nominations.modeling.tabular import evaluate_tabular_candidates
 from systems.award_nominations.source.connection import connect as connect_award
 from systems.award_nominations.source.live_smoke import _load_environment
 from systems.award_nominations.source.tenant_config import (

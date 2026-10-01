@@ -9,7 +9,9 @@ import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
-from feature_builders.tabular.category_encoding import CategoryFraudRateEncoder
+from systems.award_nominations.features.tabular.category_encoding import (
+    CategoryFraudRateEncoder,
+)
 
 
 def _numeric_matrix(frame: pd.DataFrame) -> np.ndarray:

@@ -727,14 +727,14 @@ need to be captured during the synthetic evaluation run.
 
 | Responsibility | File |
 |---|---|
-| Tenant graph, features, temporal folds, serving snapshot | `fraud-analytics-job/modeling/gnn/graph.py` |
-| Candidate encoders, decoder, rolling optimization, metrics | `fraud-analytics-job/modeling/gnn/model.py` |
-| Gates, labels, candidate bake-off, winner refit and activation | `fraud-analytics-job/systems/award_nominations/modeling/gnn.py` |
+| Tenant graph, features, temporal folds, serving snapshot | `fraud-analytics-job/systems/award_nominations/features/gnn/graph.py` |
+| Candidate encoders, decoder, rolling optimization, metrics | `fraud-analytics-job/systems/award_nominations/modeling/gnn/model.py` |
+| Gates, labels, candidate bake-off, winner refit and activation | `fraud-analytics-job/systems/award_nominations/modeling/gnn/stage.py` |
 | Canonical model-neutral label contract | `fraud-analytics-job/modeling/labels.py` |
 | Synthetic-label provenance schema | `schema-migration/alembic/versions/0060_synthetic_training_labels.py` |
 | Synthetics Inc. dry-run generator | `scripts/synthetic_tenant/` |
-| Restricted graph snapshot bundle | `fraud-analytics-job/modeling/gnn/artifact_bundle.py` |
-| Active training policy loader | `fraud-analytics-job/modeling/gnn/policy.py` |
+| Restricted graph snapshot bundle | `fraud-analytics-job/systems/award_nominations/modeling/gnn/artifact_bundle.py` |
+| Active training policy loader | `fraud-analytics-job/integrity_sentinel/gnn_policy.py` |
 | Live decoder inference | `integrity-check/inference/gnn_check.py` |
 | Versioned policy schema | `schema-migration/alembic/versions/0059_gnn_scoring_policies.py` |
 | Policy administration | `backend/routers/setup_router.py`, `frontend/src/components/GNNPolicyModal.tsx` |

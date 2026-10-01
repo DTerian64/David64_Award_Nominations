@@ -1,6 +1,8 @@
 """Operational GNN candidate selection policy."""
 
-from modeling.gnn.evaluators.selection_by_holdout_pr_auc import select_architecture
+from systems.award_nominations.modeling.gnn.evaluators.selection_by_holdout_pr_auc import (
+    select_architecture,
+)
 
 
 def completed(value: float, **extra):

@@ -13,12 +13,14 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from systems.award_nominations.features.gnn import graph as G
-from modeling.gnn.evaluators.graph_value_by_ablation import evaluate_graph_value
-from modeling.gnn.evaluators.graph_value_by_ablation.feature_profiles import (
+from systems.award_nominations.modeling.gnn.evaluators.graph_value_by_ablation import (
+    evaluate_graph_value,
+)
+from systems.award_nominations.modeling.gnn.evaluators.graph_value_by_ablation.feature_profiles import (
     MLP_TABULAR,
     apply_feature_profile,
 )
-from modeling.gnn.evaluators.graph_value_by_ablation.scenarios import (
+from systems.award_nominations.modeling.gnn.evaluators.graph_value_by_ablation.scenarios import (
     evaluate_scenarios,
 )
 from tests.synthetic import make_tenant

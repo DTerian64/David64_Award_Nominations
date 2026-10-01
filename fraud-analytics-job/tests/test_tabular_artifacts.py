@@ -7,10 +7,10 @@ import pickle
 
 import pytest
 
-from systems.award_nominations.modeling import tabular as train_tabular_model
-from modeling.tabular import evaluate_tabular_candidates
-from modeling.tabular.artifacts import write_tabular_bundle
-from modeling.tabular.serving import fit_selected_for_serving
+from systems.award_nominations.modeling.tabular import evaluate_tabular_candidates
+from systems.award_nominations.modeling.tabular import stage as train_tabular_model
+from systems.award_nominations.modeling.tabular.artifacts import write_tabular_bundle
+from systems.award_nominations.modeling.tabular.serving import fit_selected_for_serving
 from tests.test_tabular_candidate_selection import _t4_policy
 from tests.test_tabular_random_forest_candidate import _feature_dataset
 

@@ -1,8 +1,8 @@
 """Production stage registration for the Award Nomination system."""
 
 GRAPH_MODULE = "systems.award_nominations.modeling.graph"
-TABULAR_MODULE = "systems.award_nominations.modeling.tabular"
-GNN_MODULE = "systems.award_nominations.modeling.gnn"
+TABULAR_MODULE = "systems.award_nominations.modeling.tabular.stage"
+GNN_MODULE = "systems.award_nominations.modeling.gnn.stage"
 FORECAST_MODULE = "systems.award_nominations.forecasting.models"
 HOLIDAY_MODULE = "systems.award_nominations.forecasting.holidays"
 

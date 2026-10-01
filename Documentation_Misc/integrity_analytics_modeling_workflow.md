@@ -515,7 +515,8 @@ their 114 participant records. Tenant 5 had no such rows and was unchanged.
 - [x] add and run an explicit read-only legacy/canonical population parity
   command during the migration;
 - [x] remove the legacy RF source query and trainer after parity acceptance;
-- split GNN row fetching from graph construction in `modeling/gnn/graph.py`;
+- split GNN row fetching from graph construction in
+  `systems/award_nominations/features/gnn/graph.py`;
 - make the GNN feature builder consume canonical records; and
 - add old-versus-new GNN feature parity tests.
 
@@ -543,8 +544,9 @@ migration noise; they are not added to the Tabular-v1 business contract.
 
 ### T3: database-free Tabular Random Forest candidate
 
-T3 added the database-free `modeling/tabular` boundary while the legacy serving
-path was still active:
+T3 added the database-free Award Tabular boundary, now located at
+`systems/award_nominations/modeling/tabular`, while the legacy serving path was
+still active:
 
 - [x] accept only a validated `TabularFeatureDataset` with no database query;
 - [x] use a deterministic out-of-time train/evaluation split;
@@ -610,7 +612,7 @@ deployed RF-v3 serving bundle was not modified.
 
 ### T5: tenant-first artifacts and Tabular serving
 
-The scheduled job now runs `systems.award_nominations.modeling.tabular` instead of the legacy
+The scheduled job now runs `systems.award_nominations.modeling.tabular.stage` instead of the legacy
 RF-only trainer. For each tenant it extracts one canonical snapshot, builds one
 Tabular-v1 dataset, evaluates both candidates, refits the selected architecture
 over all eligible supervised rows, and uploads the complete immutable bundle
@@ -619,7 +621,8 @@ before changing `dbo.IntegrityComponentStatus.ServingVersion`.
 After the T5 cutover was verified, `modeling/train_rf_model.py`, its RF-only
 bootstrap path, and the temporary old-versus-new parity harness were removed.
 Shared blob publication and tenant model configuration now live in `utils`;
-Random Forest remains a candidate implementation under `modeling/tabular`.
+Random Forest remains a candidate implementation under
+`systems/award_nominations/modeling/tabular`.
 
 All integrity artifacts use one tenant-first root:
 

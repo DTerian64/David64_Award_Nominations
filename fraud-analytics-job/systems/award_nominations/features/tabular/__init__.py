@@ -5,9 +5,11 @@ from .award_nomination_tabular_v1 import (
     AwardNominationTabularV1FeatureBuilder,
     build_nomination_frame,
 )
+from .category_encoding import CategoryFraudRateEncoder
 
 __all__ = [
     "AWARD_NOMINATION_TABULAR_V1_SCHEMA",
     "AwardNominationTabularV1FeatureBuilder",
+    "CategoryFraudRateEncoder",
     "build_nomination_frame",
 ]

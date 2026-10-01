@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from feature_builders import TabularFeatureDataset
 
-from ..artifact_manifest import artifact_descriptor, write_manifest
+from modeling.artifact_manifest import artifact_descriptor, write_manifest
 from .contracts import TabularCandidateEvaluation, TabularTrainingPolicy
 from .serving import TabularServingFit
 

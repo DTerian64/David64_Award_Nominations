@@ -1,4 +1,4 @@
-"""Database-free candidate models for the shared Tabular integrity engine."""
+"""Award Nomination Tabular training algorithms and candidate selection."""
 
 from .contracts import (
     TabularCandidateEvaluation,

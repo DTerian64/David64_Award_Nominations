@@ -1,6 +1,6 @@
 """
-systems/award_nominations/modeling/gnn.py — GNN training stage
-=========================================
+systems/award_nominations/modeling/gnn/stage.py — GNN training stage
+===============================================
 Stage 3 of the fraud-analytics-job pipeline, registered in run_job.py STAGES
 after train_tabular_model.
 
@@ -53,12 +53,12 @@ from dotenv import load_dotenv
 
 # Same .env loading as the other stages so this can be run standalone locally.
 # No-op in Container Apps, where env is injected by the platform.
-JOB_DIR = Path(__file__).resolve().parents[3]
+JOB_DIR = Path(__file__).resolve().parents[4]
 env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
 from systems.award_nominations.features.gnn import graph as G  # noqa: E402
-from modeling.gnn import artifact_bundle as bundle  # noqa: E402
+from . import artifact_bundle as bundle  # noqa: E402
 from systems.award_nominations.features import labels as labels_mod  # noqa: E402
 from modeling.artifact_manifest import (  # noqa: E402
     MANIFEST_SCHEMA_VERSION,
@@ -83,16 +83,16 @@ from systems.award_nominations.source.tenant_config import (  # noqa: E402
 )
 from source_adapters.contracts import SourceReadRequest  # noqa: E402
 from utils.stage_result import TenantStageResult  # noqa: E402
-from modeling.gnn.model import (  # noqa: E402
+from .model import (  # noqa: E402
     _RELATIONS,
     fit_candidate_rolling,
     train_candidate_rolling,
 )
-from modeling.gnn.evaluators.selection_by_holdout_pr_auc import (  # noqa: E402
+from .evaluators.selection_by_holdout_pr_auc import (  # noqa: E402
     GRAPH_ARCHITECTURES,
     select_architecture,
 )
-from modeling.gnn.evaluators.graph_value_by_ablation import (  # noqa: E402
+from .evaluators.graph_value_by_ablation import (  # noqa: E402
     evaluate_graph_value,
 )
 from integrity_sentinel.gnn_policy import GNNPolicy, load_active_policy  # noqa: E402
@@ -104,19 +104,19 @@ from integrity_sentinel.gnn_store import (  # noqa: E402
     read_stage_outcome,
     read_status_for_run,
 )
-from modeling.gnn.specialists.contracts import SERVING_MODE_SPECIALISTS  # noqa: E402
-from modeling.gnn.specialists.contracts import SERVING_MODE_SHARED_MULTI_HEAD  # noqa: E402
-from modeling.gnn.evaluators.selection_by_temporal_validation.evaluator import (  # noqa: E402
+from .specialists.contracts import SERVING_MODE_SPECIALISTS  # noqa: E402
+from .specialists.contracts import SERVING_MODE_SHARED_MULTI_HEAD  # noqa: E402
+from .evaluators.selection_by_temporal_validation.evaluator import (  # noqa: E402
     evaluate_shared_model,
 )
-from modeling.gnn.specialists.evaluator import (  # noqa: E402
+from .specialists.evaluator import (  # noqa: E402
     evaluate_specialists,
     specialist_fold_views,
 )
-from modeling.gnn.specialists.feature_contracts import (  # noqa: E402
+from .specialists.feature_contracts import (  # noqa: E402
     apply_specialist_feature_contract,
 )
-from modeling.gnn.specialists.labels import build_specialist_label_maps  # noqa: E402
+from .specialists.labels import build_specialist_label_maps  # noqa: E402
 
 # Reuse the Random Forest's blob upload helper rather than duplicating the auth
 # and error handling. Both stages run in the same process under run_job.py.
