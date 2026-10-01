@@ -58,7 +58,11 @@ def graph_nomination_rows(dataset: IntegrityDataset) -> list[dict]:
                 "NominatorId": roles["INITIATOR"],
                 "BeneficiaryId": roles["SUBJECT"],
                 "Status": event.status,
-                "Amount": event.amount,
+                # Canonical monetary values remain Decimal, but the Graph
+                # detector contract performs floating-point scoring.
+                "Amount": (
+                    float(event.amount) if event.amount is not None else None
+                ),
                 "Description": event.text,
                 "CreatedAt": event.occurred_at,
             }
@@ -123,7 +127,7 @@ def label_frame(dataset: IntegrityDataset) -> pd.DataFrame:
         label = labels.get(event.event_id)
         disposition = label.disposition if label is not None else None
         provenance = label.provenance if label is not None else None
-        eligible = provenance in {
+        eligible = disposition in {"FRAUD", "LEGITIMATE"} and provenance in {
             "HUMAN_INVESTIGATION",
             "RANDOM_AUDIT",
             "SYNTHETIC_GROUND_TRUTH",
@@ -134,12 +138,12 @@ def label_frame(dataset: IntegrityDataset) -> pd.DataFrame:
             else None
         )
         label_source = (
-            "hrbp"
+            "excluded"
+            if disposition == "EXCLUDED"
+            else "hrbp"
             if provenance in {"HUMAN_INVESTIGATION", "RANDOM_AUDIT"}
             else "synthetic_ground_truth"
             if provenance == "SYNTHETIC_GROUND_TRUTH"
-            else "excluded"
-            if disposition == "EXCLUDED"
             else "unlabelled"
         )
         metadata = dict(label.metadata) if label is not None else {}

@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -152,7 +153,13 @@ def _nomination(
 def test_graph_loader_uses_pending_approved_and_paid_population():
     dataset = SimpleNamespace(
         events=(
-            SimpleNamespace(event_id="1", status="Pending", amount=1, text="a", occurred_at=date.today()),
+            SimpleNamespace(
+                event_id="1",
+                status="Pending",
+                amount=Decimal("1.25"),
+                text="a",
+                occurred_at=date.today(),
+            ),
             SimpleNamespace(event_id="2", status="Rejected", amount=1, text="b", occurred_at=date.today()),
         ),
         participants=(
@@ -162,7 +169,10 @@ def test_graph_loader_uses_pending_approved_and_paid_population():
             SimpleNamespace(event_id="2", normalized_role="SUBJECT", actor_id="11"),
         ),
     )
-    assert [row["NominationId"] for row in graph_nomination_rows(dataset)] == [1]
+    rows = graph_nomination_rows(dataset)
+    assert [row["NominationId"] for row in rows] == [1]
+    assert rows[0]["Amount"] == 1.25
+    assert isinstance(rows[0]["Amount"], float)
 
 
 def test_ring_score_increases_with_financial_exposure():

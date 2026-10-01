@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -56,6 +57,37 @@ class HumanConfirmedLabelTests(unittest.TestCase):
         self.assertEqual(stats["n_excluded"], 1)
         self.assertEqual(stats["n_hrbp"], 0)
         self.assertTrue(result.empty)
+
+    def test_canonical_excluded_outcomes_take_precedence_over_provenance(self):
+        for provenance in ("HUMAN_INVESTIGATION", "SYNTHETIC_GROUND_TRUTH"):
+            with self.subTest(provenance=provenance):
+                dataset = SimpleNamespace(
+                    snapshot=SimpleNamespace(is_synthetic_tenant=True),
+                    events=(
+                        SimpleNamespace(
+                            event_id="5",
+                            status="Approved",
+                            attributes={},
+                        ),
+                    ),
+                    labels=(
+                        SimpleNamespace(
+                            event_id="5",
+                            disposition="EXCLUDED",
+                            provenance=provenance,
+                            reviewed_by="reviewer",
+                            reviewed_at=None,
+                            metadata={},
+                            behavior_labels=(),
+                        ),
+                    ),
+                )
+
+                frame = labels.label_frame(dataset)
+
+                self.assertEqual(frame.loc[0, "LabelSource"], labels.SOURCE_EXCLUDED)
+                self.assertTrue(pd.isna(frame.loc[0, "IsFraud"]))
+                self.assertTrue(labels.supervised_targets(frame).empty)
 
     def test_missing_label_contract_fails_loudly(self):
         with self.assertRaises(ValueError):

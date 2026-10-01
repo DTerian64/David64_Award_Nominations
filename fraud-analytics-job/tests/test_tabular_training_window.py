@@ -38,11 +38,25 @@ def test_job_loads_warmup_history_and_passes_configured_window_to_shared_builder
     builder = MagicMock()
     builder.build.return_value = SimpleNamespace(source_snapshot_id="fixture")
     monkeypatch.setattr(trainer, "AwardNominationTabularV1FeatureBuilder", lambda: builder)
+    candidate_evaluations = {
+        "random_forest": {
+            "eligible": False,
+            "guardrail_failures": ["PR_AUC_LIFT_BELOW_MINIMUM"],
+        },
+        "tabular_mlp": {
+            "eligible": False,
+            "guardrail_failures": ["PR_AUC_LIFT_BELOW_MINIMUM"],
+        },
+    }
     monkeypatch.setattr(trainer, "evaluate_tabular_candidates", lambda *args: SimpleNamespace(
-        selection=SimpleNamespace(selected_architecture=None, selection_reason="INSUFFICIENT_LABELS", candidate_evaluations={})))
+        selection=SimpleNamespace(
+            selected_architecture=None,
+            selection_reason="NO_CANDIDATE_PASSED_GUARDRAILS",
+            candidate_evaluations=candidate_evaluations,
+        )))
     record = MagicMock()
     monkeypatch.setattr(trainer, "_record_status", record)
-    trainer.main([5])
+    result = trainer.process_tenant(5, "run-1")
     request = loader.call_args.args[0]
     assert request.tenant_id == 5
     assert request.window_days == 540
@@ -50,3 +64,7 @@ def test_job_loads_warmup_history_and_passes_configured_window_to_shared_builder
     assert record.call_args.kwargs["diagnostics"]["window_days"] == 270
     assert record.call_args.kwargs["attempt_status"] == "SKIPPED"
     assert "serving_version" not in record.call_args.kwargs
+    assert result.status == "SKIPPED"
+    assert result.reason_code == "NO_CANDIDATE_PASSED_GUARDRAILS"
+    assert result.diagnostics == record.call_args.kwargs["diagnostics"]
+    assert result.diagnostics["selection"] == candidate_evaluations

@@ -132,22 +132,23 @@ def process_tenant(
             if lease_guard is not None:
                 lease_guard()
             reason = evaluation.selection.selection_reason
+            skip_diagnostics = {
+                "selection": evaluation.selection.candidate_evaluations,
+                "source_snapshot_id": features.source_snapshot_id,
+                "window_days": window_days,
+            }
             _record_status(
                 lease_fence=lease_fence,
                 tenant_id=tenant_id,
                 attempt_status="SKIPPED",
                 reason_code=reason,
                 reason_detail="No Tabular candidate passed selection guardrails.",
-                diagnostics={
-                    "selection": evaluation.selection.candidate_evaluations,
-                    "source_snapshot_id": features.source_snapshot_id,
-                    "window_days": window_days,
-                },
+                diagnostics=skip_diagnostics,
                 run_id=run_id,
             )
             return TenantStageResult.skipped(
                 reason,
-                diagnostics={"window_days": window_days},
+                diagnostics=skip_diagnostics,
             )
 
         serving_fit = fit_selected_for_serving(features, selected, policy)
