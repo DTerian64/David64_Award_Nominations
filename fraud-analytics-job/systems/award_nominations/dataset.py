@@ -5,15 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 from integrity_data import IntegrityDataset, build_snapshot, validate_dataset
-from source_adapters.award_nominations import AwardNominationAdapter
-from source_adapters.award_nominations.capabilities import (
+from systems.award_nominations.source import AwardNominationAdapter
+from systems.award_nominations.source.capabilities import (
     AWARD_NOMINATION_CAPABILITIES,
 )
-from source_adapters.award_nominations.connection import connect as connect_award
+from systems.award_nominations.source.connection import connect as connect_award
 from source_adapters.contracts import SourceReadRequest
 
-from .db import connect as connect_sentinel
-from .outcomes import load_outcome_labels
+from integrity_sentinel.db import connect as connect_sentinel
+from integrity_sentinel.outcomes import load_outcome_labels
 
 
 def load_award_nomination_dataset(

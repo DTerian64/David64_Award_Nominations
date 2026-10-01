@@ -18,7 +18,7 @@ sys.path.insert(0, str(root / "integrity-check"))
 from inference import random_forest_check as live
 from utils import db
 sys.path.append(str(root / "fraud-analytics-job"))
-from feature_builders.tabular.award_nomination_tabular_v1 import (
+from systems.award_nominations.features.tabular.award_nomination_tabular_v1 import (
     TABULAR_V1_FEATURE_COLUMNS, add_semantic_features, extract_features,
 )
 

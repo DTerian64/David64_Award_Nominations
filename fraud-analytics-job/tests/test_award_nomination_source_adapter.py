@@ -13,12 +13,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from integrity_data import DatasetValidationError, IntegrityDataset, validate_dataset
-from source_adapters.award_nominations.capabilities import (
+from systems.award_nominations.source.capabilities import (
     AWARD_NOMINATION_CAPABILITIES,
 )
-from source_adapters.award_nominations.map import map_award_nomination_rows
-from source_adapters.award_nominations.extract import fetch_nominations
-from source_adapters.award_nominations.live_smoke import summarize_dataset
+from systems.award_nominations.source.map import map_award_nomination_rows
+from systems.award_nominations.source.extract import fetch_nominations
+from systems.award_nominations.source.live_smoke import summarize_dataset
 from source_adapters.contracts import SourceReadRequest
 
 

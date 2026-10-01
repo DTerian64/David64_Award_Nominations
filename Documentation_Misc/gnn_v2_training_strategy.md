@@ -729,7 +729,7 @@ need to be captured during the synthetic evaluation run.
 |---|---|
 | Tenant graph, features, temporal folds, serving snapshot | `fraud-analytics-job/modeling/gnn/graph.py` |
 | Candidate encoders, decoder, rolling optimization, metrics | `fraud-analytics-job/modeling/gnn/model.py` |
-| Gates, labels, candidate bake-off, winner refit and activation | `fraud-analytics-job/modeling/train_gnn_model.py` |
+| Gates, labels, candidate bake-off, winner refit and activation | `fraud-analytics-job/systems/award_nominations/modeling/gnn.py` |
 | Canonical model-neutral label contract | `fraud-analytics-job/modeling/labels.py` |
 | Synthetic-label provenance schema | `schema-migration/alembic/versions/0060_synthetic_training_labels.py` |
 | Synthetics Inc. dry-run generator | `scripts/synthetic_tenant/` |

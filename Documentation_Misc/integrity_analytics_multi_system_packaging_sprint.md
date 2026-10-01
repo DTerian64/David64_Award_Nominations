@@ -1,6 +1,6 @@
 # Integrity Analytics Multi-System Packaging Sprint
 
-**Status:** Approved for implementation  
+**Status:** Implemented locally; sandbox validation pending
 **Decision date:** 2026-09-30  
 **Applies to:** `fraud-analytics-job`  
 **Initial system:** Award Nomination  
@@ -220,7 +220,7 @@ This sprint is a behavior-preserving package migration for Award Nomination.
 - move Award dataset assembly out of `integrity_sentinel` and into the Award
   pipeline;
 - update `run_job.py` stage registration to use the new system package;
-- retain temporary compatibility imports for existing callers and tests;
+- update existing callers and tests in the same coordinated cutover;
 - add dependency-boundary tests; and
 - update architecture documentation and operational commands.
 
@@ -272,20 +272,13 @@ acceptable. Generic detector or training code should be extracted only when
 the separation is clear and can be covered by tests; speculative abstractions
 are not required.
 
-## 9. Compatibility strategy
+## 9. Cutover strategy
 
-Temporary wrappers may preserve imports such as:
-
-```text
-modeling.graph_analytics
-modeling.train_tabular_model
-modeling.train_gnn_model
-source_adapters.award_nominations
-```
-
-Production stage registration must use the new `systems.award_nominations`
-paths. Compatibility modules must contain no implementation or SQL and should
-be marked for removal after all callers have migrated.
+This sandbox migration uses a strict one-step package cutover. Production,
+tests, scripts, and operational documentation import Award functionality only
+through `systems.award_nominations`. The former Award-specific modules under
+`source_adapters`, `feature_builders`, `modeling`, `misc_jobs`, and
+`integrity_sentinel` are removed rather than retained as compatibility aliases.
 
 Model classes that are serialized into serving artifacts must not be moved
 merely for package symmetry. Python pickle records module paths; moving a
@@ -312,8 +305,8 @@ The sprint is complete when:
 10. Terraform configuration remains unchanged unless a package path affects the
     image build or runtime command.
 11. A container image imports every production stage successfully.
-12. Compatibility wrappers contain no business logic and have an identified
-    removal milestone.
+12. Legacy Award module paths are absent and repository callers use the new
+    system package directly.
 
 ## 11. Verification plan
 
@@ -334,7 +327,7 @@ The sprint is complete when:
 |---|---|
 | Import cycles between system, Sentinel, and modeling packages | Enforce the dependency direction with import-boundary tests |
 | Pickled artifacts reference moved Python classes | Keep serialized model and preprocessing classes at stable shared paths |
-| Compatibility wrappers hide incomplete migration | Production registry uses only new paths; wrappers are implementation-free |
+| Stale imports survive the package migration | Boundary tests assert that legacy alias files are absent |
 | Tests monkeypatch old module globals | Patch the owning module and add new-path import tests |
 | Dataset hashes change unintentionally | Preserve adapter identity and canonical records; compare snapshot tests |
 | Generic code is duplicated into the Award package | Move only source-specific orchestration; retain proven reusable algorithms |
@@ -421,3 +414,15 @@ This sprint ends after the Award Nomination pipeline is operating from its new
 vertical package with unchanged behavior. Source-aware schemas, a second
 adapter, and cross-system modeling begin only in their corresponding follow-on
 phases.
+
+## 16. Implementation note
+
+The package migration was implemented on 2026-09-30. Production stage
+registration and all repository callers now use `systems.award_nominations`;
+legacy alias modules were removed. Graph and GNN persistence was separated into
+`integrity_sentinel.graph_store` and `integrity_sentinel.gnn_store`, keeping
+all `integrity.*` and `ops.*` SQL under Sentinel ownership.
+
+One sandbox execution still needs to validate every tenant stage and both
+global preparation steps. Local verification completed after the strict cutover
+with all 173 `fraud-analytics-job` tests passing.

@@ -7,7 +7,7 @@ import pickle
 
 import pytest
 
-from modeling import train_tabular_model
+from systems.award_nominations.modeling import tabular as train_tabular_model
 from modeling.tabular import evaluate_tabular_candidates
 from modeling.tabular.artifacts import write_tabular_bundle
 from modeling.tabular.serving import fit_selected_for_serving

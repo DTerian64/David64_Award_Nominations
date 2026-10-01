@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modeling.gnn import graph as G
+from systems.award_nominations.features.gnn import graph as G
 from modeling.gnn.model import (
     CANDIDATE_ARCHITECTURES,
     build_candidate,

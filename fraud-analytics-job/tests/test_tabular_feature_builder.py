@@ -11,16 +11,16 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from feature_builders.tabular.award_nomination_tabular_v1 import (
+from systems.award_nominations.features.tabular.award_nomination_tabular_v1 import (
     AWARD_NOMINATION_TABULAR_V1_SCHEMA,
     AwardNominationTabularV1FeatureBuilder,
     build_nomination_frame,
     extract_features,
 )
-from source_adapters.award_nominations.capabilities import (
+from systems.award_nominations.source.capabilities import (
     AWARD_NOMINATION_CAPABILITIES,
 )
-from source_adapters.award_nominations.map import map_award_nomination_rows
+from systems.award_nominations.source.map import map_award_nomination_rows
 from source_adapters.contracts import SourceReadRequest
 
 

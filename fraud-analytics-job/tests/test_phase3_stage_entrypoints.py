@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from modeling import forecast_models
+from systems.award_nominations.forecasting import models as forecast_models
 from utils.stage_result import TenantStageResult
 
 
@@ -98,4 +98,3 @@ def test_stage_result_distinguishes_policy_skip_from_failure():
     assert skipped.reason_code == "BELOW_MINIMUM_VOLUME"
     assert succeeded.status == "SUCCEEDED"
     assert succeeded.published_version == "model-v1"
-

@@ -11,7 +11,7 @@ that back the fraud-analytics-job weekly pipeline.
 
 The pipeline runs two stages:
   1. modeling/train_rf_model.py — Random Forest retrain → dbo.FraudScores
-  2. modeling/graph_analytics.py — graph + NLP detection → dbo.GraphPatternFindings
+  2. systems/award_nominations/modeling/graph.py — graph + NLP detection
 
 Changes
 -------

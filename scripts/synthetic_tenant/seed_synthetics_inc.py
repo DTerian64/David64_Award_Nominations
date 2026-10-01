@@ -143,7 +143,7 @@ def main() -> int:
         from .audit_v6 import _production_imports
         _production_imports()
         from .database import connect_from_environment, inspect_existing_configuration
-        from modeling.graph_analytics import _load_active_graph_policy
+        from systems.award_nominations.modeling.graph import _load_active_graph_policy
         connection = connect_from_environment()
         try:
             destination = inspect_existing_configuration(connection)
@@ -325,7 +325,7 @@ def _run_v6(args) -> int:
         _load_environment()
         from .database import connect_from_environment, inspect_existing_configuration, provision_corpus
         _production_imports()
-        from modeling.graph_analytics import _load_active_graph_policy
+        from systems.award_nominations.modeling.graph import _load_active_graph_policy
         connection = connect_from_environment()
         try:
             result = inspect_existing_configuration(connection)

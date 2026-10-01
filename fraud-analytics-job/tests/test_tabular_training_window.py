@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 import pytest
-from modeling import train_tabular_model as trainer
-from utils.tenant_model_config import get_tenant_tabular_window
+from systems.award_nominations.modeling import tabular as trainer
+from systems.award_nominations.source.tenant_config import get_tenant_tabular_window
 
 
 @pytest.mark.parametrize("stored,expected", [(None, 365), (180, 180), (365, 365)])

@@ -3,7 +3,7 @@ Random Forest Model Cache — Multi-Tenant Blob-Direct Edition
 =============================================================
 
 One selected Tabular model per tenant is trained by
-modeling/train_tabular_model.py and stored in Azure Blob Storage as immutable
+systems/award_nominations/modeling/tabular.py and stored in Azure Blob Storage as immutable
 tenant-first bundles:
     ml-models/tenant_1/tabular/<ServingVersion>/serving/model.pkl
     ml-models/tenant_2/tabular/<ServingVersion>/serving/model.pkl
@@ -191,7 +191,7 @@ class RandomForestModelCache:
             if isinstance(exc, ResourceNotFoundError):
                 logger.warning(
                     "[Tenant %d] RF model blob not found: %s/%s. "
-                    "Run modeling/train_tabular_model.py to generate it.",
+                    "Run the Award Nomination Tabular stage to generate it.",
                     tenant_id, container_name,
                     self._blob_name(tenant_id, model_version),
                 )
@@ -258,7 +258,7 @@ class RandomForestModelCache:
             else:
                 logger.warning(
                     "[Tenant %d] ⚠️  Model unavailable — returning None. "
-                    "Run modeling/train_tabular_model.py to generate a per-tenant model.",
+                    "Run the Award Nomination Tabular stage to generate a per-tenant model.",
                     tenant_id,
                 )
             return model

@@ -8,7 +8,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from modeling import labels
+from systems.award_nominations.features import labels
 
 
 class HumanConfirmedLabelTests(unittest.TestCase):

@@ -11,7 +11,7 @@ graph signals at both training time and inference time without scanning the JSON
 columns of dbo.GraphPatternFindings.
 
 dbo.UserGraphFlags — one row per (TenantId, UserId, AsOfDate).
-  Populated by modeling/graph_analytics.py after each weekly run. The batch job
+  Populated by systems/award_nominations/modeling/graph.py after each weekly run. The batch job
   APPENDS a new row rather than overwriting, producing a time-series of snapshots.
 
   At training time, modeling/train_rf_model.py uses a point-in-time OUTER APPLY to

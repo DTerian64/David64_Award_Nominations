@@ -1,7 +1,7 @@
 """Each batch detector sees its own interval, and publication records it."""
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
-from modeling import graph_analytics as graph
+from systems.award_nominations.modeling import graph
 
 
 def test_batch_dispatch_and_snapshot_keep_detector_specific_windows(monkeypatch):

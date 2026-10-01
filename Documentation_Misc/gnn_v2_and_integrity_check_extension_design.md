@@ -154,7 +154,7 @@ The main current code is in:
 
 - `fraud-analytics-job/modeling/gnn/graph.py`
 - `fraud-analytics-job/modeling/gnn/model.py`
-- `fraud-analytics-job/modeling/train_gnn_model.py`
+- `fraud-analytics-job/systems/award_nominations/modeling/gnn.py`
 - `integrity-check/inference/gnn_check.py`
 
 However, much of the feature set mirrors RF feature engineering:

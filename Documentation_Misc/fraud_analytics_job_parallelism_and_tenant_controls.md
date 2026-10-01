@@ -827,8 +827,8 @@ entry points introduced here preserve a future migration path to queued workers.
 - sandbox environment variable wiring and values
 - new Alembic migration for the `ops` schema and three job-run tables
 - `fraud-analytics-job/run_job.py`
-- `fraud-analytics-job/modeling/graph_analytics.py`
-- `fraud-analytics-job/misc_jobs/sync_holidays.py`
+- `fraud-analytics-job/systems/award_nominations/modeling/graph.py`
+- `fraud-analytics-job/systems/award_nominations/forecasting/holidays.py`
 - tenant discovery/configuration helpers
 - backend Setup router and SQL helpers
 - frontend `SetupPanel.tsx`

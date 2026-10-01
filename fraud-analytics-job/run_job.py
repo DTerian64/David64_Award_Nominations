@@ -50,9 +50,9 @@ logger = logging.getLogger("fraud_analytics_job")
 
 # ── Path setup ───────────────────────────────────────────────────────────────
 # WORKDIR in the container is /app, which is also the build context
-# (fraud-analytics-job/). Modeling stages live in the modeling package; shared
-# infrastructure lives in utils. The full job directory is copied into the
-# image, so dotted package imports work without cross-directory COPY steps.
+# (fraud-analytics-job/). Production stages live in the Award system package;
+# infrastructure lives in the top-level shared packages. The full job directory
+# is copied into the image, so dotted imports need no cross-directory COPY steps.
 JOB_DIR = Path(__file__).parent.resolve()   # /app  (same dir as this file)
 sys.path.insert(0, str(JOB_DIR))
 
@@ -62,12 +62,17 @@ from integrity_sentinel.analytics_coordinator import (  # noqa: E402
     new_worker_id,
 )
 from integrity_sentinel.db import connect as connect_integrity_sentinel  # noqa: E402
-from source_adapters.award_nominations.connection import (  # noqa: E402
+from systems.award_nominations.source.connection import (  # noqa: E402
     connect as connect_award_source,
 )
-from source_adapters.award_nominations.tenant_config import (  # noqa: E402
+from systems.award_nominations.source.tenant_config import (  # noqa: E402
     get_tenants,
     tenant_is_enabled,
+)
+from systems.award_nominations.pipeline import (  # noqa: E402
+    GLOBAL_PREPARATION_MODULES,
+    STANDALONE_STAGES,
+    TENANT_STAGES,
 )
 from utils.stage_result import TenantStageResult  # noqa: E402
 
@@ -221,24 +226,12 @@ def run_stage(name: str, module_path: str, tenants_to_process: list | None = Non
 # ── Stage registries ─────────────────────────────────────────────────────────
 # Full executions use TENANT_STAGES in tenant-major order. STAGES preserves the
 # standalone --only/--tenant harness used for local analysis and recovery.
-TENANT_STAGES = [
-    {"key": "graph_analytics", "stage": "GRAPH", "label": "Graph Analytics", "module": "integrity_sentinel.graph_analytics"},
-    {"key": "train_tabular_model", "stage": "TABULAR", "label": "Tabular model training", "module": "modeling.train_tabular_model"},
-    {"key": "train_gnn_model", "stage": "GNN", "label": "GNN model training", "module": "integrity_sentinel.train_gnn_model"},
-    {"key": "forecast_models", "stage": "FORECAST", "label": "Forecast models", "module": "source_adapters.award_nominations.forecast_models"},
-]
-
 STAGES = [
-    {"key": "graph_analytics", "label": "Graph Analytics",   "module": "integrity_sentinel.graph_analytics", "post": None},
-    {"key": "train_tabular_model", "label": "Tabular model training", "module": "modeling.train_tabular_model", "post": notify_api_refresh},
-    # GNN training follows the independent Tabular stage so a failure in either
-    # model family cannot block the other — run_stage()'s per-stage try/except
-    # gives that isolation. No post-hook: the backend does not consume the GNN, so
-    # /api/internal/refresh-fraud-model is irrelevant to it; integrity-check streams
-    # the decoder itself on first use per tenant.
-    {"key": "train_gnn_model",        "label": "GNN model training",       "module": "integrity_sentinel.train_gnn_model", "post": None},
-    {"key": "sync_holidays",          "label": "Holiday sync",             "module": "source_adapters.award_nominations.sync_holidays", "post": None},
-    {"key": "forecast_models",        "label": "Forecast models",          "module": "source_adapters.award_nominations.forecast_models", "post": None},
+    {
+        **stage,
+        "post": notify_api_refresh if stage["key"] == "train_tabular_model" else None,
+    }
+    for stage in STANDALONE_STAGES
 ]
 _STAGE_KEYS = [s["key"] for s in STAGES]
 
@@ -298,8 +291,8 @@ def _stage_run_id(run_id: str, tenant_id: int, stage: str) -> str:
 
 
 def run_global_preparation(lease_guard: Callable[[], None]) -> None:
-    graph = importlib.import_module("integrity_sentinel.graph_analytics")
-    holidays = importlib.import_module("source_adapters.award_nominations.sync_holidays")
+    graph = importlib.import_module(GLOBAL_PREPARATION_MODULES[0])
+    holidays = importlib.import_module(GLOBAL_PREPARATION_MODULES[1])
     graph.prepare_global(lease_guard=lease_guard)
     lease_guard()
     holidays.prepare_global(lease_guard=lease_guard)

@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from feature_builders import TabularFeatureDataset
-from feature_builders.tabular import AWARD_NOMINATION_TABULAR_V1_SCHEMA
+from systems.award_nominations.features.tabular import AWARD_NOMINATION_TABULAR_V1_SCHEMA
 from feature_builders.tabular.category_encoding import CategoryFraudRateEncoder
 from modeling.tabular import TabularTrainingPolicy, train_random_forest_candidate
 from modeling.tabular import random_forest as random_forest_module

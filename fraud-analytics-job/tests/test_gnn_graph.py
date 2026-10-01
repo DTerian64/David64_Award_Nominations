@@ -28,8 +28,8 @@ sys.path.insert(
     ),
 )
 
-from modeling.gnn import graph as G
-from feature_builders.source_views import gnn_nomination_rows
+from systems.award_nominations.features.gnn import graph as G
+from systems.award_nominations.features.source_views import gnn_nomination_rows
 from tests.synthetic import make_tenant, make_two_tenants
 
 

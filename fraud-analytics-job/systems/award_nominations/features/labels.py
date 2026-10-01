@@ -40,7 +40,7 @@ import logging
 
 import pandas as pd
 from integrity_data import IntegrityDataset
-from feature_builders.source_views import label_frame
+from systems.award_nominations.features.source_views import label_frame
 
 logger = logging.getLogger(__name__)
 

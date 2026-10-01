@@ -18,13 +18,15 @@ from typing import Any, Sequence
 
 from sentence_transformers import SentenceTransformer
 
-from feature_builders.tabular import AwardNominationTabularV1FeatureBuilder
-from integrity_sentinel.datasets import load_award_nomination_dataset
+from systems.award_nominations.features.tabular import (
+    AwardNominationTabularV1FeatureBuilder,
+)
+from systems.award_nominations.dataset import load_award_nomination_dataset
 from integrity_sentinel.db import connect as connect_sentinel
 from modeling.tabular import evaluate_tabular_candidates
-from source_adapters.award_nominations.connection import connect as connect_award
-from source_adapters.award_nominations.live_smoke import _load_environment
-from source_adapters.award_nominations.tenant_config import (
+from systems.award_nominations.source.connection import connect as connect_award
+from systems.award_nominations.source.live_smoke import _load_environment
+from systems.award_nominations.source.tenant_config import (
     get_tenant_embed_model,
     get_tenant_tabular_window,
 )

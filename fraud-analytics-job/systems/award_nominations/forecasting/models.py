@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 
 # Same .env loading as the other modeling jobs so this
 # stage can be run standalone locally. No-op in Container Apps (env injected).
-JOB_DIR = Path(__file__).resolve().parents[2]
+JOB_DIR = Path(__file__).resolve().parents[3]
 env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
@@ -67,10 +67,10 @@ _HOLIDAY_SET: set = set()
 
 # ── DB ──────────────────────────────────────────────────────────────────────────
 
-from source_adapters.award_nominations.connection import connect  # noqa: E402
+from systems.award_nominations.source.connection import connect  # noqa: E402
 from integrity_sentinel.analytics_coordinator import LeaseLostError  # noqa: E402
 from utils.stage_result import TenantStageResult  # noqa: E402
-from source_adapters.award_nominations.tenant_config import (  # noqa: E402
+from systems.award_nominations.source.tenant_config import (  # noqa: E402
     get_tenants as get_enabled_tenants,
 )
 

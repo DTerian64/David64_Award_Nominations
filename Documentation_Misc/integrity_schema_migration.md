@@ -84,7 +84,7 @@ Historical migrations are an immutable record and must not be edited. The physic
 | Component | Representative location | Required change |
 |---|---|---|
 | Backend API and agent tools | `backend/utils/sqlhelper2.py` and backend tool/prompt modules | Use the configured integrity schema for all in-scope objects |
-| Analytics job | `fraud-analytics-job/modeling/graph_analytics.py` and model stages | Use the configured integrity schema; retain `ops` for run history |
+| Analytics job | `fraud-analytics-job/systems/award_nominations/modeling/graph.py` and model stages | Use the configured integrity schema; retain `ops` for run history |
 | Integrity check worker | `integrity-check/utils/db.py` | Use the configured integrity schema for reads and writes |
 | Integrity check extension | `integrity-check-extension/utils/db.py` | Use the configured integrity schema for reads and writes |
 | Auxiliary service | `auxiliary-service/utils/db.py` | Update integrity/model reads |

@@ -10,9 +10,9 @@ def _python_sources(folder: Path):
     return (path for path in folder.rglob("*.py") if "tests" not in path.parts)
 
 
-def test_award_dbo_references_are_owned_by_award_adapter():
+def test_award_dbo_references_are_owned_by_award_system():
     violations = []
-    allowed = ROOT / "source_adapters" / "award_nominations"
+    allowed = ROOT / "systems" / "award_nominations"
     for path in _python_sources(ROOT):
         if allowed in path.parents:
             continue

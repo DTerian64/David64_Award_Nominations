@@ -32,7 +32,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 # Same .env loading as the other stages so this can be run standalone locally.
-JOB_DIR = Path(__file__).resolve().parents[2]
+JOB_DIR = Path(__file__).resolve().parents[3]
 env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
@@ -44,7 +44,7 @@ YEARS_AHEAD = 1
 NAGER_URL = "https://date.nager.at/api/v3/PublicHolidays/{year}/{cc}"
 
 
-from source_adapters.award_nominations.connection import connect  # noqa: E402
+from systems.award_nominations.source.connection import connect  # noqa: E402
 
 
 def get_db_connection():

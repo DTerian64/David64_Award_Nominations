@@ -12,7 +12,9 @@ from typing import Callable
 from integrity_engine.artifact_paths import tabular_bundle_prefix
 from sentence_transformers import SentenceTransformer
 
-from feature_builders.tabular import AwardNominationTabularV1FeatureBuilder
+from systems.award_nominations.features.tabular import (
+    AwardNominationTabularV1FeatureBuilder,
+)
 from modeling.tabular import (
     TabularTrainingPolicy,
     evaluate_tabular_candidates,
@@ -20,14 +22,14 @@ from modeling.tabular import (
 from modeling.tabular.artifacts import write_tabular_bundle
 from modeling.tabular.serving import fit_selected_for_serving
 from source_adapters.contracts import SourceReadRequest
-from integrity_sentinel.datasets import load_award_nomination_dataset
+from systems.award_nominations.dataset import load_award_nomination_dataset
 from integrity_sentinel.component_status import upsert_component_status
 from integrity_sentinel.db import connect as connect_sentinel
 from integrity_sentinel.analytics_coordinator import LeaseLostError
-from source_adapters.award_nominations.connection import connect as connect_award
+from systems.award_nominations.source.connection import connect as connect_award
 from utils.model_artifacts import upload_artifact
 from utils.stage_result import TenantStageResult
-from source_adapters.award_nominations.tenant_config import (
+from systems.award_nominations.source.tenant_config import (
     get_tenant_embed_model,
     get_tenant_name,
     get_tenants,
@@ -36,7 +38,7 @@ from source_adapters.award_nominations.tenant_config import (
 
 
 logger = logging.getLogger(__name__)
-OUTPUT_DIR = Path(__file__).resolve().parents[1] / "Output"
+OUTPUT_DIR = Path(__file__).resolve().parents[3] / "Output"
 
 
 def _publish_bundle(

@@ -465,7 +465,7 @@ def _risk_level(score: int) -> str:
     return "NONE"
 
 
-# ── FindingHash — must match modeling.graph_analytics._fingerprint() exactly ─
+# ── FindingHash — must match the Award system Graph stage fingerprint exactly ─
 
 def _fingerprint(
     tenant_id:      int,

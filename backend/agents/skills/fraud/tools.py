@@ -28,7 +28,7 @@ async def _get_fraud_model_info(tenant_id: int = 0) -> dict[str, Any]:
             "tenant_id": tenant_id,
             "message": (
                 f"No fraud detection model loaded for tenant {tenant_id}. "
-                "Run modeling/train_tabular_model.py to publish a serving bundle."
+                "Run the Award Nomination Tabular stage to publish a serving bundle."
             ),
         }
 

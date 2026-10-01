@@ -6,8 +6,9 @@ import json
 
 import pandas as pd
 
-from source_adapters.award_nominations import tenant_config as award_tenant_config
-from utils import model_artifacts, tenant_model_config
+from systems.award_nominations.source import tenant_config as award_tenant_config
+from systems.award_nominations.source import tenant_config as tenant_model_config
+from utils import model_artifacts
 
 
 class _Cursor:

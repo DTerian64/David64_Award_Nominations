@@ -12,7 +12,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modeling.gnn import graph as G
+from systems.award_nominations.features.gnn import graph as G
 from modeling.gnn.evaluators.graph_value_by_ablation import evaluate_graph_value
 from modeling.gnn.evaluators.graph_value_by_ablation.feature_profiles import (
     MLP_TABULAR,

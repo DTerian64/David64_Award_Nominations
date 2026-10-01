@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Feature specs ─────────────────────────────────────────────────────────────
-# Declared as module constants so modeling/train_gnn_model.py can persist them into the
+# Declared as module constants so the Award GNN stage can persist them into the
 # artifact and gnn_check.py can assert the inference-time layout matches.
 
 FEATURE_SCHEMA_VERSION = CAUSAL_FEATURE_SCHEMA_VERSION

@@ -6,7 +6,7 @@ loads canonical snapshots, validates them, and prints aggregate diagnostics.
 
 Example
 -------
-python -m source_adapters.award_nominations.live_smoke \
+python -m systems.award_nominations.source.live_smoke \
     --tenant 5 --tenant 1 --window-days 365
 """
 
@@ -23,7 +23,7 @@ from typing import Any, Sequence
 from dotenv import load_dotenv
 
 from integrity_data import IntegrityDataset
-from source_adapters.award_nominations import AwardNominationAdapter
+from systems.award_nominations.source import AwardNominationAdapter
 from source_adapters.contracts import SourceReadRequest
 
 
@@ -38,7 +38,7 @@ def _parse_utc(value: str) -> datetime:
 
 
 def _load_environment() -> None:
-    job_dir = Path(__file__).resolve().parents[2]
+    job_dir = Path(__file__).resolve().parents[3]
     load_dotenv(job_dir / ".env", override=False)
     load_dotenv(job_dir.parent / ".env", override=False)
 
@@ -131,7 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Import only after .env loading because db_conn constructs its credential at
     # module import time. This command performs SELECTs only and never commits.
-    from source_adapters.award_nominations.connection import connect
+    from systems.award_nominations.source.connection import connect
 
     as_of = args.as_of or datetime.now(timezone.utc)
     adapter = AwardNominationAdapter()

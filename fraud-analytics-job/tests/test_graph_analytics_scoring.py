@@ -5,9 +5,9 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from modeling import graph_analytics as graph
-from feature_builders.source_views import graph_nomination_rows
-from source_adapters.award_nominations.tenant_config import get_maximum_graph_window
+from systems.award_nominations.modeling import graph
+from systems.award_nominations.features.source_views import graph_nomination_rows
+from systems.award_nominations.source.tenant_config import get_maximum_graph_window
 
 
 POLICY = {

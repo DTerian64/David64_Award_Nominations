@@ -1,1 +1,1 @@
-"""GNN graph construction, model, policy, selection, and artifact support."""
+"""Shared GNN models, evaluation, selection, and artifact support."""

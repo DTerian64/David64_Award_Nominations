@@ -1,6 +1,6 @@
 """Analytics-only participation findings must not become fraud routing evidence."""
 
-from modeling import graph_analytics as graph
+from systems.award_nominations.modeling import graph
 
 
 def test_low_recognition_nominator_has_counts_and_no_routing():

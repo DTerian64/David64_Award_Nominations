@@ -1,8 +1,8 @@
 # fraud-analytics-job/requirements.txt
 # ─────────────────────────────────────────────────────────────────────────────
 # Combined dependencies for:
-#   modeling/train_tabular_model.py                 (RF + Tabular MLP pipeline)
-#   modeling/graph_analytics.py                     (Graph + NLP pipeline)
+#   systems/award_nominations/modeling/tabular.py  (RF + Tabular MLP pipeline)
+#   systems/award_nominations/modeling/graph.py    (Graph + NLP pipeline)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Data / ML ─────────────────────────────────────────────────────────────────
@@ -11,12 +11,12 @@ numpy>=1.24.0
 scikit-learn==1.8.0
 matplotlib>=3.8.0
 
-# ── Forecasting (modeling/forecast_models.py stage) ──────────────────────────
+# ── Award forecasting (systems/award_nominations/forecasting/models.py) ─────
 # statsmodels → ETS / Holt-Winters; lightgbm → gradient-boosted lag-feature model
 statsmodels>=0.14.0
 lightgbm>=4.0.0
 
-# ── Holiday sync (misc_jobs/sync_holidays.py stage) ──────────────────────────
+# ── Award holiday sync (systems/award_nominations/forecasting/holidays.py) ───
 # Offline fallback when the Nager.Date API is unreachable.
 holidays>=0.50
 
@@ -32,7 +32,7 @@ networkx>=3.2.0
 torch>=2.2.0
 sentence-transformers>=2.6.0
 
-# ── GNN — third fraud model (modeling/train_gnn_model.py stage) ──────────────
+# ── GNN — Award stage (systems/award_nominations/modeling/gnn.py) ────────────
 # Depends on the CPU-only torch pinned above; must stay below it in this file
 # so pip resolves torch from the CPU index first.
 #

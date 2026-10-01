@@ -1,5 +1,5 @@
 """
-integrity_sentinel/graph_analytics.py
+systems/award_nominations/modeling/graph.py
 ==================
 Stage 1 of the fraud-analytics-job pipeline.
 
@@ -60,11 +60,25 @@ from integrity_engine.graph.history_windows import detector_windows, filter_dete
 
 from integrity_sentinel.component_status import upsert_component_status
 from integrity_sentinel.analytics_coordinator import LeaseLostError
-from integrity_sentinel.datasets import load_award_nomination_dataset
+from integrity_sentinel.graph_store import (
+    GRAPH_FINDINGS_TABLE,
+    evict_stale_nomination_embeddings as _evict_stale_embeddings,
+    load_active_graph_policy as _load_active_graph_policy,
+    load_cached_nomination_embeddings as _load_cached_embeddings,
+    lock_graph_component,
+    populate_graph_flag_snapshot as _populate_graph_flag_snapshots,
+    read_graph_serving_version,
+    save_findings as _save_findings,
+    save_nomination_embeddings as _save_embeddings,
+)
+from systems.award_nominations.dataset import load_award_nomination_dataset
 from integrity_sentinel.graph_projection import replace_tenant_graph_projection
-from feature_builders.source_views import actor_rows, graph_nomination_rows
-from source_adapters.award_nominations.connection import connect as connect_award
-from source_adapters.award_nominations.tenant_config import (
+from systems.award_nominations.features.source_views import (
+    actor_rows,
+    graph_nomination_rows,
+)
+from systems.award_nominations.source.connection import connect as connect_award
+from systems.award_nominations.source.tenant_config import (
     get_maximum_graph_window,
     get_tenant_integrity_config,
     get_tenants as get_enabled_tenants,
@@ -74,13 +88,9 @@ from utils.stage_result import TenantStageResult
 
 # Same .env loading as the other modeling jobs so this stage
 # can be run standalone locally. No-op in Container Apps (env injected).
-JOB_DIR = Path(__file__).resolve().parents[1]
+JOB_DIR = Path(__file__).resolve().parents[3]
 env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
-
-# Permanent database contract. Schema migration 0072 moves this table from dbo
-# as part of the coordinated application/database cutover.
-GRAPH_FINDINGS_TABLE = "integrity.GraphPatternFindings"
 
 logger = logging.getLogger(__name__)
 
@@ -119,88 +129,6 @@ def _score_graph_detector_finding(
     severity = _derive_graph_finding_severity(score, policy["thresholds"])
     return score, severity, score_components
 
-
-def _load_active_graph_policy(
-    conn: pyodbc.Connection,
-    tenant_id: int,
-    default_window_days: int,
-    tenant_integrity_config: dict | None = None,
-) -> dict:
-    """Load scoring parameters plus the tenant's current Graph history window.
-
-    DetectionWindowDays in the policy table is legacy/staged policy data;
-    Tenants.integrity_config owns the operational detection window.
-    """
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT TOP 1 p.PolicyId, p.PolicyVersion, p.ScoringStrategy,
-               p.LowThreshold, p.MediumThreshold, p.HighThreshold, p.CriticalThreshold,
-               p.DetectionWindowDays, p.SnapshotMaxAgeDays
-        FROM integrity.GraphScoringPolicies p
-        WHERE p.TenantId = ? AND p.Status = 'ACTIVE'
-        ORDER BY p.PolicyVersion DESC
-    """, tenant_id)
-    row = cur.fetchone()
-    if not row:
-        raise RuntimeError(
-            f"Tenant {tenant_id} has no active Graph Analytics scoring policy"
-        )
-    tenant_integrity_config = tenant_integrity_config or {}
-    graph_config = tenant_integrity_config.get("graph_pattern")
-    if not isinstance(graph_config, dict):
-        graph_config = {}
-    configured_window = graph_config.get("detection_window_days")
-    window_days = (
-        configured_window
-        if isinstance(configured_window, int)
-        else int(row[7] or default_window_days)
-    )
-    if window_days <= 0:
-        raise ValueError(f"Tenant {tenant_id} Graph detection window must be positive")
-    policy = {
-        "policy_id": int(row[0]),
-        "version": int(row[1]),
-        "strategy": str(row[2]),
-        "thresholds": {
-            "low": float(row[3]), "medium": float(row[4]),
-            "high": float(row[5]), "critical": float(row[6]),
-        },
-        "detection_window_days": window_days,
-        "snapshot_max_age_days": int(row[8] or 14),
-        "patterns": {},
-    }
-    raw_detector_windows = graph_config.get("detector_windows")
-    policy["detector_windows"] = (
-        raw_detector_windows if isinstance(raw_detector_windows, dict) else {}
-    )
-    detector_windows(policy)
-    cur.execute("""
-        SELECT PatternType, Enabled, EnabledForRouting, ApplicableRolesJson,
-               BaseScore, MinimumScore, MaximumScore, ParametersJson,
-               CandidateEvaluationJson
-        FROM integrity.GraphScoringPatternParameters
-        WHERE PolicyId = ?
-    """, policy["policy_id"])
-    for item in cur.fetchall():
-        try:
-            roles = json.loads(item[3]) if item[3] else []
-            parameters = json.loads(item[7]) if item[7] else {}
-            candidate_evaluation = json.loads(item[8]) if item[8] else {}
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise RuntimeError(
-                f"Invalid Graph policy JSON for tenant {tenant_id}, pattern {item[0]}"
-            ) from exc
-        policy["patterns"][str(item[0])] = {
-            "enabled": bool(item[1]),
-            "enabled_for_routing": bool(item[2]),
-            "applicable_roles": roles,
-            "base_score": float(item[4]),
-            "minimum_score": float(item[5]),
-            "maximum_score": float(item[6]),
-            "parameters": parameters,
-            "candidate_evaluation": candidate_evaluation,
-        }
-    return policy
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
@@ -404,85 +332,6 @@ def _finding(
             "applicable_roles", ["nominator", "beneficiary"]
         )),
     }
-
-
-def _save_findings(
-    conn: pyodbc.Connection,
-    findings: list[dict],
-    table: str,
-) -> None:
-    """
-    Refresh existing evidence by hash; insert only previously unseen evidence.
-    RunId and DetectedAt identify the latest assessment, not an immutable archive.
-    The caller
-    commits it atomically with user snapshots and the completed-run status.
-    """
-    if not findings:
-        return
-
-    # Reassess recurring findings without adding another stored copy.
-    seen_this_run: set[str] = set()
-    new_findings:  list[dict] = []
-
-    for f in findings:
-        h = f["FindingHash"]
-        if h in seen_this_run:
-            continue          # duplicate within this run
-        seen_this_run.add(h)
-        new_findings.append(f)
-
-    skipped = len(findings) - len(new_findings)
-    logger.info(
-        "  Complete snapshot: %d candidate(s), %d unique, %d duplicates skipped.",
-        len(findings), len(new_findings), skipped,
-    )
-    if not new_findings:
-        logger.info("  No new findings to save.")
-        return
-
-    cur = conn.cursor()
-    sql = f"""
-        MERGE {table} WITH (HOLDLOCK) AS target
-        USING (SELECT ? AS TenantId, ? AS PatternType, ? AS Severity,
-                      ? AS AffectedUsers, ? AS NominationIds, ? AS Detail,
-                      ? AS DetectedAt, ? AS RunId, ? AS FindingHash,
-                      ? AS TotalAmount, ? AS FindingScore, ? AS ScoringPolicyVersion,
-                      ? AS ScoreComponentsJson) AS src
-        ON target.TenantId=src.TenantId AND target.FindingHash=src.FindingHash
-        WHEN MATCHED THEN UPDATE SET
-            Severity=src.Severity, Detail=src.Detail, DetectedAt=src.DetectedAt,
-            RunId=src.RunId, TotalAmount=src.TotalAmount, FindingScore=src.FindingScore,
-            ScoringPolicyVersion=src.ScoringPolicyVersion,
-            ScoreComponentsJson=src.ScoreComponentsJson, SnapshotComplete=0
-        WHEN NOT MATCHED THEN INSERT
-            (TenantId, PatternType, Severity, AffectedUsers, NominationIds, Detail,
-             DetectedAt, RunId, FindingHash, TotalAmount, FindingScore,
-             ScoringPolicyVersion, ScoreComponentsJson, SnapshotComplete)
-        VALUES (src.TenantId, src.PatternType, src.Severity, src.AffectedUsers,
-                src.NominationIds, src.Detail, src.DetectedAt, src.RunId, src.FindingHash,
-                src.TotalAmount, src.FindingScore, src.ScoringPolicyVersion,
-                src.ScoreComponentsJson, 0);
-    """
-    rows = [
-        (
-            f["TenantId"],
-            f["PatternType"],
-            f["Severity"],
-            f["AffectedUsers"],
-            f["NominationIds"],
-            f["Detail"],
-            f["DetectedAt"],
-            f["RunId"],
-            f["FindingHash"],
-            f.get("TotalAmount", 0),
-            f.get("FindingScore"),
-            f.get("ScoringPolicyVersion"),
-            f.get("ScoreComponentsJson"),
-        )
-        for f in new_findings
-    ]
-    cur.executemany(sql, rows)
-    logger.info("  Refreshed %d unique finding(s) in %s; existing hashes are updated, not inserted.", len(new_findings), table)
 
 
 # ── Rings ─────────────────────────────────────────────────────────────────────
@@ -1219,91 +1068,6 @@ def detect_low_recognition_nominators(
     return findings
 
 
-# ── Embedding cache helpers ───────────────────────────────────────────────────
-
-def _evict_stale_embeddings(conn: pyodbc.Connection, window_days: int) -> None:
-    """
-    Delete cached embeddings older than the longest active detection window.
-
-    Called once per job run — before per-tenant processing — to keep the
-    NomGraph_NominationEmbedding table bounded to roughly
-    Tenant Graph window × eligible nomination rate rows.
-    """
-    cur = conn.cursor()
-    cur.execute("""
-        DELETE FROM integrity.NomGraph_NominationEmbedding
-        WHERE EmbeddedAt < DATEADD(DAY, -?, SYSUTCDATETIME())
-    """, window_days)
-    deleted = cur.rowcount
-    conn.commit()
-    if deleted:
-        logger.info("Evicted %d stale embedding(s) from cache.", deleted)
-
-
-def _load_cached_embeddings(
-    conn: pyodbc.Connection,
-    nom_ids: list[int],
-) -> dict[int, np.ndarray]:
-    """
-    Return {NominationId: embedding_vector} for all IDs that already have a
-    cached row in NomGraph_NominationEmbedding.
-
-    Chunked into batches of 2 000 to stay within SQL Server's 2 100-parameter
-    limit per statement.
-    """
-    if not nom_ids:
-        return {}
-
-    result: dict[int, np.ndarray] = {}
-    cur = conn.cursor()
-    CHUNK = 2_000
-
-    for i in range(0, len(nom_ids), CHUNK):
-        batch = nom_ids[i : i + CHUNK]
-        placeholders = ",".join("?" * len(batch))
-        cur.execute(
-            f"SELECT NominationId, Embedding "
-            f"FROM   integrity.NomGraph_NominationEmbedding "
-            f"WHERE  NominationId IN ({placeholders})",
-            batch,
-        )
-        for row in cur.fetchall():
-            # pyodbc returns VARBINARY as memoryview; bytes() converts it
-            result[row[0]] = np.frombuffer(bytes(row[1]), dtype=np.float32).copy()
-
-    return result
-
-
-def _save_embeddings(
-    conn: pyodbc.Connection,
-    embeddings: dict[int, np.ndarray],
-) -> None:
-    """
-    Persist newly computed embedding vectors to the cache table.
-
-    Uses INSERT … WHERE NOT EXISTS so a re-run that encounters a race
-    condition (two job instances starting simultaneously) is safe.
-    Each vector is stored as raw float32 bytes via tobytes().
-    """
-    if not embeddings:
-        return
-
-    cur = conn.cursor()
-    rows = [
-        (nom_id, vec.astype(np.float32).tobytes(), nom_id)
-        for nom_id, vec in embeddings.items()
-    ]
-    cur.executemany("""
-        INSERT INTO integrity.NomGraph_NominationEmbedding (NominationId, Embedding, EmbeddedAt)
-        SELECT ?, CAST(? AS VARBINARY(MAX)), GETUTCDATE()
-        WHERE  NOT EXISTS (
-            SELECT 1 FROM integrity.NomGraph_NominationEmbedding WHERE NominationId = ?
-        )
-    """, rows)
-    conn.commit()
-    logger.info("  Cached %d new embedding(s).", len(embeddings))
-
-
 # ── Copy-paste fraud ──────────────────────────────────────────────────────────
 
 def detect_copy_paste(
@@ -1575,92 +1339,6 @@ def detect_hidden_candidate(
     return findings
 
 
-# ── Complete Graph snapshot ──────────────────────────────────────────────────
-
-def _populate_graph_flag_snapshots(
-    conn: pyodbc.Connection,
-    tenant_id: int,
-    findings: list[dict],
-    as_of_date: str,
-    run_id: str,
-) -> None:
-    """Materialise one complete, evidence-rich Graph snapshot.
-
-    IntegrityComponentStatus is published in the same transaction and identifies
-    the latest successful run, including a clean run with zero findings.
-    UserGraphFlags contains only affected nominators and beneficiaries.
-    """
-    cur = conn.cursor()
-
-    active_findings = [
-        finding for finding in findings
-        if finding.get("PatternType") != "ApproverAffinity"
-    ]
-
-    user_flags: dict[int, list] = defaultdict(list)
-
-    for f in active_findings:
-        ptype    = f["PatternType"]
-        severity = f["Severity"]
-        users    = json.loads(f["AffectedUsers"])
-        nom_ids  = json.loads(f.get("NominationIds") or "[]")
-
-        evidence = {
-            "snapshot_run_id": run_id,
-            "finding_hash": f.get("FindingHash"),
-            "pattern_type": ptype,
-            "severity": severity,
-            "nomination_ids": nom_ids,
-            "detail": f.get("Detail"),
-            "total_amount": f.get("TotalAmount", 0),
-            "finding_score": float(f.get("FindingScore") or 0),
-            "scoring_policy_version": f.get("ScoringPolicyVersion"),
-            "score_components": json.loads(
-                f.get("ScoreComponentsJson") or "{}"
-            ),
-            "enabled_for_routing": bool(f.get("EnabledForRouting", True)),
-            "applicable_roles": list(f.get(
-                "ApplicableRoles", ["nominator", "beneficiary"]
-            )),
-        }
-
-        for uid in users:
-            user_flags[uid].append(evidence)
-    # A same-day rerun is a full replacement, not a partial merge.
-    cur.execute(
-        "DELETE FROM integrity.UserGraphFlags WHERE TenantId = ? AND AsOfDate = ?",
-        (tenant_id, as_of_date),
-    )
-
-    if user_flags:
-        rows_ugf = [
-            (
-                tenant_id,
-                uid,
-                as_of_date,
-                json.dumps(uf, separators=(",", ":"), allow_nan=False),
-            )
-            for uid, uf in user_flags.items()
-        ]
-
-        cur.executemany("""
-            INSERT INTO integrity.UserGraphFlags
-                (TenantId, UserId, AsOfDate, FindingsJson)
-            VALUES (?, ?, ?, ?)
-        """, rows_ugf)
-
-        logger.info(
-            "  UserGraphFlags: inserted %d affected-user row(s) for AsOfDate=%s",
-            len(rows_ugf), as_of_date,
-        )
-
-    logger.info(
-        "  Complete Graph snapshot staged for AsOfDate=%s (%d finding(s)); "
-        "component status will commit it atomically",
-        as_of_date, len(active_findings),
-    )
-
-
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def _process_tenant(
@@ -1697,7 +1375,9 @@ def _process_tenant(
             source_connection=source,
             sentinel_connection=conn,
         )
-        replace_tenant_graph_projection(conn, dataset)
+        users = actor_rows(dataset)
+        nominations = graph_nomination_rows(dataset)
+        replace_tenant_graph_projection(conn, tenant_id, users, nominations)
     finally:
         source.close()
     logger.info(
@@ -1705,12 +1385,10 @@ def _process_tenant(
         policy["version"], policy["strategy"], window_days,
     )
 
-    nominations = graph_nomination_rows(dataset)
     nominations = filter_detector_history(nominations, window_days, as_of)
     scoped = {name: filter_detector_history(nominations, days, as_of)
               for name, days in windows.items()}
     logger.info("  Graph detector windows: %s", windows)
-    users = actor_rows(dataset)
     ever_active_ids = {
         user["UserId"] for user in users if user["EverActiveBeforeAsOf"]
     }
@@ -1789,10 +1467,7 @@ def _process_tenant(
     if lease_fence is not None:
         lease_fence(conn)
     # Same lock order as inference: serving marker before user snapshot rows.
-    conn.cursor().execute("""
-        SELECT TenantId FROM integrity.IntegrityComponentStatus WITH (UPDLOCK, HOLDLOCK)
-        WHERE TenantId=? AND Component='GRAPH'
-    """, (tenant_id,)).fetchall()
+    lock_graph_component(conn, tenant_id)
     _save_findings(conn, detected_findings, findings_table)
     logger.info("  Tenant %d total findings: %d", tenant_id, len(detected_findings))
 
@@ -1851,16 +1526,8 @@ def process_tenant(
             lease_fence,
             data_as_of_utc,
         )
-        row = conn.cursor().execute(
-            """
-            SELECT ServingVersion
-            FROM integrity.IntegrityComponentStatus
-            WHERE TenantId=? AND Component='GRAPH'
-            """,
-            (tenant_id,),
-        ).fetchone()
         return TenantStageResult.succeeded(
-            published_version=str(row[0]) if row and row[0] else None,
+            published_version=read_graph_serving_version(conn, tenant_id),
             diagnostics={"finding_count": finding_count},
         )
     except LeaseLostError:

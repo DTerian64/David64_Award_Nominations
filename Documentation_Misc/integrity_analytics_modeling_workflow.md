@@ -10,8 +10,9 @@
 Before the source boundary cutover, model implementations read Award Nomination
 tables directly and integrity-owned processing assumed that `dbo`, `integrity`,
 and `ops` lived in one database. Award source extraction now terminates in
-`source_adapters/award_nominations`, while integrity-owned enrichment,
-coordination, Graph processing, and GNN processing live in
+`systems/award_nominations/source`, while Award-specific Graph, Tabular, and
+GNN orchestration lives in `systems/award_nominations`. Integrity-owned
+enrichment, coordination, and persistence live in
 `fraud-analytics-job/integrity_sentinel`.
 
 This design introduces an explicit workflow:
@@ -470,7 +471,7 @@ its model family has completed serving cutover.
 The explicit read-only sandbox smoke command is:
 
 ```powershell
-python -m source_adapters.award_nominations.live_smoke `
+python -m systems.award_nominations.source.live_smoke `
   --tenant 5 --tenant 1 --window-days 365
 ```
 
@@ -609,7 +610,7 @@ deployed RF-v3 serving bundle was not modified.
 
 ### T5: tenant-first artifacts and Tabular serving
 
-The scheduled job now runs `modeling.train_tabular_model` instead of the legacy
+The scheduled job now runs `systems.award_nominations.modeling.tabular` instead of the legacy
 RF-only trainer. For each tenant it extracts one canonical snapshot, builds one
 Tabular-v1 dataset, evaluates both candidates, refits the selected architecture
 over all eligible supervised rows, and uploads the complete immutable bundle

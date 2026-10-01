@@ -152,7 +152,7 @@ def main() -> int:
              100 * (m["eval_pr_auc"] - abl["eval_pr_auc"]) / abl["eval_pr_auc"])
     log.info("  best epoch %d / %d run", m["best_epoch"], m["epochs_run"])
 
-    # Embedding publication path: exactly what train_gnn_model.py will persist.
+    # Embedding publication path: exactly what the Award GNN stage persists.
     with torch.no_grad():
         z = model.embed_users(graph["data"]).numpy().astype(np.float32)
     blob = z[0].tobytes()

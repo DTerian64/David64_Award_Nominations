@@ -4,7 +4,7 @@ Run: python -m pytest tests/test_gnn_artifact_bundle.py -v
 """
 
 from modeling.gnn import artifact_bundle as bundle
-from modeling.gnn import graph as gnn_graph
+from systems.award_nominations.features.gnn import graph as gnn_graph
 from tests.synthetic import make_tenant
 
 

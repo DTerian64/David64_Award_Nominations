@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...graph import BASE_NOMINATION_FEATURE_COLUMNS
+from integrity_engine.gnn.features import BASE_NOMINATION_FEATURE_COLUMNS
 
 
 MLP_TABULAR = "mlp_tabular"

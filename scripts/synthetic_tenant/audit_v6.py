@@ -58,11 +58,11 @@ def audit(users, rows, design, c, as_of: date, *, policy: dict | None = None, se
     _production_imports()
     import numpy as np
     import pandas as pd
-    from modeling import graph_analytics as graph
+    from systems.award_nominations.modeling import graph
     from integrity_engine.graph.history_windows import detector_windows, filter_detector_history
     from integrity_engine.gnn.causal_context import causal_context_matrix, CAUSAL_CONTEXT_FEATURE_COLUMNS
-    from feature_builders.tabular.award_nomination_tabular_v1 import extract_features, add_semantic_features
-    from feature_builders.tabular import AWARD_NOMINATION_TABULAR_V1_SCHEMA
+    from systems.award_nominations.features.tabular.award_nomination_tabular_v1 import extract_features, add_semantic_features
+    from systems.award_nominations.features.tabular import AWARD_NOMINATION_TABULAR_V1_SCHEMA
     from feature_builders.tabular.category_encoding import CategoryFraudRateEncoder
 
     end = datetime.combine(as_of, datetime.min.time(), tzinfo=timezone.utc)

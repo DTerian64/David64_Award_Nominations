@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from typing import Any
-
-from feature_builders.source_views import actor_rows, graph_nomination_rows
-from integrity_data import IntegrityDataset
 
 
 def replace_tenant_graph_projection(
     connection: Any,
-    dataset: IntegrityDataset,
+    tenant_id: int,
+    users: Iterable[Mapping[str, Any]],
+    nominations: Iterable[Mapping[str, Any]],
 ) -> None:
     """Replace one tenant's SQL Graph projection inside the caller transaction."""
 
-    tenant_id = dataset.snapshot.tenant_id
     cursor = connection.cursor()
     cursor.execute(
         """
@@ -32,7 +31,6 @@ def replace_tenant_graph_projection(
         "DELETE FROM integrity.NomGraph_Person WHERE TenantId = ?",
         tenant_id,
     )
-    users = actor_rows(dataset)
     for user in users:
         cursor.execute(
             """
@@ -43,7 +41,7 @@ def replace_tenant_graph_projection(
             user["FullName"],
             tenant_id,
         )
-    for event in graph_nomination_rows(dataset):
+    for event in nominations:
         cursor.execute(
             """
             INSERT INTO integrity.NomGraph_Nominated

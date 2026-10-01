@@ -1,1 +1,1 @@
-"""RF, Graph Analytics, and GNN modeling pipelines."""
+"""Shared, database-free model algorithms and artifact contracts."""

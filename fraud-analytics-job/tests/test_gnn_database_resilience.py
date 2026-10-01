@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "integrity-engine-core" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from modeling import train_gnn_model as gnn  # noqa: E402
+from systems.award_nominations.modeling import gnn  # noqa: E402
 from utils import sql_connection as db_conn  # noqa: E402
 
 

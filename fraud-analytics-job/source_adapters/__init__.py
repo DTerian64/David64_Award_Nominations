@@ -1,4 +1,4 @@
-"""Source-system adapters for the Integrity Analytics workflow."""
+"""Shared source-adapter contracts for Integrity Analytics systems."""
 
 from .contracts import SourceAdapter, SourceCapability, SourceReadRequest
 

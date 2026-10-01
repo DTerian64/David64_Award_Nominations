@@ -13,13 +13,13 @@ from modeling.gnn.evaluators.selection_by_temporal_validation.model import (
 )
 from modeling.gnn.specialists.contracts import BEHAVIOR_TRACKS
 from modeling.gnn.specialists.feature_contracts import FEATURE_CONTRACTS
-from modeling.gnn.graph import NOMINATION_FEATURE_COLUMNS
+from systems.award_nominations.features.gnn.graph import NOMINATION_FEATURE_COLUMNS
 from modeling.gnn.evaluators.selection_by_temporal_validation.evaluator import (
     _fit, evaluate_shared_model, select_shared_architecture,
 )
 from modeling.gnn.evaluators.metrics import display_threshold_metrics
-from modeling.gnn import graph as G
-from modeling.train_gnn_model import _shared_admission_failure
+from systems.award_nominations.features.gnn import graph as G
+from systems.award_nominations.modeling.gnn import _shared_admission_failure
 from tests.synthetic import make_tenant
 
 
@@ -207,7 +207,7 @@ def test_v4_evaluation_keeps_final_period_out_of_architecture_selection():
 
 
 def test_new_v4_encoder_decoder_artifacts_share_frozen_preprocessing(tmp_path):
-    from modeling import train_gnn_model as publisher
+    from systems.award_nominations.modeling import gnn as publisher
     from integrity_engine.gnn.live_graph import LIVE_ENCODING_CONTRACT
     users, nominations, labels = make_tenant(1, n_users=24, nominations_per_user=4, n_decoys=6)
     folds = G.build_rolling_folds(users, nominations, n_folds=3)

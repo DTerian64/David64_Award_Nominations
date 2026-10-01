@@ -1,5 +1,5 @@
 """
-train_gnn_model.py — GNN training stage
+systems/award_nominations/modeling/gnn.py — GNN training stage
 =========================================
 Stage 3 of the fraud-analytics-job pipeline, registered in run_job.py STAGES
 after train_tabular_model.
@@ -33,7 +33,7 @@ import logging
 import os
 import time
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -53,13 +53,13 @@ from dotenv import load_dotenv
 
 # Same .env loading as the other stages so this can be run standalone locally.
 # No-op in Container Apps, where env is injected by the platform.
-JOB_DIR = Path(__file__).resolve().parents[1]
+JOB_DIR = Path(__file__).resolve().parents[3]
 env_path = JOB_DIR.parent / ".env"
 load_dotenv(env_path)
 
-from modeling.gnn import graph as G  # noqa: E402 - .env must load before model imports
+from systems.award_nominations.features.gnn import graph as G  # noqa: E402
 from modeling.gnn import artifact_bundle as bundle  # noqa: E402
-from modeling import labels as labels_mod  # noqa: E402
+from systems.award_nominations.features import labels as labels_mod  # noqa: E402
 from modeling.artifact_manifest import (  # noqa: E402
     MANIFEST_SCHEMA_VERSION,
     artifact_descriptor,
@@ -68,16 +68,16 @@ from modeling.artifact_manifest import (  # noqa: E402
 from integrity_sentinel.component_status import upsert_component_status  # noqa: E402
 from integrity_sentinel.db import RenewableConnection, connect  # noqa: E402
 from integrity_sentinel.analytics_coordinator import LeaseLostError  # noqa: E402
-from integrity_sentinel.datasets import load_award_nomination_dataset  # noqa: E402
-from feature_builders.source_views import (  # noqa: E402
+from systems.award_nominations.dataset import load_award_nomination_dataset  # noqa: E402
+from systems.award_nominations.features.source_views import (  # noqa: E402
     actor_rows,
     gnn_nomination_rows,
     label_frame,
 )
-from source_adapters.award_nominations.connection import (  # noqa: E402
+from systems.award_nominations.source.connection import (  # noqa: E402
     connect as connect_award,
 )
-from source_adapters.award_nominations.tenant_config import (  # noqa: E402
+from systems.award_nominations.source.tenant_config import (  # noqa: E402
     get_tenant_gnn_window,
     get_tenants as get_enabled_tenants,
 )
@@ -96,6 +96,14 @@ from modeling.gnn.evaluators.graph_value_by_ablation import (  # noqa: E402
     evaluate_graph_value,
 )
 from integrity_sentinel.gnn_policy import GNNPolicy, load_active_policy  # noqa: E402
+from integrity_sentinel.gnn_store import (  # noqa: E402
+    evict_stale_user_embeddings as _evict_stale_embeddings,
+    load_incumbent_selection,
+    load_incumbent_specialists as _incumbent_specialists,
+    publish_user_embeddings as _publish_embeddings,
+    read_stage_outcome,
+    read_status_for_run,
+)
 from modeling.gnn.specialists.contracts import SERVING_MODE_SPECIALISTS  # noqa: E402
 from modeling.gnn.specialists.contracts import SERVING_MODE_SHARED_MULTI_HEAD  # noqa: E402
 from modeling.gnn.evaluators.selection_by_temporal_validation.evaluator import (  # noqa: E402
@@ -227,14 +235,7 @@ def _reconcile_gnn_status(
     expected_version: str | None = None,
 ) -> tuple[bool, dict]:
     """Check whether an activation commit succeeded before its ACK was lost."""
-    row = connection.cursor().execute(
-        """
-        SELECT LastAttemptStatus, ServingVersion, DiagnosticsJson
-        FROM integrity.IntegrityComponentStatus
-        WHERE TenantId=? AND Component='GNN' AND RunId=?
-        """,
-        (tenant_id, run_id),
-    ).fetchone()
+    row = read_status_for_run(connection, tenant_id, run_id)
     connection.rollback()
     if row is None or str(row[0]).upper() != expected_status.upper():
         return False, {}
@@ -251,14 +252,7 @@ def _read_gnn_outcome_with_retry(
     """Read the committed stage outcome without turning a transient into failure."""
     for attempt in range(1, _PUBLICATION_MAX_ATTEMPTS + 1):
         try:
-            row = connection.cursor().execute(
-                """
-                SELECT LastAttemptStatus, ReasonCode, ServingVersion
-                FROM integrity.IntegrityComponentStatus
-                WHERE TenantId=? AND Component='GNN'
-                """,
-                (tenant_id,),
-            ).fetchone()
+            row = read_stage_outcome(connection, tenant_id)
             connection.rollback()
             return row
         except Exception as exc:
@@ -354,78 +348,6 @@ def _log_peak_rss(label: str) -> float | None:
 
 def _get_tenants(conn) -> list[int]:
     return [tenant_id for tenant_id, _ in get_enabled_tenants(conn)]
-
-
-# ── Persistence ───────────────────────────────────────────────────────────────
-# The weekly job publishes only the user embeddings required by live inference.
-
-def _publish_embeddings(
-    conn, tenant_id: int, user_ids: list[int], z: np.ndarray,
-    as_of: date, model_version: str,
-) -> int:
-    cur = conn.cursor()
-
-    cur.execute("""
-        CREATE TABLE #gnn_emb (
-            UserId INT, AsOfDate DATE, Embedding VARBINARY(MAX),
-            EmbeddingDim SMALLINT, ModelVersion VARCHAR(64)
-        )
-    """)
-    rows = [
-        (int(uid), as_of, z[i].astype(np.float32).tobytes(), int(z.shape[1]), model_version)
-        for i, uid in enumerate(user_ids)
-    ]
-    # fast_executemany OFF for this one statement.
-    #
-    # fast_executemany makes pyodbc pre-bind a single fixed-width buffer per
-    # column rather than describing each row, and for a bytes parameter that
-    # buffer defaults to 255. A float32 embedding is 4 bytes per dimension, so
-    # An embedding dimension of 64 is exactly 256 bytes and overflows it by one float:
-    #     ('String data, right truncation: length 256 buffer 255', 'HY000')
-    # The column is VARBINARY(MAX); the limit was entirely client-side. Any
-    # embed_dim >= 64 hits it, which is to say the shipped default did.
-    #
-    # Binding per row costs a round trip per row — a few seconds for a tenant
-    # with thousands of users, once a week. If that ever matters, the faster fix
-    # is cur.setinputsizes() with an explicit VARBINARY width, but verify the
-    # exact call against the pyodbc version in the image first: the placeholder
-    # and MAX-size semantics are not documented on the wiki.
-    cur.fast_executemany = False   # see note above
-    cur.executemany(
-        "INSERT INTO #gnn_emb (UserId, AsOfDate, Embedding, EmbeddingDim, ModelVersion) "
-        "VALUES (?, ?, ?, ?, ?)",
-        rows,
-    )
-    cur.execute("""
-        MERGE integrity.GNN_UserEmbeddings AS target
-        USING (SELECT ? AS TenantId, UserId, AsOfDate, Embedding, EmbeddingDim, ModelVersion
-               FROM #gnn_emb) AS src
-            ON  target.TenantId = src.TenantId
-            AND target.UserId   = src.UserId
-            AND target.ModelVersion = src.ModelVersion
-            AND target.AsOfDate = src.AsOfDate
-        WHEN MATCHED THEN
-            UPDATE SET Embedding = src.Embedding, EmbeddingDim = src.EmbeddingDim,
-                       ModelVersion = src.ModelVersion, LastUpdatedUtc = SYSUTCDATETIME()
-        WHEN NOT MATCHED THEN
-            INSERT (TenantId, UserId, AsOfDate, Embedding, EmbeddingDim, ModelVersion)
-            VALUES (src.TenantId, src.UserId, src.AsOfDate, src.Embedding,
-                    src.EmbeddingDim, src.ModelVersion);
-    """, tenant_id)
-    cur.execute("DROP TABLE #gnn_emb")
-    return len(rows)
-
-
-def _evict_stale_embeddings(conn, tenant_id: int, retention_days: int) -> int:
-    """Bound table growth. Retention must outlive the rollback window it protects."""
-    cutoff = date.today() - timedelta(days=retention_days)
-    cur = conn.cursor()
-    cur.execute(
-        "DELETE FROM integrity.GNN_UserEmbeddings WHERE TenantId = ? AND AsOfDate < ?",
-        tenant_id, cutoff,
-    )
-    n = cur.rowcount
-    return max(n, 0)
 
 
 # ── Artifacts ─────────────────────────────────────────────────────────────────
@@ -653,67 +575,7 @@ def _headline_candidate_metrics(metrics: dict) -> dict:
 
 def _incumbent_selection(conn, tenant_id: int) -> dict | None:
     """Read the active architecture without making the status row a model registry."""
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT DiagnosticsJson
-        FROM integrity.IntegrityComponentStatus
-        WHERE TenantId = ? AND Component = 'GNN'
-    """, tenant_id)
-    row = cur.fetchone()
-    if not row or not row[0]:
-        return None
-    try:
-        import json
-
-        diagnostics = json.loads(row[0])
-        selection = diagnostics.get("selection") or {}
-        value = selection.get("selected_architecture")
-        return selection if value in GRAPH_ARCHITECTURES else None
-    except (TypeError, ValueError):
-        logger.warning(
-            "Tenant %d has invalid GNN selection diagnostics; ignoring incumbent",
-            tenant_id,
-        )
-        return None
-
-
-def _incumbent_specialists(conn, tenant_id: int) -> dict[str, dict]:
-    """Read the active specialist roster for refresh or carry-forward."""
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ServingVersion, DiagnosticsJson
-        FROM integrity.IntegrityComponentStatus
-        WHERE TenantId = ? AND Component = 'GNN'
-    """, tenant_id)
-    row = cur.fetchone()
-    if not row or not row[1]:
-        return {}
-    try:
-        import json
-
-        diagnostics = json.loads(row[1])
-        roster = diagnostics.get("specialists") or {}
-        if not isinstance(roster, dict):
-            return {}
-        result = {}
-        for key, value in roster.items():
-            if not isinstance(value, dict) or value.get("state") not in {
-                "ACTIVE", "CARRIED_FORWARD"
-            }:
-                continue
-            result[str(key).upper()] = {
-                **value,
-                "artifact_bundle_version": value.get(
-                    "artifact_bundle_version", row[0]
-                ),
-            }
-        return result
-    except (TypeError, ValueError):
-        logger.warning(
-            "Tenant %d has invalid GNN specialist diagnostics; ignoring incumbents",
-            tenant_id,
-        )
-        return {}
+    return load_incumbent_selection(conn, tenant_id, GRAPH_ARCHITECTURES)
 def _candidate_training_set(
     folds: list[dict], y_train_by_fold: list[np.ndarray], y_holdout: np.ndarray
 ) -> tuple[list[dict], list[np.ndarray]]:
