@@ -16,7 +16,9 @@ def load_encoder(head, tenant_id, read_blob):
         raise ValueError("Unsupported live GNN inference contract")
     if "_live_encoder" in head:
         return head["_live_encoder"], False
-    prefix = gnn_bundle_prefix(tenant_id, head["model_version"])
+    prefix = gnn_bundle_prefix(
+        tenant_id, head["model_version"], system="awards"
+    )
     manifest = json.loads(read_blob(f"{prefix}/manifest.json"))
     if (manifest.get("tenant_id") != tenant_id or
         manifest.get("model_version") != head["model_version"] or

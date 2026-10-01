@@ -241,7 +241,7 @@ updates on the canonical result provide request ownership and idempotency.
 The worker downloads only the immutable bundle named by the request:
 
 ```text
-tenant_<tenant_id>/gnn/<model_version>/
+tenant_<tenant_id>/awards/gnn/<model_version>/
   manifest.json
   graph_snapshot.pt
   serving/

@@ -230,7 +230,9 @@ def _get_model(tenant_id: int, serving_version: str | None) -> dict | None:
 
 def _stream_from_blob(tenant_id: int, serving_version: str) -> dict | None:
     from azure.storage.blob import BlobServiceClient
-    blob_name = tabular_serving_model_blob(tenant_id, serving_version)
+    blob_name = tabular_serving_model_blob(
+        tenant_id, serving_version, system="awards"
+    )
 
     if _STORAGE_KEY:
         conn_str = (

@@ -610,7 +610,7 @@ Random Forest was selected with reason `HIGHEST_ELIGIBLE_PR_AUC`. The result is
 evaluation evidence only: `serving_state_changed` remained `false`, and the
 deployed RF-v3 serving bundle was not modified.
 
-### T5: tenant-first artifacts and Tabular serving
+### T5: tenant- and system-scoped artifacts and Tabular serving
 
 The scheduled job now runs `systems.award_nominations.modeling.tabular.stage` instead of the legacy
 RF-only trainer. For each tenant it extracts one canonical snapshot, builds one
@@ -624,19 +624,21 @@ Shared blob publication and tenant model configuration now live in `utils`;
 Random Forest remains a candidate implementation under
 `systems/award_nominations/modeling/tabular`.
 
-All integrity artifacts use one tenant-first root:
+Award Nomination integrity artifacts use one tenant-first, system-scoped root:
 
 ```text
 ml-models/
 └── tenant_<tenant_id>/
-    ├── tabular/<model_version>/
-    ├── gnn/<model_version>/
-    └── graph/<run_id>/
+    └── awards/
+        ├── tabular/<model_version>/
+        ├── gnn/<model_version>/
+        └── graph/<run_id>/
 ```
 
-There is no runtime fallback to the retired `random_forest/`, `gnn/tenant_*`,
-or `graph/runs/` prefixes. This makes missing or stale registry state fail as
-unavailable instead of silently crossing into a legacy storage contract.
+There is no runtime fallback to the retired tenant-only or family-first
+prefixes. This makes missing or stale registry state fail as unavailable
+instead of silently crossing into a legacy storage contract or another source
+system.
 
 ### Phase C: workflow orchestration
 

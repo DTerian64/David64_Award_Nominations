@@ -111,7 +111,7 @@ The source of truth is the nomination's persisted `GnnResultJson`, together with
 the immutable bundle named by its model/snapshot identity:
 
 ```text
-ml-models/tenant_<tenant_id>/gnn/<model_version>/
+ml-models/tenant_<tenant_id>/awards/gnn/<model_version>/
   manifest.json
   graph_snapshot.pt
   serving/encoder.pt

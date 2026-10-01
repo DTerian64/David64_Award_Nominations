@@ -461,7 +461,7 @@ the next analytics run and requires no Terraform deployment.
 One immutable bundle contains all candidates and one serving model:
 
 ```text
-tenant_<tenant_id>/gnn/<model_version>/
+tenant_<tenant_id>/awards/gnn/<model_version>/
   manifest.json
   graph_snapshot.pt
   candidates/

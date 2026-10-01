@@ -109,7 +109,7 @@ def test_embedding_retention_uses_longest_tenant_window_not_legacy_policy():
 
 def test_graph_run_places_snapshot_below_tenant_boundary():
     assert graph._graph_snapshot_blob_name(2, "run-abc") == (
-        "tenant_2/graph/run-abc/inference-snapshot.json.gz"
+        "tenant_2/awards/graph/run-abc/inference-snapshot.json.gz"
     )
 
 

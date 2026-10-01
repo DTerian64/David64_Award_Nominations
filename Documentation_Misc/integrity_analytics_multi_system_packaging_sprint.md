@@ -112,18 +112,11 @@ calling system's physical source database.
 
 ### 3.4 `modeling`
 
-Owns reusable, database-free model implementation:
-
-- Tabular algorithms;
-- GNN architectures;
-- temporal splits and evaluation;
-- candidate selection and admission gates;
-- fitted preprocessing;
-- artifact formats; and
-- shared metrics.
-
-Modeling code accepts canonical or feature-builder contracts. It must not query
-a source database or the Sentinel database.
+The root `modeling` package owns only proven cross-system artifact utilities.
+Award-specific Tabular and GNN algorithms, temporal evaluation, candidate
+selection, admission gates, preprocessing, and artifact assembly live under
+`systems/award_nominations/modeling` because their contracts encode Award
+entities and behavior semantics.
 
 ### 3.5 `orchestration`
 
@@ -221,6 +214,8 @@ This sprint is a behavior-preserving package migration for Award Nomination.
   pipeline;
 - update `run_job.py` stage registration to use the new system package;
 - update existing callers and tests in the same coordinated cutover;
+- place Award artifacts below `tenant_<id>/awards/` and update producers and
+  consumers in the same coordinated cutover;
 - add dependency-boundary tests; and
 - update architecture documentation and operational commands.
 
@@ -229,7 +224,7 @@ This sprint is a behavior-preserving package migration for Award Nomination.
 - adding Payroll or HR ingestion;
 - changing database schemas;
 - changing model inputs, hyperparameters, selection, or admission rules;
-- changing artifact paths or manifest formats;
+- changing artifact payload or manifest formats;
 - changing the Container Apps Job schedule or replica behavior;
 - changing tenant enablement behavior;
 - splitting the physical Award and Sentinel databases;
@@ -300,7 +295,8 @@ The sprint is complete when:
    code.
 5. Dataset snapshots preserve their source system, adapter version, record
    counts, cutoff, and deterministic hash behavior.
-6. Existing artifact paths and serving-version resolution remain unchanged.
+6. Award artifacts use `tenant_<id>/awards/{tabular,gnn,graph}/...`, while
+   serving-version resolution remains unchanged.
 7. Existing stage reason codes and run-history behavior remain unchanged.
 8. Multi-replica tenant claiming and lease fencing remain unchanged.
 9. The full `fraud-analytics-job` test suite passes.
@@ -320,7 +316,8 @@ The sprint is complete when:
 - run a filtered local or sandbox tenant execution;
 - compare stage-attempt count, statuses, reason codes, and diagnostics with the
   previous package layout;
-- confirm the produced artifact manifest and blob paths are unchanged; and
+- confirm produced artifact payloads are unchanged and blob paths use the
+  `tenant_<id>/awards/` namespace; and
 - run one manual two-replica sandbox execution after deployment.
 
 ## 12. Risks and mitigations
@@ -328,11 +325,11 @@ The sprint is complete when:
 | Risk | Mitigation |
 |---|---|
 | Import cycles between system, Sentinel, and modeling packages | Enforce the dependency direction with import-boundary tests |
-| Pickled artifacts reference moved Python classes | Keep serialized model and preprocessing classes at stable shared paths |
+| Existing serving versions point to legacy tenant-only blob paths | Before the consumer cutover, copy each active incumbent Tabular and GNN bundle into `tenant_<id>/awards/`, or successfully republish every active component and verify its system-scoped bundle |
 | Stale imports survive the package migration | Boundary tests assert that legacy alias files are absent |
 | Tests monkeypatch old module globals | Patch the owning module and add new-path import tests |
 | Dataset hashes change unintentionally | Preserve adapter identity and canonical records; compare snapshot tests |
-| Generic code is duplicated into the Award package | Move only source-specific orchestration; retain proven reusable algorithms |
+| Award-specific model code is mistaken for a reusable abstraction | Extract shared algorithms only after a second system proves an identical contract |
 | Over-generalizing before a second source exists | Use Award as the vertical slice and extract abstractions only at clear seams |
 
 ## 13. Estimated sprint effort
@@ -379,9 +376,9 @@ equivalent source scoping.
 Use source-scoped artifact identities, for example:
 
 ```text
-award_nominations/tenant_5/tabular/<version>/
-payroll/tenant_5/tabular/<version>/
-cross_system/tenant_5/decision/<version>/
+tenant_5/awards/tabular/<version>/
+tenant_5/payroll/tabular/<version>/
+tenant_5/cross_system/decision/<version>/
 ```
 
 ### Phase 5: second-source proof

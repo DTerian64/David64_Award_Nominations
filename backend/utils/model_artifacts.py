@@ -72,8 +72,12 @@ def get_manifest(
         return None
     family = "tabular" if component == "rf" else "gnn"
     names = {
-        "rf": f"tenant_{tenant_id}/{family}/{model_version}/manifest.json",
-        "gnn": f"tenant_{tenant_id}/{family}/{model_version}/manifest.json",
+        "rf": (
+            f"tenant_{tenant_id}/awards/{family}/{model_version}/manifest.json"
+        ),
+        "gnn": (
+            f"tenant_{tenant_id}/awards/{family}/{model_version}/manifest.json"
+        ),
     }
     payload = _download(names[component], _MAX_MANIFEST_BYTES)
     if payload is None:
@@ -133,6 +137,6 @@ def get_rf_visualization(
         visualization_path or "serving/score_distribution.png"
     )
     return _download(
-        f"tenant_{tenant_id}/tabular/{model_version}/{relative_path}",
+        f"tenant_{tenant_id}/awards/tabular/{model_version}/{relative_path}",
         _MAX_VISUALIZATION_BYTES,
     )

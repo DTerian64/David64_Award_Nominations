@@ -54,8 +54,12 @@ def bundle_fixture():
         {"role": "serving_decoder", "relative_path": "serving/decoder.pt", "size_bytes": 7,
          "sha256": head["_artifact_sha256"]},
     ]
-    blobs = {"tenant_5/gnn/gnn-v4-test/manifest.json": json.dumps(manifest).encode(),
-             "tenant_5/gnn/gnn-v4-test/serving/encoder.pt": raw}
+    blobs = {
+        "tenant_5/awards/gnn/gnn-v4-test/manifest.json": (
+            json.dumps(manifest).encode()
+        ),
+        "tenant_5/awards/gnn/gnn-v4-test/serving/encoder.pt": raw,
+    }
     return head, users, target, blobs
 
 
@@ -74,7 +78,7 @@ def test_encoder_is_manifest_verified_and_cached_with_frozen_weights():
 
 def test_corrupted_encoder_or_foreign_manifest_is_rejected():
     head, users, target, blobs = bundle_fixture()
-    blobs["tenant_5/gnn/gnn-v4-test/serving/encoder.pt"] += b"bad"
+    blobs["tenant_5/awards/gnn/gnn-v4-test/serving/encoder.pt"] += b"bad"
     with pytest.raises(ValueError, match="size/hash"):
         gnn_live.load_encoder(head, 5, blobs.__getitem__)
     with pytest.raises(ValueError, match="identity"):

@@ -23,10 +23,10 @@ resource "azurerm_storage_account" "storage" {
   allow_nested_items_to_be_public = false
 
   # ── Artifact recovery ───────────────────────────────────────────────────────
-  # Integrity artifacts are immutable and tenant-first:
-  #     tenant_<N>/tabular/<version>/...            (RF + Tabular MLP)
-  #     tenant_<N>/gnn/<version>/...                (GNN candidates + serving)
-  #     tenant_<N>/graph/<run-id>/inference-snapshot.json.gz
+  # Integrity artifacts are immutable, tenant-first, and source-system scoped:
+  #     tenant_<N>/awards/tabular/<version>/...      (RF + Tabular MLP)
+  #     tenant_<N>/awards/gnn/<version>/...          (GNN candidates + serving)
+  #     tenant_<N>/awards/graph/<run-id>/inference-snapshot.json.gz
   #
   # Without versioning that overwrite is destructive: a bad weekly run replaces
   # the last known-good model and there is no way back except retraining, which

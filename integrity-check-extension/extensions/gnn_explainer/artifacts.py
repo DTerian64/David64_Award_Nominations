@@ -34,7 +34,9 @@ class BundleLoader:
 
     def load(self, request: ExplanationRequest) -> ArtifactBundle:
         prefix = gnn_bundle_prefix(
-            request.tenant_id, request.artifact_bundle_version
+            request.tenant_id,
+            request.artifact_bundle_version,
+            system="awards",
         )
         manifest_raw = self.reader.read(
             f"{prefix}/manifest.json", min(self.max_artifact_bytes, 10_000_000)

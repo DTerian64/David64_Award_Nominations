@@ -77,7 +77,7 @@ class RfArtifactNamingTests(unittest.TestCase):
         self.assertEqual(result["model_version"], "rf-test")
         self.assertEqual(
             attempts,
-            ["tenant_3/tabular/rf-test/serving/model.pkl"],
+            ["tenant_3/awards/tabular/rf-test/serving/model.pkl"],
         )
 
     def test_idle_models_are_evicted_with_their_embedded_explainers(self):

@@ -48,7 +48,7 @@ def _publish_bundle(
     bundle_dir: Path,
     artifacts: list[tuple[Path, str]],
 ) -> None:
-    prefix = tabular_bundle_prefix(tenant_id, model_version)
+    prefix = tabular_bundle_prefix(tenant_id, model_version, system="awards")
     uploads: list[bool] = []
     for path, _role in artifacts:
         relative = path.relative_to(bundle_dir)
@@ -178,7 +178,9 @@ def process_tenant(
         diagnostics = {
             "window_days": window_days,
             "history_feature_contract": features.fitted_state["history_feature_contract"],
-            "artifact_bundle_prefix": tabular_bundle_prefix(tenant_id, model_version),
+            "artifact_bundle_prefix": tabular_bundle_prefix(
+                tenant_id, model_version, system="awards"
+            ),
             "source_snapshot_id": features.source_snapshot_id,
             "feature_schema_id": features.schema.schema_id,
             "selected_architecture": selected,

@@ -14,32 +14,42 @@ from integrity_engine.artifact_paths import (
 
 
 def test_all_model_families_are_nested_below_tenant_boundary():
-    assert tabular_manifest_blob(5, "tabular-v1-run") == (
-        "tenant_5/tabular/tabular-v1-run/manifest.json"
+    assert tabular_manifest_blob(5, "tabular-v1-run", system="awards") == (
+        "tenant_5/awards/tabular/tabular-v1-run/manifest.json"
     )
-    assert tabular_serving_model_blob(5, "tabular-v1-run") == (
-        "tenant_5/tabular/tabular-v1-run/serving/model.pkl"
+    assert tabular_serving_model_blob(5, "tabular-v1-run", system="awards") == (
+        "tenant_5/awards/tabular/tabular-v1-run/serving/model.pkl"
     )
-    assert tabular_serving_visualization_blob(5, "tabular-v1-run") == (
-        "tenant_5/tabular/tabular-v1-run/serving/score_distribution.png"
+    assert tabular_serving_visualization_blob(
+        5, "tabular-v1-run", system="awards"
+    ) == (
+        "tenant_5/awards/tabular/tabular-v1-run/serving/score_distribution.png"
     )
-    assert gnn_manifest_blob(5, "gnn-v2-run") == (
-        "tenant_5/gnn/gnn-v2-run/manifest.json"
+    assert gnn_manifest_blob(5, "gnn-v2-run", system="awards") == (
+        "tenant_5/awards/gnn/gnn-v2-run/manifest.json"
     )
-    assert gnn_serving_decoder_blob(5, "gnn-v2-run") == (
-        "tenant_5/gnn/gnn-v2-run/serving/decoder.pt"
+    assert gnn_serving_decoder_blob(5, "gnn-v2-run", system="awards") == (
+        "tenant_5/awards/gnn/gnn-v2-run/serving/decoder.pt"
     )
-    assert gnn_specialist_decoder_blob(5, "gnn-v3-run", "ring") == (
-        "tenant_5/gnn/gnn-v3-run/specialists/ring/serving/decoder.pt"
+    assert gnn_specialist_decoder_blob(
+        5, "gnn-v3-run", "ring", system="awards"
+    ) == (
+        "tenant_5/awards/gnn/gnn-v3-run/specialists/ring/serving/decoder.pt"
     )
-    assert graph_inference_snapshot_blob(5, "run-123") == (
-        "tenant_5/graph/run-123/inference-snapshot.json.gz"
+    assert graph_inference_snapshot_blob(5, "run-123", system="awards") == (
+        "tenant_5/awards/graph/run-123/inference-snapshot.json.gz"
     )
 
 
 @pytest.mark.parametrize("value", ["../escape", "nested/path", "", " space"])
 def test_versions_and_run_ids_cannot_escape_tenant_prefix(value):
     with pytest.raises(ValueError):
-        tabular_manifest_blob(5, value)
+        tabular_manifest_blob(5, value, system="awards")
     with pytest.raises(ValueError):
-        graph_inference_snapshot_blob(5, value)
+        graph_inference_snapshot_blob(5, value, system="awards")
+
+
+@pytest.mark.parametrize("value", ["../escape", "nested/path", "", "Awards"])
+def test_system_names_cannot_escape_tenant_prefix(value):
+    with pytest.raises(ValueError):
+        tabular_manifest_blob(5, "tabular-v1-run", system=value)

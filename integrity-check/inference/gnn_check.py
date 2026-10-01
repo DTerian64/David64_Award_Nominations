@@ -155,7 +155,9 @@ def _get_head(tenant_id: int, serving_version: str | None = None) -> dict | None
 def _head_blob_name(tenant_id: int, serving_version: str | None = None) -> str:
     if not serving_version:
         raise ValueError("GNN serving version is required")
-    return gnn_serving_decoder_blob(tenant_id, serving_version)
+    return gnn_serving_decoder_blob(
+        tenant_id, serving_version, system="awards"
+    )
 
 
 def _get_specialist_head(
@@ -186,7 +188,7 @@ def _stream_head_from_blob(
     specialist_key: str | None = None,
 ) -> dict | None:
     """
-    Download the versioned tenant-scoped serving decoder.
+    Download the versioned tenant- and Award-system-scoped serving decoder.
 
     weights_only=True is deliberate and load-bearing. torch.save uses pickle
     underneath, so a .pt file is as executable as a .pkl unless restricted. The
@@ -202,7 +204,10 @@ def _stream_head_from_blob(
 
     blob_name = (
         gnn_specialist_decoder_blob(
-            tenant_id, serving_version, specialist_key.lower()
+            tenant_id,
+            serving_version,
+            specialist_key.lower(),
+            system="awards",
         )
         if specialist_key
         else _head_blob_name(tenant_id, serving_version)
@@ -367,7 +372,9 @@ def _stream_specialist_manifest(
     try:
         raw = client.get_blob_client(
             container=_MODEL_CONTAINER,
-            blob=gnn_manifest_blob(tenant_id, bundle_version),
+            blob=gnn_manifest_blob(
+                tenant_id, bundle_version, system="awards"
+            ),
         ).download_blob().readall()
         manifest = json.loads(raw)
     except Exception as exc:

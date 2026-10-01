@@ -220,7 +220,7 @@ class GnnP2PContractTests(unittest.TestCase):
             gnn_check._head_blob_name(7)
         self.assertEqual(
             gnn_check._head_blob_name(7, "gnn-v2-selected"),
-            "tenant_7/gnn/gnn-v2-selected/serving/decoder.pt",
+            "tenant_7/awards/gnn/gnn-v2-selected/serving/decoder.pt",
         )
 
     def test_behavior_population_accepts_new_and_legacy_artifacts(self):

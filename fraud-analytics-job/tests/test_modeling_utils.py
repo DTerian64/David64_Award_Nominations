@@ -110,7 +110,7 @@ def test_upload_without_storage_account_is_explicitly_skipped(
     assert (
         model_artifacts.upload_artifact(
             artifact,
-            blob_folder="tenant_5/tabular/version",
+            blob_folder="tenant_5/awards/tabular/version",
         )
         is False
     )

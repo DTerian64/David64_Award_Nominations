@@ -160,12 +160,12 @@ def test_publish_uses_tenant_first_immutable_prefix(tmp_path, monkeypatch):
     assert uploads == [
         (
             serving,
-            "tenant_5/tabular/tabular-v1-test/serving",
+            "tenant_5/awards/tabular/tabular-v1-test/serving",
             "model.pkl",
         ),
         (
             manifest,
-            "tenant_5/tabular/tabular-v1-test",
+            "tenant_5/awards/tabular/tabular-v1-test",
             "manifest.json",
         ),
     ]

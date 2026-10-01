@@ -30,7 +30,7 @@ class ModelArtifactTests(unittest.TestCase):
         )
         self.assertEqual(
             download.call_args.args[0],
-            "tenant_7/tabular/tabular-v1-selected/manifest.json",
+            "tenant_7/awards/tabular/tabular-v1-selected/manifest.json",
         )
 
     @patch("utils.model_artifacts._download")
@@ -50,7 +50,7 @@ class ModelArtifactTests(unittest.TestCase):
             )
         self.assertEqual(
             download.call_args.args[0],
-            "tenant_7/gnn/gnn-v2-selected/manifest.json",
+            "tenant_7/awards/gnn/gnn-v2-selected/manifest.json",
         )
 
     @patch("utils.model_artifacts._download")
@@ -70,7 +70,7 @@ class ModelArtifactTests(unittest.TestCase):
 
         self.assertEqual(
             download.call_args.args[0],
-            "tenant_7/gnn/gnn-v2-selected/manifest.json",
+            "tenant_7/awards/gnn/gnn-v2-selected/manifest.json",
         )
 
     @patch("utils.model_artifacts._download")
@@ -114,11 +114,11 @@ class ModelArtifactTests(unittest.TestCase):
         )
         self.assertEqual(
             download.call_args_list[0].args[0],
-            "tenant_9/tabular/tabular-v1-selected/manifest.json",
+            "tenant_9/awards/tabular/tabular-v1-selected/manifest.json",
         )
         self.assertEqual(
             download.call_args_list[1].args[0],
-            "tenant_9/tabular/tabular-v1-selected/serving/score_distribution.png",
+            "tenant_9/awards/tabular/tabular-v1-selected/serving/score_distribution.png",
         )
 
     @patch("utils.model_artifacts._download")
@@ -141,7 +141,7 @@ class ModelArtifactTests(unittest.TestCase):
         )
         self.assertEqual(
             download.call_args_list[1].args[0],
-            "tenant_9/tabular/tabular-v1-selected/"
+            "tenant_9/awards/tabular/tabular-v1-selected/"
             "evaluation/selected_candidate_score_distribution.png",
         )
 

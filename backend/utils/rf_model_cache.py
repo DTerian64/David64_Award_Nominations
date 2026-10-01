@@ -3,10 +3,10 @@ Random Forest Model Cache — Multi-Tenant Blob-Direct Edition
 =============================================================
 
 One selected Tabular model per tenant is trained by
-systems/award_nominations/modeling/tabular.py and stored in Azure Blob Storage as immutable
-tenant-first bundles:
-    ml-models/tenant_1/tabular/<ServingVersion>/serving/model.pkl
-    ml-models/tenant_2/tabular/<ServingVersion>/serving/model.pkl
+systems/award_nominations/modeling/tabular/stage.py and stored in Azure Blob
+Storage as immutable tenant- and system-scoped bundles:
+    ml-models/tenant_1/awards/tabular/<ServingVersion>/serving/model.pkl
+    ml-models/tenant_2/awards/tabular/<ServingVersion>/serving/model.pkl
 
 Models are loaded ON DEMAND: the first get_model() call for a given tenant
 streams the pkl DIRECTLY from blob into memory (pickle.loads(bytes)) — no local
@@ -99,7 +99,10 @@ class RandomForestModelCache:
     @staticmethod
     def _blob_name(tenant_id: int, model_version: str) -> str:
         """Tenant-scoped immutable Tabular serving artifact name."""
-        return f"tenant_{tenant_id}/tabular/{model_version}/serving/model.pkl"
+        return (
+            f"tenant_{tenant_id}/awards/tabular/"
+            f"{model_version}/serving/model.pkl"
+        )
 
     @staticmethod
     def _serving_version(tenant_id: int) -> Optional[str]:

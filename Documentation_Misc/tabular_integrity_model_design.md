@@ -222,7 +222,7 @@ not call an MLP attribution an RF SHAP explanation.
 Every successful run is stored below the tenant boundary:
 
 ```text
-ml-models/tenant_<tenant_id>/tabular/<model_version>/
+ml-models/tenant_<tenant_id>/awards/tabular/<model_version>/
 ├── manifest.json
 ├── candidates/
 │   ├── random_forest/

@@ -502,7 +502,9 @@ def _write_operational_manifest(
             "graph_snapshot_as_of", graph["t_graph"]
         ).isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "description": "Tenant-scoped operational GNN architecture bake-off",
+        "description": (
+            "Tenant- and Award-system-scoped operational GNN architecture bake-off"
+        ),
         "training_policy": policy.snapshot(),
         "selection": selection,
         "graph_value_evaluation": graph_value_evaluation,
@@ -848,7 +850,9 @@ def _process_shared_multi_head(
     suffix = run_id.replace("-", "")[:8]
     model_version = f"gnn-v4-{as_of:%Y%m%d}-t{tenant_id}-{suffix}"
     graph_snapshot_id = f"gnn-graph-v4-{as_of:%Y%m%d}-t{tenant_id}-{suffix}"
-    bundle_dir = OUTPUT_DIR / "gnn" / f"tenant_{tenant_id}" / model_version
+    bundle_dir = (
+        OUTPUT_DIR / f"tenant_{tenant_id}" / "awards" / "gnn" / model_version
+    )
     bundle_dir.mkdir(parents=True, exist_ok=True)
     snapshot_path = bundle_dir / "graph_snapshot.pt"
     bundle.write_snapshot(snapshot_path, bundle.build_snapshot(
@@ -910,7 +914,7 @@ def _process_shared_multi_head(
         } for path, role in artifacts],
     })
     artifacts.append((manifest_path, "operational_manifest"))
-    prefix = gnn_bundle_prefix(tenant_id, model_version)
+    prefix = gnn_bundle_prefix(tenant_id, model_version, system="awards")
     uploaded = []
     upload_started = time.monotonic()
     logger.info(
@@ -1425,7 +1429,9 @@ def _process_tenant(
     selection["model_version"] = model_version
     selection["selected_at"] = datetime.now(timezone.utc).isoformat()
 
-    bundle_dir = OUTPUT_DIR / "gnn" / f"tenant_{tenant_id}" / model_version
+    bundle_dir = (
+        OUTPUT_DIR / f"tenant_{tenant_id}" / "awards" / "gnn" / model_version
+    )
     bundle_dir.mkdir(parents=True, exist_ok=True)
     snapshot_path = bundle_dir / "graph_snapshot.pt"
     manifest_path = bundle_dir / "manifest.json"
@@ -1540,7 +1546,9 @@ def _process_tenant(
     artifact_paths.append((manifest_path, "operational_manifest"))
 
     # Upload the whole immutable run before the SQL serving pointer changes.
-    versioned_folder = gnn_bundle_prefix(tenant_id, model_version)
+    versioned_folder = gnn_bundle_prefix(
+        tenant_id, model_version, system="awards"
+    )
     bundle_uploads = []
     for artifact, _role in artifact_paths:
         relative_parent = artifact.relative_to(bundle_dir).parent.as_posix()

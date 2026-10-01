@@ -142,7 +142,13 @@ def write_tabular_bundle(
 ) -> tuple[Path, list[tuple[Path, str]]]:
     """Write one complete immutable run and return its upload inventory."""
 
-    bundle_dir = output_dir / "tabular" / f"tenant_{tenant_id}" / model_version
+    bundle_dir = (
+        output_dir
+        / f"tenant_{tenant_id}"
+        / "awards"
+        / "tabular"
+        / model_version
+    )
     artifacts: list[tuple[Path, str]] = []
     candidate_manifest: dict[str, Any] = {}
     for architecture, candidate in evaluation.candidates.items():

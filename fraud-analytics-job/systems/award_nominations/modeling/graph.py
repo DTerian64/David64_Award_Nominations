@@ -141,8 +141,8 @@ def _get_connection() -> pyodbc.Connection:
 
 
 def _graph_snapshot_blob_name(tenant_id: int, run_id: str) -> str:
-    """Return the tenant-scoped immutable Graph inference snapshot path."""
-    return graph_inference_snapshot_blob(tenant_id, run_id)
+    """Return the tenant- and Award-system-scoped Graph snapshot path."""
+    return graph_inference_snapshot_blob(tenant_id, run_id, system="awards")
 
 
 def _publish_graph_inference_snapshot(
